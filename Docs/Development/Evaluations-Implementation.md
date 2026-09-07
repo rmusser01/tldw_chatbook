@@ -79,6 +79,10 @@ The tldw_chatbook evaluation system provides comprehensive LLM benchmarking capa
    - ✅ `ExportFilePickerDialog` - Fully implemented (lines 208-223)
    - ✅ `TemplateSelectorDialog` - Fully implemented in `template_selector.py` (lines 171-274)
 
+> **Retired (PR 1 of the Evals rebuild):** `Event_Handlers/eval_events.py` was deleted as unreachable dead code — no
+> production import path reached it. The status below is historical. See
+> `Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md` for the rebuild plan.
+
 2. **Event Handler Functions** (`Event_Handlers/eval_events.py`)
    - ✅ `refresh_tasks_list()` - Implemented (lines 441-462)
    - ✅ `refresh_models_list()` - Implemented (lines 463-489)
@@ -87,6 +91,10 @@ The tldw_chatbook evaluation system provides comprehensive LLM benchmarking capa
    - ✅ `get_available_models()` - Implemented (lines 634-642)
    - ✅ `get_available_datasets()` - Implemented (lines 652-660)
    - ✅ Export functionality - Fully implemented
+
+> **Retired (PR 1 of the Evals rebuild):** `Widgets/eval_results_widgets.py` was deleted as unreachable dead code — its
+> only importers were the `eval_events`/`evals_views` cluster above, also deleted. The status below is historical. See
+> `Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md` for the rebuild plan.
 
 3. **Progress Tracking Widget** (`Widgets/eval_results_widgets.py`)
    - ✅ `ProgressTracker` widget - Fully implemented (lines 29-152)

@@ -9,6 +9,8 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -93,7 +95,9 @@ def test_optional_deps_import_does_not_eagerly_check_embeddings(tmp_path: Path) 
     assert "Checking embeddings dependencies early" not in result.stderr
 
 
-def test_optional_deps_eager_env_still_initializes_dependency_checks(tmp_path: Path) -> None:
+def test_optional_deps_eager_env_still_initializes_dependency_checks(
+    tmp_path: Path,
+) -> None:
     """Explicit eager dependency mode should still run dependency initialization."""
 
     result = _run_isolated_python(
@@ -111,7 +115,10 @@ def test_optional_deps_eager_env_still_initializes_dependency_checks(tmp_path: P
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["initialized"] is True
-    assert "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK" in result.stderr
+    assert (
+        "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK"
+        in result.stderr
+    )
 
 
 def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None:
@@ -126,9 +133,7 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
         import tldw_chatbook.app  # noqa: F401
 
         guards = (
-            "tldw_chatbook.UI.Evals.evals_window_v3",
             "tldw_chatbook.UI.STTS_Window",
-            "tldw_chatbook.UI.SearchWindow",
             "tldw_chatbook.UI.MediaWindow_v2",
             "tldw_chatbook.Utils.Splash_Screens.classic.glitch_reveal",
             "tldw_chatbook.Utils.Splash_Screens.tech.code_scroll",
@@ -142,11 +147,568 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
     assert payload["loaded"] == []
 
 
+def test_tool_pack_facade_export_is_lazy(tmp_path: Path) -> None:
+    """Package symbols must not pull service owners in until first access."""
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import json
+        import sys
+
+        import tldw_chatbook.Tool_Packs as tool_packs
+
+        before = "tldw_chatbook.Tool_Packs.service" in sys.modules
+        facade = tool_packs.ToolPackService
+        after = "tldw_chatbook.Tool_Packs.service" in sys.modules
+        print(json.dumps({"before": before, "after": after, "name": facade.__name__}))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "before": False,
+        "after": True,
+        "name": "ToolPackService",
+    }
+
+
+def test_tool_pack_implementation_imports_only_in_deferred_worker(
+    tmp_path: Path,
+) -> None:
+    """App import stays cheap; the post-ready worker owns composition and I/O."""
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import json
+        import sys
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        import tldw_chatbook.app as app_module
+        from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+        from tldw_chatbook.Workspaces.registry_service import DeferredWorkspaceToolProfileGuard
+
+        guarded = (
+            "tldw_chatbook.Tool_Packs.service",
+            "tldw_chatbook.Tool_Packs.export",
+            "tldw_chatbook.Tool_Packs.publication",
+            "tldw_chatbook.Tool_Packs.importer",
+            "tldw_chatbook.Tool_Packs.activation",
+            "tldw_chatbook.Tool_Packs.receipt_store",
+            "tldw_chatbook.Tool_Packs.removal",
+        )
+        before = [name for name in guarded if name in sys.modules]
+        root = Path(__import__("os").environ["XDG_DATA_HOME"])
+        app_module.get_user_data_dir = lambda: root
+
+        class Registry:
+            def __init__(self, guard): self.guard = guard
+            def list_workspaces(self, *, include_archived=False): return ()
+            def get_workspace(self, workspace_id): return None
+            def attach_tool_profile_guard(self, guard): self.guard = guard
+            @property
+            def tool_profile_guard(self): return self.guard
+
+        bootstrap = DeferredWorkspaceToolProfileGuard()
+        registry = Registry(bootstrap)
+        fake = SimpleNamespace(
+            unified_mcp_service=SimpleNamespace(
+                permission_store=MCPPermissionStore(root / "permissions.json")
+            ),
+            local_mcp_control_service=object(),
+            workspace_registry_service=registry,
+            _tool_pack_guard_bootstrap=bootstrap,
+            tool_pack_service=None,
+            tool_pack_service_unavailable_reason="starting",
+            tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+        )
+        fake.call_from_thread = lambda callback, *args: callback(*args)
+        fake._mark_tool_pack_service_unavailable = lambda category: (
+            app_module.TldwCli._mark_tool_pack_service_unavailable(fake, category)
+        )
+        fake._attach_tool_pack_service = lambda service, owner, guard_bootstrap: (
+            app_module.TldwCli._attach_tool_pack_service(
+                fake, service, owner, guard_bootstrap
+            )
+        )
+        fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
+            app_module.TldwCli._record_tool_pack_receipt_reconciliation(
+                fake, service, category
+            )
+        )
+
+        app_module.TldwCli._compose_tool_pack_service_off_thread(fake)
+        after = [name for name in guarded if name in sys.modules]
+        print(json.dumps({
+            "before": before,
+            "after": after,
+            "attached": fake.tool_pack_service is not None and registry.guard is not None,
+            "root": str(fake.tool_pack_service.receipt_root),
+        }))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["before"] == []
+    assert payload["after"] == [
+        "tldw_chatbook.Tool_Packs.service",
+        "tldw_chatbook.Tool_Packs.export",
+        "tldw_chatbook.Tool_Packs.publication",
+        "tldw_chatbook.Tool_Packs.importer",
+        "tldw_chatbook.Tool_Packs.activation",
+        "tldw_chatbook.Tool_Packs.receipt_store",
+        "tldw_chatbook.Tool_Packs.removal",
+    ]
+    assert payload["attached"] is True
+    assert payload["root"] == str(tmp_path / "data" / "tool_pack_receipts")
+
+
+@pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
+def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
+    enabled: bool,
+    expected_tasks: int,
+) -> None:
+    """Ownership recovery starts after readiness and only under the write switch."""
+
+    from tldw_chatbook.app import TldwCli
+
+    scheduled: list[tuple[object, str]] = []
+
+    def capture(coroutine, *, name: str):
+        scheduled.append((coroutine, name))
+        coroutine.close()
+
+    async def reconcile() -> None:
+        return None
+
+    # A `Mock(spec=TldwCli)` rather than a hand-listed `SimpleNamespace`
+    # (TASK-21566). The namespace had to name every attribute the method
+    # touches, so each time deferred startup grew a step these tests died on
+    # the new one -- most recently `run_worker`, added by task-21106 to move
+    # Actor Pack recovery off the construction path. `spec=` tracks the class:
+    # a genuinely new dependency is satisfied, while a typo or an attribute
+    # that does not exist on TldwCli still raises. Only the seams under test
+    # are wired for real.
+    fake_app = Mock(spec=TldwCli)
+    fake_app.citation_artifact_ownership_coordinator = SimpleNamespace(
+        writes_enabled=enabled
+    )
+    fake_app._reconcile_citation_artifact_ownership = reconcile
+    fake_app._create_deferred_startup_task = capture
+
+    TldwCli._schedule_deferred_startup_work(fake_app)
+
+    # Assert on this task by NAME, not by position or by the total. Deferred
+    # startup schedules unrelated work too (a subscription reconcile lands
+    # first, unconditionally), so a count or an index pins the shape of the
+    # whole method instead of the policy gate this test is about -- and breaks
+    # every time an unrelated step is added.
+    citation_tasks = [
+        name
+        for _, name in scheduled
+        if name == "deferred_citation_artifact_reconciliation"
+    ]
+    assert len(citation_tasks) == expected_tasks
+
+
+@pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
+def test_legacy_citation_migration_is_deferred_and_policy_gated(
+    enabled: bool,
+    expected_tasks: int,
+) -> None:
+    """One bounded migration idle unit starts only after the write switch."""
+
+    from tldw_chatbook.app import TldwCli
+
+    scheduled: list[tuple[object, str]] = []
+
+    def capture(coroutine, *, name: str):
+        scheduled.append((coroutine, name))
+        coroutine.close()
+
+    async def migrate() -> None:
+        return None
+
+    # See the sibling test above for why this is a spec'd Mock and why the
+    # assertion is by name rather than by count (TASK-21566).
+    fake_app = Mock(spec=TldwCli)
+    fake_app.citation_artifact_ownership_coordinator = None
+    fake_app.citation_legacy_migration_service = SimpleNamespace(
+        writes_enabled=enabled,
+        ready=enabled,
+    )
+    fake_app._migrate_legacy_citations_idle_unit = migrate
+    fake_app._create_deferred_startup_task = capture
+
+    TldwCli._schedule_deferred_startup_work(fake_app)
+
+    migration_tasks = [
+        name for _, name in scheduled if name == "deferred_legacy_citation_migration"
+    ]
+    assert len(migration_tasks) == expected_tasks
+
+
 @pytest.mark.asyncio
-async def test_ui_ready_before_nonessential_startup_services_finish(monkeypatch) -> None:
+async def test_deferred_migration_drains_bounded_batches_and_multiple_conversations(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Deferred work yields between 100-message units until every conversation ends."""
+
+    import tldw_chatbook.app as app_module
+    from Tests.Chat.test_citation_legacy_migration import (
+        CODEC,
+        _record,
+        _repository,
+        _write_sidecar,
+    )
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+        LegacyMigrationState,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        tmp_path / "deferred-migration.sqlite",
+        client_id="deferred-migration-test",
+    )
+    try:
+        first_conversation = db.add_conversation(
+            {
+                "id": "a-conversation",
+                "title": "First migration",
+                "character_id": None,
+            }
+        )
+        first_ids = [f"first-message-{ordinal:04d}" for ordinal in range(205)]
+        for message_id in first_ids:
+            db.add_message(
+                {
+                    "id": message_id,
+                    "conversation_id": first_conversation,
+                    "sender": "assistant",
+                    "content": "Legacy answer [1].",
+                }
+            )
+        second_conversation = db.add_conversation(
+            {
+                "id": "b-conversation",
+                "title": "Second migration",
+                "character_id": None,
+            }
+        )
+        second_ids = ["second-message-0000"]
+        db.add_message(
+            {
+                "id": second_ids[0],
+                "conversation_id": second_conversation,
+                "sender": "assistant",
+                "content": "Legacy answer [1].",
+            }
+        )
+        sidecar = tmp_path / "chat_rag_context.json"
+        _write_sidecar(sidecar, first_conversation, first_ids)
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        payload["conversations"][second_conversation] = {
+            message_id: {
+                **_record(message_id),
+                "conversation_id": second_conversation,
+            }
+            for message_id in second_ids
+        }
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+        migration = CitationLegacyMigrationService(
+            db=db,
+            repository=_repository(db),
+            sidecar_path=sidecar,
+            fingerprint_codec=CODEC,
+        )
+        processed: list[int] = []
+        original_migrate = migration.migrate_idle_unit
+
+        def record_migration_unit():
+            result = original_migrate()
+            processed.append(result.processed_messages)
+            return result
+
+        migration.migrate_idle_unit = record_migration_unit
+        real_sleep = asyncio.sleep
+        yielded: list[float] = []
+
+        async def record_yield(delay: float) -> None:
+            yielded.append(delay)
+            await real_sleep(0)
+
+        monkeypatch.setattr(app_module.asyncio, "sleep", record_yield)
+        fake_app = SimpleNamespace(
+            citation_legacy_migration_service=migration,
+            loguru_logger=Mock(),
+        )
+
+        await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+        assert processed == [100, 100, 5, 1]
+        assert yielded == [0, 0, 0]
+        assert (
+            migration.get_journal(first_conversation).state
+            is LegacyMigrationState.COMPLETE
+        )
+        assert (
+            migration.get_journal(second_conversation).state
+            is LegacyMigrationState.COMPLETE
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_is_single_flight(monkeypatch) -> None:
+    """Concurrent scheduler calls share one migration driver."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def blocked_to_thread(function):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return function()
+
+    migration = SimpleNamespace(
+        ready=True,
+        migrate_idle_unit=lambda: LegacyMigrationBatchResult(
+            state=LegacyMigrationState.COMPLETE
+        ),
+    )
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=migration,
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_module.asyncio, "to_thread", blocked_to_thread)
+
+    first = asyncio.create_task(
+        app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+    )
+    await started.wait()
+    second = asyncio.create_task(
+        app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+    )
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_retries_exceptions_with_bounded_backoff(
+    monkeypatch,
+) -> None:
+    """A transient worker error gets one bounded retry path instead of a task storm."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    calls = 0
+    delays: list[float] = []
+
+    def migrate_idle_unit():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient")
+        return LegacyMigrationBatchResult(state=LegacyMigrationState.COMPLETE)
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True,
+            migrate_idle_unit=migrate_idle_unit,
+        ),
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_module.asyncio, "sleep", record_sleep)
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert calls == 2
+    assert delays == [1]
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_backs_off_running_guard_failures(
+    monkeypatch,
+) -> None:
+    """A retryable guard result yields bounded backoff instead of a hot loop."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    calls = 0
+    delays: list[float] = []
+
+    def migrate_idle_unit():
+        nonlocal calls
+        calls += 1
+        return LegacyMigrationBatchResult(
+            state=(
+                LegacyMigrationState.RUNNING
+                if calls < 3
+                else LegacyMigrationState.COMPLETE
+            ),
+            reason_code=("legacy_cutover_guard_failed" if calls < 3 else None),
+        )
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True,
+            migrate_idle_unit=migrate_idle_unit,
+        ),
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_module.asyncio, "sleep", record_sleep)
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert calls == 3
+    assert delays == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_isolates_terminal_failures_and_drains_later_work(
+    monkeypatch,
+) -> None:
+    """Malformed conversations do not consume the retry budget for later work."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    results = iter(
+        (
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_cutover_guard_failed",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_batch_invalid",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_field_too_large",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_source_unavailable",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.COMPLETE,
+                processed_messages=1,
+            ),
+        )
+    )
+    calls = 0
+    delays: list[float] = []
+
+    def migrate_idle_unit():
+        nonlocal calls
+        calls += 1
+        return next(results)
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    logger = Mock()
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True,
+            migrate_idle_unit=migrate_idle_unit,
+        ),
+        loguru_logger=logger,
+    )
+    monkeypatch.setattr(app_module.asyncio, "sleep", record_sleep)
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert calls == 5
+    assert delays == [1, 0, 0, 0]
+    assert [call.args[0] for call in logger.warning.call_args_list] == [
+        f"Legacy citation migration retained retry state: reason_code={reason_code!r}"
+        for reason_code in (
+            "legacy_cutover_guard_failed",
+            "legacy_batch_invalid",
+            "legacy_field_too_large",
+            "legacy_source_unavailable",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_rechecks_disabled_policy_between_units() -> None:
+    """Turning off canonical writes stops the driver before another batch."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    class Migration:
+        enabled = True
+        calls = 0
+
+        @property
+        def ready(self) -> bool:
+            return self.enabled
+
+        def migrate_idle_unit(self):
+            self.calls += 1
+            self.enabled = False
+            return LegacyMigrationBatchResult(state=LegacyMigrationState.RUNNING)
+
+    migration = Migration()
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=migration,
+        loguru_logger=Mock(),
+    )
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert migration.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_ui_ready_before_nonessential_startup_services_finish(
+    monkeypatch,
+) -> None:
     """Optional audio/DB/cleanup startup work should not gate initial UI readiness."""
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Utils.db_status_manager import DBStatusManager
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
     from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
@@ -215,7 +777,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(monkeypatch)
 async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
     """TTS event paths can initialize the handler lazily after startup."""
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
 
     initialized = asyncio.Event()
@@ -232,13 +794,15 @@ async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
 
     assert initialized.is_set()
     assert handler is app._tts_handler
+    assert handler._profile_service_loader == app._ensure_tts_profile_service
+    assert app._tts_profile_service is None
 
 
 @pytest.mark.asyncio
 async def test_stts_handler_initializes_on_first_use(monkeypatch) -> None:
     """S/TT/S command paths can initialize the handler lazily after startup."""
 
-    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
 
     initialized = asyncio.Event()

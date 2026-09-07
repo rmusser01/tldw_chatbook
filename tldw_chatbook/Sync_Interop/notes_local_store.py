@@ -4,13 +4,16 @@ The protocol is the seam the apply adapter writes through. P2 ships an in-memory
 implementation for round-trip verification; a ChaChaNotes-backed implementation is a
 later integration step.
 """
+
 from __future__ import annotations
 
 from typing import Any, Protocol
 
 
 class NotesSyncLocalStore(Protocol):
-    def upsert_note(self, object_id: str, payload: dict[str, Any], *, object_revision: int) -> None: ...
+    def upsert_note(
+        self, object_id: str, payload: dict[str, Any], *, object_revision: int
+    ) -> None: ...
     def soft_delete_note(self, object_id: str, *, object_revision: int) -> None: ...
     def get(self, object_id: str) -> dict[str, Any] | None: ...
 
@@ -23,9 +26,15 @@ class InMemoryNotesStore:
         self.upsert_calls = 0
         self.delete_calls = 0
 
-    def upsert_note(self, object_id: str, payload: dict[str, Any], *, object_revision: int) -> None:
+    def upsert_note(
+        self, object_id: str, payload: dict[str, Any], *, object_revision: int
+    ) -> None:
         self.upsert_calls += 1
-        record = {"title": payload.get("title", ""), "content": payload.get("content", payload.get("body", "")), "deleted": False}
+        record = {
+            "title": payload.get("title", ""),
+            "content": payload.get("content", payload.get("body", "")),
+            "deleted": False,
+        }
         self._notes[object_id] = record
 
     def soft_delete_note(self, object_id: str, *, object_revision: int) -> None:

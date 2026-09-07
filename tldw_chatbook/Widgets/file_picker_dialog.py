@@ -1,257 +1,236 @@
 # file_picker_dialog.py
-# Description: File picker dialog for evaluation tasks and datasets
+# Description: File picker dialogs for evaluation tasks and datasets
 #
 """
-File Picker Dialog for Evaluations
-----------------------------------
+File Picker Dialogs for Evaluations
+-----------------------------------
 
-Provides file selection functionality for:
-- Task upload (YAML, JSON files)
-- Dataset import (CSV, TSV, JSON files)
-- Result export destination
+Provides thin, evaluation-specific wrappers around the enhanced file picker:
 
-Uses the existing fspicker component with evaluation-specific filters.
+- ``EvalFilePickerDialog``: generic eval file open dialog
+- ``TaskFilePickerDialog``: task file selection (YAML/JSON)
+- ``DatasetFilePickerDialog``: dataset file selection (JSON/CSV/TSV)
+- ``ExportFilePickerDialog``: result export destination
+- ``QuickPickerWidget``: inline file selection widget
+
+These are no longer nested ``ModalScreen`` wrappers; each dialog is a direct
+subclass of ``EnhancedFileOpen`` or ``EnhancedFileSave`` so there is only one
+screen on the stack and no duplicated Cancel/Select buttons.
 """
 
-from pathlib import Path
-from typing import List, Optional, Callable, Any
 from fnmatch import fnmatch
+from pathlib import Path
+from typing import Callable, Optional
+
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal
-from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static, ListView, ListItem
-from textual.binding import Binding
-from loguru import logger
+from textual.containers import Container, Horizontal
+from textual.widgets import Button, Label, Static
 
-from ..Third_Party.textual_fspicker import FileOpen, FileSave, Filters
-from .enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave, RecentLocations
+from ..Third_Party.textual_fspicker import Filters
+from .enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
 
-def create_filter(patterns: str):
-    """Create a filter function from semicolon-separated patterns."""
-    pattern_list = patterns.split(';')
+
+def create_filter(patterns: str) -> Callable[[Path], bool]:
+    """Create a case-insensitive filter function from semicolon-separated globs.
+
+    Args:
+        patterns: Semicolon-separated glob patterns (e.g. ``"*.yaml;*.json"``).
+
+    Returns:
+        A callable that returns ``True`` when a file name matches any pattern.
+    """
+    pattern_list = [p.strip().lower() for p in patterns.split(";") if p.strip()]
+
     def filter_func(path: Path) -> bool:
-        return any(fnmatch(path.name, pattern) for pattern in pattern_list)
+        name = path.name.lower()
+        return any(fnmatch(name, pattern) for pattern in pattern_list)
+
     return filter_func
 
-class EvalFilePickerDialog(ModalScreen):
-    """Modal dialog for file selection in evaluation context."""
-    
-    BINDINGS = [
-        Binding("ctrl+h", "toggle_hidden", "Toggle hidden files"),
-        Binding("ctrl+r", "toggle_recent", "Show recent files"),
-        Binding("ctrl+f", "focus_search", "Search files"),
-        Binding("f5", "refresh", "Refresh directory"),
-        Binding("escape", "dismiss(None)", "Cancel"),
-    ]
-    
-    def __init__(self, 
-                 title: str = "Select File",
-                 filters: Optional[Filters] = None,
-                 callback: Optional[Callable[[Optional[str]], None]] = None,
-                 save_mode: bool = False,
-                 use_enhanced: bool = True,
-                 **kwargs):
-        super().__init__(**kwargs)
-        self.title = title
-        self.filters = filters or self._get_default_filters()
-        self.callback = callback
-        self.save_mode = save_mode
-        self.use_enhanced = use_enhanced
-        self.selected_file: Optional[str] = None
-        self.recent_locations = RecentLocations() if use_enhanced else None
-    
-    def _get_default_filters(self) -> Filters:
-        """Get default file filters for evaluation files."""
-        # Filters require callable testers; glob strings here crash the picker
-        # (TypeError: 'str' object is not callable). Use the create_filter helper.
+
+class EvalFilePickerDialog(EnhancedFileOpen):
+    """Generic evaluation file open dialog.
+
+    This is a direct ``EnhancedFileOpen`` subclass rather than a wrapper screen,
+    so callers can push it with ``app.push_screen`` exactly as before.
+    """
+
+    def __init__(
+        self,
+        title: str = "Select File",
+        filters: Optional[Filters] = None,
+        callback: Optional[Callable[[Optional[str]], None]] = None,
+        context: str = "eval_file",
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        self._callback = callback
+        super().__init__(
+            location=".",
+            title=title,
+            filters=filters or self._default_filters(),
+            must_exist=True,
+            context=context,
+            id=id,
+            classes=classes,
+            name=name,
+        )
+
+    @staticmethod
+    def _default_filters() -> Filters:
+        """Default filters for evaluation files."""
         return Filters(
             ("All Evaluation Files", create_filter("*.yaml;*.yml;*.json;*.csv;*.tsv")),
             ("YAML Files", create_filter("*.yaml;*.yml")),
             ("JSON Files", create_filter("*.json")),
             ("CSV Files", create_filter("*.csv;*.tsv")),
-            ("All Files", lambda path: True),
+            ("All Files", lambda _path: True),
         )
-    
-    def compose(self) -> ComposeResult:
-        with Container(classes="file-picker-dialog"):
-            yield Label(self.title, classes="dialog-title")
-            
-            if self.use_enhanced:
-                # Use enhanced file picker with new features
-                if self.save_mode:
-                    yield EnhancedFileSave(
-                        location=".",
-                        filters=self.filters,
-                        id="file-picker"
-                    )
-                else:
-                    yield EnhancedFileOpen(
-                        location=".",
-                        filters=self.filters,
-                        id="file-picker"
-                    )
-            else:
-                # Fallback to original file picker
-                if self.save_mode:
-                    yield FileSave(
-                        location=".",
-                        filters=self.filters,
-                        id="file-picker"
-                    )
-                else:
-                    yield FileOpen(
-                        location=".",
-                        filters=self.filters,
-                        id="file-picker"
-                    )
-            
-            with Horizontal(classes="dialog-buttons"):
-                yield Button("Cancel", id="cancel-button", variant="error")
-                yield Button("Select", id="select-button", variant="primary")
-    
-    def on_dismiss(self, result):
-        """Handle dialog dismissal with selected file."""
-        if result:
-            self.selected_file = str(result)
-            logger.info(f"File selected: {self.selected_file}")
-            
-            # Add to recent locations if using enhanced picker
-            if self.use_enhanced and self.recent_locations:
-                from pathlib import Path
-                self.recent_locations.add(Path(result))
-            
-            # Call callback if provided
-            if self.callback:
-                self.callback(self.selected_file)
-    
-    @on(Button.Pressed, "#select-button")
-    def handle_select(self):
-        """Handle select button press."""
-        if self.selected_file and self.callback:
-            self.callback(self.selected_file)
-        self.dismiss(self.selected_file)
-    
-    def action_toggle_hidden(self) -> None:
-        """Forward toggle hidden action to file picker"""
-        try:
-            picker = self.query_one("#file-picker")
-            if hasattr(picker, 'action_toggle_hidden'):
-                picker.action_toggle_hidden()
-        except Exception:
-            pass
-    
-    def action_toggle_recent(self) -> None:
-        """Forward toggle recent action to file picker"""
-        try:
-            picker = self.query_one("#file-picker")
-            if hasattr(picker, 'action_toggle_recent'):
-                picker.action_toggle_recent()
-        except Exception:
-            pass
-    
-    def action_focus_search(self) -> None:
-        """Forward focus search action to file picker"""
-        try:
-            picker = self.query_one("#file-picker")
-            if hasattr(picker, 'action_focus_search'):
-                picker.action_focus_search()
-        except Exception:
-            pass
-    
-    def action_refresh(self) -> None:
-        """Forward refresh action to file picker"""
-        try:
-            picker = self.query_one("#file-picker")
-            if hasattr(picker, 'action_refresh'):
-                picker.action_refresh()
-        except Exception:
-            pass
-    
-    @on(Button.Pressed, "#cancel-button")
-    def handle_cancel(self):
-        """Handle cancel button press."""
-        self.dismiss(None)
+
+    def dismiss(self, result: Optional[Path]) -> None:
+        """Dismiss and notify the caller's callback."""
+        if self._callback:
+            try:
+                self._callback(str(result) if result else None)
+            except Exception:
+                logger.exception("Eval file picker callback failed")
+        super().dismiss(result)
+
 
 class TaskFilePickerDialog(EvalFilePickerDialog):
-    """Specialized file picker for evaluation task files."""
-    
-    def __init__(self, callback: Optional[Callable[[Optional[str]], None]] = None, **kwargs):
+    """File open dialog for evaluation task files."""
+
+    def __init__(
+        self,
+        callback: Optional[Callable[[Optional[str]], None]] = None,
+        context: str = "eval_task",
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
         filters = Filters(
             ("Task Files", create_filter("*.yaml;*.yml;*.json")),
             ("YAML Files", create_filter("*.yaml;*.yml")),
             ("JSON Files", create_filter("*.json")),
-            ("All Files", lambda path: True)
+            ("All Files", lambda _path: True),
         )
         super().__init__(
             title="Select Evaluation Task File",
             filters=filters,
             callback=callback,
-            **kwargs
+            context=context,
+            id=id,
+            classes=classes,
+            name=name,
         )
 
+
 class DatasetFilePickerDialog(EvalFilePickerDialog):
-    """Specialized file picker for dataset files."""
-    
-    def __init__(self, callback: Optional[Callable[[Optional[str]], None]] = None, **kwargs):
+    """File open dialog for dataset files."""
+
+    def __init__(
+        self,
+        callback: Optional[Callable[[Optional[str]], None]] = None,
+        context: str = "eval_dataset",
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
         filters = Filters(
             ("Dataset Files", create_filter("*.json;*.csv;*.tsv")),
             ("JSON Files", create_filter("*.json")),
             ("CSV Files", create_filter("*.csv;*.tsv")),
-            ("All Files", lambda path: True)
+            ("All Files", lambda _path: True),
         )
         super().__init__(
             title="Select Dataset File",
             filters=filters,
             callback=callback,
-            **kwargs
+            context=context,
+            id=id,
+            classes=classes,
+            name=name,
         )
 
-class ExportFilePickerDialog(EvalFilePickerDialog):
-    """Specialized file picker for result export."""
-    
-    def __init__(self, callback: Optional[Callable[[Optional[str]], None]] = None, **kwargs):
+
+class ExportFilePickerDialog(EnhancedFileSave):
+    """File save dialog for exporting evaluation results."""
+
+    def __init__(
+        self,
+        callback: Optional[Callable[[Optional[str]], None]] = None,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        self._callback = callback
         filters = Filters(
             ("JSON Files", create_filter("*.json")),
             ("CSV Files", create_filter("*.csv")),
-            ("All Files", lambda path: True)
+            ("All Files", lambda _path: True),
         )
         super().__init__(
+            location=".",
             title="Export Results To",
             filters=filters,
-            callback=callback,
-            save_mode=True,
-            **kwargs
+            context="eval_export",
+            id=id,
+            classes=classes,
+            name=name,
         )
+
+    def dismiss(self, result: Optional[Path]) -> None:
+        """Dismiss and notify the caller's callback."""
+        if self._callback:
+            try:
+                self._callback(str(result) if result else None)
+            except Exception:
+                logger.exception("Export file picker callback failed")
+        super().dismiss(result)
+
 
 class QuickPickerWidget(Container):
     """Quick file picker widget for inline use."""
-    
-    def __init__(self, 
-                 label: str = "Selected File",
-                 file_types: str = "evaluation files",
-                 callback: Optional[Callable[[str], None]] = None,
-                 **kwargs):
-        super().__init__(**kwargs)
+
+    def __init__(
+        self,
+        label: str = "Selected File",
+        file_types: str = "evaluation files",
+        callback: Optional[Callable[[str], None]] = None,
+        context: str = "eval_file",
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        super().__init__(id=id, classes=classes, name=name)
         self.label = label
         self.file_types = file_types
         self.callback = callback
+        self.context = context
         self.selected_file: Optional[str] = None
-    
+
     def compose(self) -> ComposeResult:
         with Horizontal(classes="quick-picker"):
             yield Label(self.label, classes="picker-label")
-            yield Static("No file selected", id="selected-file-display", classes="file-display")
+            yield Static(
+                "No file selected",
+                id="selected-file-display",
+                classes="file-display",
+            )
             yield Button(
                 "Browse...",
                 id="browse-button",
                 classes="browse-button",
                 tooltip=f"Choose {self.file_types} from disk.",
             )
-    
+
     @on(Button.Pressed, "#browse-button")
     def handle_browse(self):
-        """Open file picker dialog."""
+        """Open the appropriate file picker dialog."""
+
         def on_file_selected(file_path: Optional[str]):
             if file_path:
                 self.selected_file = file_path
@@ -260,26 +239,32 @@ class QuickPickerWidget(Container):
                     display = self.query_one("#selected-file-display")
                     display.update(file_name)
                     display.set_class(True, "file-selected")
-                except:
+                except Exception:
                     pass
-                
+
                 if self.callback:
                     self.callback(file_path)
-        
-        # Determine dialog type based on file types
-        if "task" in self.file_types.lower():
-            dialog = TaskFilePickerDialog(callback=on_file_selected)
-        elif "dataset" in self.file_types.lower():
-            dialog = DatasetFilePickerDialog(callback=on_file_selected)
+
+        file_types = self.file_types.lower()
+        if "task" in file_types:
+            dialog: EnhancedFileOpen = TaskFilePickerDialog(
+                callback=on_file_selected, context=self.context
+            )
+        elif "dataset" in file_types:
+            dialog = DatasetFilePickerDialog(
+                callback=on_file_selected, context=self.context
+            )
         else:
-            dialog = EvalFilePickerDialog(callback=on_file_selected)
-        
+            dialog = EvalFilePickerDialog(
+                callback=on_file_selected, context=self.context
+            )
+
         self.app.push_screen(dialog)
-    
+
     def get_selected_file(self) -> Optional[str]:
         """Get the currently selected file path."""
         return self.selected_file
-    
+
     def clear_selection(self):
         """Clear the current file selection."""
         self.selected_file = None
@@ -287,5 +272,5 @@ class QuickPickerWidget(Container):
             display = self.query_one("#selected-file-display")
             display.update("No file selected")
             display.set_class(False, "file-selected")
-        except:
+        except Exception:
             pass

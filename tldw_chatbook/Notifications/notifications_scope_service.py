@@ -52,7 +52,9 @@ class NotificationsScopeService:
         self.event_state_repository = event_state_repository
         self.server_event_scope_provider = server_event_scope_provider
 
-    def _normalize_mode(self, mode: NotificationsBackend | str | None) -> NotificationsBackend:
+    def _normalize_mode(
+        self, mode: NotificationsBackend | str | None
+    ) -> NotificationsBackend:
         if mode is None:
             return NotificationsBackend.SERVER
         if isinstance(mode, NotificationsBackend):
@@ -92,7 +94,12 @@ class NotificationsScopeService:
         return f"notifications.{resource}.{action}.server"
 
     @staticmethod
-    def _with_record_id(mode: NotificationsBackend, kind: str, payload: dict[str, Any], id_key: str = "id") -> dict[str, Any]:
+    def _with_record_id(
+        mode: NotificationsBackend,
+        kind: str,
+        payload: dict[str, Any],
+        id_key: str = "id",
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         source_id = record.get(id_key)
@@ -120,7 +127,9 @@ class NotificationsScopeService:
         if isinstance(result, list):
             if normalize_kind:
                 return [
-                    self._with_record_id(mode, normalize_kind, item, id_key) if isinstance(item, dict) else item
+                    self._with_record_id(mode, normalize_kind, item, id_key)
+                    if isinstance(item, dict)
+                    else item
                     for item in result
                 ]
             return result
@@ -132,7 +141,9 @@ class NotificationsScopeService:
         if isinstance(payload.get("items"), list):
             if normalize_kind:
                 payload["items"] = [
-                    self._with_record_id(mode, normalize_kind, item, id_key) if isinstance(item, dict) else item
+                    self._with_record_id(mode, normalize_kind, item, id_key)
+                    if isinstance(item, dict)
+                    else item
                     for item in payload["items"]
                 ]
             else:
@@ -145,7 +156,9 @@ class NotificationsScopeService:
             return self._with_record_id(mode, normalize_kind, payload, id_key)
         return self._normalize_item(mode, payload)
 
-    def _normalize_item(self, mode: NotificationsBackend, item: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_item(
+        self, mode: NotificationsBackend, item: dict[str, Any]
+    ) -> dict[str, Any]:
         if mode == NotificationsBackend.LOCAL:
             return self._with_local_notification_record_id(item)
         if "schedule_kind" in item or "next_run_at" in item:
@@ -239,10 +252,16 @@ class NotificationsScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(self._action_id(resource, action))
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
-        return self._normalize_response(normalized_mode, result, normalize_kind=normalize_kind, id_key=id_key)
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
+        return self._normalize_response(
+            normalized_mode, result, normalize_kind=normalize_kind, id_key=id_key
+        )
 
-    async def list_feed(self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_feed(
+        self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == NotificationsBackend.LOCAL:
             service = self._require_local_service()
@@ -255,7 +274,11 @@ class NotificationsScopeService:
                 )
             )
             items = [self._normalize_item(normalized_mode, item) for item in result]
-            return {"items": items, "total": len(items), "backend": normalized_mode.value}
+            return {
+                "items": items,
+                "total": len(items),
+                "backend": normalized_mode.value,
+            }
         return await self._call(
             mode=normalized_mode,
             resource="feed",
@@ -265,15 +288,21 @@ class NotificationsScopeService:
             kwargs=kwargs,
         )
 
-    async def unread_count(self, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def unread_count(
+        self, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == NotificationsBackend.LOCAL:
             service = self._require_local_service()
             self._enforce_policy("notifications.queue.list.local")
-            result = await self._maybe_await(service.list_queue(limit=1000, include_dismissed=False))
+            result = await self._maybe_await(
+                service.list_queue(limit=1000, include_dismissed=False)
+            )
             return {
                 "backend": normalized_mode.value,
-                "unread_count": sum(1 for item in result if not bool(item.get("is_read"))),
+                "unread_count": sum(
+                    1 for item in result if not bool(item.get("is_read"))
+                ),
             }
         return await self._call(
             mode=normalized_mode,
@@ -282,13 +311,17 @@ class NotificationsScopeService:
             method_name="unread_count",
         )
 
-    async def mark_read(self, ids: list[int], *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def mark_read(
+        self, ids: list[int], *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == NotificationsBackend.LOCAL:
             service = self._require_local_service()
             self._enforce_policy("notifications.queue.update.local")
             for notification_id in ids:
-                await self._maybe_await(service.update_notification(int(notification_id), is_read=True))
+                await self._maybe_await(
+                    service.update_notification(int(notification_id), is_read=True)
+                )
             return {"backend": normalized_mode.value, "updated": len(ids)}
         return await self._call(
             mode=normalized_mode,
@@ -298,7 +331,9 @@ class NotificationsScopeService:
             args=(ids,),
         )
 
-    async def dismiss(self, notification_id: int, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def dismiss(
+        self, notification_id: int, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == NotificationsBackend.LOCAL:
             service = self._require_local_service()
@@ -315,7 +350,9 @@ class NotificationsScopeService:
             args=(notification_id,),
         )
 
-    async def get_settings(self, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def get_settings(
+        self, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == NotificationsBackend.LOCAL:
             service = self._require_local_service()
@@ -368,7 +405,9 @@ class NotificationsScopeService:
             args=(notification_id,),
         )
 
-    async def get_preferences(self, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def get_preferences(
+        self, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="reminders",
@@ -376,7 +415,9 @@ class NotificationsScopeService:
             method_name="get_preferences",
         )
 
-    async def update_preferences(self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def update_preferences(
+        self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="reminders",
@@ -475,7 +516,9 @@ class NotificationsScopeService:
             mark_presented=mark_presented,
         )
 
-    async def create_reminder(self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_reminder(
+        self, *, mode: NotificationsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="reminders",
@@ -485,7 +528,9 @@ class NotificationsScopeService:
             kwargs=kwargs,
         )
 
-    async def list_reminders(self, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def list_reminders(
+        self, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="reminders",
@@ -494,7 +539,9 @@ class NotificationsScopeService:
             normalize_kind="reminder_task",
         )
 
-    async def get_reminder(self, task_id: str, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def get_reminder(
+        self, task_id: str, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="reminders",
@@ -521,7 +568,9 @@ class NotificationsScopeService:
             kwargs=kwargs,
         )
 
-    async def delete_reminder(self, task_id: str, *, mode: NotificationsBackend | str | None = None) -> dict[str, Any]:
+    async def delete_reminder(
+        self, task_id: str, *, mode: NotificationsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="reminders",

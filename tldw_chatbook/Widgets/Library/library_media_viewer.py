@@ -2,23 +2,61 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Sequence
 
+from loguru import logger
 from rich.color import Color
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, ItemGrid, Vertical, VerticalGroup
+from textual.css.query import NoMatches, QueryError
+from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook.Audio.meeting_session import (
+    is_widget_safe_cluster_id,
+    normalize_speaker_name,
+)
+from tldw_chatbook.Library.meeting_speaker_rename import (
+    RENAME_REFUSED_EMPTY_TRANSCRIPT,
+    RENAME_REFUSED_NOT_MEETING_CONTENT,
+    SpeakerRenameResult,
+    _meeting_speaker_legend_rows,
+    rename_meeting_speaker,
+)
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.Library.library_media_viewer_state import (
+    analysis_find_unavailable_reason,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+)
+from tldw_chatbook.Widgets.Library.library_media_content import (
+    LibraryMediaContentBody,
+    LibraryMediaContentSearchControls,
+)
 
 
-class LibraryMediaViewer(Vertical):
+class LibraryMediaViewer(PostRecomposeCallback, Vertical):
     """Render the full Library media item: metadata, content, and actions.
+
+    DEFAULT_CSS pins the Rendered|Raw toggle's "|" separator to a width of
+    1 -- a bare ``Static`` has no width rule of its own (only
+    ``height: auto``), so it inherits Textual's base ``1fr`` default and
+    silently expands to consume the Horizontal's remaining space, pushing
+    the "Raw" button off past the right edge of the screen (found live in
+    a 170-column terminal: the button existed in the DOM with a correct
+    label -- passing an existence/label-only query -- while its region was
+    ``x=184`` against a 170-column screen, entirely off-screen). Mirrors
+    ``LibraryScreen``'s own ``#library-notes-source-separator`` rule for
+    the "Database | Files" strip this toggle's shape was modeled on.
 
     Attributes:
         viewer: Current media viewer display state.
@@ -35,6 +73,21 @@ class LibraryMediaViewer(Vertical):
         content_match_index: Index into ``find_content_matches``' result
             for the currently focused match (wrapped mod the match count
             by the screen before it is passed in here).
+        content_mode: ``"rendered"`` shows ``viewer.content`` through the
+            same ``Markdown`` render path Notes Preview uses (LIB-13);
+            ``"raw"`` shows the plain/highlighted text ``Static`` (the
+            pre-existing behavior). Only meaningful -- and only offered as
+            a toggle -- when ``viewer.is_markdown`` is true; the screen is
+            responsible for defaulting this per item and never showing
+            ``"rendered"`` for a non-markdown item.
+    """
+
+    DEFAULT_CSS = """
+    LibraryMediaViewer #library-media-content-mode-separator {
+        width: 1;
+        min-width: 1;
+        max-width: 1;
+    }
     """
 
     def __init__(
@@ -45,24 +98,99 @@ class LibraryMediaViewer(Vertical):
         confirming_delete: bool = False,
         highlights: Sequence[LibraryMediaHighlightRow] = (),
         editing_analysis: bool = False,
+        generating_analysis: bool = False,
+        analysis_provider_reason: str = "",
         content_query: str = "",
         content_match_index: int = 0,
+        content_mode: str = "raw",
+        find_open: bool = False,
+        find_focus_pending: bool = False,
+        loading: bool = False,
+        loading_message: str = "Loading media…",
+        error_message: str = "",
+        reader_mode: str = "read",
+        more_open: bool = False,
+        external_detail: bool = False,
+        console_representation: str = "Complete stored text excerpt",
+        image_preview: Widget | None = None,
+        image_preview_status: str = "",
+        image_preview_hidden: bool = False,
+        image_preview_available: bool = False,
+        image_preview_source: Any = None,
+        review_banner: str = "",
+        back_visible: bool = True,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
         **kwargs: Any,
     ) -> None:
+        """Hold the viewer's compose inputs.
+
+        Args:
+            viewer: Pure display state for the loaded item.
+            analysis_provider_reason: Why the Analysis tab's Generate
+                action cannot run (no configured provider, an unready
+                one), or "" when it can. The screen resolves it through
+                the same seam the handler and the ingest path use
+                (task-28007 AC#5), so the label and the post-click
+                refusal can never disagree.
+            find_focus_pending: One-shot token from the Find gesture; the
+                bar it mounts takes focus, then the token is spent here so
+                later syncs never re-take focus (task-31269).
+            find_open: Whether the content Find bar renders (task-31237:
+                collapsed until the Find action opens it -- a permanently
+                open input duplicated Find and spent 3 rows per item).
+            review_banner: One-line active review-set banner ("Reviewing:
+                <name> — X of M · N reviewed · ✓ reviewed"), or "" when no
+                set is active (task-30045). Rendered as literal text (set
+                names derive from user input).
+            back_visible: Whether the "‹ Back" control renders. False in the
+                three-pane shell, where the Items pane already shows the
+                list so Back changed no pixels while revoking every Reader
+                binding gated on the view flag (task-31272); the screen
+                decides from the shell's effective layout.
+            media_db: The real ``MediaDatabase`` and, with
+                ``speaker_rename_media_id``, the selected item's backing id
+                (TASK-31745). Breaks this canvas's otherwise pure-state
+                design on purpose -- exactly as ``LibraryMediaCanvas``
+                does -- so the speaker legend can actually persist a rename
+                instead of showing an inert control.
+            speaker_rename_media_id: See ``media_db``.
+        """
         super().__init__(**kwargs)
         self.viewer = viewer
         self.editing = editing
         self.confirming_delete = confirming_delete
         self.highlights = tuple(highlights)
         self.editing_analysis = editing_analysis
+        self.generating_analysis = generating_analysis
+        self.analysis_provider_reason = analysis_provider_reason
         self.content_query = content_query
         self.content_match_index = content_match_index
+        self.content_mode = content_mode
+        self.find_open = find_open
+        self.find_focus_pending = find_focus_pending
+        self.loading = loading
+        self.loading_message = loading_message
+        self.error_message = error_message
+        self.reader_mode = reader_mode
+        self.more_open = more_open
+        self.external_detail = external_detail
+        self.console_representation = console_representation
+        self.image_preview = image_preview
+        self.image_preview_status = image_preview_status
+        self.image_preview_hidden = image_preview_hidden
+        self.image_preview_available = image_preview_available
+        self.image_preview_source = image_preview_source
+        self.review_banner = review_banner
+        self.back_visible = back_visible
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
         # space and lets the text bodies wrap.
         self.styles.width = "1fr"
-        self.styles.min_width = 40
+        self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
         """Render the back control, title, metadata, content, and actions.
@@ -71,229 +199,630 @@ class LibraryMediaViewer(Vertical):
         ``Button``) stacked full-width in this ``Vertical`` — horizontal rows
         that mix a ``1fr`` sibling with a fixed-width widget are the known
         non-rendering failure mode, so every row here is either a single
-        full-width widget or the plain ``ds-toolbar`` action row (already
-        proven to render by the conversations/media list canvases).
+        full-width widget, the plain ``ds-toolbar`` action row (already
+        proven to render by the conversations/media list canvases), or the
+        Rendered|Raw toggle strip (``_compose_content_mode_toggle``) — a
+        THIRD instance of that exact failure mode was found live while
+        building it (a bare ``Static`` separator with no width rule of its
+        own silently inherits Textual's base ``1fr`` default), fixed via
+        this class's ``DEFAULT_CSS`` pinning that one widget's width to 1.
 
         Returns:
             ComposeResult for the media viewer canvas.
         """
-        yield Button(
-            "‹ Back to list",
-            id="library-media-back",
-            classes="library-canvas-action",
-            compact=True,
+        if self.error_message:
+            yield Static(
+                self.error_message,
+                id="library-media-viewer-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button(
+                "Retry",
+                id="library-media-reader-retry",
+                classes="library-canvas-action",
+                compact=True,
+            )
+        if not self.viewer.media_id:
+            yield Static(
+                "Loading media…"
+                if self.loading
+                else "Select a media item to read it here.",
+                id="library-media-reader-empty",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        # task-22207: the pending banner is a PERSISTENT, display-gated
+        # widget rather than a conditional child. Traversal keystrokes flip
+        # only the loading state, and rebuilding the whole viewer (with a
+        # fresh full-document body) just to add/remove this one Static was
+        # the dominant per-keystroke cost. ``sync_loading_state`` patches
+        # its copy and visibility in place.
+        banner = Static(
+            self.loading_message,
+            id="library-media-viewer-loading",
+            classes="destination-purpose",
+            markup=False,
         )
+        banner.display = self.loading
+        yield banner
+        if self.external_detail:
+            # task-31277 (critique #4 P2): only a SERVER item needs an
+            # identity line. "Local Media item" restated what the Media
+            # list beside it already said, at the cost of the top row of
+            # the reading surface on every local open.
+            yield Static(
+                "Server item · not in local Media list",
+                id="library-media-reader-identity",
+                markup=False,
+            )
+        if self.review_banner:
+            # task-30045 (critique P2): the active review set is a workflow
+            # object -- its name, live progress, and the loaded item's own
+            # reviewed state frame the Reader, not just a footer string.
+            # markup=False: the set name derives from user input.
+            yield Static(
+                self.review_banner,
+                id="library-media-review-banner",
+                markup=False,
+            )
+        if self.back_visible:
+            yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,
             id="library-media-viewer-title",
             markup=False,
         )
-        if self.editing:
-            yield from self._compose_edit_form()
-        else:
-            yield Static(
-                "\n".join(self.viewer.metadata_lines),
-                id="library-media-viewer-meta",
-                markup=False,
+        if not self.editing:
+            byline = next(
+                (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
+                 if line.startswith("Author: ")),
+                "",
+            ) or next(
+                (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
+                 if line.startswith("URL: ")),
+                "",
             )
-        yield Static(
-            "Content",
-            id="library-media-viewer-content-title",
-            classes="destination-section",
-        )
-        yield from self._compose_content_search()
-        with VerticalScroll(id="library-media-viewer-content"):
-            yield Static(
-                self._content_renderable(),
-                id="library-media-viewer-content-text",
-                markup=False,
-            )
-        yield from self._compose_analysis()
-
-        yield from self._compose_highlights()
+            # task-31277: an item with neither an author nor a URL spent a
+            # row of the Reader header painting nothing at all.
+            if byline:
+                yield Static(
+                    byline,
+                    id="library-media-reader-byline",
+                    markup=False,
+                )
+        yield from self._compose_primary_toolbar()
+        yield from self._compose_mode_toolbar()
 
         if self.confirming_delete and not self.editing:
             # A single full-width Static above the toolbar, not inside it --
             # mixing a Static with the toolbar's Buttons is the known
             # non-rendering failure mode called out on ``compose`` above.
+            # task-14901 (ADR-055): single delete leaves the same Undo
+            # receipt as "Delete selected". task-4025 AC3: the Trash view
+            # now exists (the media list toolbar's "Trash" action), so the
+            # copy names the durable recovery path exactly like the bulk
+            # confirm does -- one promise, two entry points.
             yield Static(
-                "Delete this media? This moves it to trash.",
+                "Delete this media? You can undo right away, or restore "
+                "later from Trash.",
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button(
+                    "Delete", id="library-media-delete-confirm", compact=True
+                )
+                yield Button(
+                    "Cancel", id="library-media-delete-cancel", compact=True
+                )
 
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        with toolbar:
-            if self.editing:
+        yield from self._compose_active_body()
+
+    def _compose_primary_toolbar(self) -> ComposeResult:
+        """Render the always-reachable Reader actions."""
+        with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
+            # Qodo on #2378: an Analysis tab with nothing to search has no
+            # bar to mount -- say why Find is off instead of toggling silently.
+            find_reason = analysis_find_unavailable_reason(
+                mode=self.reader_mode,
+                analysis=self.viewer.analysis,
+                generating=self.generating_analysis,
+                editing=self.editing_analysis,
+            )
+            find = Button(
+                library_disabled_action_label("Find", bool(find_reason)),
+                id="library-media-reader-find",
+                compact=True,
+            )
+            if find_reason:
+                find.disabled = True
+                find.tooltip = find_reason
+            yield find
+            if not self.external_detail:
                 yield Button(
-                    "Save",
-                    id="library-media-edit-save",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-media-edit-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            elif self.confirming_delete:
-                yield Button(
-                    "Delete",
-                    id="library-media-delete-confirm",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-media-delete-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
-                # Object/primary actions first, then the escape hatch to the
-                # legacy screen, then the destructive Delete pushed to the far
-                # end (CSS margin) so it is not adjacent to Edit -- avoids the
-                # classic Edit/Delete misclick trap.
-                yield Button(
-                    "Edit",
-                    id="library-media-edit",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Use in Console",
-                    id="library-media-use-in-chat",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Remove from read-it-later" if self.viewer.read_later else "Read it later",
+                    "Remove later" if self.viewer.read_later else "Read later",
                     id="library-media-read-later",
-                    classes="library-canvas-action",
                     compact=True,
                 )
+            yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
+            if not self.external_detail or self.viewer.original_source:
+                # task-31633 AC#3: the glyph is the disclosure state. The
+                # actions render as ONE toolbar row under this one, so
+                # nothing else on screen says whether More is open.
                 yield Button(
-                    "Open in Media manager",
-                    id="library-media-open",
-                    classes="library-canvas-action",
+                    "More \u25b4" if self.more_open else "More",
+                    id="library-media-reader-more",
                     compact=True,
                 )
+        # The same condition the More button above is composed under: a stale
+        # ``more_open`` carried onto a server-only detail would otherwise paint
+        # an empty actions row under a button that is no longer there.
+        if self.more_open and (not self.external_detail or self.viewer.original_source):
+            # task-31633 AC#3 (critique #5, capture 10): this was a bare
+            # Vertical, and an unstyled Vertical defaults to 1fr -- it took
+            # 19 rows for three one-row buttons and pushed the tab row and
+            # the whole reading body off the fold. A second ds-toolbar row
+            # costs exactly one row at the wide size. ItemGrid rather than
+            # Horizontal because the four labels need ~60 cells and the
+            # Reader is only ~46 wide at 100x30, where a Horizontal clips
+            # the fourth action off the pane outright; the grid reflows it
+            # onto a second row instead. Column width is the longest label
+            # (13) plus two cells of gutter -- the toolbar rule zeroes these
+            # buttons' own padding, so the label is the whole button.
+            with ItemGrid(
+                id="library-media-reader-more-actions",
+                classes="ds-toolbar",
+                min_column_width=15,
+                max_column_width=16,
+            ):
+                if not self.external_detail:
+                    yield Button("Edit metadata", id="library-media-edit", compact=True)
+                if self.viewer.original_source:
+                    yield Button("Open original", id="library-media-open-original", compact=True)
+                if not self.external_detail:
+                    yield Button("Open manager", id="library-media-open", compact=True)
+                    yield Button("Move to trash", id="library-media-delete", compact=True)
+
+    def _compose_mode_toolbar(self) -> ComposeResult:
+        """Render one explicit mode selector; external detail remains read-only."""
+        if self.external_detail:
+            return
+        with Horizontal(classes="ds-toolbar", id="library-media-reader-mode-toolbar"):
+            for mode, label in (
+                ("read", "Read"),
+                ("analysis", "Analysis"),
+                ("highlights", "Highlights"),
+                ("info", "Info"),
+            ):
                 yield Button(
-                    "Delete",
-                    id="library-media-delete",
-                    classes="library-canvas-action library-media-action-danger",
+                    f"{label} (selected)" if self.reader_mode == mode else label,
+                    id=f"library-media-reader-select-{mode}",
+                    classes="library-media-reader-mode",
                     compact=True,
                 )
 
-    def _compose_content_search(self) -> ComposeResult:
-        """Render the in-content search box, and its status/prev-next only while active.
+    def _compose_active_body(self) -> ComposeResult:
+        """Compose exactly the selected Reader body; never mount hidden modes."""
+        if self.external_detail or self.reader_mode == "read":
+            # task-31277 (critique #4 P2, AC#3): no section header here --
+            # the mode row directly above already reads "Read (selected)",
+            # so the header spent a row of the reading surface saying that
+            # word twice. Analysis and Highlights lost theirs the same way.
+            with Vertical(id="library-media-reader-mode-read"):
+                if self.image_preview is not None and not self.image_preview_hidden:
+                    with Vertical(id="library-media-image-preview"):
+                        yield self.image_preview
+                if self.image_preview_status:
+                    yield Static(
+                        self.image_preview_status,
+                        id="library-media-image-preview-status",
+                        markup=False,
+                    )
+                if self.image_preview_available:
+                    yield Button(
+                        "Show preview" if self.image_preview_hidden else "Hide preview",
+                        id="library-media-image-preview-toggle",
+                        compact=True,
+                    )
+                elif self.image_preview_status:
+                    yield Button(
+                        "Retry preview",
+                        id="library-media-image-preview-retry",
+                        compact=True,
+                    )
+                yield from self._compose_content_mode_toggle()
+            # Keep the search controls and content body as direct children of
+            # the Reader, siblings of the mode marker -- the mode row is the
+            # Find bar's anchor (task-31276 retired the dock that moved an
+            # active bar to the viewport top).
+            # task-31237: the Find bar is collapsed until the Find action
+            # opens it (or a query is applied); a permanently open
+            # "Search content…" input duplicated Find and spent 3 rows on
+            # every fresh item.
+            if self.find_open or self.content_query:
+                matches = find_content_matches(
+                    self.viewer.content, self.content_query
+                )
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=self.viewer.is_markdown,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    focus_on_mount=self.find_focus_pending,
+                    id="library-media-content-search-controls",
+                )
+                # task-31269: the gesture token is spent on this mount.
+                self.find_focus_pending = False
+            yield LibraryMediaContentBody(
+                content=self.viewer.content,
+                is_markdown=self.viewer.is_markdown,
+                mode=self.content_mode,
+                query=self.content_query,
+                match_index=self.content_match_index,
+                id="library-media-viewer-content",
+            )
+            yield from self._compose_speaker_legend()
+            return
+        if self.reader_mode == "analysis":
+            with Vertical(id="library-media-reader-mode-analysis"):
+                yield from self._compose_analysis()
+            return
+        if self.reader_mode == "highlights":
+            with Vertical(id="library-media-reader-mode-highlights"):
+                yield from self._compose_highlights()
+            return
+        with Vertical(id="library-media-reader-mode-info"):
+            if self.editing:
+                yield from self._compose_edit_form()
+            else:
+                yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                yield Static(
+                    "\n".join((
+                        f"Backend: {self.viewer.backend}",
+                        f"Canonical ID: {self.viewer.canonical_id}",
+                        f"Original source: {self.viewer.original_source or 'None recorded'}",
+                        f"Stored representation: {self.viewer.stored_representation}",
+                        f"Use in Console sends: {self.console_representation}",
+                    )),
+                    id="library-media-reader-provenance",
+                    markup=False,
+                )
 
-        The search ``Input`` always renders, full-width above the content
-        ``VerticalScroll``. The match-count status ``Static`` and the
-        prev/next ``ds-toolbar`` only render while ``self.content_query``
-        is non-empty -- with no active search there is nothing to page
-        through, so the status line and toolbar are omitted entirely
-        rather than left showing as empty/orphaned chrome. When present,
-        Input and Static are each their own row and prev/next live in a
-        plain ``ds-toolbar`` of buttons only, matching the render-safety
-        rule on ``compose`` above (never mix a ``1fr`` sibling with a
-        fixed-width widget in one ``Horizontal``).
+    def _compose_content_mode_toggle(self) -> ComposeResult:
+        """Render the Rendered|Raw content-view toggle for markdown-typed media.
+
+        Only rendered when ``self.viewer.is_markdown`` is true -- a
+        non-markdown item never offers a toggle and always shows the plain
+        Raw view (no behavior change from before LIB-13). Mirrors the
+        screen's own "Database (selected) | Files" source-strip idiom
+        exactly (``library_screen.py``'s notes-source strip): a plain
+        ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
+        ``Static`` separator, each label suffixed "(selected)" for the
+        active mode -- the state-in-text idiom, not a color/class alone,
+        so the current mode reads correctly even without extra CSS.
 
         Returns:
-            ComposeResult for the content search row and, when a query is
-            active, the status line and prev/next action toolbar.
+            ComposeResult for the toggle strip, or nothing for non-markdown
+            media.
         """
-        yield Input(
-            value=self.content_query,
-            placeholder="Search content…",
-            id="library-media-content-search",
-        )
-        if not self.content_query:
+        if not self.viewer.is_markdown:
             return
-        matches = find_content_matches(self.viewer.content, self.content_query)
-        yield Static(
-            self._content_search_status_text(matches),
-            id="library-media-content-search-status",
-            markup=False,
-        )
-        search_toolbar = Horizontal(classes="ds-toolbar")
-        search_toolbar.styles.height = "auto"
-        with search_toolbar:
-            yield Button(
-                "◀ Prev",
-                id="library-media-content-search-prev",
-                classes="library-canvas-action",
+        with Horizontal(id="library-media-content-mode-strip"):
+            rendered_selected = self.content_mode == "rendered"
+            rendered_button = Button(
+                "Rendered (selected)" if rendered_selected else "Rendered",
+                id="library-media-content-mode-rendered",
                 compact=True,
             )
-            yield Button(
-                "Next ▶",
-                id="library-media-content-search-next",
-                classes="library-canvas-action",
+            rendered_button.set_class(rendered_selected, "-selected")
+            yield rendered_button
+            yield Static("|", id="library-media-content-mode-separator", markup=False)
+            raw_selected = not rendered_selected
+            raw_button = Button(
+                "Raw (selected)" if raw_selected else "Raw",
+                id="library-media-content-mode-raw",
                 compact=True,
             )
+            raw_button.set_class(raw_selected, "-selected")
+            yield raw_button
 
-    def _content_search_status_text(self, matches: tuple[int, ...]) -> str:
-        """Build the in-content search status line text.
+    # ---- TASK-31745: rename a finished meeting's speakers, from the reader --
+    #: What each refusal means in the user's terms, keyed by the reason
+    #: ``rename_meeting_speaker`` returns. Static copy -- never a path, a
+    #: name, or transcript text.
+    _RENAME_REFUSAL_COPY = {
+        RENAME_REFUSED_NOT_MEETING_CONTENT: (
+            "This transcript came from ingest; rename the live transcript in Meetings."
+        ),
+        RENAME_REFUSED_EMPTY_TRANSCRIPT: (
+            "This meeting's local transcript is missing or empty; nothing to rename."
+        ),
+    }
+    _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
+
+    class SpeakerRenamed(Message):
+        """A meeting speaker was renamed on ``media_id``; its detail is stale.
+
+        The reader repaints itself immediately (below), but the SCREEN's
+        viewer state is memoized per detail ARRIVAL and still built from the
+        pre-rename content -- the next viewer sync would repaint that over
+        the new name. The screen re-reads the item on this message.
+        """
+
+        def __init__(self, media_id: int) -> None:
+            super().__init__()
+            self.media_id = media_id
+
+    def _compose_speaker_legend(self) -> ComposeResult:
+        """Render one rename row per speaker of a finished meeting recording.
+
+        Absent, not disabled, for anything else: a non-meeting item has no
+        speakers to rename (the screen resolves that into
+        ``viewer.can_rename_speakers``).
+
+        ``VerticalGroup``, never a bare ``Vertical``: Textual's ``Vertical``
+        defaults to ``height: 1fr``, so as a direct sibling of the ``1fr``
+        content body this legend would claim HALF the reading pane (the
+        task-31222/31276 trap). ``VerticalGroup`` is ``height: auto`` in
+        upstream's own CSS, so the section costs exactly its rows and needs
+        no rule here.
+
+        Label above input, each full-width -- the shape ``_compose_edit_form``
+        uses; the labels reuse its ``.library-media-edit-label`` styling. A
+        ``Horizontal`` row mixing an auto-width ``Static`` with a ``1fr``
+        ``Input`` is this canvas's known non-rendering failure mode, and
+        re-keying that would spend two more ancestor-scoped bare-type rules
+        against ADR-097's ratchet.
+
+        Returns:
+            ComposeResult for the legend, or nothing when there is none.
+        """
+        if not self.viewer.can_rename_speakers or not self.viewer.speaker_legend_rows:
+            return
+        with VerticalGroup(id="library-media-speaker-legend"):
+            yield Static(
+                "Rename speakers",
+                id="library-media-speaker-legend-title",
+                classes="library-media-edit-label",
+                markup=False,
+            )
+            for cluster_id, label in self.viewer.speaker_legend_rows:
+                # A hand-edited transcript.jsonl can carry an id that is not
+                # a legal Textual widget id ("S 1"); interpolating it would
+                # raise out of compose() and take the screen down.
+                if not is_widget_safe_cluster_id(cluster_id):
+                    continue
+                yield Static(
+                    label,
+                    id=f"library-media-speaker-label-{cluster_id}",
+                    markup=False,
+                    classes="library-media-edit-label library-media-speaker-label",
+                )
+                yield Input(
+                    placeholder="Rename…",
+                    id=f"{self._SPEAKER_INPUT_PREFIX}{cluster_id}",
+                    classes="library-media-speaker-input",
+                )
+
+    @on(Input.Submitted, ".library-media-speaker-input")
+    def _handle_speaker_rename_submitted(self, event: Input.Submitted) -> None:
+        """Persist the submitted row's rename off the UI thread.
+
+        Mirrors ``LibraryMediaCanvas``' legend: the rename itself is
+        unconditional (a submit racing teardown should still persist) and
+        only the repaint afterwards is ``is_mounted``-guarded.
+        """
+        event.stop()
+        widget_id = event.input.id or ""
+        if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
+            return
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        name = normalize_speaker_name(event.value)
+        event.input.value = ""
+        media_id = self.speaker_rename_media_id
+        if self.media_db is None or media_id is None:
+            return
+        # The rename reads the transcript file, runs several DB writes, FTS
+        # maintenance and a post-ingest dispatch -- all of which would freeze
+        # the reader on a large transcript or a busy database.
+        # ``exclusive`` keeps two fast submits from piling up in this group.
+        # (Textual cannot interrupt a THREAD worker mid-flight, so a genuine
+        # overlap still ends at the row's optimistic lock -- which fails safe,
+        # writing nothing and reporting the conflict.)
+        # The id is captured here, not read in the worker: a selection change
+        # mid-rename must not retarget the write. The legend the user typed
+        # into belongs to this id, so the rename lands on it either way.
+        self.run_worker(
+            lambda: self._rename_speaker_off_thread(media_id, cluster_id, name),
+            group="library-media-speaker-rename",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _rename_speaker_off_thread(
+        self, media_id: int, cluster_id: str, name: str
+    ) -> None:
+        """Rename on a worker thread, then repaint on the UI one.
+
+        The post-rename re-reads (content + legend labels) happen HERE, on
+        the worker, so the UI-thread callback only assigns and recomposes.
+        """
+        content = ""
+        rows: tuple[tuple[str, str], ...] = ()
+        try:
+            outcome = rename_meeting_speaker(
+                self.media_db, media_id, cluster_id, name
+            )
+            if outcome.ok:
+                row = self.media_db.get_media_by_id(media_id)
+                content = (row["content"] if row else "") or ""
+                rows = tuple(_meeting_speaker_legend_rows(self.media_db, media_id))
+        except Exception as exc:  # noqa: BLE001 - a rename must not crash the reader
+            # A filesystem failure's ``str()`` embeds the meeting folder path.
+            logger.warning(
+                "Library media reader speaker rename failed: {}",
+                redact_user_paths(str(exc)),
+            )
+            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+        self.app.call_from_thread(
+            self._apply_speaker_rename_outcome, media_id, outcome, content, rows
+        )
+
+    def _apply_speaker_rename_outcome(
+        self,
+        media_id: int,
+        outcome: SpeakerRenameResult,
+        content: str,
+        rows: tuple[tuple[str, str], ...],
+    ) -> None:
+        """Explain a refused/failed rename, or repaint after a successful one."""
+        if not outcome.ok:
+            # ``reason`` is documented static, user-safe copy, so an
+            # unmapped one (a failure, not a refusal) is shown as it stands.
+            detail = self._RENAME_REFUSAL_COPY.get(outcome.reason, outcome.reason)
+            self.app.notify(
+                f"Couldn't rename this speaker. {detail}", severity="warning"
+            )
+            return
+        if not self.is_mounted:
+            return
+        # Recompose, not an in-place patch: the content body holds an
+        # immutable document (a content change builds a new body by design),
+        # and the same pass repaints the legend's labels from ``rows``.
+        # A selection that moved on during the write self-corrects: the screen
+        # rebuilds this viewer from the NEW item's detail, and the message
+        # below names the id that was actually renamed.
+        self.viewer = dataclasses.replace(
+            self.viewer, content=content, speaker_legend_rows=rows
+        )
+        self.refresh(recompose=True)
+        self.post_message(self.SpeakerRenamed(media_id))
+
+    def sync_loading_state(self, *, loading: bool, message: str) -> None:
+        """Patch the mounted loading placeholder without rebuilding the body.
+
+        task-22207: a traversal keystroke flips only the pending-request
+        state; recomposing the viewer for that re-parses the full document
+        being LEFT purely to paint "Loading…". This patches the persistent
+        banner (or the empty-reader placeholder) in place instead.
+        Display-gating a widget composed once -- rather than mounting and
+        unmounting it here -- is deliberate: an async mount seam on this
+        surface is the TASK-21116 M3 ``DuplicateIds`` race class.
 
         Args:
-            matches: Ordered line indices matching ``self.content_query``,
-                as returned by ``find_content_matches``.
+            loading: Whether a detail request is pending without error.
+            message: Banner copy for the pending request.
 
         Returns:
-            "" when the query is blank (no search active), "No matches"
-            when a non-blank query has no hits, otherwise
-            "Match {i} of {n} matches" for the current (wrapped) index.
+            None.
         """
-        if not self.content_query:
-            return ""
-        if not matches:
-            return "No matches"
-        index = self.content_match_index % len(matches)
-        return f"Match {index + 1} of {len(matches)} matches"
+        self.loading = loading
+        self.loading_message = message
+        if not self.viewer.media_id:
+            try:
+                empty = self.query_one("#library-media-reader-empty", Static)
+            except (NoMatches, QueryError):
+                # Not composed yet -- compose() reads the attributes above.
+                return
+            copy = (
+                "Loading media…"
+                if loading
+                else "Select a media item to read it here."
+            )
+            if str(empty.content) != copy:
+                empty.update(copy)
+            return
+        try:
+            banner = self.query_one("#library-media-viewer-loading", Static)
+        except (NoMatches, QueryError):
+            # Not composed yet -- compose() reads the attributes above.
+            return
+        if loading and str(banner.content) != message:
+            banner.update(message)
+        if banner.display != loading:
+            banner.display = loading
 
-    def _content_renderable(self) -> Text | str:
-        """Return the content body, marking the matched lines while searching.
+    def sync_query_state(
+        self, *, query: str, matches: tuple[int, ...], match_index: int
+    ) -> None:
+        """Synchronize a submitted query without rebuilding the viewer.
 
-        With no active search this is the plain content string. While a
-        search is active, the first occurrence of the query on each matching
-        line is marked (case-insensitive), so the number of visible marks
-        equals the line-based "Match N of M" count from
-        ``find_content_matches`` -- otherwise the count and the highlighting
-        would disagree on any line that contains the query twice. The
-        currently-focused match (``content_match_index``) is marked
-        ``reverse bold`` while the others are ``reverse``, so prev/next has a
-        visible target. Built as a Rich ``Text`` from raw slices (never
-        markup) so arbitrary content cannot inject styles.
+        Args:
+            query: Submitted content-search query.
+            matches: Source-line indexes matching ``query``.
+            match_index: Zero-based index of the active match.
 
         Returns:
-            The plain content ``str`` when idle, or a Rich ``Text`` with the
-            matched lines marked while searching.
+            None.
         """
-        content = self.viewer.content or "No stored content."
-        query = (self.content_query or "").strip()
-        if not query or not self.viewer.content:
-            return content
-        matches = find_content_matches(self.viewer.content, query)
-        if not matches:
-            return content
-        current_line = matches[self.content_match_index % len(matches)]
-        needle = query.lower()
-        span = len(needle)
-        text = Text()
-        for index, line in enumerate(content.split("\n")):
-            if index:
-                text.append("\n")
-            hit = line.lower().find(needle)
-            if hit == -1:
-                text.append(line)
-                continue
-            style = "reverse bold" if index == current_line else "reverse"
-            text.append(line[:hit])
-            text.append(line[hit : hit + span], style=style)
-            text.append(line[hit + span :])
-        return text
+        self.content_query = query
+        self.content_match_index = match_index
+        self.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        ).sync_query_state(
+            is_markdown=self.viewer.is_markdown,
+            query=query,
+            matches=matches,
+            match_index=match_index,
+        )
+        self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_search(query, match_index)
+
+    def sync_match_index(
+        self, *, matches: tuple[int, ...], match_index: int
+    ) -> None:
+        """Synchronize match navigation without rebuilding viewer children.
+
+        Args:
+            matches: Source-line indexes matching the active query.
+            match_index: Zero-based index of the active match.
+
+        Returns:
+            None.
+        """
+        self.content_match_index = match_index
+        self.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        ).sync_match_index(matches=matches, match_index=match_index)
+        self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_search(self.content_query, match_index)
+
+    async def sync_mode(self, mode: str) -> None:
+        """Synchronize toggle state and reuse the persistent content views.
+
+        Args:
+            mode: Requested content mode, either ``"raw"`` or ``"rendered"``.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If ``mode`` is not a supported content mode.
+        """
+        self.content_mode = mode
+        rendered_selected = mode == "rendered"
+        rendered_button = self.query_one(
+            "#library-media-content-mode-rendered", Button
+        )
+        raw_button = self.query_one("#library-media-content-mode-raw", Button)
+        rendered_button.label = (
+            "Rendered (selected)" if rendered_selected else "Rendered"
+        )
+        raw_button.label = "Raw" if rendered_selected else "Raw (selected)"
+        rendered_button.set_class(rendered_selected, "-selected")
+        raw_button.set_class(not rendered_selected, "-selected")
+        rendered_button.refresh(layout=True)
+        raw_button.refresh(layout=True)
+        await self.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        ).sync_mode(mode)
 
     def _compose_edit_form(self) -> ComposeResult:
         """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.
@@ -330,38 +859,100 @@ class LibraryMediaViewer(Vertical):
                     placeholder=placeholder,
                     id=field_id,
                 )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button("Save", id="library-media-edit-save", compact=True)
+                yield Button("Cancel", id="library-media-edit-cancel", compact=True)
 
     def _compose_analysis(self) -> ComposeResult:
-        """Render the Analysis section: read-only text + Edit toggle, or the edit form.
+        """Render the Analysis section: read-only text + Edit/Generate, or a form.
 
         Always renders (mirroring the Content section's always-present
-        placeholder) so "Edit analysis" is reachable even when no analysis
-        exists yet -- editing an empty analysis simply creates the first
-        one via ``save_analysis_version``. Analysis (re)generation via an
-        LLM is explicitly out of scope; this only edits existing text.
+        placeholder) so the actions are reachable even when no analysis
+        exists yet. "Edit"/"Add" hand-edits text via ``save_analysis_version``;
+        "Generate" (task-28006) runs the configured analysis provider and
+        persists the result the same way. While a generation is in flight
+        the section shows a progress line instead of the actions.
 
         Returns:
             ComposeResult for the Analysis section.
         """
-        yield Static(
-            "Analysis",
-            id="library-media-viewer-analysis-title",
-            classes="destination-section",
-        )
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
-        else:
+            return
+        if self.generating_analysis:
             yield Static(
                 self.viewer.analysis or "No analysis yet.",
                 id="library-media-viewer-analysis-text",
                 markup=False,
             )
+            yield Static(
+                "Generating analysis…",
+                id="library-media-analysis-generating",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        if self.viewer.analysis:
+            # task-28026: render the analysis in the SAME searchable/
+            # highlightable widgets the Read tab uses, so the in-item find
+            # bar works over the analysis text. The screen's search corpus
+            # (_library_media_content_matches) is mode-aware, so the query,
+            # match count, Prev/Next, and Enter-advance all follow the
+            # active tab. Analysis is plain text -> raw mode, not Markdown.
+            matches = find_content_matches(self.viewer.analysis, self.content_query)
+            # task-31269: like Read, the bar is collapsed until Find opens
+            # it -- an always-mounted bar stole focus on every item load and
+            # swallowed the walk keys (critique #4 P0).
+            if self.find_open or self.content_query:
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=False,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    focus_on_mount=self.find_focus_pending,
+                    id="library-media-content-search-controls",
+                )
+                self.find_focus_pending = False
+            yield LibraryMediaContentBody(
+                content=self.viewer.analysis,
+                is_markdown=False,
+                mode="raw",
+                query=self.content_query,
+                match_index=self.content_match_index,
+                id="library-media-viewer-content",
+            )
+        else:
+            yield Static(
+                "No analysis yet.",
+                id="library-media-viewer-analysis-text",
+                markup=False,
+            )
+        with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit analysis" if self.viewer.analysis else "Add analysis",
                 id="library-media-analysis-edit",
                 classes="library-canvas-action",
                 compact=True,
             )
+            # task-28006: LLM generation, in the reading flow (no detour to
+            # the manager). "Regenerate" when an analysis already exists.
+            # task-28007 AC#5: with no callable provider it says so at the
+            # control, in PR A's "○"-with-reason grammar, instead of
+            # accepting the click and answering with a toast.
+            reason = self.analysis_provider_reason
+            generate = Button(
+                library_disabled_action_label(
+                    "Regenerate" if self.viewer.analysis else "Generate",
+                    bool(reason),
+                ),
+                id="library-media-analysis-generate",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            if reason:
+                generate.disabled = True
+                generate.tooltip = reason
+            yield generate
 
     def _compose_analysis_edit_form(self) -> ComposeResult:
         """Render the analysis edit ``TextArea`` prefilled with the current analysis.
@@ -492,11 +1083,6 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the highlights section.
         """
-        yield Static(
-            "Highlights",
-            id="library-media-viewer-highlights-title",
-            classes="destination-section",
-        )
         if not self.highlights:
             yield Static(
                 "No highlights yet.",

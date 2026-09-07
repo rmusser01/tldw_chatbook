@@ -9,16 +9,33 @@ Supports both initial password setup and password entry for decryption.
 from typing import Optional, Callable, Literal
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, Horizontal
+from textual.binding import Binding
+from textual.containers import Container, Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, Static
+from textual.widgets import Button, Checkbox, Label, Input, Static
 from textual.validation import Length
 from loguru import logger
+
+#: Shown wherever a user is about to enable config encryption for the first
+#: time. Encrypting rewrites config.toml through a TOML parse/serialize
+#: round-trip (tomllib.load + toml.dumps), which preserves every value and
+#: type losslessly but drops comments and reorders tables -- there is no
+#: comment-preserving TOML writer in use here, and the fix for this review
+#: is to warn, not to silently rewrite an annotated config (see task-851
+#: review finding 3).
+COMMENT_LOSS_WARNING = (
+    "• Saving will rewrite config.toml: any comments or custom formatting "
+    "in it will be lost (all values are preserved)"
+)
 
 
 class PasswordDialog(ModalScreen):
     """Dialog for entering master password for config encryption."""
-    
+
+    # TASK-21141 (UAT K-2): keyboard users need a way out. Escape follows
+    # the same path as the Cancel button.
+    BINDINGS = [Binding("escape", "cancel_dialog", "Cancel", show=False)]
+
     DEFAULT_CSS = """
     PasswordDialog {
         align: center middle;
@@ -30,7 +47,7 @@ class PasswordDialog(ModalScreen):
         padding: 1 2;
         width: 60;
         height: auto;
-        max-height: 25;
+        max-height: 32;
     }
     
     PasswordDialog .dialog-title {
@@ -50,14 +67,23 @@ class PasswordDialog(ModalScreen):
         width: 100%;
     }
     
-    PasswordDialog .error-message {
+    /* TASK-21141 (UAT K-3): a dialog-scoped class. The app-wide
+       .error-message rule (border: round + padding + margin in
+       _wizards.tcss) inflated the one-line error to ~7 rows and pushed
+       the Cancel/Submit row past this container's max-height clip — the
+       buttons stayed functional but invisible after a failed submit. */
+    PasswordDialog .password-dialog-error {
         color: $error;
         margin-bottom: 1;
         display: none;
     }
-    
-    PasswordDialog .error-message.visible {
+
+    PasswordDialog .password-dialog-error.visible {
         display: block;
+    }
+
+    PasswordDialog .show-password-toggle {
+        margin-bottom: 1;
     }
     
     PasswordDialog .button-container {
@@ -87,7 +113,7 @@ class PasswordDialog(ModalScreen):
         color: $success;
     }
     """
-    
+
     def __init__(
         self,
         mode: Literal["setup", "unlock", "change"] = "unlock",
@@ -99,7 +125,7 @@ class PasswordDialog(ModalScreen):
     ):
         """
         Initialize the password dialog.
-        
+
         Args:
             mode: The dialog mode - "setup" for initial setup, "unlock" for decryption, "change" for changing password
             title: Custom title for the dialog
@@ -114,84 +140,124 @@ class PasswordDialog(ModalScreen):
         self.custom_message = message
         self.on_submit_callback = on_submit
         self.on_cancel_callback = on_cancel
-        
-        # Set default titles and messages based on mode
+
+        # Set default titles and messages based on mode.
+        # TASK-21141 (UAT K-5): sentence case, "set up" as the verb.
         if not self.custom_title:
             if mode == "setup":
-                self.custom_title = "Setup Master Password"
+                self.custom_title = "Set up master password"
             elif mode == "unlock":
-                self.custom_title = "Enter Master Password"
+                self.custom_title = "Enter master password"
             elif mode == "change":
-                self.custom_title = "Change Master Password"
-        
+                self.custom_title = "Change master password"
+
         if not self.custom_message:
             if mode == "setup":
-                self.custom_message = "Create a master password to encrypt your API keys and sensitive configuration data."
+                # TASK-21141 (UAT K-1/K-4): requirements and the
+                # forgotten-password consequence stated BEFORE first submit,
+                # not discovered through a failed attempt.
+                self.custom_message = (
+                    "Create a master password to encrypt your API keys and "
+                    "sensitive configuration data. At least 8 characters. "
+                    "If you forget it, the encrypted keys cannot be "
+                    "recovered — you'll need to re-enter them."
+                )
             elif mode == "unlock":
-                self.custom_message = "Enter your master password to decrypt the configuration file."
+                self.custom_message = (
+                    "Enter your master password to decrypt the configuration file."
+                )
             elif mode == "change":
                 self.custom_message = "Enter your current master password to change it."
-    
+
     def compose(self) -> ComposeResult:
         """Create the dialog layout."""
         with Container():
-            with Vertical():
+            # TASK-21141 (UAT K-3): scrollable so the button row stays
+            # reachable even when a short terminal clips the container —
+            # focus movement scrolls it into view.
+            with VerticalScroll():
                 yield Label(self.custom_title, classes="dialog-title")
                 yield Static(self.custom_message, classes="dialog-message")
-                
+
                 # Password input
                 yield Input(
                     placeholder="Enter password",
                     password=True,
                     id="password-input",
                     classes="password-input",
-                    validators=[Length(minimum=8, failure_description="Password must be at least 8 characters")]
+                    validators=[
+                        Length(
+                            minimum=8,
+                            failure_description="Password must be at least 8 characters",
+                        )
+                    ],
                 )
-                
+
                 # Confirm password for setup/change modes
                 if self.mode in ["setup", "change"]:
                     yield Input(
                         placeholder="Confirm password",
                         password=True,
                         id="confirm-input",
-                        classes="password-input"
+                        classes="password-input",
                     )
-                    
+
                     # Password strength indicator
-                    yield Static("", id="strength-indicator", classes="strength-indicator")
-                
-                # Error message container
-                yield Static("", id="error-message", classes="error-message")
-                
+                    yield Static(
+                        "", id="strength-indicator", classes="strength-indicator"
+                    )
+
+                # TASK-21141 (UAT K-6): let the user see what they typed.
+                yield Checkbox(
+                    "Show password",
+                    id="show-password-toggle",
+                    classes="show-password-toggle",
+                )
+
+                # Error message container (dialog-scoped class; see the
+                # DEFAULT_CSS comment for why not .error-message).
+                yield Static("", id="error-message", classes="password-dialog-error")
+
                 # Buttons
                 with Horizontal(classes="button-container"):
                     yield Button("Cancel", variant="default", id="cancel-button")
                     yield Button("Submit", variant="primary", id="submit-button")
-    
+
     def check_password_strength(self, password: str) -> tuple[str, str]:
         """
         Check password strength and return strength level and message.
-        
+
         Returns:
             Tuple of (strength_class, strength_message)
         """
         if len(password) < 8:
             return "strength-weak", "Too short"
-        
+
         has_upper = any(c.isupper() for c in password)
         has_lower = any(c.islower() for c in password)
         has_digit = any(c.isdigit() for c in password)
         has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
-        
+
         strength_score = sum([has_upper, has_lower, has_digit, has_special])
-        
+
         if strength_score <= 1:
             return "strength-weak", "Weak password"
         elif strength_score == 2:
             return "strength-medium", "Medium strength"
         else:
             return "strength-strong", "Strong password"
-    
+
+    @on(Checkbox.Changed, "#show-password-toggle")
+    def on_show_password_toggled(self, event: Checkbox.Changed) -> None:
+        """Reveal or mask both password fields (UAT K-6)."""
+        for field in self.query(".password-input").results(Input):
+            field.password = not event.value
+
+    @on(Input.Changed)
+    def on_any_input_changed(self, event: Input.Changed) -> None:
+        """A stale error must not outlive the input it described (UAT K-3)."""
+        self.hide_error()
+
     @on(Input.Changed, "#password-input")
     def on_password_changed(self, event: Input.Changed) -> None:
         """Update password strength indicator when password changes."""
@@ -200,48 +266,50 @@ class PasswordDialog(ModalScreen):
             if event.value:
                 strength_class, strength_msg = self.check_password_strength(event.value)
                 strength_indicator.update(f"Password strength: {strength_msg}")
-                strength_indicator.remove_class("strength-weak", "strength-medium", "strength-strong")
+                strength_indicator.remove_class(
+                    "strength-weak", "strength-medium", "strength-strong"
+                )
                 strength_indicator.add_class(strength_class)
             else:
                 strength_indicator.update("")
-    
+
     def show_error(self, message: str) -> None:
         """Display an error message."""
         error_widget = self.query_one("#error-message", Static)
         error_widget.update(message)
         error_widget.add_class("visible")
-    
+
     def hide_error(self) -> None:
         """Hide the error message."""
         error_widget = self.query_one("#error-message", Static)
         error_widget.remove_class("visible")
-    
+
     @on(Button.Pressed, "#submit-button")
     def on_submit(self) -> None:
         """Handle submit button press."""
         self.hide_error()
-        
+
         password_input = self.query_one("#password-input", Input)
         password = password_input.value
-        
+
         # Validate password
         if not password:
             self.show_error("Password cannot be empty")
             return
-        
+
         if len(password) < 8:
             self.show_error("Password must be at least 8 characters")
             return
-        
+
         # For setup/change modes, check password confirmation
         if self.mode in ["setup", "change"]:
             confirm_input = self.query_one("#confirm-input", Input)
             confirm_password = confirm_input.value
-            
+
             if password != confirm_password:
                 self.show_error("Passwords do not match")
                 return
-        
+
         # Call the callback if provided
         if self.on_submit_callback:
             try:
@@ -252,14 +320,18 @@ class PasswordDialog(ModalScreen):
                 self.show_error(str(e))
         else:
             self.dismiss(password)
-    
+
     @on(Button.Pressed, "#cancel-button")
     def on_cancel(self) -> None:
         """Handle cancel button press."""
         if self.on_cancel_callback:
             self.on_cancel_callback()
         self.dismiss(None)
-    
+
+    def action_cancel_dialog(self) -> None:
+        """Escape follows the exact Cancel-button path (UAT K-2)."""
+        self.on_cancel()
+
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in input fields."""
@@ -273,7 +345,7 @@ class PasswordDialog(ModalScreen):
 
 class EncryptionSetupDialog(ModalScreen):
     """Dialog for setting up config encryption with API key detection."""
-    
+
     DEFAULT_CSS = """
     EncryptionSetupDialog {
         align: center middle;
@@ -324,7 +396,7 @@ class EncryptionSetupDialog(ModalScreen):
         min-width: 12;
     }
     """
-    
+
     def __init__(
         self,
         detected_providers: list[str],
@@ -334,7 +406,7 @@ class EncryptionSetupDialog(ModalScreen):
     ):
         """
         Initialize the encryption setup dialog.
-        
+
         Args:
             detected_providers: List of providers with detected API keys
             on_proceed: Callback when user proceeds with encryption
@@ -345,41 +417,52 @@ class EncryptionSetupDialog(ModalScreen):
         self.detected_providers = detected_providers
         self.on_proceed_callback = on_proceed
         self.on_cancel_callback = on_cancel
-    
+
     def compose(self) -> ComposeResult:
         """Create the dialog layout."""
         with Container():
             with Vertical():
                 yield Label("Config Encryption Setup", classes="dialog-title")
-                
+
                 # Info section
                 with Vertical(classes="info-section"):
                     yield Static("🔐 API Keys Detected!")
-                    yield Static(f"\nFound API keys for {len(self.detected_providers)} provider(s):")
-                    
+                    yield Static(
+                        f"\nFound API keys for {len(self.detected_providers)} provider(s):"
+                    )
+
                     # List detected providers
-                    api_key_list = "\n".join(f"• {provider}" for provider in self.detected_providers)
+                    api_key_list = "\n".join(
+                        f"• {provider}" for provider in self.detected_providers
+                    )
                     yield Static(api_key_list, classes="api-key-list")
-                
+
                 # Warning section
                 with Vertical(classes="warning-section"):
                     yield Static("⚠️  Important:")
-                    yield Static("• You'll need to enter this password every time you start the app")
-                    yield Static("• If you forget the password, you'll need to re-enter your API keys")
+                    yield Static(
+                        "• You'll need to enter this password every time you start the app"
+                    )
+                    yield Static(
+                        "• If you forget the password, you'll need to re-enter your API keys"
+                    )
                     yield Static("• Make sure to use a strong, memorable password")
-                
+                    yield Static(COMMENT_LOSS_WARNING)
+
                 # Buttons
                 with Horizontal(classes="button-container"):
                     yield Button("Not Now", variant="default", id="cancel-button")
-                    yield Button("Setup Encryption", variant="primary", id="proceed-button")
-    
+                    yield Button(
+                        "Setup Encryption", variant="primary", id="proceed-button"
+                    )
+
     @on(Button.Pressed, "#proceed-button")
     def on_proceed(self) -> None:
         """Handle proceed button press."""
         if self.on_proceed_callback:
             self.on_proceed_callback()
         self.dismiss(True)
-    
+
     @on(Button.Pressed, "#cancel-button")
     def on_cancel(self) -> None:
         """Handle cancel button press."""

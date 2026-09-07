@@ -1,0 +1,362 @@
+"""Pure slash-command grammar for the native Console composer.
+
+This module has no dependency on Textual, the running app, or any I/O. It
+exposes a small tokenizer plus a registry that maps ``/word rest`` Console
+drafts onto registered :class:`ConsoleCommand` entries, with an ordered
+fallback-resolver hook reserved for future extensions (for example, a Skills
+feature routing bare ``/skill-name`` drafts that do not match a built-in
+command). Callers own all UI wiring, readiness gating, and paste-token
+bookkeeping; this module only ever sees a plain draft-text string.
+
+Paste-token gating is entirely the caller's responsibility: the composer's
+canonical ``draft_text()`` (the text this module parses) never contains
+display-only paste markers such as "Pasted Text: " or "Unfurl?" — those are
+rendered only by the composer's UI-only display representation. A caller
+that wants to suppress command parsing while a paste is staged must gate on
+its own paste-segment state *before* calling :meth:`ConsoleCommandRegistry.parse`,
+not by scanning the draft text for marker substrings.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+COMMAND_PREFIX = "/"
+"""Leading character that marks a Console draft as a candidate slash command."""
+
+KIND_COMMAND = "command"
+KIND_FALLBACK = "fallback"
+KIND_UNKNOWN = "unknown"
+KIND_NOT_COMMAND = "not-command"
+
+PROMPT_COMMAND_NAME = "prompt"
+PROMPT_COMMAND_ARGUMENT_HINT = "[name]"
+PROMPT_COMMAND_HANDLER_ID = "insert-prompt"
+
+SYSTEM_COMMAND_NAME = "system"
+SYSTEM_COMMAND_ARGUMENT_HINT = "[name]"
+SYSTEM_COMMAND_HANDLER_ID = "apply-system"
+
+SKILLS_COMMAND_NAME = "skills"
+SKILLS_COMMAND_ARGUMENT_HINT = "[name] [args]"
+SKILLS_COMMAND_HANDLER_ID = "skills"
+
+FEWER_PERMISSION_PROMPTS_COMMAND_NAME = "fewer-permission-prompts"
+FEWER_PERMISSION_PROMPTS_COMMAND_ARGUMENT_HINT = ""
+FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID = "fewer-permission-prompts"
+
+PREFILL_COMMAND_NAME = "prefill"
+PREFILL_COMMAND_ARGUMENT_HINT = "[pin|clear] [text]"
+PREFILL_COMMAND_HANDLER_ID = "prefill"
+
+GENERATE_IMAGE_COMMAND_NAME = "generate-image"
+# Help text: "Generate an image: /generate-image [:backend] <prompt>"
+GENERATE_IMAGE_COMMAND_ARGUMENT_HINT = "[:backend] <prompt>"
+GENERATE_IMAGE_COMMAND_HANDLER_ID = "generate-image"
+
+GENERATE_VIDEO_COMMAND_NAME = "generate-video"
+# Help text: "Generate a video: /generate-video [:backend] <prompt>"
+GENERATE_VIDEO_COMMAND_ARGUMENT_HINT = "[:backend] <prompt>"
+GENERATE_VIDEO_COMMAND_HANDLER_ID = "generate-video"
+
+STREAM_VIDEO_COMMAND_NAME = "stream-video"
+# Help text: "Stream a video: /stream-video <url>"
+STREAM_VIDEO_COMMAND_ARGUMENT_HINT = "<url>"
+STREAM_VIDEO_COMMAND_HANDLER_ID = "stream-video"
+
+#: TASK-25903: deliver text into the ACTIVE run's next model call instead of
+#: queueing it for the next turn. Plain submission still queues -- that default
+#: is unchanged; /steer is the explicit opt-in per message.
+STEER_COMMAND_NAME = "steer"
+STEER_COMMAND_ARGUMENT_HINT = "<guidance for the running agent>"
+STEER_COMMAND_HANDLER_ID = "steer"
+
+#: TASK-28227: cut off the current model response and re-run the turn with
+#: the correction; completed tool results and the streamed partial survive.
+#: /steer lets the current response finish; /redirect is for when it is
+#: already wrong. Stop stays terminal and untouched.
+REDIRECT_COMMAND_NAME = "redirect"
+REDIRECT_COMMAND_ARGUMENT_HINT = "<correction for the running turn>"
+REDIRECT_COMMAND_HANDLER_ID = "redirect"
+
+#: TASK-26004: the global emergency stop. Holds NEW agent runs and scheduled
+#: dispatches; in-flight work is untouched. `/emergency-stop clear` resumes.
+EMERGENCY_STOP_COMMAND_NAME = "emergency-stop"
+EMERGENCY_STOP_COMMAND_ARGUMENT_HINT = "[clear | <reason>]"
+EMERGENCY_STOP_COMMAND_HANDLER_ID = "emergency-stop"
+
+REWIND_COMMAND_NAME = "rewind"
+REWIND_COMMAND_ARGUMENT_HINT = ""
+REWIND_COMMAND_HANDLER_ID = "rewind"
+
+# Help text: "Run deep research in the background: /research <question>"
+RESEARCH_COMMAND_NAME = "research"
+RESEARCH_COMMAND_ARGUMENT_HINT = "<question>"
+RESEARCH_COMMAND_HANDLER_ID = "research"
+HELP_COMMAND_NAME = "help"
+HELP_COMMAND_ARGUMENT_HINT = "[command]"
+HELP_COMMAND_HANDLER_ID = "help"
+DOCTOR_COMMAND_NAME = "doctor"
+DOCTOR_COMMAND_ARGUMENT_HINT = "[network]"
+DOCTOR_COMMAND_HANDLER_ID = "doctor"
+
+# TASK-25909: existing Console actions given a typed slash route. All share
+# one handler_id; the screen maps each name to the action method that already
+# implements it (see ChatScreen._CONSOLE_ACTION_COMMAND_TARGETS). No new
+# capability -- every one maps to a palette entry / key binding that works today.
+CONSOLE_ACTION_COMMAND_HANDLER_ID = "console-action"
+CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("model", ""),
+    ("sessions", ""),
+    ("workspace", ""),
+    ("new", ""),
+    ("temp", ""),
+    ("settings", ""),
+    ("context", ""),
+)
+
+
+@dataclass(frozen=True)
+class ConsoleCommand:
+    """One registered Console slash command.
+
+    Args:
+        name: Canonical command word, without the leading slash (e.g. ``"prompt"``).
+        argument_hint: Short human-readable argument placeholder (e.g. ``"[name]"``).
+        handler_id: Stable id a caller dispatches on to run the command.
+    """
+
+    name: str
+    argument_hint: str
+    handler_id: str
+
+
+@dataclass(frozen=True)
+class CommandParse:
+    """Result of parsing one Console draft against the command grammar.
+
+    Args:
+        kind: One of ``"command"``, ``"fallback"``, ``"unknown"``, or ``"not-command"``.
+        name: Matched/attempted command word; empty for ``"not-command"``.
+        args: Remaining text after the command word; empty when absent.
+    """
+
+    kind: str
+    name: str = ""
+    args: str = ""
+
+
+def _split_leading_token(text: str) -> tuple[str, str]:
+    """Split ``text`` into its leading whitespace-delimited token and the rest.
+
+    Args:
+        text: Raw draft text, already known to start with ``COMMAND_PREFIX``.
+
+    Returns:
+        A ``(token, rest)`` pair. ``token`` is every character up to (but
+        excluding) the first whitespace character; ``rest`` is everything
+        after that single whitespace character, or ``""`` when no whitespace
+        is present (the whole string is one token).
+    """
+    for index, character in enumerate(text):
+        if character.isspace():
+            return text[:index], text[index + 1 :]
+    return text, ""
+
+
+class ConsoleCommandRegistry:
+    """Registry and parser for Console slash commands.
+
+    Holds registered :class:`ConsoleCommand` entries plus an ordered list of
+    fallback resolvers consulted (in registration order) for words that do
+    not match a registered command. Fallback resolvers are the extension
+    point a future Skills feature can use to route bare ``/skill-name``
+    drafts without this module knowing anything about skills.
+    """
+
+    def __init__(self) -> None:
+        self._commands: dict[str, ConsoleCommand] = {}
+        self._fallback_resolvers: list[Callable[[str, str], CommandParse | None]] = []
+
+    def register(self, command: ConsoleCommand) -> None:
+        """Register (or replace) a command, keyed by its case-folded name."""
+        self._commands[command.name.lower()] = command
+
+    def register_fallback_resolver(
+        self, resolver: Callable[[str, str], CommandParse | None]
+    ) -> None:
+        """Append a resolver consulted, in registration order, for unmatched words.
+
+        Args:
+            resolver: Called with ``(word, args)`` for a leading token that
+                matched no registered command. Return a `CommandParse` to
+                claim the draft, or ``None`` to defer to the next resolver
+                (or to `"unknown"` if none claim it).
+        """
+        self._fallback_resolvers.append(resolver)
+
+    def parse(self, draft_text: str) -> CommandParse:
+        """Parse a Console draft against the registered command grammar.
+
+        Args:
+            draft_text: Plain composer draft text.
+
+        Returns:
+            `not-command` when ``draft_text`` does not start with
+            `COMMAND_PREFIX`. Otherwise the leading whitespace-delimited
+            token (minus its slash) is matched case-insensitively against
+            registered command names (`command`); failing that, each
+            fallback resolver is offered the word and remainder
+            (`fallback`); failing that, `unknown` with `name` set to the
+            word.
+        """
+        if not draft_text.startswith(COMMAND_PREFIX):
+            return CommandParse(kind=KIND_NOT_COMMAND)
+
+        token, rest = _split_leading_token(draft_text)
+        word = token[len(COMMAND_PREFIX) :]
+
+        command = self._commands.get(word.lower())
+        if command is not None:
+            return CommandParse(kind=KIND_COMMAND, name=command.name, args=rest)
+
+        for resolver in self._fallback_resolvers:
+            result = resolver(word, rest)
+            if result is not None:
+                return result
+
+        return CommandParse(kind=KIND_UNKNOWN, name=word)
+
+    def available_names(self) -> tuple[str, ...]:
+        """Return registered command names, in registration order."""
+        return tuple(command.name for command in self._commands.values())
+
+    def commands(self) -> tuple["ConsoleCommand", ...]:
+        """Return the registered commands (name + argument_hint), in order."""
+        return tuple(self._commands.values())
+
+
+def default_console_registry() -> ConsoleCommandRegistry:
+    """Build the default registry of native Console slash commands.
+
+    Returns:
+        A new `ConsoleCommandRegistry` with `PROMPT_COMMAND_NAME`, `SYSTEM_COMMAND_NAME`,
+        `SKILLS_COMMAND_NAME`, `PREFILL_COMMAND_NAME`, `GENERATE_IMAGE_COMMAND_NAME`,
+        and `REWIND_COMMAND_NAME` registered and no fallback resolvers.
+    """
+    registry = ConsoleCommandRegistry()
+    registry.register(
+        ConsoleCommand(
+            name=PROMPT_COMMAND_NAME,
+            argument_hint=PROMPT_COMMAND_ARGUMENT_HINT,
+            handler_id=PROMPT_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=SYSTEM_COMMAND_NAME,
+            argument_hint=SYSTEM_COMMAND_ARGUMENT_HINT,
+            handler_id=SYSTEM_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=SKILLS_COMMAND_NAME,
+            argument_hint=SKILLS_COMMAND_ARGUMENT_HINT,
+            handler_id=SKILLS_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=FEWER_PERMISSION_PROMPTS_COMMAND_NAME,
+            argument_hint=FEWER_PERMISSION_PROMPTS_COMMAND_ARGUMENT_HINT,
+            handler_id=FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=PREFILL_COMMAND_NAME,
+            argument_hint=PREFILL_COMMAND_ARGUMENT_HINT,
+            handler_id=PREFILL_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=GENERATE_IMAGE_COMMAND_NAME,
+            argument_hint=GENERATE_IMAGE_COMMAND_ARGUMENT_HINT,
+            handler_id=GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=GENERATE_VIDEO_COMMAND_NAME,
+            argument_hint=GENERATE_VIDEO_COMMAND_ARGUMENT_HINT,
+            handler_id=GENERATE_VIDEO_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=STREAM_VIDEO_COMMAND_NAME,
+            argument_hint=STREAM_VIDEO_COMMAND_ARGUMENT_HINT,
+            handler_id=STREAM_VIDEO_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=STEER_COMMAND_NAME,
+            argument_hint=STEER_COMMAND_ARGUMENT_HINT,
+            handler_id=STEER_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=REDIRECT_COMMAND_NAME,
+            argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
+            handler_id=REDIRECT_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=EMERGENCY_STOP_COMMAND_NAME,
+            argument_hint=EMERGENCY_STOP_COMMAND_ARGUMENT_HINT,
+            handler_id=EMERGENCY_STOP_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=REWIND_COMMAND_NAME,
+            argument_hint=REWIND_COMMAND_ARGUMENT_HINT,
+            handler_id=REWIND_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=RESEARCH_COMMAND_NAME,
+            argument_hint=RESEARCH_COMMAND_ARGUMENT_HINT,
+            handler_id=RESEARCH_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=HELP_COMMAND_NAME,
+            argument_hint=HELP_COMMAND_ARGUMENT_HINT,
+            handler_id=HELP_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=DOCTOR_COMMAND_NAME,
+            argument_hint=DOCTOR_COMMAND_ARGUMENT_HINT,
+            handler_id=DOCTOR_COMMAND_HANDLER_ID,
+        )
+    )
+    for _action_name, _action_hint in CONSOLE_ACTION_COMMANDS:
+        registry.register(
+            ConsoleCommand(
+                name=_action_name,
+                argument_hint=_action_hint,
+                handler_id=CONSOLE_ACTION_COMMAND_HANDLER_ID,
+            )
+        )
+    return registry

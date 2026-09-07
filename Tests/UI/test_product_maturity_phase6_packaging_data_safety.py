@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 import tomllib
 from pathlib import Path
 
@@ -84,7 +83,9 @@ def _validation_matrix_rows(evidence: str) -> dict[str, list[str]]:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> None:
@@ -94,13 +95,19 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     config = _text(CONFIG)
     chachanotes_db = _text(CHACHANOTES_DB)
     media_db = _text(MEDIA_DB)
+    write_raw_config_block = config.split(
+        "def _write_raw_cli_config_unlocked(", maxsplit=1
+    )[1].split("\ndef ", maxsplit=1)[0]
 
     project = pyproject["project"]
     assert project["name"] == "tldw_chatbook"
     assert project["requires-python"] == ">=3.11"
-    assert "textual>=3.3.0" in project["dependencies"]
+    assert "textual==8.2.8" in project["dependencies"]
     assert "tldw-cli" in project["scripts"]
-    assert project["scripts"]["tldw-cli"] == "tldw_chatbook.app:main_cli_runner"
+    # The supported launcher is the lightweight shim in cli.py (it defers the
+    # heavy app import until invocation); app:main_cli_runner remains the
+    # underlying runner the shim delegates to.
+    assert project["scripts"]["tldw-cli"] == "tldw_chatbook.cli:main_cli_runner"
     assert "tldw-serve" in project["scripts"]
     assert project["scripts"]["tldw-serve"] == "tldw_chatbook.Web_Server.serve:main"
     for extra in ("dev", "embeddings_rag", "mcp", "web"):
@@ -110,33 +117,55 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     assert "tldw_chatbook.css" in package_data
     assert "tldw_chatbook.Config_Files" in package_data
 
+    # Pin newcomer outcomes and recovery paths, not legacy headings that the
+    # approved README information architecture intentionally replaced.
     for required_copy in (
-        "Local-first baseline",
-        "Advanced optional capability groups",
+        "## Alpha status",
+        "**Available now:**",
+        "**Still evolving:**",
+        "**Goal:**",
+        '<a id="installation"></a>',
+        "## Quick start",
+        "python3 --version",
         "python3 -m venv .venv",
-        "pip install -e .",
-        "pip install -e \".[dev]\"",
-        "pip install \"tldw_chatbook[embeddings_rag]\"",
+        "py -3 --version",
+        "py -3 -m venv .venv",
+        "python -m pip install -e .",
         "tldw-cli",
-        "tldw-serve",
-        "Configuration File",
-        "Environment Variables",
+        "### Option A: Connect a hosted model API",
+        "### Option B: Connect a local model server",
+        "Settings › Diagnostics › Run setup wizard",
+        "Settings › Providers & Models",
+        "## Optional capabilities",
+        "## Configuration and data",
+        "~/.config/tldw_cli/config.toml",
+        "~/.local/share/tldw_cli/",
+        "~/.local/share/tldw_cli/<profile>/",
+        "~/.local/share/tldw_cli/default_user/",
+        "](Docs/User_Guide/index.md)",
+        "](Docs/Development/release-recovery-setup.md)",
     ):
         assert required_copy in readme
 
-    for optional_area in (
-        "RAG and retrieval",
-        "Media ingestion and transcription",
-        "MCP integration",
-        "Local inference",
-        "Web access",
+    for optional_group in (
+        "embeddings_rag",
+        "websearch",
+        "mcp",
+        "web",
+        "audio",
+        "video",
+        "pdf",
+        "ebook",
     ):
-        assert optional_area in readme
+        assert optional_group in project["optional-dependencies"]
+        _markdown_table_row(readme, f"`{optional_group}`")
 
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
     assert "_CONFIG_CACHE_SOURCE == config_path" in config
-    assert "atomic_write_text(DEFAULT_CONFIG_PATH" in config
+    assert "create_private_text(" in config
+    assert "atomic_private_write_text(" in write_raw_config_block
+    assert "application_owned_directory=application_directory" in write_raw_config_block
     assert "Do not use machine-specific absolute paths" in recovery_doc
 
     for required_migration_signal in (
@@ -162,5 +191,3 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
         "transaction",
     ):
         assert required_media_signal in media_db
-
-

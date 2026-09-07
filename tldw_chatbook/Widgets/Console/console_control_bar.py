@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from textual.app import ComposeResult
 from textual import on
+from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
@@ -15,14 +17,11 @@ from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
-
-CONSOLE_CONTROL_BAR_HEIGHT = 2
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
     "attach-context",
     "run-library-rag",
-    "save-chatbook",
     "help",
 }
 CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
@@ -30,7 +29,6 @@ CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
     "settings": "console-control-settings",
     "attach-context": "console-control-attach-context",
     "run-library-rag": "console-control-run-library-rag",
-    "save-chatbook": "console-control-save-chatbook",
     "help": "console-control-help",
 }
 FALLBACK_ACTIONS = (
@@ -41,12 +39,16 @@ FALLBACK_ACTIONS = (
     ),
     WorkbenchAction(
         id="attach-context",
-        label="Attach",
+        # CN-03 (TASK-2154.13): byte-matches the live action in
+        # ``console_workbench_state.py`` -- the composer's own ☰ menu entry
+        # is the file picker ("Attach file"), so this rail-opening action
+        # must never read as the same word.
+        label="Attach context",
         tooltip="Stage Library or workspace context",
     ),
     WorkbenchAction(
         id="run-library-rag",
-        label="Library RAG",
+        label="Search Library",
         tooltip="Search Library evidence before sending",
     ),
     WorkbenchAction(
@@ -57,12 +59,20 @@ FALLBACK_ACTIONS = (
 )
 
 
+class ConsoleAutoSpeakResumeRequested(Message):
+    """User requested resume after an automatic speech failure."""
+
+
+class ConsoleAutoSpeakRetryRequested(Message):
+    """User requested speech retry for the failed automatic reply."""
+
+
 def _summary_line(state: ConsoleControlState) -> str:
     return " | ".join(
         (
             state.provider_label,
             state.model_label,
-            state.persona_label,
+            state.assistant_label,
             state.rag_label,
             state.sources_label,
             state.tools_label,
@@ -74,7 +84,7 @@ def _summary_line(state: ConsoleControlState) -> str:
 class ConsoleControlBar(Vertical):
     """Visible Console control strip outside the transcript region.
 
-    The widget renders Console-owned provider, model, persona, RAG, source,
+    The widget renders Console-owned provider, model, assistant, RAG, source,
     tools, and approval labels plus the compact provider/model controls. It
     exposes `sync_state()` so `ChatScreen` can refresh labels after the user
     changes provider/model state through existing sidebar or compact controls.
@@ -104,9 +114,17 @@ class ConsoleControlBar(Vertical):
         self.app_instance = app_instance
         self.actions = tuple(actions)
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
-        self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
-        self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
-        self.styles.max_height = CONSOLE_CONTROL_BAR_HEIGHT
+        self.auto_speak_enabled = False
+        self.auto_speak_paused = False
+        self.auto_speak_retry_available = False
+        self._set_recovery_height(False)
+
+    def _set_recovery_height(self, visible: bool) -> None:
+        """Set the exact bar height for its recovery-row visibility."""
+        height = 2 if visible else 1
+        self.styles.height = height
+        self.styles.min_height = height
+        self.styles.max_height = height
 
     @staticmethod
     def _compatibility_layout_widget(widget: Any) -> Any:
@@ -135,7 +153,11 @@ class ConsoleControlBar(Vertical):
         """
         if actions is None and state == self.state:
             return
-        if actions is not None and state == self.state and tuple(actions) == self.actions:
+        if (
+            actions is not None
+            and state == self.state
+            and tuple(actions) == self.actions
+        ):
             return
         self.state = state
         if actions is not None:
@@ -144,45 +166,18 @@ class ConsoleControlBar(Vertical):
             "#console-control-status-line": _summary_line(state),
             "#console-provider-label": state.provider_label,
             "#console-model-label": state.model_label,
-            "#console-persona-label": state.persona_label,
+            "#console-assistant-label": state.assistant_label,
             "#console-rag-label": state.rag_label,
             "#console-sources-label": state.sources_label,
             "#console-tools-label": state.tools_label,
             "#console-approvals-label": state.approvals_label,
-            "#console-provider-chip": state.provider_label,
-            "#console-model-chip": state.model_label,
-            "#console-persona-chip": state.persona_label,
-            "#console-rag-chip": state.rag_label,
-            "#console-sources-chip": state.sources_label,
-            "#console-tools-chip": state.tools_label,
-            "#console-approvals-chip": state.approvals_label,
         }
         for selector, label in label_values.items():
             try:
-                self.query_one(selector, Static).update(label)
+                widget = self.query_one(selector, Static)
             except NoMatches:
                 continue
-        chip_emphasis = {
-            "#console-sources-chip": state.sources_active,
-            "#console-tools-chip": state.tools_active,
-            "#console-approvals-chip": state.approvals_active,
-        }
-        for selector, active in chip_emphasis.items():
-            try:
-                chip = self.query_one(selector, Static)
-            except NoMatches:
-                continue
-            chip.set_class(not active, "console-chip-dim")
-            chip.set_class(active, "console-chip-alert")
-
-    @staticmethod
-    def _chip(label: str, *, id: str, emphasis: bool | None = None) -> Static:
-        classes = "console-control-chip"
-        if emphasis is False:
-            classes += " console-chip-dim"
-        elif emphasis is True:
-            classes += " console-chip-alert"
-        return Static(label, id=id, classes=classes)
+            widget.update(label)
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:
@@ -253,76 +248,130 @@ class ConsoleControlBar(Vertical):
             if action is not None and isinstance(child, Button):
                 self._sync_action_button(child, action)
 
+    def sync_auto_speak(
+        self,
+        *,
+        enabled: bool,
+        paused: bool,
+        retry_available: bool = False,
+    ) -> None:
+        """Render recovery actions for the active conversation's speech state.
+
+        Args:
+            enabled: Whether automatic reply speech is enabled.
+            paused: Whether automatic speech is paused after a failure.
+            retry_available: Whether the failed reply can be retried.
+        """
+        self.auto_speak_enabled = enabled is True
+        self.auto_speak_paused = paused is True
+        self.auto_speak_retry_available = retry_available is True
+        recovery_visible = self.auto_speak_enabled and self.auto_speak_paused
+        self._set_recovery_height(recovery_visible)
+        try:
+            row = self.query_one("#console-auto-speak-row", Horizontal)
+        except NoMatches:
+            return
+        retry = self.query_one("#console-auto-speak-retry", Button)
+        retry.display = (
+            self.auto_speak_enabled
+            and self.auto_speak_paused
+            and self.auto_speak_retry_available
+        )
+        resume = self.query_one("#console-auto-speak-resume", Button)
+        resume.display = recovery_visible
+        row.display = recovery_visible
+
     def compose(self) -> ComposeResult:
-        with Horizontal(id="console-control-chip-row", classes="console-control-chip-row"):
-            yield self._chip(self.state.provider_label, id="console-provider-chip")
-            yield self._chip(self.state.model_label, id="console-model-chip")
-            yield self._chip(self.state.persona_label, id="console-persona-chip")
-            yield self._chip(self.state.rag_label, id="console-rag-chip")
-            yield self._chip(
-                self.state.sources_label,
-                id="console-sources-chip",
-                emphasis=self.state.sources_active,
-            )
-            yield self._chip(
-                self.state.tools_label,
-                id="console-tools-chip",
-                emphasis=self.state.tools_active,
-            )
-            yield self._chip(
-                self.state.approvals_label,
-                id="console-approvals-chip",
-                emphasis=self.state.approvals_active,
-            )
-        with Horizontal(id="console-control-action-row", classes="console-control-action-row"):
+        with Horizontal(
+            id="console-control-action-row", classes="console-control-action-row"
+        ):
             for action in self._visible_actions():
                 yield self._action(action)
-        yield self._compatibility_layout_widget(Static(
-            _summary_line(self.state),
-            id="console-control-status-line",
-            classes="console-control-summary-line",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.provider_label,
-            id="console-provider-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.model_label,
-            id="console-model-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.persona_label,
-            id="console-persona-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.rag_label,
-            id="console-rag-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.sources_label,
-            id="console-sources-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.tools_label,
-            id="console-tools-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.approvals_label,
-            id="console-approvals-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(CompactModelBar(
-            self.app_instance,
-            on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
-            id="console-compact-model-bar",
-            classes="console-compact-model-bar console-hidden-control",
-        ))
+        with Horizontal(id="console-auto-speak-row") as speech_row:
+            speech_row.styles.height = 1
+            speech_row.styles.min_height = 1
+            speech_row.styles.max_height = 1
+            retry = Button(
+                "Retry speech",
+                id="console-auto-speak-retry",
+                compact=True,
+                tooltip="Retry speech for the reply that failed.",
+            )
+            retry.display = False
+            yield retry
+            resume = Button(
+                "Resume auto-speak",
+                id="console-auto-speak-resume",
+                compact=True,
+                tooltip="Resume speaking future replies automatically.",
+            )
+            resume.display = False
+            yield resume
+            speech_row.display = False
+        yield self._compatibility_layout_widget(
+            Static(
+                _summary_line(self.state),
+                id="console-control-status-line",
+                classes="console-control-summary-line",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.provider_label,
+                id="console-provider-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.model_label,
+                id="console-model-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.assistant_label,
+                id="console-assistant-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.rag_label,
+                id="console-rag-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.sources_label,
+                id="console-sources-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.tools_label,
+                id="console-tools-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.approvals_label,
+                id="console-approvals-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            CompactModelBar(
+                self.app_instance,
+                on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
+                id="console-compact-model-bar",
+                classes="console-compact-model-bar console-hidden-control",
+            )
+        )
 
     @on(Button.Pressed, ".console-control-action")
     def on_console_control_action_pressed(self, event: Button.Pressed) -> None:
@@ -332,3 +381,23 @@ class ConsoleControlBar(Vertical):
             return
         event.stop()
         self.post_message(WorkbenchActionRequested(action_id))
+
+    @on(Button.Pressed, "#console-auto-speak-resume")
+    def on_console_auto_speak_resume_pressed(self, event: Button.Pressed) -> None:
+        """Forward a user request to resume automatic speech.
+
+        Args:
+            event: Textual button-press event.
+        """
+        event.stop()
+        self.post_message(ConsoleAutoSpeakResumeRequested())
+
+    @on(Button.Pressed, "#console-auto-speak-retry")
+    def on_console_auto_speak_retry_pressed(self, event: Button.Pressed) -> None:
+        """Forward a user request to retry the failed reply.
+
+        Args:
+            event: Textual button-press event.
+        """
+        event.stop()
+        self.post_message(ConsoleAutoSpeakRetryRequested())

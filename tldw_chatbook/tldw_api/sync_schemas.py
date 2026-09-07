@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
+from tldw_profile_core import (
+    ProfileManifest,
+    ProfileProposal,
+    ProfileRecord,
+    ProfileScope,
+)
 
 
 class SyncEntity(str, Enum):
@@ -44,11 +60,19 @@ class SyncLogEntry(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="allow")
 
     change_id: int = Field(..., description="Server sync_log change identifier.")
-    entity: SyncEntity = Field(..., description="Entity type changed by this log entry.")
+    entity: SyncEntity = Field(
+        ..., description="Entity type changed by this log entry."
+    )
     entity_uuid: str = Field(..., description="UUID of the changed entity.")
-    operation: SyncOperation = Field(..., description="Operation applied to the entity.")
-    timestamp: str = Field(..., description="ISO-like timestamp attached to the change.")
-    server_timestamp: str | None = Field(None, description="Optional authoritative server timestamp.")
+    operation: SyncOperation = Field(
+        ..., description="Operation applied to the entity."
+    )
+    timestamp: str = Field(
+        ..., description="ISO-like timestamp attached to the change."
+    )
+    server_timestamp: str | None = Field(
+        None, description="Optional authoritative server timestamp."
+    )
     client_id: str = Field(..., description="Client that originated the change.")
     version: int = Field(..., description="Entity version after this change.")
     payload: str = Field(..., description="JSON string payload for the changed entity.")
@@ -60,9 +84,13 @@ class SyncSendLogEntry(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     change_id: int = Field(..., description="Client-local sync_log change identifier.")
-    entity: SyncSendEntity = Field(..., description="Entity type accepted by /sync/send.")
+    entity: SyncSendEntity = Field(
+        ..., description="Entity type accepted by /sync/send."
+    )
     entity_uuid: str = Field(..., description="UUID of the changed entity.")
-    operation: SyncOperation = Field(..., description="Operation applied to the entity.")
+    operation: SyncOperation = Field(
+        ..., description="Operation applied to the entity."
+    )
     timestamp: str = Field(..., description="ISO-like client timestamp for the change.")
     client_id: str = Field(..., description="Client that originated the change.")
     version: int = Field(..., description="Entity version after this change.")
@@ -88,7 +116,9 @@ class ServerChangesResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     changes: list[SyncLogEntry] = Field(default_factory=list)
-    latest_change_id: int = Field(..., description="Highest server-side sync_log change_id.")
+    latest_change_id: int = Field(
+        ..., description="Highest server-side sync_log change_id."
+    )
 
 
 SyncTransportResponse = dict[str, Any]
@@ -96,16 +126,27 @@ SyncTransportResponse = dict[str, Any]
 
 SyncV2Domain = str
 SyncV2Operation = Literal[
-    "upsert", "delete", "link", "unlink", "resolve_conflict",
-    "append", "tombstone",
+    "upsert",
+    "delete",
+    "link",
+    "unlink",
+    "resolve_conflict",
+    "append",
+    "tombstone",
 ]
 SyncV2DatasetScope = Literal["personal", "workspace"]
 SyncV2EncryptionPolicy = Literal[
-    "client_private_v1", "server_trusted", "shared_workspace_v1",
-    "server_trusted_v1", "passphrase_wrapped_v1", "device_wrapped_v1",
+    "client_private_v1",
+    "server_trusted",
+    "shared_workspace_v1",
+    "server_trusted_v1",
+    "passphrase_wrapped_v1",
+    "device_wrapped_v1",
 ]
 SyncV2ConflictStatus = Literal["unresolved", "resolved", "dismissed"]
-SyncV2ConflictResolutionAction = Literal["accept_local", "accept_remote", "merge", "dismiss"]
+SyncV2ConflictResolutionAction = Literal[
+    "accept_local", "accept_remote", "merge", "dismiss"
+]
 
 SYNC_V2_DOMAINS: list[SyncV2Domain] = [
     "notes.note",
@@ -114,8 +155,13 @@ SYNC_V2_DOMAINS: list[SyncV2Domain] = [
     "attachment.ref",
 ]
 SYNC_V2_OPERATIONS: list[SyncV2Operation] = [
-    "upsert", "delete", "link", "unlink", "resolve_conflict",
-    "append", "tombstone",
+    "upsert",
+    "delete",
+    "link",
+    "unlink",
+    "resolve_conflict",
+    "append",
+    "tombstone",
 ]
 SYNC_V2_ENCRYPTION_POLICIES: list[SyncV2EncryptionPolicy] = [
     "client_private_v1",
@@ -176,6 +222,100 @@ def _find_disallowed_private_clear_payload_key(value: dict[str, Any]) -> str | N
     return None
 
 
+class PersonalContextSyncCapabilities(BaseModel):
+    """Strict Personal Context capability contract advertised by Sync v2."""
+
+    available: StrictBool
+    blockers: list[StrictStr] = Field(max_length=8)
+    authorization_policy: StrictStr
+    min_schema_version: StrictInt = Field(ge=1)
+    max_schema_version: StrictInt = Field(ge=1)
+    integrity_algorithm: StrictStr
+    integrity_key_distribution: StrictStr
+    privacy_cleanup_ack: StrictStr
+    purge_generation: StrictStr
+    max_record_bytes: StrictInt = Field(ge=1)
+    max_search_results: StrictInt = Field(ge=1)
+    max_proposals_per_turn: StrictInt = Field(ge=1)
+    max_proposals_per_session: StrictInt = Field(ge=1)
+    max_unresolved_proposals: StrictInt = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _validate_contract_state(self) -> "PersonalContextSyncCapabilities":
+        if self.min_schema_version > self.max_schema_version:
+            raise ValueError("min_schema_version must not exceed max_schema_version")
+        if self.available and self.blockers:
+            raise ValueError(
+                "available Personal Context capability cannot have blockers"
+            )
+        if not self.available and not self.blockers:
+            raise ValueError(
+                "unavailable Personal Context capability requires a blocker"
+            )
+        return self
+
+    model_config = ConfigDict(extra="ignore")
+
+
+_PERSONAL_CONTEXT_SYNC_DOMAINS = frozenset(
+    {
+        "personal_context.manifest",
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+        "personal_context.purge",
+    }
+)
+_MAX_CAPABILITY_MAP_ENTRIES = 100
+_MAX_CAPABILITY_VALUES_PER_DOMAIN = 8
+
+
+def _sanitize_capability_string_map(value: Any) -> tuple[dict[str, list[str]], bool]:
+    """Bound a string-list map and isolate malformed Personal Context entries."""
+
+    if not isinstance(value, dict):
+        return {}, False
+    sanitized: dict[str, list[str]] = {}
+    personal_context_malformed = False
+    for domain, entries in value.items():
+        valid = (
+            isinstance(domain, str)
+            and isinstance(entries, list)
+            and len(entries) <= _MAX_CAPABILITY_VALUES_PER_DOMAIN
+            and all(isinstance(entry, str) for entry in entries)
+        )
+        if not valid:
+            if domain in _PERSONAL_CONTEXT_SYNC_DOMAINS:
+                personal_context_malformed = True
+            continue
+        if len(sanitized) < _MAX_CAPABILITY_MAP_ENTRIES:
+            sanitized[domain] = entries
+    return sanitized, personal_context_malformed
+
+
+def _sanitize_capability_version_map(value: Any) -> tuple[dict[str, list[int]], bool]:
+    """Bound a positive-int version map and isolate malformed Personal Context entries."""
+
+    if not isinstance(value, dict):
+        return {}, False
+    sanitized: dict[str, list[int]] = {}
+    personal_context_malformed = False
+    for domain, versions in value.items():
+        valid = (
+            isinstance(domain, str)
+            and isinstance(versions, list)
+            and len(versions) <= _MAX_CAPABILITY_VALUES_PER_DOMAIN
+            and all(type(version) is int and version >= 1 for version in versions)
+        )
+        if not valid:
+            if domain in _PERSONAL_CONTEXT_SYNC_DOMAINS:
+                personal_context_malformed = True
+            continue
+        if len(sanitized) < _MAX_CAPABILITY_MAP_ENTRIES:
+            sanitized[domain] = versions
+    return sanitized, personal_context_malformed
+
+
 class SyncV2CapabilitiesResponse(BaseModel):
     """Server-supported Sync v2 protocol capabilities (M1 shape).
 
@@ -194,6 +334,14 @@ class SyncV2CapabilitiesResponse(BaseModel):
         default_factory=dict,
         validation_alias=AliasChoices("operations", "supported_operations"),
     )
+    supported_adapter_versions: dict[str, list[StrictInt]] = Field(
+        default_factory=dict,
+        max_length=100,
+    )
+    writable_adapter_versions: dict[str, list[StrictInt]] = Field(
+        default_factory=dict,
+        max_length=100,
+    )
     encryption: dict[str, Any] = Field(default_factory=dict)
     encryption_policies: list[str] = Field(default_factory=list)
     blob_transfer: dict[str, Any] = Field(default_factory=dict)
@@ -201,6 +349,12 @@ class SyncV2CapabilitiesResponse(BaseModel):
     max_batch_size: int = Field(100, ge=1)
     max_envelope_payload_bytes: int = Field(262_144, ge=1)
     max_attachment_bytes: int = Field(1_048_576, ge=1)
+    personal_context: PersonalContextSyncCapabilities | None = None
+    personal_context_validation_error: str | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+    )
     supports_restore_manifest: bool = True
     supports_conflicts: bool = True
     supports_attachments: bool = False
@@ -213,19 +367,74 @@ class SyncV2CapabilitiesResponse(BaseModel):
     def _normalize_legacy_capability_payload(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
+        normalized = dict(value)
+        normalized.pop("personal_context_validation_error", None)
+        personal_context_malformed = False
+        if normalized.get("domains") is None and isinstance(
+            normalized.get("supported_domains"), list
+        ):
+            normalized["domains"] = normalized["supported_domains"]
+        personal_context = value.get("personal_context")
+        if personal_context is not None:
+            try:
+                normalized["personal_context"] = (
+                    PersonalContextSyncCapabilities.model_validate(personal_context)
+                )
+            except (TypeError, ValueError):
+                normalized["personal_context"] = None
+                normalized["personal_context_validation_error"] = (
+                    "personal_context_capability_malformed"
+                )
         supported_operations = value.get("supported_operations")
-        if "operations" not in value and isinstance(supported_operations, list):
-            normalized = dict(value)
-            normalized["operations"] = {"*": supported_operations}
-            return normalized
-        return value
+        if "operations" not in value:
+            if isinstance(supported_operations, list):
+                normalized["operations"] = {"*": supported_operations}
+            elif isinstance(supported_operations, dict):
+                normalized["operations"] = supported_operations
+        operations, malformed = _sanitize_capability_string_map(
+            normalized.get("operations", {})
+        )
+        normalized["operations"] = operations
+        personal_context_malformed |= malformed
+        for field_name in (
+            "supported_adapter_versions",
+            "writable_adapter_versions",
+        ):
+            versions, malformed = _sanitize_capability_version_map(
+                normalized.get(field_name, {})
+            )
+            normalized[field_name] = versions
+            personal_context_malformed |= malformed
+        if personal_context_malformed:
+            normalized["personal_context_validation_error"] = (
+                "personal_context_capability_malformed"
+            )
+        return normalized
 
-    @field_validator("protocol_version", "min_supported_protocol_version", mode="before")
+    @field_validator(
+        "protocol_version", "min_supported_protocol_version", mode="before"
+    )
     @classmethod
     def _coerce_protocol_version(cls, value: Any) -> str:
         if value in (None, 2, "2"):
             return "sync-v2-m1"
         return str(value)
+
+    @field_validator(
+        "supported_adapter_versions",
+        "writable_adapter_versions",
+    )
+    @classmethod
+    def _validate_adapter_version_maps(
+        cls,
+        value: dict[str, list[int]],
+    ) -> dict[str, list[int]]:
+        if any(
+            len(versions) > 8 or any(version < 1 for version in versions)
+            for versions in value.values()
+        ):
+            raise ValueError("adapter version maps must contain bounded positive versions")
+        return value
 
     @property
     def supported_domains(self) -> list[str]:
@@ -254,6 +463,17 @@ class SyncV2ProfileDeviceStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class SyncV2NotesOrganizationStatus(BaseModel):
+    """Public-safe progress for the server Notes organization bootstrap."""
+
+    state: Literal["initializing", "ready", "failed"]
+    captured_count: int = Field(0, ge=0)
+    expected_count: int = Field(0, ge=0)
+    error_code: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SyncV2ProfileDatasetStatus(BaseModel):
     """Default personal dataset metadata in a Sync v2 profile response."""
 
@@ -265,6 +485,7 @@ class SyncV2ProfileDatasetStatus(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     encryption_policy: str = "server_trusted_v1"
+    notes_organization: SyncV2NotesOrganizationStatus | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -293,7 +514,9 @@ class SyncV2ProfileResponse(BaseModel):
     device: SyncV2ProfileDeviceStatus | None = None
     dataset: SyncV2ProfileDatasetStatus | None = None
     server_cursor: int = Field(0, ge=0)
-    capabilities: SyncV2CapabilitiesResponse = Field(default_factory=SyncV2CapabilitiesResponse)
+    capabilities: SyncV2CapabilitiesResponse = Field(
+        default_factory=SyncV2CapabilitiesResponse
+    )
     domain_status: list[SyncV2ProfileDomainStatus] = Field(default_factory=list)
     warnings: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -311,9 +534,60 @@ class SyncV2ProfileBootstrapRequest(BaseModel):
     client_instance: dict[str, Any] = Field(default_factory=dict)
     requested_domains: list[str] = Field(
         default_factory=lambda: [
-            "notes.note", "chat.conversation", "chat.message", "attachment.ref",
+            "notes.note",
+            "chat.conversation",
+            "chat.message",
+            "attachment.ref",
         ]
     )
+    supported_adapter_versions: dict[str, list[int]] | None = None
+
+    @model_validator(mode="after")
+    def _normalize_supported_adapter_versions(
+        self,
+    ) -> "SyncV2ProfileBootstrapRequest":
+        requested = list(
+            dict.fromkeys(str(domain) for domain in self.requested_domains)
+        )
+        if any(not domain.strip() for domain in requested):
+            raise ValueError("requested_domains must contain non-blank domain names")
+        supplied = self.supported_adapter_versions
+        if supplied is None:
+            supplied = self.client_instance.get("supported_adapter_versions")
+        if supplied is None:
+            supplied = {domain: [1] for domain in requested}
+        if not isinstance(supplied, dict):
+            raise ValueError("supported_adapter_versions must be an object")
+        extra = set(supplied) - set(requested)
+        if extra:
+            raise ValueError(
+                "supported_adapter_versions domains must also be requested"
+            )
+        normalized = {domain: [1] for domain in requested}
+        for domain, versions in supplied.items():
+            if (
+                not isinstance(versions, list)
+                or not versions
+                or any(
+                    isinstance(version, bool)
+                    or not isinstance(version, int)
+                    or version < 1
+                    for version in versions
+                )
+                or len(set(versions)) != len(versions)
+            ):
+                raise ValueError(
+                    "supported_adapter_versions must contain unique positive integers"
+                )
+            normalized[domain] = sorted(versions)
+        self.requested_domains = requested
+        self.supported_adapter_versions = normalized
+        self.client_instance = {
+            **self.client_instance,
+            "supported_adapter_versions": normalized,
+        }
+        return self
+
     model_config = ConfigDict(extra="ignore")
 
 
@@ -321,6 +595,214 @@ class SyncV2ProfileBootstrapResponse(SyncV2ProfileResponse):
     """Response from explicit profile bootstrap."""
 
     created: bool = False
+
+
+_PersonalContextQuotaInteger = Annotated[
+    int, Field(strict=True, ge=0, le=2**63 - 1)
+]
+
+
+def _validate_personal_context_quota_names(quotas: dict[str, int]) -> dict[str, int]:
+    if not all(
+        1 <= len(name) <= 64
+        and name[0].isascii()
+        and name[0].isalpha()
+        and all(
+            character.isascii()
+            and (character.islower() or character.isdigit() or character == "_")
+            for character in name
+        )
+        for name in quotas
+    ):
+        raise ValueError("quota name is invalid")
+    return quotas
+
+
+class SyncPersonalContextBootstrapRequest(BaseModel):
+    """Request one cursor-bounded canonical Personal Context snapshot."""
+
+    device_id: str = Field(..., min_length=1, max_length=256)
+    required_schema_version: int | None = Field(None, ge=1)
+    required_quotas: dict[StrictStr, _PersonalContextQuotaInteger] = Field(
+        default_factory=dict, max_length=32
+    )
+    expected_purge_generation: int | None = Field(None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("required_quotas")
+    @classmethod
+    def _validate_required_quota_names(
+        cls, quotas: dict[str, int]
+    ) -> dict[str, int]:
+        return _validate_personal_context_quota_names(quotas)
+
+
+class SyncPersonalContextBootstrapResponse(BaseModel):
+    """Canonical first-link snapshot and device-wrapped integrity key."""
+
+    dataset_id: str = Field(..., min_length=1, max_length=256)
+    authority_id: str = Field(..., min_length=1, max_length=256)
+    manifest: ProfileManifest
+    scopes: list[ProfileScope] = Field(default_factory=list)
+    records: list[ProfileRecord] = Field(default_factory=list)
+    proposals: list[ProfileProposal] = Field(default_factory=list)
+    purge_generation: int = Field(..., ge=0)
+    schema_version: int = Field(..., ge=1)
+    quotas: dict[StrictStr, _PersonalContextQuotaInteger] = Field(
+        ..., min_length=1, max_length=32
+    )
+    cursor: str = Field(..., min_length=1, max_length=256)
+    sync_transport_cursor: str = Field(..., min_length=1, max_length=32_768)
+    integrity_key_id: str = Field(..., min_length=1, max_length=256)
+    key_record_id: str = Field(..., min_length=1, max_length=512)
+    wrapped_key_blob: str = Field(..., min_length=1, max_length=16_384)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("quotas")
+    @classmethod
+    def _validate_quota_names(cls, quotas: dict[str, int]) -> dict[str, int]:
+        return _validate_personal_context_quota_names(quotas)
+
+    @model_validator(mode="after")
+    def _validate_canonical_binding(self) -> "SyncPersonalContextBootstrapResponse":
+        if self.manifest.purge_generation != self.purge_generation:
+            raise ValueError("bootstrap purge generation must match the manifest")
+        profile_id = self.manifest.profile_id
+        if any(scope.profile_id != profile_id for scope in self.scopes):
+            raise ValueError("bootstrap scope profile identity mismatch")
+        if any(record.profile_id != profile_id for record in self.records):
+            raise ValueError("bootstrap record profile identity mismatch")
+        if any(proposal.profile_id != profile_id for proposal in self.proposals):
+            raise ValueError("bootstrap proposal profile identity mismatch")
+        return self
+
+
+_AttentionInteger = _PersonalContextQuotaInteger
+
+
+class SyncPersonalContextSchemaAttention(BaseModel):
+    """Content-free server schema incompatibility details."""
+
+    kind: Literal["schema_incompatible"]
+    required_schema_version: Annotated[int, Field(strict=True, ge=1)]
+    server_min_schema_version: Annotated[int, Field(strict=True, ge=1)]
+    server_max_schema_version: Annotated[int, Field(strict=True, ge=1)]
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_incompatible_range(self) -> "SyncPersonalContextSchemaAttention":
+        if self.server_min_schema_version > self.server_max_schema_version:
+            raise ValueError("server schema range is invalid")
+        if (
+            self.server_min_schema_version
+            <= self.required_schema_version
+            <= self.server_max_schema_version
+        ):
+            raise ValueError("required schema version is compatible")
+        return self
+
+
+class SyncPersonalContextQuotaAttention(BaseModel):
+    """Content-free server quota incompatibility details."""
+
+    kind: Literal["quota_incompatible"]
+    required_quotas: dict[StrictStr, _AttentionInteger] = Field(
+        ..., min_length=1, max_length=32
+    )
+    available_quotas: dict[StrictStr, _AttentionInteger] = Field(
+        ..., min_length=1, max_length=32
+    )
+    insufficient_quotas: list[StrictStr] = Field(
+        ..., min_length=1, max_length=32
+    )
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_exact_shortfall(self) -> "SyncPersonalContextQuotaAttention":
+        all_names = set(self.required_quotas) | set(self.available_quotas)
+        _validate_personal_context_quota_names({name: 0 for name in all_names})
+        if not set(self.required_quotas).issubset(self.available_quotas):
+            raise ValueError("available quotas do not cover required quotas")
+        expected = {
+            name
+            for name, required in self.required_quotas.items()
+            if required > self.available_quotas[name]
+        }
+        actual = set(self.insufficient_quotas)
+        if len(actual) != len(self.insufficient_quotas) or actual != expected:
+            raise ValueError("insufficient quotas do not match the quota values")
+        return self
+
+
+class SyncPersonalContextPurgeAttention(BaseModel):
+    """Content-free server purge-generation mismatch details."""
+
+    kind: Literal["purge_generation_mismatch"]
+    expected_purge_generation: _AttentionInteger
+    current_purge_generation: _AttentionInteger
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_mismatch(self) -> "SyncPersonalContextPurgeAttention":
+        if self.expected_purge_generation == self.current_purge_generation:
+            raise ValueError("purge generations match")
+        return self
+
+
+SyncPersonalContextBootstrapAttention = Annotated[
+    SyncPersonalContextSchemaAttention
+    | SyncPersonalContextQuotaAttention
+    | SyncPersonalContextPurgeAttention,
+    Field(discriminator="kind"),
+]
+
+
+class SyncPersonalContextBootstrapErrorDetail(BaseModel):
+    """Strict, content-free detail for a Personal Context bootstrap rejection."""
+
+    error_code: StrictStr = Field(..., min_length=1, max_length=128)
+    message: StrictStr = Field(..., min_length=1, max_length=512)
+    attention: SyncPersonalContextBootstrapAttention | None = None
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_attention_error_code(
+        self,
+    ) -> "SyncPersonalContextBootstrapErrorDetail":
+        if self.attention is None:
+            return self
+        expected_codes = {
+            "schema_incompatible": "personal_context_schema_incompatible",
+            "quota_incompatible": "personal_context_quota_incompatible",
+            "purge_generation_mismatch": "personal_context_purge_generation_stale",
+        }
+        if self.error_code != expected_codes[self.attention.kind]:
+            raise ValueError("attention kind does not match error code")
+        return self
+
+
+class SyncPersonalContextBootstrapErrorResponse(BaseModel):
+    """Strict wrapper for a server bootstrap error response."""
+
+    detail: SyncPersonalContextBootstrapErrorDetail
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class SyncPersonalContextLinkCompleteRequest(BaseModel):
+    """Acknowledge one exact completed first-link cursor."""
+
+    device_id: str = Field(..., min_length=1, max_length=256)
+    dataset_id: str = Field(..., min_length=1, max_length=256)
+    bootstrap_cursor: str = Field(..., min_length=1, max_length=256)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SyncV2DeviceRegisterRequest(BaseModel):
@@ -402,7 +884,7 @@ class SyncV2Envelope(BaseModel):
     server_cursor: int | None = Field(None, ge=0)
     client_sequence: int | None = Field(None, ge=0)
     base_version: str | int | None = None
-    entity_version: str | int | None = None
+    entity_version: StrictStr | StrictInt | None = None
     object_revision: int | None = Field(None, ge=0)
     base_server_cursor: int | None = Field(None, ge=0)
     base_object_revision: int | None = Field(None, ge=0)
@@ -419,7 +901,13 @@ class SyncV2Envelope(BaseModel):
     encryption_metadata: dict[str, Any] = Field(default_factory=dict)
     status: str | None = None
 
-    @field_validator("routing_metadata", "payload_clear", "payload", "encryption_metadata", mode="before")
+    @field_validator(
+        "routing_metadata",
+        "payload_clear",
+        "payload",
+        "encryption_metadata",
+        mode="before",
+    )
     @classmethod
     def _default_object_maps(cls, value: Any) -> dict[str, Any]:
         return _normalize_object_map(value)
@@ -445,10 +933,7 @@ class SyncV2Envelope(BaseModel):
             self.payload_clear = dict(self.payload)
         # M1 fine-grained domains default to server_trusted_v1, but only when the
         # caller did not explicitly choose a policy (explicit client_private_v1 is honored).
-        if (
-            "." in self.domain
-            and "encryption_policy" not in self.model_fields_set
-        ):
+        if "." in self.domain and "encryption_policy" not in self.model_fields_set:
             self.encryption_policy = "server_trusted_v1"
         return self
 
@@ -456,7 +941,9 @@ class SyncV2Envelope(BaseModel):
     def _reject_clear_private_payload(self) -> "SyncV2Envelope":
         if self.encryption_policy != "client_private_v1":
             return self
-        disallowed_key_path = _find_disallowed_private_clear_payload_key(self.payload_clear)
+        disallowed_key_path = _find_disallowed_private_clear_payload_key(
+            self.payload_clear
+        )
         if disallowed_key_path:
             raise ValueError(
                 f"{disallowed_key_path} is not allowed in clear client_private_v1 sync envelopes"
@@ -477,20 +964,30 @@ class SyncV2PushRequest(BaseModel):
     def _validate_envelope_dataset_ids(self) -> "SyncV2PushRequest":
         for envelope in self.envelopes:
             if envelope.dataset_id != self.dataset_id:
-                raise ValueError("envelope dataset_id must match SyncV2PushRequest.dataset_id")
+                raise ValueError(
+                    "envelope dataset_id must match SyncV2PushRequest.dataset_id"
+                )
         return self
 
 
 class SyncV2PushAcceptedEnvelope(BaseModel):
     client_envelope_id: str
     envelope_id: str | None = None
-    server_sequence: int | None = Field(None, ge=0, validation_alias=AliasChoices("server_sequence", "server_cursor"))
+    server_sequence: int | None = Field(
+        None, ge=0, validation_alias=AliasChoices("server_sequence", "server_cursor")
+    )
     domain: SyncV2Domain | None = None
     entity_id: str | None = None
-    object_id: str | None = Field(None, validation_alias=AliasChoices("object_id", "entity_id"))
+    object_id: str | None = Field(
+        None, validation_alias=AliasChoices("object_id", "entity_id")
+    )
     object_revision: int | None = Field(None, ge=0)
     apply_status: str | None = None
-    server_cursor: int | None = Field(None, ge=0, validation_alias=AliasChoices("server_cursor", "server_sequence"))
+    apply_error_code: str | None = None
+    apply_error_message: str | None = None
+    server_cursor: int | None = Field(
+        None, ge=0, validation_alias=AliasChoices("server_cursor", "server_sequence")
+    )
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 

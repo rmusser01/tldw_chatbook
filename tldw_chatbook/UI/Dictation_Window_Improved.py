@@ -3,40 +3,58 @@
 Improved dictation interface with privacy settings and better error handling.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 from pathlib import Path
 from datetime import datetime
+import asyncio
 import time
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
-    Label, Button, TextArea, Select, Input, Static, 
-    RichLog, Switch, Collapsible, Rule, ListView, ListItem,
-    LoadingIndicator
+    Label,
+    Button,
+    TextArea,
+    Select,
+    Input,
+    Static,
+    Switch,
+    Collapsible,
 )
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
-from textual import work
 from textual.binding import Binding
 from loguru import logger
-import json
 
 # Local imports
-from ..config import get_cli_setting, save_setting_to_cli_config
-from ..Audio.dictation_service_lazy import (
-    LazyLiveDictationService, 
-    AudioInitializationError,
-    TranscriptionInitializationError,
-    DictationState
+from ..config import (
+    get_cli_setting,
+    get_user_data_dir,
+    save_settings_to_cli_config,
 )
-from ..Event_Handlers.Audio_Events import (
-    DictationStartedEvent, DictationStoppedEvent,
-    PartialTranscriptEvent, FinalTranscriptEvent,
-    VoiceCommandEvent
-)
-from ..Utils.input_validation import validate_text_input
+from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
+from ..Event_Handlers.Audio_Events import VoiceCommandEvent
+from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
+
+
+# task-15470: `_persist_settings` used to write straight to config.toml --
+# 6-9 sequential `save_setting_to_cli_config` calls, each its own full
+# read+atomic-rewrite+cache-reload cycle -- and the buffer-duration input
+# fired it on every keystroke that happened to parse. This debounce
+# coalesces a burst of edits (a typed duration, several switch flips) into
+# one batched write, dispatched off the event loop; `on_unmount` flushes any
+# pending write so an edit immediately followed by navigating away or
+# quitting is not lost.
+DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS = 0.6
+
+
+def dictation_export_directory() -> Path:
+    """Return the active user's directory for requested Dictation exports.
+
+    Returns:
+        The profile-owned Dictation export directory.
+    """
+    return get_user_data_dir() / "exports" / "dictation"
 
 
 class ImprovedDictationWindow(Widget):
@@ -47,7 +65,7 @@ class ImprovedDictationWindow(Widget):
     - Lazy initialization
     - Resource optimization
     """
-    
+
     BINDINGS = [
         Binding("ctrl+d", "toggle_dictation", "Start/Stop Dictation"),
         Binding("ctrl+p", "pause_dictation", "Pause/Resume"),
@@ -56,15 +74,21 @@ class ImprovedDictationWindow(Widget):
         Binding("ctrl+shift+c", "clear_transcript", "Clear Transcript"),
         Binding("f1", "show_help", "Help"),
     ]
-    
+
     DEFAULT_CSS = """
+    /* `1fr`, not `100%`. A percentage height is measured against the
+       parent and ignores siblings, so the container claimed a full
+       viewport's worth beside the Lab chrome and everything below it was
+       squeezed: the transcript -- the thing this view exists to show --
+       measured FOUR rows of 26, starting at y=24, which is where the
+       viewport ends. */
     ImprovedDictationWindow {
-        height: 100%;
+        height: 1fr;
         width: 100%;
     }
-    
+
     .dictation-container {
-        height: 100%;
+        height: 1fr;
         layout: vertical;
     }
     
@@ -77,6 +101,15 @@ class ImprovedDictationWindow(Widget):
     .dictation-content {
         height: 1fr;
         layout: horizontal;
+    }
+
+    /* The status readouts are a few lines of text, but the container had no
+       height, so it split the body with the content: measured at 200x60,
+       the header and status took 30 of 54 rows and the transcript -- the
+       thing this view exists to show -- got 10. */
+    #status-container {
+        height: auto;
+        max-height: 4;
     }
     
     .transcript-area {
@@ -107,16 +140,24 @@ class ImprovedDictationWindow(Widget):
         margin-bottom: 1;
     }
     
+    /* One line, not a block. Measured on the running screen: this rendered
+       as a padded, bordered, full-background box FOUR rows tall, and there
+       are two of them -- 8 of a 26-row viewport spent on notices, while 30
+       of 34 controls sat below the fold. State is carried by the text and a
+       foreground colour instead. */
     .privacy-notice {
-        background: $warning;
-        padding: 1;
-        margin: 1 0;
-        border: round $warning-darken-1;
+        height: 1;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: transparent;
+        color: $warning;
     }
-    
+
     .privacy-enabled {
-        background: $success;
-        border: round $success-darken-1;
+        background: transparent;
+        border: none;
+        color: $success;
     }
     
     .error-message {
@@ -151,7 +192,7 @@ class ImprovedDictationWindow(Widget):
         text-style: italic;
     }
     """
-    
+
     # Reactive attributes
     is_dictating = reactive(False)
     is_initialized = reactive(False)
@@ -160,35 +201,42 @@ class ImprovedDictationWindow(Widget):
     word_count = reactive(0)
     duration = reactive(0.0)
     dictation_state = reactive(DictationState.IDLE)
-    
+
     def __init__(self):
         """Initialize improved dictation window."""
         super().__init__()
-        
+
         # Lazy service - not initialized until needed
         self.dictation_service = None
-        
+
         # Transcript management
         self.transcript_segments = []
-        self.transcript_history = []
-        
+
         # Settings
         self.settings = self._load_settings()
-        
+
+        # task-15470: debounce state for `_persist_settings` -- see
+        # `DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS`.
+        self._settings_save_timer = None
+        self._settings_dirty = False
+        self._settings_persist_worker = None
+
         # Start time tracking
         self._start_time = None
-    
+
     def compose(self) -> ComposeResult:
         """Compose the improved dictation UI."""
         with Vertical(classes="dictation-container"):
             # Header
             with Horizontal(classes="dictation-header"):
                 yield Label("🎤 Live Dictation", classes="section-title")
-                yield Label("Press Ctrl+D to start/stop • F1 for help", classes="help-text")
-            
+                yield Label(
+                    "Press Ctrl+D to start/stop • F1 for help", classes="help-text"
+                )
+
             # Status/Error area
             yield Container(id="status-container")
-            
+
             # Main content area
             with Horizontal(classes="dictation-content"):
                 # Transcript area
@@ -197,59 +245,60 @@ class ImprovedDictationWindow(Widget):
                     yield TextArea(
                         id="transcript-display",
                         classes="transcript-display",
-                        read_only=True
+                        read_only=True,
                     )
-                    
+
                     # Control buttons
                     with Horizontal():
                         yield Button(
                             "🎤 Start Dictation",
                             id="dictation-toggle-btn",
-                            variant="primary"
+                            variant="primary",
                         )
-                        yield Button(
-                            "⏸️ Pause",
-                            id="dictation-pause-btn",
-                            disabled=True
-                        )
-                        yield Button(
-                            "🗑️ Clear",
-                            id="dictation-clear-btn"
-                        )
-                        yield Button(
-                            "🔧 Troubleshoot",
-                            id="troubleshoot-btn"
-                        )
-                
+                        yield Button("⏸️ Pause", id="dictation-pause-btn", disabled=True)
+                        yield Button("🗑️ Clear", id="dictation-clear-btn")
+                        yield Button("🔧 Troubleshoot", id="troubleshoot-btn")
+
                 # Sidebar
                 with ScrollableContainer(classes="dictation-sidebar"):
                     # Privacy Settings
                     with Collapsible(title="🔒 Privacy Settings", collapsed=False):
                         with Vertical(classes="control-section"):
                             # Privacy status
-                            privacy_class = "privacy-enabled" if self.settings['privacy']['local_only'] else ""
-                            with Container(classes=f"privacy-notice {privacy_class}", id="privacy-status"):
-                                yield Static(self._get_privacy_status_text())
-                            
-                            # Privacy switches
-                            yield Switch(
-                                value=self.settings['privacy']['save_history'],
-                                id="save-history-switch"
+                            privacy_class = (
+                                "privacy-enabled"
+                                if self.settings["privacy"]["local_only"]
+                                else ""
                             )
-                            yield Label("Save transcription history")
-                            
+                            with Container(
+                                classes=f"privacy-notice {privacy_class}",
+                                id="privacy-status",
+                            ):
+                                yield Static(self._get_privacy_status_text())
+
+                            # "Save transcription history" was here. It
+                            # persisted a setting and nothing else:
+                            # `_add_to_history` was a `pass` stub, so no
+                            # transcript was ever recorded, and the History
+                            # list it implied was composed only if the
+                            # setting had been on at mount. A switch telling
+                            # the user their speech is being kept, when it
+                            # is not, is a privacy claim the code did not
+                            # honour -- removed rather than left as a
+                            # control that does nothing. See task-1331.
+
                             yield Switch(
-                                value=self.settings['privacy']['local_only'],
-                                id="local-only-switch"
+                                value=self.settings["privacy"]["local_only"],
+                                id="local-only-switch",
                             )
                             yield Label("Local processing only (privacy mode)")
-                            
+
                             yield Switch(
-                                value=self.settings['privacy']['auto_clear_buffer'],
-                                id="auto-clear-switch"
+                                value=self.settings["privacy"]["auto_clear_buffer"],
+                                id="auto-clear-switch",
                             )
                             yield Label("Auto-clear audio buffer")
-                    
+
                     # Transcription Settings
                     with Collapsible(title="⚙️ Transcription Settings"):
                         with Vertical(classes="control-section"):
@@ -268,45 +317,47 @@ class ImprovedDictationWindow(Widget):
                                     ("Japanese", "ja"),
                                     ("Korean", "ko"),
                                 ],
-                                value=self.settings.get('language') or 'en',  # Ensure never None
-                                id="language-select"
+                                value=self.settings.get("language")
+                                or "en",  # Ensure never None
+                                id="language-select",
                             )
-                            
+
                             # Provider selection (filtered by privacy mode)
                             yield Label("Provider:")
                             yield Select(
                                 options=self._get_provider_options(),
-                                value=self.settings.get('provider') or 'auto',  # Ensure never None
-                                id="provider-select"
+                                value=self.settings.get("provider")
+                                or "auto",  # Ensure never None
+                                id="provider-select",
                             )
-                            
+
                             # Options
                             yield Switch(
-                                value=self.settings.get('punctuation', True),
-                                id="punctuation-switch"
+                                value=self.settings.get("punctuation", True),
+                                id="punctuation-switch",
                             )
                             yield Label("Auto punctuation")
-                            
+
                             yield Switch(
-                                value=self.settings.get('commands', True),
-                                id="commands-switch"
+                                value=self.settings.get("commands", True),
+                                id="commands-switch",
                             )
                             yield Label("Voice commands")
-                    
+
                     # Performance Settings
                     with Collapsible(title="🚀 Performance", collapsed=True):
                         with Vertical(classes="control-section"):
                             yield Label("Buffer Duration (ms):")
                             yield Input(
-                                value=str(self.settings.get('buffer_duration_ms', 500)),
+                                value=str(self.settings.get("buffer_duration_ms", 500)),
                                 id="buffer-duration-input",
-                                type="integer"
+                                type="integer",
                             )
                             yield Static(
                                 "Lower = more responsive, Higher = more stable",
-                                classes="help-text"
+                                classes="help-text",
                             )
-                    
+
                     # Statistics
                     with Vertical(classes="control-section"):
                         yield Label("Statistics", classes="section-title")
@@ -315,49 +366,44 @@ class ImprovedDictationWindow(Widget):
                             yield Static("Duration: 0:00", id="duration-display")
                             yield Static("Speed: 0 WPM", id="speed-display")
                             yield Static("State: Idle", id="state-display")
-                    
+
                     # Export section
                     with Vertical(classes="control-section"):
                         yield Label("Export", classes="section-title")
                         yield Button("📋 Copy to Clipboard", id="copy-button")
                         yield Button("💾 Save as Text", id="save-text-button")
                         yield Button("📝 Save as Markdown", id="save-md-button")
-                    
-                    # History section (only if enabled)
-                    if self.settings['privacy']['save_history']:
-                        with Vertical(classes="control-section"):
-                            yield Label("History", classes="section-title")
-                            yield ListView(
-                                id="history-list",
-                                classes="history-list"
-                            )
-                            yield Button("Clear History", id="clear-history-button")
-    
+
     def on_mount(self):
         """Initialize on mount."""
+        # Textual posts `Changed` when a Switch or Input is created with a
+        # value, and every one of those handlers persists settings -- so
+        # merely opening this view wrote a [dictation] section, privacy
+        # included, that the user never asked for. The flag is cleared after
+        # the first refresh, by which point the mount-time events have been
+        # delivered; anything after that is a real edit.
+        self._settings_are_mounting = True
+        self.call_after_refresh(self._finish_mounting)
+
         # Update UI based on settings
         self._update_privacy_ui()
-        
-        # Load history if enabled
-        if self.settings['privacy']['save_history']:
-            self._load_history()
-    
+
     def _get_privacy_status_text(self) -> str:
         """Get privacy status description."""
-        if self.settings['privacy']['local_only']:
+        if self.settings["privacy"]["local_only"]:
             return "🔒 Privacy Mode: All processing happens locally"
         else:
             return "⚠️ Standard Mode: May use cloud services"
-    
+
     def _get_provider_options(self) -> List[tuple]:
         """Get provider options based on privacy settings."""
-        if self.settings['privacy']['local_only']:
+        if self.settings["privacy"]["local_only"]:
             # Only local providers in privacy mode
             return [
                 ("Auto (Local)", "auto"),
                 ("Parakeet MLX", "parakeet-mlx"),
                 ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper"),
+                ("Lightning Whisper", "lightning-whisper-mlx"),
             ]
         else:
             # All providers available
@@ -365,69 +411,65 @@ class ImprovedDictationWindow(Widget):
                 ("Auto", "auto"),
                 ("Parakeet MLX", "parakeet-mlx"),
                 ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper"),
+                ("Lightning Whisper", "lightning-whisper-mlx"),
                 ("OpenAI Whisper", "openai-whisper"),
                 ("Google Speech", "google-speech"),
             ]
-    
+
     def _initialize_service(self) -> bool:
         """Initialize dictation service lazily."""
         if self.dictation_service is not None:
             return True
-        
+
         try:
             # Show initialization status
             self._show_status("Initializing dictation service...", "info")
-            
+
             # Create service with current settings
             self.dictation_service = LazyLiveDictationService(
-                transcription_provider=self.settings.get('provider', 'auto'),
-                transcription_model=self.settings.get('model'),
-                language=self.settings.get('language', 'en'),
-                enable_punctuation=self.settings.get('punctuation', True),
-                enable_commands=self.settings.get('commands', True)
+                transcription_provider=self.settings.get("provider", "auto"),
+                transcription_model=self.settings.get("model"),
+                language=self.settings.get("language", "en"),
+                enable_punctuation=self.settings.get("punctuation", True),
+                enable_commands=self.settings.get("commands", True),
             )
-            
+
             # Apply privacy settings
-            self.dictation_service.update_privacy_settings(self.settings['privacy'])
-            
+            self.dictation_service.update_privacy_settings(self.settings["privacy"])
+
             # Set buffer duration
-            buffer_ms = self.settings.get('buffer_duration_ms', 500)
+            buffer_ms = self.settings.get("buffer_duration_ms", 500)
             self.dictation_service.set_buffer_duration(buffer_ms)
-            
+
             self.is_initialized = True
             self._show_status("Dictation service ready", "success")
             return True
-            
+
         except Exception as e:
             self.is_initialized = False
             self.initialization_error = str(e)
             self._show_status(f"Initialization failed: {e}", "error")
             logger.error(f"Failed to initialize dictation service: {e}")
             return False
-    
+
     def _show_status(self, message: str, level: str = "info"):
         """Show status message in UI."""
         status_container = self.query_one("#status-container", Container)
         status_container.remove_children()
-        
+
         if level == "error":
-            status_container.mount(
-                Static(message, classes="error-message")
-            )
+            status_container.mount(Static(message, classes="error-message"))
         elif level == "success":
             status_container.mount(
                 Static(message, classes="initialization-status status-ready")
             )
         else:
-            status_container.mount(
-                Static(message, classes="initialization-status")
-            )
-    
+            status_container.mount(Static(message, classes="initialization-status"))
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
-        
+
         if button_id == "dictation-toggle-btn":
             self.action_toggle_dictation()
         elif button_id == "dictation-pause-btn":
@@ -442,59 +484,146 @@ class ImprovedDictationWindow(Widget):
             self._export_as_text()
         elif button_id == "save-md-button":
             self._export_as_markdown()
-        elif button_id == "clear-history-button":
-            self._clear_history()
-    
+
+    def _finish_mounting(self) -> None:
+        """Stop treating control changes as mount noise."""
+        self._settings_are_mounting = False
+
+    def _persist_settings(self) -> None:
+        """Schedule a debounced settings save unless controls are mounting.
+
+        The single gate. Handlers call this rather than `_save_settings`
+        directly, so a new handler cannot reintroduce the write-on-open by
+        forgetting to check. task-15470: this used to call `_save_settings()`
+        directly and synchronously -- 6-9 sequential config.toml
+        read-rewrite-reload cycles on the event loop, and the
+        buffer-duration input called it once per parsing keystroke. It now
+        only marks settings dirty and (re)arms a debounce timer; the actual
+        write is one batched atomic mutation, dispatched off the loop by
+        `_flush_settings_after_debounce`. `on_unmount` force-flushes any
+        pending write.
+        """
+        if getattr(self, "_settings_are_mounting", False):
+            return
+        self._settings_dirty = True
+        if self._settings_save_timer is not None:
+            self._settings_save_timer.stop()
+        self._settings_save_timer = self.set_timer(
+            DICTATION_SETTINGS_SAVE_DEBOUNCE_SECONDS,
+            self._flush_settings_after_debounce,
+        )
+
+    def _flush_settings_after_debounce(self) -> None:
+        """Debounce timer callback: hand the actual write to a worker."""
+        self._settings_save_timer = None
+        self._settings_persist_worker = self.run_worker(
+            self._persist_settings_off_loop(),
+            exclusive=True,
+            group="dictation-settings-persist",
+        )
+
+    async def _persist_settings_off_loop(self) -> None:
+        """Write settings on a worker thread, off the event loop.
+
+        Snapshots `self.settings` here, on the main thread, before handing
+        the write to `to_thread` -- a further keystroke/switch can still
+        arrive and mutate `self.settings` while this write is in flight, and
+        it must not race the worker thread's read of that same dict.
+
+        Clears `_settings_dirty` immediately after taking the snapshot, NOT
+        after the write completes (review round, task-15470): the awaited
+        `to_thread` call below yields to the event loop, and a further edit
+        can land while this write is still in flight. Clearing dirty only
+        after the write finished would blindly stamp it False again on
+        completion -- clobbering the True a mid-flight edit had just set --
+        so a quit landing before that edit's own new debounce timer fires
+        would see `dirty=False` and lose it (reproduced: "edit 2 LOST").
+        Clearing right here instead means the dirty flag always answers
+        "is there an edit newer than the snapshot this worker is holding",
+        which a mid-flight edit correctly flips back to True.
+        """
+        snapshot = self._settings_snapshot()
+        self._settings_dirty = False
+        await asyncio.to_thread(self._write_settings_snapshot, snapshot)
+
+    async def on_unmount(self) -> None:
+        """Flush a pending debounced settings write.
+
+        Fires both when this view is switched away from (`STTS_Window`'s
+        `content_container.remove_children()`) and when the app quits while
+        the Dictation view is mounted -- Textual's `App._shutdown` prunes
+        every mounted descendant, this widget included. If a debounced
+        write is already in flight, waits for it rather than dispatching a
+        second writer against the same config file.
+        """
+        if self._settings_save_timer is not None:
+            self._settings_save_timer.stop()
+            self._settings_save_timer = None
+        worker = self._settings_persist_worker
+        if worker is not None and not worker.is_finished:
+            try:
+                await worker.wait()
+            except Exception as error:
+                logger.error(
+                    "Pending dictation settings write failed: {}",
+                    type(error).__name__,
+                )
+            # Falls through to the dirty re-check below (review round,
+            # task-15470) rather than returning here: an edit can land
+            # while THIS await was in flight, re-dirtying settings after
+            # the awaited worker already took its own snapshot. Returning
+            # unconditionally after the wait would silently drop it.
+        if self._settings_dirty:
+            snapshot = self._settings_snapshot()
+            await asyncio.to_thread(self._write_settings_snapshot, snapshot)
+            self._settings_dirty = False
+
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handle switch changes."""
-        if event.switch.id == "save-history-switch":
-            self.settings['privacy']['save_history'] = event.value
-            self._save_settings()
-            self._update_privacy_ui()
-        elif event.switch.id == "local-only-switch":
-            self.settings['privacy']['local_only'] = event.value
-            self._save_settings()
+        if event.switch.id == "local-only-switch":
+            self.settings["privacy"]["local_only"] = event.value
+            self._persist_settings()
             self._update_privacy_ui()
             # Update provider options
             provider_select = self.query_one("#provider-select", Select)
             provider_select.set_options(self._get_provider_options())
         elif event.switch.id == "auto-clear-switch":
-            self.settings['privacy']['auto_clear_buffer'] = event.value
-            self._save_settings()
+            self.settings["privacy"]["auto_clear_buffer"] = event.value
+            self._persist_settings()
             if self.dictation_service:
-                self.dictation_service.update_privacy_settings(self.settings['privacy'])
+                self.dictation_service.update_privacy_settings(self.settings["privacy"])
         elif event.switch.id == "punctuation-switch":
-            self.settings['punctuation'] = event.value
-            self._save_settings()
+            self.settings["punctuation"] = event.value
+            self._persist_settings()
         elif event.switch.id == "commands-switch":
-            self.settings['commands'] = event.value
-            self._save_settings()
-    
+            self.settings["commands"] = event.value
+            self._persist_settings()
+
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes."""
         if event.input.id == "buffer-duration-input":
             try:
                 duration = int(event.value)
                 if 100 <= duration <= 2000:
-                    self.settings['buffer_duration_ms'] = duration
-                    self._save_settings()
+                    self.settings["buffer_duration_ms"] = duration
+                    self._persist_settings()
                     if self.dictation_service:
                         self.dictation_service.set_buffer_duration(duration)
             except ValueError:
                 pass
-    
+
     def action_toggle_dictation(self) -> None:
         """Toggle dictation on/off with lazy initialization."""
         if self.is_dictating:
             self._stop_dictation()
         else:
             self._start_dictation()
-    
+
     def action_pause_dictation(self) -> None:
         """Pause or resume dictation."""
         if not self.dictation_service or not self.is_dictating:
             return
-        
+
         # Check current state to toggle between pause/resume
         if self.dictation_state == DictationState.PAUSED:
             self.dictation_service.resume_dictation()
@@ -504,21 +633,21 @@ class ImprovedDictationWindow(Widget):
             self.dictation_service.pause_dictation()
             pause_btn = self.query_one("#dictation-pause-btn", Button)
             pause_btn.label = "▶️ Resume"
-    
+
     def _start_dictation(self):
         """Start dictation with initialization if needed."""
         # Initialize service if not already done
         if not self._initialize_service():
             return
-        
+
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
         toggle_btn.label = "🛑 Stop Dictation"
         toggle_btn.variant = "error"
-        
+
         pause_btn = self.query_one("#dictation-pause-btn", Button)
         pause_btn.disabled = False
-        
+
         # Start dictation
         success = self.dictation_service.start_dictation(
             on_partial_transcript=self._on_partial_transcript,
@@ -526,9 +655,9 @@ class ImprovedDictationWindow(Widget):
             on_state_change=self._on_state_change,
             on_error=self._on_error,
             on_command=self._on_command,
-            save_audio=False  # Respect privacy settings
+            save_audio=False,  # Respect privacy settings
         )
-        
+
         if success:
             self.is_dictating = True
             self._start_time = datetime.now()
@@ -539,118 +668,118 @@ class ImprovedDictationWindow(Widget):
             toggle_btn.label = "🎤 Start Dictation"
             toggle_btn.variant = "primary"
             pause_btn.disabled = True
-    
+
     def _stop_dictation(self):
         """Stop dictation."""
         if not self.dictation_service:
             return
-        
+
         result = self.dictation_service.stop_dictation()
-        
+
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
         toggle_btn.label = "🎤 Start Dictation"
         toggle_btn.variant = "primary"
-        
+
         pause_btn = self.query_one("#dictation-pause-btn", Button)
         pause_btn.disabled = True
         pause_btn.label = "⏸️ Pause"
-        
+
         self.is_dictating = False
         self.duration = result.duration
         self.word_count = len(result.transcript.split()) if result.transcript else 0
         self._update_stats()
-        
+
         # Save to history if enabled
-        if result.transcript and self.settings['privacy']['save_history']:
-            self._add_to_history(result.transcript)
-        
+
         self._show_status("Dictation stopped", "info")
-    
+
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript updates."""
         self._update_transcript_display(text, is_partial=True)
-    
+
     def _on_final_transcript(self, text: str):
         """Handle final transcript segments."""
         self._add_transcript_segment(text)
-    
+
     def _on_state_change(self, state: str):
         """Handle dictation state changes."""
         self.dictation_state = state
         state_display = self.query_one("#state-display", Static)
         state_display.update(f"State: {state}")
-    
+
     def _on_error(self, error: Exception):
         """Handle dictation errors."""
         self._show_status(f"Error: {error}", "error")
         logger.error(f"Dictation error: {error}")
-    
+
     def _on_command(self, command: str):
         """Handle voice commands."""
         self.post_message(VoiceCommandEvent(command=command))
         logger.info(f"Voice command detected: {command}")
-    
+
     def _update_privacy_ui(self):
         """Update UI based on privacy settings."""
         privacy_status = self.query_one("#privacy-status", Container)
         privacy_status.remove_children()
         privacy_status.mount(Static(self._get_privacy_status_text()))
-        
-        if self.settings['privacy']['local_only']:
+
+        if self.settings["privacy"]["local_only"]:
             privacy_status.add_class("privacy-enabled")
         else:
             privacy_status.remove_class("privacy-enabled")
-    
+
     def _show_troubleshooting(self):
         """Show audio troubleshooting dialog."""
         self.app.push_screen(
-            AudioTroubleshootingDialog(),
-            callback=self._on_troubleshooting_complete
+            AudioTroubleshootingDialog(), callback=self._on_troubleshooting_complete
         )
-    
+
     def _on_troubleshooting_complete(self, result: bool):
         """Handle troubleshooting dialog completion."""
         if result:
             # Reload settings in case device preference changed
             self.settings = self._load_settings()
-            
+
             # Reset service to pick up new settings
             if self.dictation_service:
                 if self.is_dictating:
                     self._stop_dictation()
                 self.dictation_service = None
-            
+
             self._show_status("Audio settings updated", "info")
-    
+
     def action_clear_transcript(self) -> None:
         """Clear the current transcript."""
         try:
             # Clear the display
             transcript_display = self.query_one("#transcript-display", TextArea)
             transcript_display.clear()
-            
+
             # Clear internal data
             self.transcript_text = ""
             self.word_count = 0
             if self.dictation_service:
                 self.dictation_service.transcript_segments = []
                 self.dictation_service.current_transcript = ""
-            
+
             # Update stats
             self._update_stats()
-            
+
             self.app.notify("Transcript cleared")
         except Exception as e:
             logger.error(f"Error clearing transcript: {e}")
-    
+
     def action_copy_transcript(self) -> None:
         """Copy transcript to clipboard."""
         try:
             if self.transcript_text:
                 import pyperclip
+
                 pyperclip.copy(self.transcript_text)
-                self.app.notify(f"Copied {len(self.transcript_text)} characters to clipboard")
+                self.app.notify(
+                    f"Copied {len(self.transcript_text)} characters to clipboard"
+                )
             else:
                 self.app.notify("No transcript to copy", severity="warning")
         except ImportError:
@@ -659,16 +788,16 @@ class ImprovedDictationWindow(Widget):
         except Exception as e:
             logger.error(f"Error copying transcript: {e}")
             self.app.notify("Failed to copy transcript", severity="error")
-    
+
     def action_export_transcript(self) -> None:
         """Export transcript to file."""
         if not self.transcript_text:
             self.app.notify("No transcript to export", severity="warning")
             return
-        
+
         # For now, just save as text
         self._export_as_text()
-    
+
     def action_show_help(self):
         """Show help dialog."""
         help_text = """
@@ -690,7 +819,7 @@ Voice Commands (when enabled):
 
 Privacy Settings:
 • Local Only: All processing on your device
-• Save History: Keep transcripts between sessions
+• Transcript Storage: Transcripts are not automatically saved unless explicitly exported.
 • Auto-clear Buffer: Remove audio data after processing
 
 Performance Tips:
@@ -699,49 +828,99 @@ Performance Tips:
 • Use local providers for privacy
         """
         self.app.notify(help_text.strip(), title="Dictation Help", timeout=15)
-    
+
     def _load_settings(self) -> Dict[str, Any]:
-        """Load dictation settings with privacy defaults."""
+        """Load dictation settings with privacy defaults.
+
+        Normalizes `dictation.provider` on read so a config file saved before
+        `_get_provider_options()` was corrected to `"lightning-whisper-mlx"`
+        (it used to offer the misspelled `"lightning-whisper"`) still resolves
+        to a real dispatch id. This is read-side only -- it does not write
+        the normalized value back to config.
+        """
         settings = {
-            'provider': get_cli_setting('dictation.provider', 'auto') or 'auto',
-            'model': get_cli_setting('dictation.model', None),
-            'language': get_cli_setting('dictation.language', 'en') or 'en',
-            'punctuation': get_cli_setting('dictation.punctuation', True),
-            'commands': get_cli_setting('dictation.commands', True),
-            'buffer_duration_ms': get_cli_setting('dictation.buffer_duration_ms', 500) or 500,
-            'privacy': {
-                'save_history': get_cli_setting('dictation.privacy.save_history', False),
-                'local_only': get_cli_setting('dictation.privacy.local_only', True),
-                'auto_clear_buffer': get_cli_setting('dictation.privacy.auto_clear_buffer', True),
-            }
+            "provider": normalize_provider_id(
+                get_cli_setting("dictation.provider", "auto") or "auto"
+            ),
+            "model": get_cli_setting("dictation.model", None),
+            "language": get_cli_setting("dictation.language", "en") or "en",
+            "punctuation": get_cli_setting("dictation.punctuation", True),
+            "commands": get_cli_setting("dictation.commands", True),
+            "buffer_duration_ms": get_cli_setting("dictation.buffer_duration_ms", 500)
+            or 500,
+            "privacy": {
+                "local_only": get_cli_setting("dictation.privacy.local_only", True),
+                "auto_clear_buffer": get_cli_setting(
+                    "dictation.privacy.auto_clear_buffer", True
+                ),
+            },
         }
         # Ensure no None values for critical settings
-        if settings['provider'] is None:
-            settings['provider'] = 'auto'
-        if settings['language'] is None:
-            settings['language'] = 'en'
+        if settings["provider"] is None:
+            settings["provider"] = "auto"
+        if settings["language"] is None:
+            settings["language"] = "en"
         return settings
-    
+
+    def _settings_snapshot(self) -> Dict[str, Any]:
+        """Copy the persisted fields off `self.settings`.
+
+        `self.settings` is a plain mutable dict; taking this copy on the
+        caller's thread (always the main/event-loop thread -- see
+        `_persist_settings_off_loop`) before handing the write to a worker
+        thread means the worker never reads `self.settings` directly, so a
+        further keystroke/switch arriving while that write is in flight
+        cannot race it.
+        """
+        return {
+            "dictation": {
+                "provider": self.settings["provider"],
+                "model": self.settings.get("model"),
+                "language": self.settings["language"],
+                "punctuation": self.settings["punctuation"],
+                "commands": self.settings["commands"],
+                "buffer_duration_ms": self.settings["buffer_duration_ms"],
+            },
+            "dictation.privacy": dict(self.settings["privacy"]),
+        }
+
+    def _write_settings_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Persist a pre-captured settings snapshot with one atomic write.
+
+        Safe to call from a worker thread: touches only the passed-in
+        `snapshot`, never `self.settings`. `save_settings_to_cli_config`
+        applies every section/key in `snapshot` under a single config-file
+        lock, atomic replace, and cache reload -- the 6-9 sequential
+        `save_setting_to_cli_config` calls this replaced each did all three
+        independently. Guarded broadly: this now also runs inside a
+        `run_worker` coroutine (`_persist_settings_off_loop`), where an
+        uncaught exception is fatal to the whole app by default
+        (`exit_on_error=True`) -- a config-write hiccup must not crash the
+        session.
+        """
+        try:
+            save_settings_to_cli_config(snapshot)
+        except Exception:
+            logger.error("Failed to persist dictation settings")
+
     def _save_settings(self):
-        """Save dictation settings."""
-        save_setting_to_cli_config('dictation', 'provider', self.settings['provider'])
-        save_setting_to_cli_config('dictation', 'model', self.settings.get('model'))
-        save_setting_to_cli_config('dictation', 'language', self.settings['language'])
-        save_setting_to_cli_config('dictation', 'punctuation', self.settings['punctuation'])
-        save_setting_to_cli_config('dictation', 'commands', self.settings['commands'])
-        save_setting_to_cli_config('dictation', 'buffer_duration_ms', self.settings['buffer_duration_ms'])
-        
-        # Save privacy settings
-        for key, value in self.settings['privacy'].items():
-            save_setting_to_cli_config('dictation.privacy', key, value)
-    
+        """Save dictation settings, synchronously, on this thread.
+
+        Convenience wrapper around `_settings_snapshot` +
+        `_write_settings_snapshot` for a caller that is already off the
+        event loop (a worker thread via `to_thread`). A caller on the event
+        loop that must not block it should go through `_persist_settings`'s
+        debounce instead.
+        """
+        self._write_settings_snapshot(self._settings_snapshot())
+
     def _update_stats(self):
         """Update statistics display."""
         try:
             # Update word count
             word_count_widget = self.query_one("#word-count", Static)
             word_count_widget.update(f"Words: {self.word_count}")
-            
+
             # Update duration
             if self._start_time:
                 duration = time.time() - self._start_time.timestamp()
@@ -749,33 +928,35 @@ Performance Tips:
                 seconds = int(duration % 60)
                 duration_widget = self.query_one("#duration-display", Static)
                 duration_widget.update(f"Duration: {minutes}:{seconds:02d}")
-                
+
                 # Update speed
                 if duration > 0:
                     wpm = int((self.word_count / duration) * 60)
                     speed_widget = self.query_one("#speed-display", Static)
                     speed_widget.update(f"Speed: {wpm} WPM")
-            
+
             # Update state
             state_widget = self.query_one("#state-display", Static)
             state_widget.update(f"State: {self.dictation_state}")
-            
+
         except Exception as e:
             logger.debug(f"Error updating stats: {e}")
-    
+
     def _update_transcript_display(self, text: str, is_partial: bool = False):
         """Update the transcript display."""
         try:
             transcript_display = self.query_one("#transcript-display", TextArea)
-            
+
             # Get segments from service if available
             segments = []
-            if self.dictation_service and hasattr(self.dictation_service, 'transcript_segments'):
+            if self.dictation_service and hasattr(
+                self.dictation_service, "transcript_segments"
+            ):
                 segments = self.dictation_service.transcript_segments
-            
+
             if is_partial:
                 # For partial updates, show current + partial
-                full_text = " ".join(seg['text'] for seg in segments)
+                full_text = " ".join(seg["text"] for seg in segments)
                 if full_text:
                     full_text += " " + text
                 else:
@@ -783,61 +964,59 @@ Performance Tips:
                 transcript_display.load_text(full_text)
             else:
                 # For final updates, just show all segments
-                full_text = " ".join(seg['text'] for seg in segments)
+                full_text = " ".join(seg["text"] for seg in segments)
                 transcript_display.load_text(full_text)
                 self.transcript_text = full_text
                 self.word_count = len(full_text.split()) if full_text else 0
-                
+
             self._update_stats()
-            
+
         except Exception as e:
             logger.error(f"Error updating transcript display: {e}")
-    
+
     def _add_transcript_segment(self, text: str):
         """Add a finalized transcript segment."""
         if text:
             # This is handled by the dictation service now
             self._update_transcript_display("", is_partial=False)
-    
+
     def _export_as_text(self):
         """Export transcript as text file."""
-        from pathlib import Path
         from datetime import datetime
-        
+
         try:
             # Create exports directory
-            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports" / "dictation"
+            export_dir = dictation_export_directory()
             export_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Generate filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = export_dir / f"transcript_{timestamp}.txt"
-            
+
             # Write file
-            with open(filename, 'w', encoding='utf-8') as f:
+            with open(filename, "w", encoding="utf-8") as f:
                 f.write(self.transcript_text)
-            
+
             self.app.notify(f"Exported to: {filename.name}", timeout=5)
             logger.info(f"Transcript exported to: {filename}")
-            
+
         except Exception as e:
             logger.error(f"Error exporting transcript: {e}")
             self.app.notify("Failed to export transcript", severity="error")
-    
+
     def _export_as_markdown(self):
         """Export transcript as markdown file."""
-        from pathlib import Path
         from datetime import datetime
-        
+
         try:
             # Create exports directory
-            export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports" / "dictation"
+            export_dir = dictation_export_directory()
             export_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Generate filename
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = export_dir / f"transcript_{timestamp}.md"
-            
+
             # Create markdown content
             content = f"""# Dictation Transcript
             
@@ -850,45 +1029,23 @@ Performance Tips:
 
 {self.transcript_text}
 """
-            
+
             # Write file
-            with open(filename, 'w', encoding='utf-8') as f:
+            with open(filename, "w", encoding="utf-8") as f:
                 f.write(content)
-            
+
             self.app.notify(f"Exported to: {filename.name}", timeout=5)
             logger.info(f"Transcript exported to: {filename}")
-            
+
         except Exception as e:
             logger.error(f"Error exporting transcript: {e}")
             self.app.notify("Failed to export transcript", severity="error")
-    
-    def _load_history(self):
-        """Load transcription history if enabled."""
-        # TODO: Implement history loading from config/database
-        pass
-    
-    def _add_to_history(self, transcript: str):
-        """Add transcript to history."""
-        # TODO: Implement history saving
-        pass
-    
-    def _clear_history(self):
-        """Clear transcription history."""
-        try:
-            history_list = self.query_one("#history-list", ListView)
-            history_list.clear()
-            self.transcript_history = []
-            # TODO: Clear from persistent storage
-            self.app.notify("History cleared")
-        except Exception as e:
-            logger.error(f"Error clearing history: {e}")
-    
+
     def _show_troubleshooting(self):
         """Show audio troubleshooting dialog."""
         self.app.push_screen(
-            AudioTroubleshootingDialog(),
-            callback=self._on_troubleshooting_complete
+            AudioTroubleshootingDialog(), callback=self._on_troubleshooting_complete
         )
-    
+
     # Include other helper methods from original implementation...
     # (transcript management, export, etc. remain similar)

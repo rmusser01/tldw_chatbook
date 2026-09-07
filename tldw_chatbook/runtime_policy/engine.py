@@ -30,7 +30,9 @@ class PolicyEngine:
             )
 
         current_time = now or datetime.now(timezone.utc)
-        normalized_state = state.normalized_for_policy(now=current_time, freshness_window=freshness_window)
+        normalized_state = state.normalized_for_policy(
+            now=current_time, freshness_window=freshness_window
+        )
 
         if not entry.enabled:
             return self._deny(

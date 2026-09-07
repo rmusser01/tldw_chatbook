@@ -62,12 +62,18 @@ class ServerSharingService:
             return []
         return list(value)
 
-    async def share_workspace(self, workspace_id: str, **payload: Any) -> dict[str, Any]:
+    async def share_workspace(
+        self, workspace_id: str, **payload: Any
+    ) -> dict[str, Any]:
         request_data = ShareWorkspaceRequest(**payload)
-        result = await self._require_client().share_workspace(str(workspace_id), request_data)
+        result = await self._require_client().share_workspace(
+            str(workspace_id), request_data
+        )
         return self._as_dict(result)
 
-    async def list_workspace_shares(self, workspace_id: str, *, include_revoked: bool = False) -> dict[str, Any]:
+    async def list_workspace_shares(
+        self, workspace_id: str, *, include_revoked: bool = False
+    ) -> dict[str, Any]:
         result = await self._require_client().list_workspace_shares(
             str(workspace_id),
             include_revoked=include_revoked,
@@ -91,22 +97,38 @@ class ServerSharingService:
         result = await self._require_client().get_shared_workspace(int(share_id))
         return self._as_dict(result)
 
-    async def clone_shared_workspace(self, share_id: int, **payload: Any) -> dict[str, Any]:
+    async def clone_shared_workspace(
+        self, share_id: int, **payload: Any
+    ) -> dict[str, Any]:
         request_data = CloneWorkspaceRequest(**payload)
-        result = await self._require_client().clone_shared_workspace(int(share_id), request_data)
+        result = await self._require_client().clone_shared_workspace(
+            int(share_id), request_data
+        )
         return self._as_dict(result)
 
-    async def list_shared_workspace_sources(self, share_id: int) -> list[dict[str, Any]]:
-        result = await self._require_client().list_shared_workspace_sources(int(share_id))
+    async def list_shared_workspace_sources(
+        self, share_id: int
+    ) -> list[dict[str, Any]]:
+        result = await self._require_client().list_shared_workspace_sources(
+            int(share_id)
+        )
         return [self._as_dict(item) for item in self._as_list(result)]
 
-    async def get_shared_workspace_media(self, share_id: int, media_id: int) -> dict[str, Any]:
-        result = await self._require_client().get_shared_workspace_media(int(share_id), int(media_id))
+    async def get_shared_workspace_media(
+        self, share_id: int, media_id: int
+    ) -> dict[str, Any]:
+        result = await self._require_client().get_shared_workspace_media(
+            int(share_id), int(media_id)
+        )
         return self._as_dict(result)
 
-    async def chat_with_shared_workspace(self, share_id: int, **payload: Any) -> dict[str, Any]:
+    async def chat_with_shared_workspace(
+        self, share_id: int, **payload: Any
+    ) -> dict[str, Any]:
         request_data = SharedChatRequest(**payload)
-        result = await self._require_client().chat_with_shared_workspace(int(share_id), request_data)
+        result = await self._require_client().chat_with_shared_workspace(
+            int(share_id), request_data
+        )
         return self._as_dict(result)
 
     async def create_share_token(self, **payload: Any) -> dict[str, Any]:
@@ -126,9 +148,13 @@ class ServerSharingService:
         result = await self._require_client().preview_public_share(str(token))
         return self._as_dict(result)
 
-    async def verify_public_share_password(self, token: str, **payload: Any) -> dict[str, Any]:
+    async def verify_public_share_password(
+        self, token: str, **payload: Any
+    ) -> dict[str, Any]:
         request_data = VerifyPasswordRequest(**payload)
-        result = await self._require_client().verify_public_share_password(str(token), request_data)
+        result = await self._require_client().verify_public_share_password(
+            str(token), request_data
+        )
         return self._as_dict(result)
 
     async def import_public_share(self, token: str) -> dict[str, Any]:

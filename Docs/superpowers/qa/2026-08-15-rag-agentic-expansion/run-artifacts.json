@@ -1,0 +1,1140 @@
+{
+  "model": "claude-haiku-4-5",
+  "route": "plain (four-seam keyword path)",
+  "questions": [
+    {
+      "id": "q1-quillon-access",
+      "probe_query": "Quillon-6 antenna mast",
+      "slug": "media-quillon-antenna",
+      "source_type": "media",
+      "title": "Quillon-6 antenna mast survey",
+      "question": "What restriction applies to climbing access on the Quillon-6 antenna mast?",
+      "oracle": "rescue certification"
+    },
+    {
+      "id": "q2-pellucid-lag",
+      "probe_query": "Pellucid-12 vacuum gauge",
+      "slug": "media-pellucid-gauge",
+      "source_type": "media",
+      "title": "Pellucid-12 vacuum gauge calibration record",
+      "question": "At which point did the Pellucid-12 vacuum gauge lag when it was calibrated against the reference standard?",
+      "oracle": "lowest decade"
+    },
+    {
+      "id": "q3-ashgrove-seal",
+      "probe_query": "Ashgrove-2 coolant pump seal",
+      "slug": "conv-ashgrove-pump",
+      "source_type": "conversation",
+      "title": "Chat: the Ashgrove-2 coolant pump seal",
+      "question": "What kind of seal did maintenance fit to the Ashgrove-2 coolant pump, and what does that save on future seal changes?",
+      "oracle": "shimming"
+    },
+    {
+      "id": "q4-obsidian-bearing",
+      "probe_query": "Obsidian-3 lathe spindle",
+      "slug": "media-obsidian-lathe",
+      "source_type": "media",
+      "title": "Obsidian-3 lathe spindle teardown",
+      "question": "What did the front bearing of the Obsidian-3 lathe spindle show when the spindle was pulled after chatter?",
+      "oracle": "brinelling"
+    },
+    {
+      "id": "q5-dunnock-cooling",
+      "probe_query": "Dunnock Row cabinet",
+      "slug": "conv-dunnock-row-cooling",
+      "source_type": "conversation",
+      "title": "Chat: why the Dunnock Row cabinet is so quiet",
+      "question": "Why is the Dunnock Row cabinet cooled through its case rather than by drawing air in?",
+      "oracle": "blown sand"
+    },
+    {
+      "id": "q6-gatehouse-ups",
+      "probe_query": "gate house UPS",
+      "slug": "conv-gatehouse-power",
+      "source_type": "conversation",
+      "title": "Chat: how long the gate house holds up",
+      "question": "How long does the gate house stay live on its UPS when the incomer drops?",
+      "oracle": "(?:ninety|90)\\s*minutes"
+    },
+    {
+      "id": "q7-filling-head-mtbf",
+      "probe_query": "filling head reliability",
+      "slug": "media-filling-head-reliability",
+      "source_type": "media",
+      "title": "Filling head reliability study",
+      "question": "What mean time between failures is quoted for the filling head across the fleet of machines?",
+      "oracle": "(?:nine hundred|900)\\s+(?:running\\s+)?hours"
+    },
+    {
+      "id": "q8-larkspur-lubrication",
+      "probe_query": "Larkspur-11 lubrication",
+      "slug": "media-larkspur-turbine",
+      "source_type": "media",
+      "title": "Larkspur-11 turbine commissioning walkthrough",
+      "question": "During the Larkspur-11 turbine commissioning, what was found wrong with one of the automatic lubrication delivery lines?",
+      "oracle": "starved a bearing"
+    }
+  ],
+  "scratch": "/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/rag16174-oracle-35z6i0ck",
+  "pid": 55829,
+  "retrieval_probe": [
+    {
+      "id": "q1-quillon-access",
+      "probe_query": "Quillon-6 antenna mast",
+      "slug": "media-quillon-antenna",
+      "expected": [
+        "media",
+        "3"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Quillon-6 antenna mast survey",
+          "snippet": "Matched media \u00b7 document",
+          "source_type": "media",
+          "source_id": "3",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched media \u00b7 document",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 295,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q2-pellucid-lag",
+      "probe_query": "Pellucid-12 vacuum gauge",
+      "slug": "media-pellucid-gauge",
+      "expected": [
+        "media",
+        "5"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Pellucid-12 vacuum gauge calibration record",
+          "snippet": "Matched media \u00b7 document",
+          "source_type": "media",
+          "source_id": "5",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched media \u00b7 document",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 317,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q3-ashgrove-seal",
+      "probe_query": "Ashgrove-2 coolant pump seal",
+      "slug": "conv-ashgrove-pump",
+      "expected": [
+        "conversation",
+        "287e6e5b-6bca-4095-b9c5-d392e4c345bb"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Chat: the Ashgrove-2 coolant pump seal",
+          "snippet": "Matched conversation \u00b7 1 message",
+          "source_type": "conversation",
+          "source_id": "287e6e5b-6bca-4095-b9c5-d392e4c345bb",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched conversation \u00b7 1 message",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 299,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q4-obsidian-bearing",
+      "probe_query": "Obsidian-3 lathe spindle",
+      "slug": "media-obsidian-lathe",
+      "expected": [
+        "media",
+        "2"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Obsidian-3 lathe spindle teardown",
+          "snippet": "Matched media \u00b7 document",
+          "source_type": "media",
+          "source_id": "2",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched media \u00b7 document",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 289,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q5-dunnock-cooling",
+      "probe_query": "Dunnock Row cabinet",
+      "slug": "conv-dunnock-row-cooling",
+      "expected": [
+        "conversation",
+        "fefb5e7c-6d9a-4e87-bdc3-0605a7e2844e"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Chat: why the Dunnock Row cabinet is so quiet",
+          "snippet": "Matched conversation \u00b7 1 message",
+          "source_type": "conversation",
+          "source_id": "fefb5e7c-6d9a-4e87-bdc3-0605a7e2844e",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched conversation \u00b7 1 message",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 511,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q6-gatehouse-ups",
+      "probe_query": "gate house UPS",
+      "slug": "conv-gatehouse-power",
+      "expected": [
+        "conversation",
+        "4ae365d0-9d44-4180-a4ee-106874e7a7a4"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Chat: how long the gate house holds up",
+          "snippet": "Matched conversation \u00b7 1 message",
+          "source_type": "conversation",
+          "source_id": "4ae365d0-9d44-4180-a4ee-106874e7a7a4",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched conversation \u00b7 1 message",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 379,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q7-filling-head-mtbf",
+      "probe_query": "filling head reliability",
+      "slug": "media-filling-head-reliability",
+      "expected": [
+        "media",
+        "42"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Filling head reliability study",
+          "snippet": "Matched media \u00b7 document",
+          "source_type": "media",
+          "source_id": "42",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched media \u00b7 document",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 381,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    },
+    {
+      "id": "q8-larkspur-lubrication",
+      "probe_query": "Larkspur-11 lubrication",
+      "slug": "media-larkspur-turbine",
+      "expected": [
+        "media",
+        "20"
+      ],
+      "ok": true,
+      "returned": 1,
+      "rows": [
+        {
+          "rank": 1,
+          "title": "Larkspur-11 turbine commissioning walkthrough",
+          "snippet": "Matched media \u00b7 document",
+          "source_type": "media",
+          "source_id": "20",
+          "chunk_id": "",
+          "expand_hint": {
+            "expandable": true,
+            "reason": "label_only"
+          }
+        }
+      ],
+      "target_rank": 1,
+      "target_hint": {
+        "expandable": true,
+        "reason": "label_only"
+      },
+      "target_snippet": "Matched media \u00b7 document",
+      "chunked_rows": [],
+      "expand_status": "ok",
+      "expand_total_size": 4924,
+      "expand_truncated": false,
+      "oracle_in_expansion": true
+    }
+  ],
+  "off": {
+    "arm": "off",
+    "offered_tools": [
+      "calculator",
+      "get_current_datetime"
+    ],
+    "allowed_tools": [
+      "search_library_rag"
+    ],
+    "approval_rounds": [],
+    "results": [
+      {
+        "id": "q1-quillon-access",
+        "queries": [
+          "Quillon-6 antenna mast climbing access restriction",
+          "Quillon-6 antenna mast"
+        ],
+        "slug": "media-quillon-antenna",
+        "oracle": "rescue certification",
+        "hit": false,
+        "status": "done",
+        "answer": "I found a reference to a \"Quillon-6 antenna mast survey\" document in your Library. However, I can only see that it's a media document and cannot access its full contents through the search results. \n\nTo get the specific information about climbing access restrictions on the Quillon-6 antenna mast, you would need to:\n1. Open the \"Quillon-6 antenna mast survey\" document directly from your Library\n2. Search within that document for terms like \"climbing,\" \"access,\" or \"restriction\"\n\nCould you provide the document or share the relevant section that contains information about the climbing restrictions?",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Quillon-6 antenna mast climbing access restriction"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Quillon-6 antenna mast"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Quillon-6 antenna mast climbing access restriction\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Quillon-6 antenna mast\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"3\",\"title\":\"Quillon-6 antenna mast survey\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"3\"}]}"
+          }
+        ],
+        "seconds": 4.0,
+        "run_id": "0ac4e2a0b45e43e091507ab0bea7e8cb"
+      },
+      {
+        "id": "q2-pellucid-lag",
+        "queries": [
+          "Pellucid-12 vacuum gauge calibration reference standard lag"
+        ],
+        "slug": "media-pellucid-gauge",
+        "oracle": "lowest decade",
+        "hit": false,
+        "status": "done",
+        "answer": "I don't have any information in my Library about the Pellucid-12 vacuum gauge or its calibration characteristics. The search returned no results.\n\nCould you provide more context about this gauge? For example:\n- Do you have documentation or notes about the Pellucid-12 that you'd like me to reference?\n- Is this from a specific technical report, manual, or experiment?\n- Do you remember approximately when this calibration was performed?\n\nWith more details, I may be able to help you find or recall the specific point at which the lag occurred.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Pellucid-12 vacuum gauge calibration reference standard lag"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Pellucid-12 vacuum gauge calibration reference standard lag\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          }
+        ],
+        "seconds": 3.1,
+        "run_id": "98f12d3c5fd1461bbcef525e1382ee85"
+      },
+      {
+        "id": "q3-ashgrove-seal",
+        "queries": [
+          "Ashgrove-2 coolant pump seal maintenance",
+          "Ashgrove-2 coolant pump seal mechanical carbon",
+          "Ashgrove-2 pump seal change maintenance cost"
+        ],
+        "slug": "conv-ashgrove-pump",
+        "oracle": "shimming",
+        "hit": false,
+        "status": "stuck",
+        "answer": "",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Ashgrove-2 coolant pump seal maintenance"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Ashgrove-2 coolant pump seal mechanical carbon",
+              "top_k": 5
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Ashgrove-2 pump seal change maintenance cost"
+            }
+          },
+          {
+            "name": "search_run_log",
+            "args": {
+              "contains": "Ashgrove-2 coolant pump seal",
+              "scope": "conversation"
+            }
+          },
+          {
+            "name": "search_run_log",
+            "args": {
+              "contains": "Ashgrove-2",
+              "scope": "conversation",
+              "context": 5
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Ashgrove-2 coolant pump seal maintenance\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"287e6e5b-6bca-4095-b9c5-d392e4c345bb\",\"title\":\"Chat: the Ashgrove-2 coolant pump seal\",\"snippet\":\"Matched conversation \u00b7 1 message\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\""
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Ashgrove-2 coolant pump seal mechanical carbon\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Ashgrove-2 pump seal change maintenance cost\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_run_log",
+            "result": "Searched 1 of 1 run(s) in this conversation.\n\n[this run]\nrecord 000001 [model]\nI'll search for information about the Ashgrove-2 coolant pump seal and maintenance details.\n\n[this run]\nrecord 000002 [tool_call/search_library_rag]\n{\"query\": \"Ashgrove-2 coolant pump seal maintenance\"}\n\n[this run]\nrecord 000003 [tool_result/search_library_rag/ok]\n{\"status\":\"ready\",\"query\":\"Ashgrove-2 coolant pump seal "
+          },
+          {
+            "name": "search_run_log",
+            "result": "Searched 1 of 1 run(s) in this conversation.\n\n[this run]\nrecord 000001 [model]\nI'll search for information about the Ashgrove-2 coolant pump seal and maintenance details.\n\n[this run]\nrecord 000002 [tool_call/search_library_rag]\n{\"query\": \"Ashgrove-2 coolant pump seal maintenance\"}\n\n[this run]\nrecord 000003 [tool_result/search_library_rag/ok]\n{\"status\":\"ready\",\"query\":\"Ashgrove-2 coolant pump seal "
+          }
+        ],
+        "seconds": 5.9,
+        "run_id": "9b170749e0ac4ee080602eaca1e670ad"
+      },
+      {
+        "id": "q4-obsidian-bearing",
+        "queries": [
+          "Obsidian-3 lathe spindle front bearing chatter pulled",
+          "Obsidian-3 front bearing damage wear chatter spindle pulled",
+          "Obsidian-3 spindle bearing"
+        ],
+        "slug": "media-obsidian-lathe",
+        "oracle": "brinelling",
+        "hit": false,
+        "status": "done",
+        "answer": "I found a document titled \"Obsidian-3 lathe spindle teardown\" in your library, but the search results are only showing the title without the detailed content. Unfortunately, the library search isn't returning the specific details about what the front bearing showed. \n\nThe document appears to be a media file (likely a PDF or image document) that contains the information you're looking for, but I don't have direct access to view its full contents through the search results.\n\nCould you either:\n1. Share the specific details from that document, or\n2. Provide more context about what you remember from the teardown?\n\nThis would help me give you the accurate answer about what the front bearing showed when the spindle was pulled after chatter.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Obsidian-3 lathe spindle front bearing chatter pulled"
+            }
+          },
+          {
+            "name": "search_run_log",
+            "args": {
+              "contains": "Obsidian-3 lathe spindle front bearing chatter"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Obsidian-3 front bearing damage wear chatter spindle pulled"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Obsidian-3 spindle bearing"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Obsidian-3 lathe spindle front bearing chatter pulled\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"2\",\"title\":\"Obsidian-3 lathe spindle teardown\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"2\"}]}"
+          },
+          {
+            "name": "search_run_log",
+            "result": "record 000002 [tool_call/search_library_rag]\n{\"query\": \"Obsidian-3 lathe spindle front bearing chatter pulled\"}\n\nrecord 000003 [tool_result/search_library_rag/ok]\n{\"status\":\"ready\",\"query\":\"Obsidian-3 lathe spindle front bearing chatter pulled\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"2\",\"title\":\"Obsidian-3 lathe spindle teardown\",\"snippet\":\"Matched me"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Obsidian-3 front bearing damage wear chatter spindle pulled\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Obsidian-3 spindle bearing\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"2\",\"title\":\"Obsidian-3 lathe spindle teardown\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"2\"}]}"
+          }
+        ],
+        "seconds": 6.1,
+        "run_id": "49cce46e26054d678f42c0501417d8b4"
+      },
+      {
+        "id": "q5-dunnock-cooling",
+        "queries": [
+          "Dunnock Row cabinet cooling case air"
+        ],
+        "slug": "conv-dunnock-row-cooling",
+        "oracle": "blown sand",
+        "hit": false,
+        "status": "done",
+        "answer": "I don't have any information about the Dunnock Row cabinet in my library. Could you provide more context about this cabinet? For example:\n\n- What field or industry is it used in (audio equipment, computing, industrial, etc.)?\n- Where did you encounter this information?\n- Do you have any additional details about its design or specifications?\n\nWith more context, I may be able to help you understand the reasoning behind its cooling design, or you could share the source material and I can help analyze it.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Dunnock Row cabinet cooling case air"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Dunnock Row cabinet cooling case air\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          }
+        ],
+        "seconds": 2.8,
+        "run_id": "0fc244c1c12d452b83b74743ebd52b39"
+      },
+      {
+        "id": "q6-gatehouse-ups",
+        "queries": [
+          "gate house UPS incomer drops live duration",
+          "gate house UPS battery backup time"
+        ],
+        "slug": "conv-gatehouse-power",
+        "oracle": "(?:ninety|90)\\s*minutes",
+        "hit": false,
+        "status": "done",
+        "answer": "I don't have any information in my Library about the gate house UPS specifications or how long it stays live when the incomer (main power supply) drops. \n\nTo help you find this information, I would need:\n1. Documentation or specifications for the gate house UPS system\n2. Technical manuals or system design documents\n3. Previous notes or conversations about this system\n\nCould you provide more context about:\n- Which gate house system you're referring to?\n- Do you have access to the UPS specifications or technical documentation?\n- Is this related to a specific facility or installation?",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "gate house UPS incomer drops live duration"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "gate house UPS battery backup time"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"gate house UPS incomer drops live duration\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"gate house UPS battery backup time\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          }
+        ],
+        "seconds": 3.9,
+        "run_id": "a9e4202214594c0a8ebd28252b36a55c"
+      },
+      {
+        "id": "q7-filling-head-mtbf",
+        "queries": [
+          "mean time between failures MTBF filling head fleet machines",
+          "filling head MTBF reliability"
+        ],
+        "slug": "media-filling-head-reliability",
+        "oracle": "(?:nine hundred|900)\\s+(?:running\\s+)?hours",
+        "hit": false,
+        "status": "done",
+        "answer": "I'm unable to find information about the mean time between failures (MTBF) for the filling head in the available library resources. The search returned no results. \n\nCould you provide more context about:\n1. Where this information might be located (e.g., a specific document, manual, or report)?\n2. The name or model of the machines you're referring to?\n3. Any other details that might help me locate this specification?\n\nThis would help me search more effectively for the MTBF data you're looking for.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "mean time between failures MTBF filling head fleet machines"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "filling head MTBF reliability"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"mean time between failures MTBF filling head fleet machines\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"filling head MTBF reliability\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          }
+        ],
+        "seconds": 3.9,
+        "run_id": "17ae72444f5b47feaea9e4636d746baa"
+      },
+      {
+        "id": "q8-larkspur-lubrication",
+        "queries": [
+          "Larkspur-11 turbine commissioning automatic lubrication delivery lines",
+          "Larkspur-11 lubrication line problem defect issue"
+        ],
+        "slug": "media-larkspur-turbine",
+        "oracle": "starved a bearing",
+        "hit": false,
+        "status": "done",
+        "answer": "I found a reference to a \"Larkspur-11 turbine commissioning walkthrough\" document in your library, but I wasn't able to retrieve the specific details about the lubrication delivery line issue from the search results. The document appears to be media content that would contain this information, but I need more context to access the specific details.\n\nCould you help me by either:\n1. Providing the document directly, or\n2. Letting me know if you have additional notes or information about this commissioning that might contain the specific details about what was wrong with the automatic lubrication delivery line?",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Larkspur-11 turbine commissioning automatic lubrication delivery lines"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Larkspur-11 lubrication line problem defect issue",
+              "top_k": 5
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Larkspur-11 turbine commissioning automatic lubrication delivery lines\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"20\",\"title\":\"Larkspur-11 turbine commissioning walkthrough\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"med"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Larkspur-11 lubrication line problem defect issue\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          }
+        ],
+        "seconds": 4.6,
+        "run_id": "5b6245f618754d04b055e99543c89f4c"
+      }
+    ],
+    "spend": {
+      "calls": 25,
+      "input_tokens": 62663,
+      "output_tokens": 2620,
+      "cache_write_tokens": 0,
+      "cache_read_tokens": 0,
+      "usd": 0.075763
+    }
+  },
+  "on": {
+    "arm": "on",
+    "offered_tools": [
+      "calculator",
+      "expand_document",
+      "get_current_datetime"
+    ],
+    "allowed_tools": [
+      "search_library_rag",
+      "expand_document"
+    ],
+    "approval_rounds": [
+      [
+        "expand_document"
+      ],
+      [
+        "expand_document"
+      ],
+      [
+        "expand_document"
+      ],
+      [
+        "expand_document"
+      ],
+      [
+        "expand_document"
+      ],
+      [
+        "expand_document"
+      ],
+      [
+        "expand_document"
+      ]
+    ],
+    "results": [
+      {
+        "id": "q1-quillon-access",
+        "queries": [
+          "Quillon-6 antenna mast climbing access restriction",
+          "Quillon-6 antenna mast"
+        ],
+        "slug": "media-quillon-antenna",
+        "oracle": "rescue certification",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the document, **climbing access to the Quillon-6 antenna mast is restricted to crews holding current rescue certification**.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Quillon-6 antenna mast climbing access restriction"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Quillon-6 antenna mast"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "media",
+              "source_id": "3"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Quillon-6 antenna mast climbing access restriction\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Quillon-6 antenna mast\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"3\",\"title\":\"Quillon-6 antenna mast survey\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"3\"}]}"
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"media\", \"source_id\": \"3\", \"title\": \"Quillon-6 antenna mast survey\", \"text\": \"The Quillon-6 antenna mast stands on a rock outcrop above the access track and carries three sector panels.\\nGuy tensions were re-set after the second winter because the anchors had crept slightly.\\nClimbing access to the Quillon-6 remains restricted to crews holding current rescue certifi"
+          }
+        ],
+        "seconds": 4.4,
+        "run_id": "224de1f674704c43949bb2a7db266eab"
+      },
+      {
+        "id": "q2-pellucid-lag",
+        "queries": [
+          "Pellucid-12 vacuum gauge calibration reference standard lag",
+          "Pellucid-12 vacuum gauge"
+        ],
+        "slug": "media-pellucid-gauge",
+        "oracle": "lowest decade",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the calibration record, the **Pellucid-12 vacuum gauge lagged at the lowest decade point** when it was calibrated against the reference standard. \n\nSpecifically, the gauge's readings tracked within two percent at every calibration point except at the lowest decade, where the sensor exhibited lag until the chamber stabilized. A correction table was subsequently written into the Pellucid-12 to address this issue, and its calibration sticker was updated accordingly.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Pellucid-12 vacuum gauge calibration reference standard lag"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Pellucid-12 vacuum gauge"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "media",
+              "source_id": "5"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Pellucid-12 vacuum gauge calibration reference standard lag\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Pellucid-12 vacuum gauge\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"5\",\"title\":\"Pellucid-12 vacuum gauge calibration record\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"5\"}]}"
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"media\", \"source_id\": \"5\", \"title\": \"Pellucid-12 vacuum gauge calibration record\", \"text\": \"The Pellucid-12 vacuum gauge was calibrated against the reference standard at five decade points.\\nReadings tracked within two percent at every point except the lowest decade, where the sensor lagged until the chamber stabilised.\\nA correction table was written into the Pellu"
+          }
+        ],
+        "seconds": 4.8,
+        "run_id": "480c896af9c643ffa481cdf6f5cf81fd"
+      },
+      {
+        "id": "q3-ashgrove-seal",
+        "queries": [
+          "Ashgrove-2 coolant pump seal maintenance"
+        ],
+        "slug": "conv-ashgrove-pump",
+        "oracle": "shimming",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the information in your library, maintenance fitted a **cartridge seal** to the Ashgrove-2 coolant pump (replacing the previous component set mechanical seal that was weeping).\n\nThe key benefit this saves on future seal changes is that **no shimming is required** when replacing the seal in the future. This eliminates a time-consuming adjustment step that would have been necessary with the component set seal, making future maintenance faster and simpler.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Ashgrove-2 coolant pump seal maintenance"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "conversation",
+              "source_id": "287e6e5b-6bca-4095-b9c5-d392e4c345bb"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Ashgrove-2 coolant pump seal maintenance\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"287e6e5b-6bca-4095-b9c5-d392e4c345bb\",\"title\":\"Chat: the Ashgrove-2 coolant pump seal\",\"snippet\":\"Matched conversation \u00b7 1 message\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\""
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"conversation\", \"source_id\": \"287e6e5b-6bca-4095-b9c5-d392e4c345bb\", \"title\": \"Chat: the Ashgrove-2 coolant pump seal\", \"text\": \"user: The Ashgrove-2 coolant pump was weeping at its mechanical seal and left a small puddle each shift.\\nMaintenance fitted a cartridge seal instead of the component set, so future changes need no shimming.\\nFlow readings on the Ashgrove-"
+          }
+        ],
+        "seconds": 4.5,
+        "run_id": "b192b2044d8046ff9b703eb859e146e3"
+      },
+      {
+        "id": "q4-obsidian-bearing",
+        "queries": [
+          "Obsidian-3 lathe spindle front bearing chatter pulled"
+        ],
+        "slug": "media-obsidian-lathe",
+        "oracle": "brinelling",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the document, when the Obsidian-3 lathe spindle was pulled after chatter appeared in fine finishing passes, **the front bearing showed brinelling on the inner race**, which was consistent with a shock load rather than gradual wear. After this discovery, a matched bearing pair was fitted and the spindle was re-trued to under two microns of runout.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Obsidian-3 lathe spindle front bearing chatter pulled"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "media",
+              "source_id": "2"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Obsidian-3 lathe spindle front bearing chatter pulled\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"2\",\"title\":\"Obsidian-3 lathe spindle teardown\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"2\"}]}"
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"media\", \"source_id\": \"2\", \"title\": \"Obsidian-3 lathe spindle teardown\", \"text\": \"The Obsidian-3 lathe spindle was pulled after chatter appeared in fine finishing passes.\\nIts front bearing showed brinelling on the inner race, consistent with a shock load rather than gradual wear.\\nA matched bearing pair was fitted and the spindle re-trued to under two microns of ru"
+          }
+        ],
+        "seconds": 3.2,
+        "run_id": "286291931dcd43be9579f97d098a8dd0"
+      },
+      {
+        "id": "q5-dunnock-cooling",
+        "queries": [
+          "Dunnock Row cabinet cooling case air",
+          "Dunnock Row cabinet"
+        ],
+        "slug": "conv-dunnock-row-cooling",
+        "oracle": "blown sand",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the information in your library, the Dunnock Row cabinet is cooled through its case rather than by drawing air in because **the site sits in blown sand**. Any cabinet that draws air in would silt up within a season due to the sandy environment.\n\nThis design choice involves a trade-off:\n- **Advantage**: The cabinet runs much quieter than the rest of the chain (since there's no fan noise from air intake)\n- **Trade-off**: During the warmest weeks, the cabinet is derated (reduced power output), and the radio drops power rather than shutting down completely\n\nThe finned sides and shaded hood of the cabinet help dissipate heat through the case itself. This solution has proven worthwhile because silt damage had previously taken out the earlier cabinet twice, so the quieter operation with passive cooling is preferable to dealing with repeated silt-related failures.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Dunnock Row cabinet cooling case air"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Dunnock Row cabinet"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "conversation",
+              "source_id": "fefb5e7c-6d9a-4e87-bdc3-0605a7e2844e"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"Dunnock Row cabinet cooling case air\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Dunnock Row cabinet\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"fefb5e7c-6d9a-4e87-bdc3-0605a7e2844e\",\"title\":\"Chat: why the Dunnock Row cabinet is so quiet\",\"snippet\":\"Matched conversation \u00b7 1 message\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"conversation"
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"conversation\", \"source_id\": \"fefb5e7c-6d9a-4e87-bdc3-0605a7e2844e\", \"title\": \"Chat: why the Dunnock Row cabinet is so quiet\", \"text\": \"user: Someone asked on the thread why the Dunnock Row cabinet runs so much quieter than the rest of the chain.\\nThe answer is that it is cooled through the case alone, with finned sides and a shaded hood, because the site sits in bl"
+          }
+        ],
+        "seconds": 6.2,
+        "run_id": "967bd95ac969409bbe364c8498002202"
+      },
+      {
+        "id": "q6-gatehouse-ups",
+        "queries": [
+          "gate house UPS incomer drops live duration",
+          "gate house UPS battery backup time"
+        ],
+        "slug": "conv-gatehouse-power",
+        "oracle": "(?:ninety|90)\\s*minutes",
+        "hit": false,
+        "status": "done",
+        "answer": "I'm unable to find information about the gate house UPS duration in your library. The search returned no results for queries about:\n- Gate house UPS incomer drops\n- Gate house UPS battery backup time\n\nCould you provide more context about:\n1. What system or facility this gate house is part of?\n2. Do you have documentation, notes, or specifications about this UPS system?\n3. Is this related to a specific project or location?\n\nThis information might help me locate the relevant documentation if it exists in your library, or you may need to check the UPS manufacturer's specifications or system documentation directly.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "gate house UPS incomer drops live duration"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "gate house UPS battery backup time"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"gate house UPS incomer drops live duration\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"gate house UPS battery backup time\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          }
+        ],
+        "seconds": 3.9,
+        "run_id": "86f7dd6c61ac4d81b1ca2e95fa7037c1"
+      },
+      {
+        "id": "q7-filling-head-mtbf",
+        "queries": [
+          "mean time between failures MTBF filling head fleet machines",
+          "filling head MTBF reliability",
+          "filling head mean time between failures"
+        ],
+        "slug": "media-filling-head-reliability",
+        "oracle": "(?:nine hundred|900)\\s+(?:running\\s+)?hours",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the filling head reliability study in your library, **the mean time between failures (MTBF) for the filling head is quoted at 900 running hours across the fleet of machines**.\n\nThe study also notes that:\n- The failures are dominated by the nozzle seats rather than the drive\n- Failures cluster in the weeks after a seat change, suggesting the issue is with fitting rather than wear\n- The study recommends implementing a fitting jig and torque check to replace the current \"feel method\"",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "mean time between failures MTBF filling head fleet machines"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "filling head MTBF reliability"
+            }
+          },
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "filling head mean time between failures"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "media",
+              "source_id": "42"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"mean time between failures MTBF filling head fleet machines\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"empty\",\"query\":\"filling head MTBF reliability\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":0,\"results\":[]}"
+          },
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"filling head mean time between failures\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"42\",\"title\":\"Filling head reliability study\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"media\",\"source_id\":\"42\"}]}"
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"media\", \"source_id\": \"42\", \"title\": \"Filling head reliability study\", \"text\": \"The mean time between failures on the filling head is quoted at nine hundred running hours across the fleet of machines, and the figure is dominated by the nozzle seats rather than by the drive.\\nFailures cluster in the weeks after a seat change, which points at fitting rather than at we"
+          }
+        ],
+        "seconds": 6.1,
+        "run_id": "0782ee64f1814166b552b3b38f9abcdf"
+      },
+      {
+        "id": "q8-larkspur-lubrication",
+        "queries": [
+          "Larkspur-11 turbine commissioning automatic lubrication delivery lines"
+        ],
+        "slug": "media-larkspur-turbine",
+        "oracle": "starved a bearing",
+        "hit": true,
+        "status": "done",
+        "answer": "Based on the Larkspur-11 turbine commissioning walkthrough, **one of the automatic lubrication delivery lines had been run to the wrong point at the factory**. This was discovered during the commissioning process when the delivery lines were traced end to end against the schematic. The document notes that this error \"would have starved a bearing indefinitely had it not been traced.\"\n\nThis highlights the importance of thoroughly checking lubrication systems during commissioning, as this type of error could have caused serious bearing damage if it had gone undetected.",
+        "tool_calls": [
+          {
+            "name": "search_library_rag",
+            "args": {
+              "query": "Larkspur-11 turbine commissioning automatic lubrication delivery lines"
+            }
+          },
+          {
+            "name": "expand_document",
+            "args": {
+              "source_type": "media",
+              "source_id": "20"
+            }
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_library_rag",
+            "result": "{\"status\":\"ready\",\"query\":\"Larkspur-11 turbine commissioning automatic lubrication delivery lines\",\"source_types\":[\"notes\",\"media\",\"conversations\"],\"returned\":1,\"results\":[{\"result_id\":\"20\",\"title\":\"Larkspur-11 turbine commissioning walkthrough\",\"snippet\":\"Matched media \u00b7 document\",\"score\":null,\"runtime_backend\":\"local-fts\",\"expand_hint\":{\"expandable\":true,\"reason\":\"label_only\"},\"source_type\":\"med"
+          },
+          {
+            "name": "expand_document",
+            "result": "{\"status\": \"ok\", \"source_type\": \"media\", \"source_id\": \"20\", \"title\": \"Larkspur-11 turbine commissioning walkthrough\", \"text\": \"This walkthrough covers the commissioning of the Larkspur-11 turbine from the delivery of the nacelle through to the first hours on grid. It is recorded as a teaching piece for crews who have erected towers but never taken a machine through acceptance. Nothing in it is sit"
+          }
+        ],
+        "seconds": 4.7,
+        "run_id": "178ef4410f60407f9bf29ae761b401fc"
+      }
+    ],
+    "spend": {
+      "calls": 29,
+      "input_tokens": 87033,
+      "output_tokens": 2770,
+      "cache_write_tokens": 0,
+      "cache_read_tokens": 0,
+      "usd": 0.100883
+    }
+  },
+  "table": "| question | target (label-only row) | oracle | tool-OFF | tool-ON | ON tool calls |\n|---|---|---|---|---|---|\n| `q1-quillon-access` | `media-quillon-antenna` (media) | `/rescue certification/` | miss | HIT | search_library_rag, search_library_rag, expand_document |\n| `q2-pellucid-lag` | `media-pellucid-gauge` (media) | `/lowest decade/` | miss | HIT | search_library_rag, search_library_rag, expand_document |\n| `q3-ashgrove-seal` | `conv-ashgrove-pump` (conversation) | `/shimming/` | miss | HIT | search_library_rag, expand_document |\n| `q4-obsidian-bearing` | `media-obsidian-lathe` (media) | `/brinelling/` | miss | HIT | search_library_rag, expand_document |\n| `q5-dunnock-cooling` | `conv-dunnock-row-cooling` (conversation) | `/blown sand/` | miss | HIT | search_library_rag, search_library_rag, expand_document |\n| `q6-gatehouse-ups` | `conv-gatehouse-power` (conversation) | `/(?:ninety|90)\\s*minutes/` | miss | miss | search_library_rag, search_library_rag |\n| `q7-filling-head-mtbf` | `media-filling-head-reliability` (media) | `/(?:nine hundred|900)\\s+(?:running\\s+)?hours/` | miss | HIT | search_library_rag, search_library_rag, search_library_rag, expand_document |\n| `q8-larkspur-lubrication` | `media-larkspur-turbine` (media) | `/starved a bearing/` | miss | HIT | search_library_rag, expand_document |\n| **TOTAL** | | | **0/8** | **7/8** | |",
+  "total_usd": 0.176646,
+  "real_config_sha256": {
+    "before": "42e2f42de95915f59fcc7c36751c2cc041cb0e4ddda9b324668683a270d7ecc0",
+    "after": "42e2f42de95915f59fcc7c36751c2cc041cb0e4ddda9b324668683a270d7ecc0"
+  }
+}

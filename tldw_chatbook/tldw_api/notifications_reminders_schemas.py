@@ -94,6 +94,15 @@ NotificationKind = Literal[
     "job_completed",
     "job_failed",
     "companion_reflection",
+    # Server-offloaded automation runs (ADR-077): the agent-task consumer
+    # writes one of these per terminal run status as the phase-1 result
+    # pass-back channel. Kind must stay a closed Literal for the inbox list
+    # parse -- when the server adds a kind, extend this list in the same
+    # change or the whole feed response fails validation client-side.
+    "automation_run_succeeded",
+    "automation_run_failed",
+    "automation_run_timed_out",
+    "automation_run_skipped",
 ]
 
 

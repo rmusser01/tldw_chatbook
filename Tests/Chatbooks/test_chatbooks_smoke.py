@@ -4,7 +4,6 @@ import tempfile
 import pytest
 
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
-from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 
 
 @pytest.mark.unit
@@ -28,4 +27,3 @@ def test_chatbook_creator_minimal_archive_creation():
 
         assert success, message
         assert out_path.exists() and out_path.stat().st_size > 0
-

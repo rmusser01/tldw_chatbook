@@ -6,6 +6,18 @@ import json
 from typing import Any, Dict, List, Optional
 
 
+def normalize_artifact_type(artifact_type: Any) -> str:
+    """Return a supported artifact type, defaulting legacy records to Prompt."""
+    if artifact_type is None:
+        return "prompt"
+    if not isinstance(artifact_type, str) or artifact_type not in {
+        "prompt",
+        "recipe",
+    }:
+        raise ValueError("artifact_type must be either 'prompt' or 'recipe'.")
+    return artifact_type
+
+
 def _normalize_keywords(keywords: Any) -> List[str]:
     if keywords is None:
         return []
@@ -30,7 +42,9 @@ def _deserialize_prompt_definition(prompt_definition: Any) -> Optional[Any]:
 
 
 def local_prompt_to_server_payload(local_prompt: Dict[str, Any]) -> Dict[str, Any]:
-    prompt_definition = _deserialize_prompt_definition(local_prompt.get("prompt_definition"))
+    prompt_definition = _deserialize_prompt_definition(
+        local_prompt.get("prompt_definition")
+    )
     payload: Dict[str, Any] = {
         "name": local_prompt.get("name"),
         "author": local_prompt.get("author"),
@@ -41,10 +55,14 @@ def local_prompt_to_server_payload(local_prompt: Dict[str, Any]) -> Dict[str, An
         "prompt_format": local_prompt.get("prompt_format") or "legacy",
         "prompt_schema_version": local_prompt.get("prompt_schema_version"),
         "prompt_definition": prompt_definition,
+        "artifact_type": normalize_artifact_type(local_prompt.get("artifact_type")),
     }
 
     for passthrough_key in ("uuid", "version", "deleted"):
-        if passthrough_key in local_prompt and local_prompt.get(passthrough_key) is not None:
+        if (
+            passthrough_key in local_prompt
+            and local_prompt.get(passthrough_key) is not None
+        ):
             payload[passthrough_key] = local_prompt.get(passthrough_key)
 
     return payload
@@ -62,9 +80,21 @@ def local_prompt_to_preview_payload(local_prompt: Dict[str, Any]) -> Dict[str, A
 def server_prompt_to_local_update(payload: Dict[str, Any]) -> Dict[str, Any]:
     update: Dict[str, Any] = {}
 
-    for field in ("name", "author", "details", "system_prompt", "user_prompt", "prompt_schema_version"):
+    for field in (
+        "name",
+        "author",
+        "details",
+        "system_prompt",
+        "user_prompt",
+        "prompt_schema_version",
+    ):
         if field in payload:
             update[field] = payload.get(field)
+
+    if "artifact_type" in payload:
+        update["artifact_type"] = normalize_artifact_type(payload.get("artifact_type"))
+    else:
+        update["artifact_type"] = "prompt"
 
     if "keywords" in payload:
         update["keywords"] = sorted(_normalize_keywords(payload.get("keywords")))
@@ -73,9 +103,15 @@ def server_prompt_to_local_update(payload: Dict[str, Any]) -> Dict[str, Any]:
         update["prompt_format"] = payload.get("prompt_format") or "legacy"
 
     if "prompt_definition" in payload:
-        update["prompt_definition"] = _deserialize_prompt_definition(payload.get("prompt_definition"))
+        update["prompt_definition"] = _deserialize_prompt_definition(
+            payload.get("prompt_definition")
+        )
 
-    if "prompt_format" not in update and "prompt_definition" in update and update["prompt_definition"] is not None:
+    if (
+        "prompt_format" not in update
+        and "prompt_definition" in update
+        and update["prompt_definition"] is not None
+    ):
         update["prompt_format"] = "structured"
 
     return update

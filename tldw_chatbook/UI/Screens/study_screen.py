@@ -14,13 +14,19 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import HandoffChannel
 from ..Study_Window import StudyWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 from ...Widgets.Study import QuizSessionWidget, StudyDashboard
 from ...Widgets.Study.quiz_session_widget import (
     QUIZ_REVIEW_ENABLED_TOOLTIP,
@@ -34,9 +40,13 @@ from ...Widgets.Study.quiz_session_widget import (
 )
 from .notes_scope_models import WorkspaceSubview
 from .study_scope_models import (
+    STUDY_INITIAL_SECTIONS,
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
+    STUDY_ORIGIN_HOME,
+    STUDY_ORIGIN_LIBRARY,
+    STUDY_ORIGINS,
     STUDY_SOURCE_ID_LENGTH_LIMIT,
     STUDY_SOURCE_ITEMS_LIMIT,
     StudyScopeContext,
@@ -48,21 +58,38 @@ from .study_scope_models import (
 
 ScopeKey = tuple[str, Optional[str], str, bool, Optional[str]]
 _HTML_TAG_RE = re.compile(r"<[^>]*>")
-_DANGEROUS_TEXT_RE = re.compile(r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE)
+_DANGEROUS_TEXT_RE = re.compile(
+    r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE
+)
 SOURCE_STUDY_PACK_STATUS_CHECKS = 8
 SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS = 0.25
 SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT = 240
 SOURCE_STUDY_PACK_ID_LENGTH_LIMIT = 64
-SOURCE_STUDY_PACK_JOB_STATUSES = frozenset({"queued", "running", "completed", "failed", "cancelled"})
+SOURCE_STUDY_PACK_JOB_STATUSES = frozenset(
+    {"queued", "running", "completed", "failed", "cancelled"}
+)
 
 
 class StudyScreen(BaseAppScreen):
     """Screen wrapper for Study functionality."""
-    
+
+    # task-2854: Study is reached from Library's Study/Flashcards/Quizzes
+    # handoff rows ("Continue in Study") but is a completely separate full
+    # screen -- no Library rail, no Library canvas. Escape returns to the
+    # screen that reached it (task-4011: the Library staging canvas OR Home,
+    # per the origin threaded through ``HandoffChannel.STUDY_ORIGIN``),
+    # mirroring the ``action_library_notes_files_back`` idiom Library's own
+    # Files-mode Escape binding uses (task-2850): a plain, screen-scoped
+    # Escape binding advertised in the footer (see ``on_mount``), not a new
+    # nav system. The description stays origin-neutral because BINDINGS is
+    # class-level state; the footer hint (``_study_footer_shortcuts``) and
+    # the breadcrumb subtitle carry the origin-specific copy.
+    BINDINGS = [("escape", "study_back", "Back")]
+
     # Screen-specific state
     current_section: reactive[str] = reactive("dashboard")
     current_study_session: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    study_materials: reactive[List[str]] = reactive([])
+    study_materials: reactive[List[str]] = reactive(list)
     is_studying: reactive[bool] = reactive(False)
     current_topic: reactive[str] = reactive("")
     scope_state: reactive[StudyScopeState] = reactive(StudyScopeState)
@@ -85,15 +112,26 @@ class StudyScreen(BaseAppScreen):
         "course": "Create course outlines and study sequences.",
         "learning_map": "Open the learning map for relationships across study material.",
     }
-    _VALID_INITIAL_SECTIONS = frozenset({"dashboard", *_SECTION_TO_VIEW.keys()})
+    _VALID_INITIAL_SECTIONS = STUDY_INITIAL_SECTIONS
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)
-        pending_scope = getattr(app_instance, "pending_study_scope_context", None)
-        if isinstance(pending_scope, StudyScopeContext):
-            self.scope_state = self._derive_scope_state(pending_scope)
-        else:
-            self.scope_state = StudyScopeState(backend=self._runtime_backend())
+        # task-2854: "study" folds under the Library destination in
+        # shell_destinations.py for label/search purposes (Home's "Opens:"
+        # copy, the command palette's search aliases) -- but Study renders
+        # none of Library's chrome, so highlighting the Library nav button
+        # here would falsely claim Library is still on screen. Clearing it
+        # (see ``BaseAppScreen.nav_bar_active``) leaves no destination
+        # highlighted; the breadcrumb header in ``compose_content`` below
+        # names where the user actually is and how to get back instead.
+        self.nav_bar_active = ""
+        # task-4011: which screen handed off into Study ("home" or
+        # "library"), claimed here -- screens are constructed fresh per
+        # navigation, and the breadcrumb built in ``compose_content`` needs
+        # it before first paint. Drives the breadcrumb, the footer Esc hint,
+        # and ``action_study_back``'s destination.
+        self._study_origin = self._claim_study_origin()
+        self.scope_state = StudyScopeState(backend=self._runtime_backend())
         self._effective_scope_key: ScopeKey = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
         self.quiz_session_widget: Optional[QuizSessionWidget] = None
@@ -102,11 +140,40 @@ class StudyScreen(BaseAppScreen):
         self._recent_deck_titles: list[str] = []
         self._recent_quiz_titles: list[str] = []
         self._latest_source_study_pack: dict[str, Any] | None = None
-        self._pending_initial_section = self._consume_pending_initial_section()
 
     @property
     def current_scope(self) -> StudyScopeState:
         return self.scope_state
+
+    def _claim_study_origin(self) -> str:
+        """Claim the single-use origin handoff, defaulting to Library.
+
+        Library is the fallback for every path that stages no origin
+        (direct ``NavigateToScreen("study")``, older callers): that is
+        exactly the pre-task-4011 behaviour, so unlabelled entries lose
+        nothing while Home's labelled entry stops lying.
+        """
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        claim_origin = getattr(store, "claim", None)
+        if not callable(claim_origin):
+            return STUDY_ORIGIN_LIBRARY
+        claim = claim_origin(HandoffChannel.STUDY_ORIGIN)
+        if claim is None:
+            return STUDY_ORIGIN_LIBRARY
+        store.acknowledge(claim)
+        value = claim.value
+        return value if value in STUDY_ORIGINS else STUDY_ORIGIN_LIBRARY
+
+    def _origin_display_name(self) -> str:
+        return "Home" if self._study_origin == STUDY_ORIGIN_HOME else "Library"
+
+    def _study_footer_shortcuts(self) -> tuple:
+        """Footer hint advertising the Escape binding (task-2854), phrased
+        for the actual origin (task-4011); mirrors
+        ``LibraryScreen.LIBRARY_NOTES_FILES_SHORTCUTS``'s ``("esc", ...)``
+        entry.
+        """
+        return (("esc", f"back to {self._origin_display_name()}"),)
 
     def compose_content(self) -> ComposeResult:
         """Compose the Study screen with a shell-level dashboard and study surface."""
@@ -117,6 +184,25 @@ class StudyScreen(BaseAppScreen):
         self.study_window_widget.display = False
 
         with Vertical(id="study-shell"):
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    # task-2854: the nav bar deliberately shows no highlighted
+                    # tab while this screen is up (see ``nav_bar_active`` in
+                    # __init__), so this breadcrumb is the only place that
+                    # names where the user is -- and, since Escape is unbound
+                    # anywhere else on this screen, the only VISIBLE (not
+                    # just footer/F1-panel) statement of how to get back.
+                    # task-4011: both halves name the ACTUAL origin (Home or
+                    # Library), matching where Escape really goes.
+                    title=f"{self._origin_display_name()} ▸ Study",
+                    subtitle=(
+                        "Flashcards, quizzes, and study sessions. "
+                        f"Esc: back to {self._origin_display_name()}."
+                    ),
+                    status="ready",
+                ),
+                id="study-destination-header",
+            )
             with Horizontal(id="study-section-bar"):
                 yield Button(
                     "Dashboard",
@@ -124,13 +210,21 @@ class StudyScreen(BaseAppScreen):
                     variant="primary",
                     tooltip=self._SECTION_TOOLTIPS["dashboard"],
                 )
-                yield Button("Paths", id="view-structured-btn", tooltip=self._SECTION_TOOLTIPS["paths"])
+                yield Button(
+                    "Paths",
+                    id="view-structured-btn",
+                    tooltip=self._SECTION_TOOLTIPS["paths"],
+                )
                 yield Button(
                     "Flashcards",
                     id="view-flashcards-btn",
                     tooltip=self._SECTION_TOOLTIPS["flashcards"],
                 )
-                yield Button("Quizzes", id="view-quizzes-btn", tooltip=self._SECTION_TOOLTIPS["quizzes"])
+                yield Button(
+                    "Quizzes",
+                    id="view-quizzes-btn",
+                    tooltip=self._SECTION_TOOLTIPS["quizzes"],
+                )
                 yield Button(
                     "Guides",
                     id="view-study-guide-btn",
@@ -141,7 +235,11 @@ class StudyScreen(BaseAppScreen):
                     id="view-mindmaps-btn",
                     tooltip=self._SECTION_TOOLTIPS["mindmaps"],
                 )
-                yield Button("Course", id="view-course-btn", tooltip=self._SECTION_TOOLTIPS["course"])
+                yield Button(
+                    "Course",
+                    id="view-course-btn",
+                    tooltip=self._SECTION_TOOLTIPS["course"],
+                )
                 yield Button(
                     "Map",
                     id="view-learning-map-btn",
@@ -220,7 +318,9 @@ class StudyScreen(BaseAppScreen):
             return ""
         return text
 
-    def _clean_material_titles(self, material_titles: tuple[str, ...]) -> tuple[str, ...]:
+    def _clean_material_titles(
+        self, material_titles: tuple[str, ...]
+    ) -> tuple[str, ...]:
         cleaned: list[str] = []
         for title in material_titles:
             clean_title = self._clean_material_text(
@@ -233,7 +333,9 @@ class StudyScreen(BaseAppScreen):
                 break
         return tuple(cleaned)
 
-    def _clean_source_items(self, source_items: tuple[StudySourceItem, ...]) -> tuple[StudySourceItem, ...]:
+    def _clean_source_items(
+        self, source_items: tuple[StudySourceItem, ...]
+    ) -> tuple[StudySourceItem, ...]:
         cleaned: list[StudySourceItem] = []
         for item in source_items:
             if not isinstance(item, StudySourceItem):
@@ -247,14 +349,20 @@ class StudyScreen(BaseAppScreen):
             )
             if not source_id:
                 continue
-            label = self._clean_material_text(
-                item.label,
-                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
-            ) or None
-            excerpt_text = self._clean_material_text(
-                item.excerpt_text,
-                max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
-            ) or None
+            label = (
+                self._clean_material_text(
+                    item.label,
+                    max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
+                )
+                or None
+            )
+            excerpt_text = (
+                self._clean_material_text(
+                    item.excerpt_text,
+                    max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
+                )
+                or None
+            )
             locator: dict[str, Any] = {}
             if isinstance(item.locator, Mapping):
                 for key, value in item.locator.items():
@@ -275,8 +383,18 @@ class StudyScreen(BaseAppScreen):
                 break
         return tuple(cleaned)
 
-    def _derive_scope_state(self, scope_context: StudyScopeContext) -> StudyScopeState:
-        backend = self._runtime_backend()
+    def _derive_scope_state(
+        self,
+        scope_context: StudyScopeContext,
+        *,
+        runtime_backend: str | None = None,
+    ) -> StudyScopeState:
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        backend = (
+            normalized_backend
+            if normalized_backend in {"local", "server"}
+            else self._runtime_backend()
+        )
         workspace_scope_available = backend == "server"
         error_message: Optional[str] = None
 
@@ -309,32 +427,13 @@ class StudyScreen(BaseAppScreen):
                 max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
             )
             or None,
-            material_titles=self._clean_material_titles(tuple(scope_context.material_titles or ())),
-            source_items=self._clean_source_items(tuple(scope_context.source_items or ())),
+            material_titles=self._clean_material_titles(
+                tuple(scope_context.material_titles or ())
+            ),
+            source_items=self._clean_source_items(
+                tuple(scope_context.source_items or ())
+            ),
         )
-
-    def _consume_pending_scope_context(self) -> Optional[StudyScopeContext]:
-        pending = getattr(self.app_instance, "pending_study_scope_context", None)
-        if pending is None:
-            return None
-        self.app_instance.pending_study_scope_context = None
-        return pending
-
-    def _consume_pending_initial_section(self) -> Optional[str]:
-        pending = getattr(self.app_instance, "pending_study_initial_section", None)
-        if pending is None:
-            return None
-        self.app_instance.pending_study_initial_section = None
-        normalized = str(pending or "").strip()
-        if normalized in self._VALID_INITIAL_SECTIONS:
-            return normalized
-        return None
-
-    def _apply_pending_initial_section(self) -> None:
-        if self._pending_initial_section is None:
-            return
-        self.current_section = self._pending_initial_section
-        self._pending_initial_section = None
 
     def _current_scope_context(self) -> StudyScopeContext:
         return self.scope_state.as_context()
@@ -349,7 +448,9 @@ class StudyScreen(BaseAppScreen):
         scope_type = self.scope_state.scope_type.value
         return {
             "scope_type": scope_type,
-            "workspace_id": self.scope_state.workspace_id if scope_type == StudyScopeType.WORKSPACE.value else None,
+            "workspace_id": self.scope_state.workspace_id
+            if scope_type == StudyScopeType.WORKSPACE.value
+            else None,
         }
 
     @staticmethod
@@ -366,13 +467,19 @@ class StudyScreen(BaseAppScreen):
     def _scope_summary_text(self) -> str:
         material_summary = self._material_context_summary_text()
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE:
-            workspace_name = self.scope_state.workspace_name or self.scope_state.workspace_id or "Workspace"
+            workspace_name = (
+                self.scope_state.workspace_name
+                or self.scope_state.workspace_id
+                or "Workspace"
+            )
             backend = self.scope_state.backend
             if self.scope_state.error_message:
                 return f"Workspace: {workspace_name} | {self.scope_state.error_message}"
             base = f"Workspace: {workspace_name} | Backend: {backend}"
             return f"{base} | {material_summary}" if material_summary else base
-        return f"Global study | {material_summary}" if material_summary else "Global study"
+        return (
+            f"Global study | {material_summary}" if material_summary else "Global study"
+        )
 
     def _material_context_summary_text(self) -> str | None:
         if not self.scope_state.material_source and not self.scope_state.material_title:
@@ -454,7 +561,16 @@ class StudyScreen(BaseAppScreen):
         self.sync_shell_from_window()
 
     def activate_section(self, section: str) -> None:
-        if section not in {"dashboard", "paths", "flashcards", "quizzes", "guides", "mindmaps", "course", "learning_map"}:
+        if section not in {
+            "dashboard",
+            "paths",
+            "flashcards",
+            "quizzes",
+            "guides",
+            "mindmaps",
+            "course",
+            "learning_map",
+        }:
             return
         self.current_section = section
 
@@ -478,11 +594,15 @@ class StudyScreen(BaseAppScreen):
 
         summary = None
         if self.current_study_session:
-            section = str(self.current_study_session.get("section") or "study").replace("_", " ")
+            section = str(self.current_study_session.get("section") or "study").replace(
+                "_", " "
+            )
             topic = str(self.current_study_session.get("topic") or "session").strip()
             summary = f"{section}: {topic}"
         self.study_dashboard.update_resume_action(summary)
-        self.study_dashboard.update_source_generation_action(**self._source_generation_dashboard_state())
+        self.study_dashboard.update_source_generation_action(
+            **self._source_generation_dashboard_state()
+        )
 
     def _source_generation_dashboard_state(self) -> dict[str, Any]:
         if not self.scope_state.source_items:
@@ -506,7 +626,9 @@ class StudyScreen(BaseAppScreen):
         if self._latest_source_study_pack:
             return {
                 "enabled": True,
-                "status": self._source_study_pack_ready_status(self._latest_source_study_pack),
+                "status": self._source_study_pack_ready_status(
+                    self._latest_source_study_pack
+                ),
                 "tooltip": "Generate another server study pack from the selected Library sources.",
             }
         return {
@@ -521,7 +643,9 @@ class StudyScreen(BaseAppScreen):
     def _source_items_payload(self) -> list[dict[str, Any]]:
         return [item.as_payload() for item in self.scope_state.source_items]
 
-    def _source_study_pack_title_from_payload(self, study_pack: Mapping[str, Any]) -> str:
+    def _source_study_pack_title_from_payload(
+        self, study_pack: Mapping[str, Any]
+    ) -> str:
         return (
             self._clean_material_text(
                 study_pack.get("title"),
@@ -552,9 +676,17 @@ class StudyScreen(BaseAppScreen):
         if title:
             self._recent_deck_titles = [
                 title,
-                *[deck_title for deck_title in self._recent_deck_titles if deck_title != title],
+                *[
+                    deck_title
+                    for deck_title in self._recent_deck_titles
+                    if deck_title != title
+                ],
             ][:3]
-        section = "flashcards" if self._has_source_pack_value(study_pack.get("deck_id")) else "dashboard"
+        section = (
+            "flashcards"
+            if self._has_source_pack_value(study_pack.get("deck_id"))
+            else "dashboard"
+        )
         self._record_study_session(section=section, topic=title)
 
     def _source_pack_job_status_text(self, status: str, job_id: Any) -> str:
@@ -573,7 +705,9 @@ class StudyScreen(BaseAppScreen):
         return self._clean_material_text(value, max_length=max_length)
 
     def _source_pack_error_text(self, value: Any) -> str:
-        return self._clean_material_text(value, max_length=SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT)
+        return self._clean_material_text(
+            value, max_length=SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT
+        )
 
     def _source_pack_status_name(self, status: Any, *, fallback: str = "queued") -> str:
         clean_status = self._clean_material_text(status, max_length=32).lower()
@@ -592,7 +726,9 @@ class StudyScreen(BaseAppScreen):
             return int(text)
         return None
 
-    def _update_source_generation_dashboard(self, *, enabled: bool, status: str, tooltip: str) -> None:
+    def _update_source_generation_dashboard(
+        self, *, enabled: bool, status: str, tooltip: str
+    ) -> None:
         if self.study_dashboard is not None and self.study_dashboard.is_mounted:
             self.study_dashboard.update_source_generation_action(
                 enabled=enabled,
@@ -600,7 +736,9 @@ class StudyScreen(BaseAppScreen):
                 tooltip=tooltip,
             )
 
-    async def _observe_source_study_pack_job(self, study_service: Any, job_id: Any) -> bool:
+    async def _observe_source_study_pack_job(
+        self, study_service: Any, job_id: Any
+    ) -> bool:
         status_loader = getattr(study_service, "get_study_pack_job_status", None)
         if not callable(status_loader):
             return False
@@ -622,7 +760,9 @@ class StudyScreen(BaseAppScreen):
         mode = self._runtime_backend()
         for attempt in range(SOURCE_STUDY_PACK_STATUS_CHECKS):
             try:
-                result = await self._maybe_await(status_loader(mode=mode, job_id=normalized_job_id))
+                result = await self._maybe_await(
+                    status_loader(mode=mode, job_id=normalized_job_id)
+                )
             except Exception:
                 logger.exception("Failed to observe source study-pack generation")
                 status = "Study pack generation was queued, but status refresh failed."
@@ -638,7 +778,9 @@ class StudyScreen(BaseAppScreen):
 
             payload = result if isinstance(result, Mapping) else {}
             job = payload.get("job") if isinstance(payload.get("job"), Mapping) else {}
-            last_status = self._source_pack_status_name(job.get("status"), fallback=last_status)
+            last_status = self._source_pack_status_name(
+                job.get("status"), fallback=last_status
+            )
             study_pack = payload.get("study_pack")
             if last_status == "completed" and isinstance(study_pack, Mapping):
                 self._record_source_study_pack_ready(study_pack)
@@ -663,7 +805,10 @@ class StudyScreen(BaseAppScreen):
                 )
                 notify = getattr(self.app_instance, "notify", None)
                 if callable(notify):
-                    notify(status, severity="error" if last_status == "failed" else "warning")
+                    notify(
+                        status,
+                        severity="error" if last_status == "failed" else "warning",
+                    )
                 return True
             if attempt + 1 < SOURCE_STUDY_PACK_STATUS_CHECKS:
                 await asyncio.sleep(SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS)
@@ -733,10 +878,11 @@ class StudyScreen(BaseAppScreen):
         job = result.get("job") if isinstance(result, Mapping) else None
         job_id = job.get("id") if isinstance(job, Mapping) else None
         normalized_job_id = self._source_pack_job_id(job_id)
-        job_status = self._source_pack_status_name(job.get("status") if isinstance(job, Mapping) else None)
-        observing_job = (
-            normalized_job_id is not None
-            and callable(getattr(study_service, "get_study_pack_job_status", None))
+        job_status = self._source_pack_status_name(
+            job.get("status") if isinstance(job, Mapping) else None
+        )
+        observing_job = normalized_job_id is not None and callable(
+            getattr(study_service, "get_study_pack_job_status", None)
         )
         self._update_source_generation_dashboard(
             enabled=not observing_job,
@@ -782,7 +928,9 @@ class StudyScreen(BaseAppScreen):
             self.quiz_session_widget.update_session_summary("Select a quiz to begin.")
             self.quiz_session_widget.update_status("")
             self.quiz_session_widget.set_start_enabled(False, QUIZ_START_SELECT_TOOLTIP)
-            self.quiz_session_widget.set_review_in_chat_enabled(False, QUIZ_REVIEW_SELECT_TOOLTIP)
+            self.quiz_session_widget.set_review_in_chat_enabled(
+                False, QUIZ_REVIEW_SELECT_TOOLTIP
+            )
             return
 
         quiz_name = None
@@ -791,7 +939,9 @@ class StudyScreen(BaseAppScreen):
             quiz_name = label_getter()
 
         if quiz_name:
-            self.quiz_session_widget.update_session_summary(f"Selected quiz: {quiz_name}")
+            self.quiz_session_widget.update_session_summary(
+                f"Selected quiz: {quiz_name}"
+            )
         elif getattr(controller, "has_quizzes", False):
             self.quiz_session_widget.update_session_summary("Select a quiz to begin.")
         else:
@@ -823,14 +973,18 @@ class StudyScreen(BaseAppScreen):
 
         open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not quiz_name:
-            self.quiz_session_widget.set_review_in_chat_enabled(False, QUIZ_REVIEW_SELECT_TOOLTIP)
+            self.quiz_session_widget.set_review_in_chat_enabled(
+                False, QUIZ_REVIEW_SELECT_TOOLTIP
+            )
         elif not callable(open_chat):
             self.quiz_session_widget.set_review_in_chat_enabled(
                 False,
                 QUIZ_REVIEW_HANDOFF_UNAVAILABLE_TOOLTIP,
             )
         else:
-            self.quiz_session_widget.set_review_in_chat_enabled(True, QUIZ_REVIEW_ENABLED_TOOLTIP)
+            self.quiz_session_widget.set_review_in_chat_enabled(
+                True, QUIZ_REVIEW_ENABLED_TOOLTIP
+            )
 
     def _build_quiz_chat_handoff_payload(self) -> ChatHandoffPayload | None:
         controller = getattr(self.study_window_widget, "quizzes_controller", None)
@@ -844,9 +998,14 @@ class StudyScreen(BaseAppScreen):
 
         id_getter = getattr(controller, "_selected_quiz_id", None)
         quiz_id = id_getter() if callable(id_getter) else None
-        status = self._status_text_from_window("#quiz-attempt-status") or "No active attempt."
+        status = (
+            self._status_text_from_window("#quiz-attempt-status")
+            or "No active attempt."
+        )
         question = self._status_text_from_window("#quiz-attempt-question")
-        attempt_questions = list(getattr(controller, "current_attempt_questions", None) or [])
+        attempt_questions = list(
+            getattr(controller, "current_attempt_questions", None) or []
+        )
 
         body_lines = [
             f"Quiz: {quiz_name}",
@@ -889,11 +1048,21 @@ class StudyScreen(BaseAppScreen):
         )
 
     def sync_shell_from_window(self) -> None:
-        self._sync_dashboard_widgets()
-        self._sync_quiz_session_widget()
+        try:
+            self._sync_dashboard_widgets()
+            self._sync_quiz_session_widget()
+        except NoMatches:
+            # is_mounted flips True before a widget's compose children are
+            # queryable, so a sync racing the initial mount can query nodes
+            # that do not exist yet. The updates are idempotent; retry once
+            # the DOM has settled instead of crashing the caller's worker.
+            self.call_after_refresh(self.sync_shell_from_window)
 
     async def _refresh_dashboard_snapshot(self) -> None:
-        if self.scope_state.scope_type == StudyScopeType.WORKSPACE and self.scope_state.error_message:
+        if (
+            self.scope_state.scope_type == StudyScopeType.WORKSPACE
+            and self.scope_state.error_message
+        ):
             self._dashboard_due_count = 0
             self._recent_deck_titles = []
             self._recent_quiz_titles = []
@@ -906,6 +1075,19 @@ class StudyScreen(BaseAppScreen):
         quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         db = getattr(self.app_instance, "chachanotes_db", None)
 
+        async def _db_off_loop(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+            """Run one sync fallback DB query off the event loop.
+
+            task-15471: these fallbacks ran synchronously in this async
+            method -- three chachanotes queries on the loop per screen
+            resume. Same `is_memory_db` guard as the Console browser-search
+            threading: a per-connection :memory: DB is only visible to the
+            thread that migrated it, so it must stay on the loop thread.
+            """
+            if bool(getattr(db, "is_memory_db", False)):
+                return func(*args, **kwargs)
+            return await asyncio.to_thread(func, *args, **kwargs)
+
         due_count = 0
         try:
             due_loader = getattr(study_service, "get_due_flashcards", None)
@@ -913,9 +1095,13 @@ class StudyScreen(BaseAppScreen):
                 due_records = await self._maybe_await(
                     due_loader(mode=mode, **scope_args, limit=25)
                 )
-                due_count = len(self._normalize_records(due_records) or list(due_records or []))
+                due_count = len(
+                    self._normalize_records(due_records) or list(due_records or [])
+                )
             elif db is not None and hasattr(db, "get_due_flashcards"):
-                due_count = len(list(db.get_due_flashcards(limit=25) or []))
+                due_count = len(
+                    list(await _db_off_loop(db.get_due_flashcards, limit=25) or [])
+                )
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study due counts")
 
@@ -923,7 +1109,9 @@ class StudyScreen(BaseAppScreen):
         try:
             deck_loader = getattr(study_service, "list_decks", None)
             if callable(deck_loader):
-                decks = await self._maybe_await(deck_loader(mode=mode, **scope_args, limit=3, offset=0))
+                decks = await self._maybe_await(
+                    deck_loader(mode=mode, **scope_args, limit=3, offset=0)
+                )
                 recent_decks = [
                     str(deck.get("name") or "Untitled deck")
                     for deck in self._normalize_records(decks)[:3]
@@ -931,7 +1119,9 @@ class StudyScreen(BaseAppScreen):
             elif db is not None and hasattr(db, "list_decks"):
                 recent_decks = [
                     str(deck.get("name") or "Untitled deck")
-                    for deck in list(db.list_decks(limit=3, offset=0) or [])[:3]
+                    for deck in list(
+                        await _db_off_loop(db.list_decks, limit=3, offset=0) or []
+                    )[:3]
                 ]
         except Exception:
             logger.opt(exception=True).debug("Failed to load Study deck recents")
@@ -940,13 +1130,21 @@ class StudyScreen(BaseAppScreen):
         try:
             quiz_loader = getattr(quiz_service, "list_quizzes", None)
             if callable(quiz_loader):
-                quizzes = await self._maybe_await(quiz_loader(mode=mode, **scope_args, q=None, limit=3, offset=0))
+                quizzes = await self._maybe_await(
+                    quiz_loader(mode=mode, **scope_args, q=None, limit=3, offset=0)
+                )
                 recent_quizzes = [
                     str(quiz.get("name") or "Untitled quiz")
                     for quiz in self._normalize_records(quizzes)[:3]
                 ]
             elif db is not None and hasattr(db, "list_quizzes"):
-                quizzes = db.list_quizzes(q=None, workspace_id=self.scope_state.workspace_id, limit=3, offset=0)
+                quizzes = await _db_off_loop(
+                    db.list_quizzes,
+                    q=None,
+                    workspace_id=self.scope_state.workspace_id,
+                    limit=3,
+                    offset=0,
+                )
                 recent_quizzes = [
                     str(quiz.get("name") or "Untitled quiz")
                     for quiz in self._normalize_records(quizzes)[:3]
@@ -1010,8 +1208,12 @@ class StudyScreen(BaseAppScreen):
         *,
         study_window: Any,
         force_controller_notify: bool = False,
+        runtime_backend: str | None = None,
     ) -> None:
-        next_state = self._derive_scope_state(scope_context)
+        next_state = self._derive_scope_state(
+            scope_context,
+            runtime_backend=runtime_backend,
+        )
         previous_key = self._effective_scope_key
         next_key = self._scope_key(next_state)
 
@@ -1027,7 +1229,9 @@ class StudyScreen(BaseAppScreen):
         for controller_name in ("flashcards_controller", "quizzes_controller"):
             controller = getattr(study_window, controller_name, None)
             if controller_name == "flashcards_controller":
-                end_review_session = getattr(controller, "end_review_session_if_needed", None)
+                end_review_session = getattr(
+                    controller, "end_review_session_if_needed", None
+                )
                 if callable(end_review_session):
                     await end_review_session()
             handler = self._ensure_scope_change_handler(controller)
@@ -1042,11 +1246,13 @@ class StudyScreen(BaseAppScreen):
         *,
         study_window: Any,
         force_controller_notify: bool = False,
+        runtime_backend: str | None = None,
     ) -> None:
         await self._apply_scope_context(
             scope_context,
             study_window=study_window,
             force_controller_notify=force_controller_notify,
+            runtime_backend=runtime_backend,
         )
         sync_scope_banner = getattr(study_window, "_sync_scope_banner", None)
         if callable(sync_scope_banner):
@@ -1054,62 +1260,188 @@ class StudyScreen(BaseAppScreen):
         await self._refresh_dashboard_snapshot()
         self.sync_shell_from_window()
 
-    async def on_mount(self) -> None:
-        """Initialize Study features when screen is mounted."""
-        super().on_mount()
+    async def _apply_pending_scope_handoff(self, *, study_window: Any) -> bool:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.STUDY_SCOPE)
+        if claim is None:
+            return False
+        try:
+            await self._apply_scope_context_and_refresh(
+                claim.value,
+                study_window=study_window,
+                force_controller_notify=True,
+            )
+        except asyncio.CancelledError:
+            store.release(claim)
+            raise
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Study scope handoff failed (exception_category={}).",
+                type(exc).__name__,
+            )
+        else:
+            store.acknowledge(claim)
+        return True
+
+    def _apply_pending_section_handoff(self) -> None:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.STUDY_INITIAL_SECTION)
+        if claim is None:
+            self._apply_section_layout()
+            return
+
+        previous_section = self.current_section
+        try:
+            self.current_section = claim.value
+            self._apply_section_layout()
+        except Exception as exc:
+            self.current_section = previous_section
+            store.release(claim)
+            logger.warning(
+                "Study section handoff failed (exception_category={}).",
+                type(exc).__name__,
+            )
+        else:
+            store.acknowledge(claim)
+
+    def on_mount(self) -> None:
+        """Mount now, load the scoped data after (TASK-1320).
+
+        Synchronous by design: mounting is awaited by the app's own navigation
+        handler, so awaiting the scope refresh here ran it on the App's message
+        pump and the app stopped responding until the scoped study data came
+        back.
+
+        Deferred by `call_after_refresh` rather than started directly, because a
+        screen's `on_mount` fires before the children its `compose()` yielded
+        have finished mounting and the deferred work does `query_one(StudyWindow)`.
+
+        No super().on_mount(): the dispatcher already invokes
+        BaseAppScreen.on_mount separately for this Mount event.
+        """
         logger.info("Study screen mounted")
+        # task-2854: advertise the Escape back-hint in the footer, mirroring
+        # LibraryScreen's Files-mode Escape registration (task-2850);
+        # task-4011: phrased for the actual origin.
+        self.register_footer_shortcuts(
+            source="study", shortcuts=self._study_footer_shortcuts()
+        )
+        self.call_after_refresh(self._start_initial_load)
 
-        study_window = self.query_one(StudyWindow)
+    def action_study_back(self) -> None:
+        """Escape: leave Study for the screen that actually reached it.
 
-        pending_scope_context = self._consume_pending_scope_context()
-        scope_context = pending_scope_context or self._current_scope_context()
-        await self._apply_scope_context_and_refresh(
-            scope_context,
-            study_window=study_window,
-            force_controller_notify=pending_scope_context is not None,
+        task-4011: routes on the claimed origin -- Home's flashcards-review
+        entry returns to Home; anything else keeps task-2854's Library
+        return below.
+
+        task-2854 (Library origin): Study has no back affordance of its own
+        -- it is a separate full screen, not a Library canvas -- so this
+        reuses the existing ``NavigateToScreen``/nav-context seam
+        (``LIBRARY_NAV_CONTEXT_MODE``) the exact way
+        ``TldwCli.open_notes_workspace`` re-enters Library's Notes list,
+        landing on the "Study decks" handoff row (``LIBRARY_NAV_MODE_TO_ROW_ID``)
+        regardless of which of the three Study handoff rows (Study/
+        Flashcards/Quizzes) actually reached this screen -- they are three
+        variations of the same staging surface and share one "Continue in
+        Study" exit, so one shared landing spot keeps this simple rather
+        than threading the originating row id through the whole handoff.
+        """
+        if self._study_origin == STUDY_ORIGIN_HOME:
+            self.app_instance.post_message(NavigateToScreen(TAB_HOME))
+            return
+        self.app_instance.post_message(
+            NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "study"})
         )
 
-        if hasattr(study_window, 'load_saved_sessions'):
+    def _start_initial_load(self) -> None:
+        self.run_worker(
+            self._load_after_mount(),
+            group="study_initial_load",
+            # A load failure is a broken screen, never a dead app. Textual
+            # defaults this to True, so deferring mount work into a worker would
+            # otherwise turn a failed scoped read into an app exit.
+            exit_on_error=False,
+            exclusive=True,
+        )
+
+    async def _load_after_mount(self) -> None:
+        """Apply scope and load scoped study data, off the message pump."""
+        try:
+            await self._load_after_mount_inner()
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Study initial load failed "
+                "(section={}, scope_key={}, backend={}, exception_category={}).",
+                self.current_section,
+                self._effective_scope_key,
+                getattr(self.scope_state, "backend", None),
+                type(exc).__name__,
+            )
+            try:
+                self.notify("Couldn't load study data.", severity="error")
+            except Exception:
+                pass
+
+    async def _load_after_mount_inner(self) -> None:
+        study_window = self.query_one(StudyWindow)
+
+        if not await self._apply_pending_scope_handoff(study_window=study_window):
+            await self._apply_scope_context_and_refresh(
+                self._current_scope_context(),
+                study_window=study_window,
+            )
+
+        # `StudyWindow` defines neither of these, so both guards are dead as
+        # written; they are kept as-is rather than silently dropped, since
+        # removing them is a separate decision from moving the mount off the
+        # pump.
+        if hasattr(study_window, "load_saved_sessions"):
             await study_window.load_saved_sessions()
 
-        if hasattr(study_window, 'initialize'):
+        if hasattr(study_window, "initialize"):
             await study_window.initialize()
-        self._apply_section_layout()
+        self._apply_pending_section_handoff()
         self.sync_shell_from_window()
 
     async def on_screen_suspend(self) -> None:
         """Save state when screen is suspended (navigated away)."""
         logger.debug("Study screen suspended")
-        
+
         # Save current study session if active
         if self.is_studying and self.current_study_session:
             study_window = self.query_one(StudyWindow)
-            if hasattr(study_window, 'save_session'):
+            if hasattr(study_window, "save_session"):
                 await study_window.save_session(self.current_study_session)
-        
+
         self.is_studying = False
-    
+
     async def on_screen_resume(self) -> None:
         """Restore state when screen is resumed."""
         logger.debug("Study screen resumed")
 
         study_window = self.query_one(StudyWindow)
-        scope_context = self._consume_pending_scope_context() or self._current_scope_context()
-        await self._apply_scope_context_and_refresh(scope_context, study_window=study_window)
+        if not await self._apply_pending_scope_handoff(study_window=study_window):
+            await self._apply_scope_context_and_refresh(
+                self._current_scope_context(),
+                study_window=study_window,
+            )
 
         if self.current_study_session:
-            if hasattr(study_window, 'restore_session'):
+            if hasattr(study_window, "restore_session"):
                 await study_window.restore_session(self.current_study_session)
-        self._apply_pending_initial_section()
-        self._apply_section_layout()
+        self._apply_pending_section_handoff()
         self.sync_shell_from_window()
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         normalized_backend = str(runtime_backend or "").strip().lower()
-        if normalized_backend in {"local", "server"}:
-            self.app_instance.current_runtime_backend = normalized_backend
         study_window = self.query_one(StudyWindow)
-        await self._apply_scope_context_and_refresh(self._current_scope_context(), study_window=study_window)
+        await self._apply_scope_context_and_refresh(
+            self._current_scope_context(),
+            study_window=study_window,
+            runtime_backend=normalized_backend,
+        )
 
     def save_state(self) -> dict[str, Any]:
         state = super().save_state()
@@ -1124,7 +1456,9 @@ class StudyScreen(BaseAppScreen):
                     "material_title": self.scope_state.material_title,
                     "material_summary": self.scope_state.material_summary,
                     "material_titles": list(self.scope_state.material_titles),
-                    "source_items": [item.as_payload() for item in self.scope_state.source_items],
+                    "source_items": [
+                        item.as_payload() for item in self.scope_state.source_items
+                    ],
                 },
                 "study_section": self.current_section,
                 "current_study_session": self.current_study_session,
@@ -1145,7 +1479,9 @@ class StudyScreen(BaseAppScreen):
         if saved_scope:
             self.scope_state = self._derive_scope_state(
                 StudyScopeContext(
-                    scope_type=StudyScopeType(saved_scope.get("scope_type", StudyScopeType.GLOBAL.value)),
+                    scope_type=StudyScopeType(
+                        saved_scope.get("scope_type", StudyScopeType.GLOBAL.value)
+                    ),
                     workspace_id=saved_scope.get("workspace_id"),
                     workspace_name=saved_scope.get("workspace_name"),
                     return_hint=saved_scope.get("return_hint"),
@@ -1174,7 +1510,7 @@ class StudyScreen(BaseAppScreen):
         """Update the list of study materials."""
         self.study_materials = materials
         logger.debug(f"Updated study materials: {len(materials)} items")
-    
+
     def start_study_session(self, topic: str, *, section: str = "dashboard") -> None:
         """Start a new study session."""
         self._record_study_session(section=section, topic=topic)
@@ -1188,7 +1524,13 @@ class StudyScreen(BaseAppScreen):
             except Exception:
                 study_window = None
             if study_window is not None:
-                self.run_worker(self._apply_scope_context_and_refresh(scope_context, study_window=study_window), exclusive=True)
+                self.run_worker(
+                    self._apply_scope_context_and_refresh(
+                        scope_context, study_window=study_window
+                    ),
+                    exclusive=True,
+                    group="study-apply-scope-context",
+                )
                 return
         open_study = getattr(self.app_instance, "open_study_screen", None)
         if callable(open_study):
@@ -1204,7 +1546,9 @@ class StudyScreen(BaseAppScreen):
                 subview=WorkspaceSubview.DETAILS,
             )
 
-    def enter_workspace_scope(self, workspace_id: str, workspace_name: Optional[str] = None) -> None:
+    def enter_workspace_scope(
+        self, workspace_id: str, workspace_name: Optional[str] = None
+    ) -> None:
         scope_context = StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id=workspace_id,
@@ -1216,7 +1560,13 @@ class StudyScreen(BaseAppScreen):
             except Exception:
                 study_window = None
             if study_window is not None:
-                self.run_worker(self._apply_scope_context_and_refresh(scope_context, study_window=study_window), exclusive=True)
+                self.run_worker(
+                    self._apply_scope_context_and_refresh(
+                        scope_context, study_window=study_window
+                    ),
+                    exclusive=True,
+                    group="study-apply-scope-context",
+                )
                 return
         open_study = getattr(self.app_instance, "open_study_screen", None)
         if callable(open_study):
@@ -1264,7 +1614,11 @@ class StudyScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#study-generate-source-pack")
     def handle_generate_source_pack(self) -> None:
-        self.run_worker(self._generate_source_study_pack(), exclusive=True)
+        self.run_worker(
+            self._generate_source_study_pack(),
+            exclusive=True,
+            group="study-generate-source-pack",
+        )
 
     @on(Button.Pressed, "#study-resume-last")
     def handle_resume_last_session(self) -> None:
@@ -1280,7 +1634,9 @@ class StudyScreen(BaseAppScreen):
             return
         self.activate_section("quizzes")
         await study_window.quizzes_controller.start_attempt()
-        quiz_name = study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
+        quiz_name = (
+            study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
+        )
         self._record_study_session(section="quizzes", topic=quiz_name)
         self.sync_shell_from_window()
 

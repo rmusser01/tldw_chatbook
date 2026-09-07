@@ -61,13 +61,27 @@ a "replaced-on-transition" job is always safe to hand out to callers, too.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import time
-from dataclasses import dataclass, replace
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable, Iterable, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
+
+from tldw_chatbook.Research_Workspace.source_operations import (
+    validate_source_operation_id,
+)
+from tldw_chatbook.STT.persistence import (
+    FailedTranscriptionAttempt,
+    dump_failed_transcription_attempt,
+    load_failed_transcription_attempt,
+)
 
 # The default chunk size (in words) used whenever a caller doesn't supply
 # one -- the lowest-level pure module in the Library ingest stack, so
@@ -93,6 +107,240 @@ class IngestJobState(str, Enum):
     WRITING = "writing"
     DONE = "done"
     FAILED = "failed"
+    #: (task-2220 owner ruling) An unsupported file the user pointed at via
+    #: a folder: never attempted, never an error. "failed" is reserved for
+    #: files the pipeline TRIED and could not ingest.
+    SKIPPED = "skipped"
+    #: Stopped deliberately rather than succeeding or erroring. Only a
+    #: server-origin job reaches this today: the server reports it for a
+    #: job the user cancelled.
+    CANCELLED = "cancelled"
+
+
+ACTIVE_INGEST_STATES: frozenset[IngestJobState] = frozenset(
+    {
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestSourceKey:
+    """Canonical identity for a source while it has active ingest work."""
+
+    origin: str
+    canonical_source: str
+
+
+def normalize_active_ingest_source(
+    source: str,
+    *,
+    origin: str,
+) -> ActiveIngestSourceKey:
+    """Return a conservative, lexical active-ingest identity for ``source``.
+
+    Local paths follow the host platform's case policy. HTTP(S) URLs normalize
+    only scheme, host, default port, absent path, and fragment.
+
+    Args:
+        source: Local path or HTTP(S) URL to identify.
+        origin: Ingest backend, either ``"local"`` or ``"server"``.
+
+    Returns:
+        Canonical source identity partitioned by backend origin.
+
+    Raises:
+        ValueError: If ``origin`` is unsupported, ``source`` is blank, or an
+            HTTP(S) source is malformed.
+    """
+    normalized_origin = str(origin).strip().lower()
+    if normalized_origin not in {"local", "server"}:
+        raise ValueError("origin must be 'local' or 'server'")
+    value = str(source).strip()
+    if not value:
+        raise ValueError("source must not be blank")
+
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() in {"http", "https"}:
+        canonical = _normalize_active_ingest_url(parsed)
+    else:
+        expanded = os.path.expanduser(value)
+        canonical = os.path.normcase(os.path.abspath(os.path.normpath(expanded)))
+    return ActiveIngestSourceKey(normalized_origin, canonical)
+
+
+def _normalize_active_ingest_url(parsed: Any) -> str:
+    """Render only the URL equivalences safe for source admission."""
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("http(s) source requires a host")
+    rendered_host = f"[{host}]" if ":" in host else host
+    raw_userinfo = f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
+    port = parsed.port
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        rendered_host = f"{rendered_host}:{port}"
+    return urlunsplit(
+        (scheme, f"{raw_userinfo}{rendered_host}", parsed.path or "/", parsed.query, "")
+    )
+
+
+def _active_source_key_or_none(
+    source: str,
+    *,
+    origin: str,
+) -> ActiveIngestSourceKey | None:
+    """Return an active-source key, treating malformed sources as non-matches."""
+    try:
+        return normalize_active_ingest_source(source, origin=origin)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+ACTIVE_INGEST_REF_LIMIT = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestJobRef:
+    """Privacy-safe reference to an active ingest job."""
+
+    job_id: str
+    state: IngestJobState
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveIngestConsentScope:
+    """Privacy-safe identity of the exact admission snapshot consented to."""
+
+    origin: str
+    candidate_digest: str
+    candidate_count: int
+    active_job_ids: tuple[str, ...]
+    active_job_count: int
+    active_job_ids_complete: bool
+    active_source_count: int
+
+    def covers(self, current: "ActiveIngestConsentScope") -> bool:
+        """Return whether ``current`` is within this exact consent scope.
+
+        Args:
+            current: Authoritatively recomputed admission scope to validate.
+
+        Returns:
+            ``True`` when the candidate set is unchanged and every current
+            active job is covered by complete consent snapshots.
+        """
+        return (
+            self.origin == current.origin
+            and self.candidate_digest == current.candidate_digest
+            and self.candidate_count == current.candidate_count
+            and self.active_job_ids_complete
+            and current.active_job_ids_complete
+            and set(current.active_job_ids).issubset(self.active_job_ids)
+        )
+
+
+def build_active_ingest_consent_scope(
+    sources: Iterable[str],
+    *,
+    origin: str,
+    active_job_ids: Iterable[str] = (),
+    active_source_count: int = 0,
+) -> ActiveIngestConsentScope:
+    """Build an opaque deterministic identity for candidates and active jobs.
+
+    Args:
+        sources: Candidate local paths or HTTP(S) URLs.
+        origin: Ingest backend, either ``"local"`` or ``"server"``.
+        active_job_ids: Active job identifiers included in the snapshot.
+        active_source_count: Number of candidate sources with active matches.
+
+    Returns:
+        Privacy-safe scope containing candidate identity and bounded active-job
+        membership.
+    """
+    keys = sorted(
+        {
+            key
+            for source in sources
+            if (key := _active_source_key_or_none(source, origin=origin)) is not None
+        },
+        key=lambda key: (key.origin, key.canonical_source),
+    )
+    payload = json.dumps(
+        [(key.origin, key.canonical_source) for key in keys],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    normalized_origin = str(origin).strip().lower()
+    normalized_active_job_ids = tuple(
+        dict.fromkeys(str(job_id) for job_id in active_job_ids)
+    )
+    return ActiveIngestConsentScope(
+        origin=normalized_origin,
+        candidate_digest=hashlib.sha256(payload).hexdigest(),
+        candidate_count=len(keys),
+        active_job_ids=normalized_active_job_ids[:ACTIVE_INGEST_REF_LIMIT],
+        active_job_count=len(normalized_active_job_ids),
+        active_job_ids_complete=(
+            len(normalized_active_job_ids) <= ACTIVE_INGEST_REF_LIMIT
+        ),
+        active_source_count=max(0, int(active_source_count)),
+    )
+
+
+class ActiveIngestSubmissionRefused(RuntimeError):
+    """Raised when a submission matches active work without exposing paths."""
+
+    def __init__(
+        self,
+        matches: Iterable[ActiveIngestJobRef],
+        *,
+        consent_scope: ActiveIngestConsentScope | None = None,
+        candidate_changed: bool = False,
+    ) -> None:
+        materialized = tuple(matches)
+        self.match_count = len(materialized)
+        self.matches = materialized[:ACTIVE_INGEST_REF_LIMIT]
+        self.consent_scope = consent_scope
+        self.candidate_changed = bool(candidate_changed)
+        super().__init__(
+            f"Active ingest admission refused ({self.match_count} matches)."
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(match_count={self.match_count}, "
+            f"candidate_changed={self.candidate_changed!r}, "
+            f"candidate_count={getattr(self.consent_scope, 'candidate_count', 0)!r}, "
+            f"states={tuple(ref.state.value for ref in self.matches)!r})"
+        )
+
+
+#: States a job never leaves. Kept as one definition so "is this finished?"
+#: cannot drift between the places that ask -- ``clear_finished``, the
+#: cancellation guard, and the queue's terminal-row rendering.
+_TERMINAL_STATES: frozenset[IngestJobState] = frozenset(
+    {
+        IngestJobState.DONE,
+        IngestJobState.FAILED,
+        IngestJobState.CANCELLED,
+        IngestJobState.SKIPPED,
+    }
+)
+
+
+#: States whose rows a user may clear individually. A cancellation is
+#: dismissible for the same reason a failure is -- the row has served its
+#: purpose -- but Retry stays withheld, since ``requeue`` is FAILED-only and
+#: offering a dead action is worse than offering none.
+_DISMISSIBLE_STATES: frozenset[IngestJobState] = frozenset(
+    {IngestJobState.FAILED, IngestJobState.CANCELLED, IngestJobState.SKIPPED}
+)
 
 
 @dataclass
@@ -159,6 +407,29 @@ class LibraryIngestJob:
             (returns ``None``) as defense in depth, matching the queue
             row's own ``can_retry = failed and not permanent`` gating in
             ``library_ingest_state.py``.
+        retry_count: Number of times this job has been retried via
+            ``requeue`` (incremented on the new copy: ``source.retry_count
+            + 1``, never on the superseded original). Persisted by
+            :class:`~tldw_chatbook.DB.Library_Ingest_Jobs_DB.
+            LibraryIngestJobsDB` for job-history display. ``0`` for every
+            job unless explicitly set.
+        ingest_options: Per-type ingestion options snapshot captured at
+            submit/requeue time (e.g. PDF engine, transcription model).
+        progress: Optional structured progress payload emitted by the
+            processor while the job is running.
+        error_detail: Optional structured error payload (category, message,
+            install hints) set on failure.
+        content_hash: Optional content hash recorded on success for
+            deduplication-aware "Open in Library" lookups.
+        retry_of_job_id: The immediately preceding Library job, when this job
+            is a retry.
+        stt_failure_provenance: This job's own sanitized failed STT attempt.
+        retry_source_failure_provenance: Immutable failed-attempt snapshot
+            carried into this retry.
+        research_source_operation_id: Opaque durable Research Workspace source
+            operation associated with this ingest lineage, when any.
+        dispatch_held: Whether the durable queue row is ineligible for owner
+            dispatch until its Research operation link is committed.
     """
 
     job_id: str
@@ -180,6 +451,92 @@ class LibraryIngestJob:
     superseded: bool = False
     dismissed: bool = False
     permanent: bool = False
+    retry_count: int = 0
+    ingest_options: dict[str, Any] = field(default_factory=dict)
+    progress: dict[str, Any] | None = None
+    error_detail: dict[str, Any] | None = None
+    content_hash: str | None = None
+    #: Where this job runs. ``"local"`` uses the in-process parse/write
+    #: pipeline; ``"server"`` was submitted to the tldw server's ingest-jobs
+    #: API, so it has no local ``media_id`` and is tracked by the ids below.
+    origin: str = "local"
+    remote_job_id: str | None = None
+    batch_id: str | None = None
+    #: The id of the media row the SERVER created, read from a finished job's
+    #: ``result``. Deliberately not ``media_id``: that means a row in *this*
+    #: machine's media DB, and the two id spaces are unrelated, so storing a
+    #: server id there would point "Open in Library" at a wrong or absent local
+    #: row. Kept separate so a server-origin job can offer its own affordance
+    #: (task-700) without weakening what ``media_id`` means.
+    remote_media_id: str | None = None
+    retry_of_job_id: str | None = None
+    stt_failure_provenance: dict[str, Any] | None = None
+    retry_source_failure_provenance: dict[str, Any] | None = None
+    research_source_operation_id: str | None = None
+    dispatch_held: bool = False
+
+
+def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
+    """Return a job whose mutable snapshots share no registry-owned state."""
+
+    return replace(
+        job,
+        ingest_options=deepcopy(job.ingest_options),
+        progress=deepcopy(job.progress),
+        error_detail=deepcopy(job.error_detail),
+        stt_failure_provenance=deepcopy(job.stt_failure_provenance),
+        retry_source_failure_provenance=deepcopy(job.retry_source_failure_provenance),
+    )
+
+
+ProgressListener = Callable[[LibraryIngestJob, LibraryIngestJob], None]
+
+
+class IngestJobStore(Protocol):
+    """Write-through persistence sink for :class:`LibraryIngestJobRegistry`.
+
+    Optional -- a registry with no store attached (the default) is 100%
+    pure/in-memory, matching every pre-existing behavior byte-for-byte.
+    When attached (``attach_store``), every mutation best-effort persists
+    the affected job(s). Retry creation is the exception: its source and
+    retry rows must commit atomically before the in-memory mutation is exposed.
+    A failed retry-pair write is logged and leaves the source retryable.
+    """
+
+    def upsert_job(self, job: "LibraryIngestJob") -> None: ...
+    def upsert_retry(
+        self,
+        source: "LibraryIngestJob",
+        retry: "LibraryIngestJob",
+    ) -> None: ...
+    def delete_job(self, job_id: str) -> None: ...
+
+
+#: (task-2041) The writer marks a dedup outcome by starting the done-job's
+#: progress message with this prefix; the batch-settle toast counts matches
+#: through the same constant so the two can never drift.
+INGEST_DUPLICATE_PROGRESS_PREFIX = "Already in Library"
+
+
+def count_duplicate_done_jobs(jobs: "Iterable[LibraryIngestJob]") -> int:
+    """Count DONE jobs whose outcome was a dedup match, not a fresh import.
+
+    Args:
+        jobs: Any iterable of jobs (a ``jobs()`` snapshot or the
+            registry's internal list -- consumed once).
+
+    Returns:
+        The number of DONE jobs whose progress message carries
+        ``INGEST_DUPLICATE_PROGRESS_PREFIX`` (the writer's dedup marker).
+    """
+    return sum(
+        1
+        for job in jobs
+        if job.state == IngestJobState.DONE
+        and str((job.progress or {}).get("message", "")).startswith(
+            INGEST_DUPLICATE_PROGRESS_PREFIX
+        )
+    )
 
 
 class LibraryIngestJobRegistry:
@@ -195,10 +552,15 @@ class LibraryIngestJobRegistry:
         self._jobs: list[LibraryIngestJob] = []
         self._next_id: int = 1
         self._listeners: list[Callable[[], None]] = []
+        self._progress_listeners: list[ProgressListener] = []
         # Plain flag flipped by the runner owner (e.g. the app's queue-runner
         # worker). No locking -- see the module docstring's threading
         # contract; this attribute is UI-thread-only like everything else.
         self.runner_active: bool = False
+        # Optional write-through persistence sink (Task 2, 161). ``None`` by
+        # default so a registry with no ``attach_store`` call stays 100%
+        # pure/in-memory -- every pre-existing test's behavior is unchanged.
+        self._store: IngestJobStore | None = None
 
     # -- id allocation -----------------------------------------------------
 
@@ -206,6 +568,130 @@ class LibraryIngestJobRegistry:
         job_id = f"ingest-job-{self._next_id}"
         self._next_id += 1
         return job_id
+
+    # -- persistence (Task 2, 161) -----------------------------------------
+
+    def attach_store(self, store: IngestJobStore) -> None:
+        """Attach a write-through persistence sink.
+
+        Args:
+            store: An object implementing ``IngestJobStore``
+                (``upsert_job``/``delete_job``). Once attached, every
+                mutation best-effort persists the affected job(s) -- see
+                ``_persist``/``_persist_delete``. Retry creation additionally
+                requires the store's atomic ``upsert_retry`` operation before
+                exposing the mutation. Not attaching one (the default) keeps
+                the registry 100% pure/in-memory.
+        """
+        self._store = store
+
+    def _persist(self, job: LibraryIngestJob) -> None:
+        """Best-effort write ``job`` through to the attached store, if any.
+
+        A store exception is caught and debug-logged, never allowed to
+        propagate -- a persistence failure must never break the in-memory
+        mutation that already succeeded.
+        """
+        if self._store is None:
+            return
+        try:
+            self._store.upsert_job(job)
+        except Exception:
+            logger.opt(exception=True).debug(f"ingest job persist failed: {job.job_id}")
+
+    def _persist_required(self, job: LibraryIngestJob) -> None:
+        """Persist ``job`` or raise before exposing a durable-only mutation."""
+
+        if self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
+        self._store.upsert_job(job)
+
+    def _persist_delete(self, job_id: str) -> None:
+        """Best-effort delete ``job_id`` from the attached store, if any.
+
+        Same swallow-and-log contract as ``_persist``.
+        """
+        if self._store is None:
+            return
+        try:
+            self._store.delete_job(job_id)
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"ingest job delete-persist failed: {job_id}"
+            )
+
+    def restore(self, jobs: list[LibraryIngestJob], next_id: int) -> None:
+        """Seed the registry from a prior session's persisted jobs.
+
+        Args:
+            jobs: The jobs to seed ``self._jobs`` with, in the same
+                seq-ascending (insertion) order the registry itself
+                maintains internally.
+            next_id: The next ``job_id`` sequence number to allocate.
+
+        This is a bulk operation (app-startup only) -- unlike every other
+        mutation in this class, it does NOT fire a per-job ``_persist``
+        call (the jobs are, by definition, already in the store; re-
+        persisting all of them here would be redundant work on every
+        launch). Callers that need to write through normalized/pruned
+        jobs (see ``plan_restore``) do so explicitly via the store before
+        calling this method.
+        """
+        self._jobs = [_copy_job(job) for job in jobs]
+        self._next_id = next_id
+        self._notify_listeners()
+
+    def merge_restored(self, jobs: list[LibraryIngestJob], next_id: int) -> None:
+        """Seed from persisted history WITHOUT discarding jobs submitted since.
+
+        Args:
+            jobs: The persisted jobs, seq-ascending, exactly as ``restore``
+                takes them.
+            next_id: The next sequence number implied by ``jobs``.
+
+        Identical to :meth:`restore` when the registry is still empty, which
+        is the normal startup case. It exists because TASK-21111 moved the
+        app's persisted-history read off the UI thread: the read now finishes
+        a few milliseconds after ``on_mount`` returns, opening a (narrow)
+        window in which a job could already have been submitted. Plain
+        ``restore`` would silently delete it.
+
+        Live jobs are kept and ordered AFTER the restored ones (they are, by
+        definition, newer). A restored job whose ``job_id`` collides with a
+        live one is dropped rather than duplicated -- both sessions allocate
+        ids from ``ingest-job-1`` upward, so a collision in that window is
+        the likely case, and two entries sharing a ``job_id`` would make
+        every id-keyed mutation ambiguous. ``_next_id`` takes the maximum so
+        no future allocation can collide either.
+
+        Unlike the restored jobs -- already in the store by definition -- the
+        live ones are written through here when a store is attached. They
+        were submitted while the registry was still store-less, so their own
+        ``submit`` reached a ``_persist`` that was a no-op, and nothing else
+        ever re-offers them: without this they were silently absent from the
+        store, gone after the next launch, and any stale persisted row that
+        shared their id was restored in their place. Attach the store BEFORE
+        calling this (see ``TldwCli._apply_ingest_job_restore``); with none
+        attached the write-through is a no-op and the pure/in-memory contract
+        is unchanged.
+        """
+        live = self._jobs
+        if not live:
+            self.restore(jobs, next_id)
+            return
+        live_ids = {job.job_id for job in live}
+        restored = [_copy_job(job) for job in jobs if job.job_id not in live_ids]
+        logger.warning(
+            "Ingest job history restored alongside {} job(s) submitted during "
+            "startup; dropped {} colliding persisted id(s).",
+            len(live),
+            len(jobs) - len(restored),
+        )
+        self._jobs = restored + live
+        self._next_id = max(next_id, self._next_id)
+        for job in live:
+            self._persist(job)
+        self._notify_listeners()
 
     # -- listeners -----------------------------------------------------
 
@@ -246,6 +732,23 @@ class LibraryIngestJobRegistry:
         except ValueError:
             pass
 
+    def add_progress_listener(self, callback: ProgressListener) -> None:
+        """Register a callback for progress-only job projection changes.
+
+        Args:
+            callback: A callable receiving immutable-by-convention before and
+                after job snapshots. Exceptions are isolated like lifecycle
+                listener failures.
+        """
+        self._progress_listeners.append(callback)
+
+    def remove_progress_listener(self, callback: ProgressListener) -> None:
+        """Unregister a previously added progress-only callback."""
+        try:
+            self._progress_listeners.remove(callback)
+        except ValueError:
+            pass
+
     def _notify_listeners(self) -> None:
         # Iterate a snapshot so a listener that adds/removes listeners
         # mid-callback can't corrupt this loop.
@@ -259,7 +762,19 @@ class LibraryIngestJobRegistry:
                 # stdlib `exc_info=True` kwarg -- the latter is a silent
                 # no-op under loguru and would otherwise drop the traceback
                 # entirely.
-                logger.opt(exception=True).debug("LibraryIngestJobRegistry listener raised")
+                logger.opt(exception=True).debug(
+                    "LibraryIngestJobRegistry listener raised"
+                )
+
+    def _notify_progress_listeners(
+        self, before: LibraryIngestJob, after: LibraryIngestJob
+    ) -> None:
+        """Notify progress observers without allowing one to stop the rest."""
+        for callback in tuple(self._progress_listeners):
+            try:
+                callback(before, after)
+            except Exception:
+                logger.debug("LibraryIngestJobRegistry progress listener raised")
 
     # -- mutations -----------------------------------------------------
 
@@ -273,6 +788,13 @@ class LibraryIngestJobRegistry:
         perform_analysis: bool = False,
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        detected_type: str = "",
+        ingest_options: dict[str, Any] | None = None,
+        origin: str = "local",
+        batch_id: str | None = None,
+        research_source_operation_id: str | None = None,
+        dispatch_held: bool = False,
+        require_persisted: bool = False,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -284,10 +806,38 @@ class LibraryIngestJobRegistry:
             perform_analysis: Whether to run post-ingest analysis.
             chunk_enabled: Whether to chunk the ingested content.
             chunk_size: Requested chunk size when ``chunk_enabled``.
+            detected_type: The file type detected by the ingest seam, when
+                already known at submission time. Optional; defaults to
+                ``""`` when not yet known.
+            ingest_options: Per-type ingestion options snapshot.
+            origin: ``"local"`` for the in-process pipeline, ``"server"`` for
+                a submission to the server's ingest-jobs API. A server job
+                carries no local ``media_id``; call ``attach_remote`` once
+                the server has issued its ids.
+            batch_id: Shared id for jobs submitted together (task-2221: a
+                folder expansion mints one so the queue can group the run);
+                ``None`` for single-file submissions.
+            research_source_operation_id: Opaque durable Research Workspace
+                source operation to retain across completion and retry.
+            dispatch_held: Keep the queued row ineligible for dispatch until
+                :meth:`release_dispatch_hold` commits the release.
+            require_persisted: Persist before exposing the queued row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
         """
+        if require_persisted and self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
+        if type(dispatch_held) is not bool:
+            raise TypeError("dispatch_held must be bool")
+        if dispatch_held and not research_source_operation_id:
+            raise ValueError("dispatch_held requires a Research source operation")
+        operation_id = (
+            None
+            if research_source_operation_id is None
+            else validate_source_operation_id(research_source_operation_id)
+        )
         job = LibraryIngestJob(
             job_id=self._allocate_job_id(),
             source_path=source_path,
@@ -299,22 +849,91 @@ class LibraryIngestJobRegistry:
             chunk_size=chunk_size,
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
+            detected_type=detected_type,
+            ingest_options=ingest_options or {},
+            origin=origin,
+            batch_id=batch_id,
+            research_source_operation_id=operation_id,
+            dispatch_held=dispatch_held,
         )
-        self._jobs.append(job)
-        self._notify_listeners()
-        return replace(job)
+        if require_persisted:
+            self._persist_required(job)
+            self._jobs.append(job)
+            self._notify_listeners()
+        else:
+            self._jobs.append(job)
+            self._notify_listeners()
+            self._persist(job)
+        return _copy_job(job)
 
-    def next_queued(self) -> LibraryIngestJob | None:
+    def next_queued(
+        self,
+        *,
+        skip_types: frozenset[str] = frozenset(),
+        only_types: frozenset[str] | None = None,
+    ) -> LibraryIngestJob | None:
         """Return the oldest still-``QUEUED`` job, or ``None`` if none.
 
+        Args:
+            skip_types: ``detected_type`` values to skip. Empty (default)
+                returns the oldest queued job of any type; a non-empty set
+                returns the oldest queued job whose ``detected_type`` is not
+                in the set (skip-ahead for the heavy-lane cap).
+            only_types: Optional set of ``detected_type`` values eligible for
+                selection. Used when a parse-pool generation owns one resource
+                class, such as ebooks.
+
         Returns:
-            A copy of the oldest queued job in FIFO submission order, or
-            ``None`` when no job is queued.
+            A copy of the oldest queued job in FIFO submission order whose
+            ``detected_type`` passes both filters, or ``None`` when no such
+            job is queued.
         """
         for job in self._jobs:
-            if job.state == IngestJobState.QUEUED:
-                return replace(job)
+            if (
+                job.state == IngestJobState.QUEUED
+                and not job.dispatch_held
+                and job.detected_type not in skip_types
+                and (only_types is None or job.detected_type in only_types)
+            ):
+                return _copy_job(job)
         return None
+
+    def release_dispatch_hold(
+        self, job_id: str, *, require_persisted: bool = True
+    ) -> LibraryIngestJob | None:
+        """Persistently release a held job to its explicit dispatch owner.
+
+        A Research retry is atomically claimed as ``PARSING`` with its release,
+        so a later owner or failure-write error can never expose it to the
+        generic ``QUEUED`` selector. Initial Research intake retains the legacy
+        queued release because its operation owner has not retried a failed job.
+        """
+
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.state is not IngestJobState.QUEUED:
+            return None
+        if not current.dispatch_held:
+            return _copy_job(current)
+        claim_retry = bool(
+            current.research_source_operation_id and current.retry_of_job_id
+        )
+        updated = replace(
+            current,
+            dispatch_held=False,
+            state=IngestJobState.PARSING if claim_retry else current.state,
+            started_at=time.monotonic() if claim_retry else current.started_at,
+        )
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
+        self._notify_listeners()
+        return _copy_job(updated)
 
     def _find_index(self, job_id: str) -> int | None:
         for index, job in enumerate(self._jobs):
@@ -322,7 +941,44 @@ class LibraryIngestJobRegistry:
                 return index
         return None
 
-    def mark_parsing(self, job_id: str, *, detected_type: str = "") -> LibraryIngestJob | None:
+    def attach_remote(
+        self,
+        job_id: str,
+        *,
+        remote_job_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> LibraryIngestJob | None:
+        """Record the server-side ids for a submitted ``server``-origin job.
+
+        The ids only exist once the server has accepted the submission, so they
+        arrive after ``submit``. Kept separate from the state transitions
+        because attaching ids is not itself a lifecycle change -- the job stays
+        in whatever state it was in.
+
+        Args:
+            job_id: The job to annotate.
+            remote_job_id: The server's job id, when it issued one.
+            batch_id: The server's batch id, when it issued one.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown.
+            Unknown ids never raise, matching the other registry mutators.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        job = self._jobs[index]
+        if remote_job_id is not None:
+            job.remote_job_id = str(remote_job_id)
+        if batch_id is not None:
+            job.batch_id = str(batch_id)
+        self._notify_listeners()
+        self._persist(job)
+        return _copy_job(job)
+
+    def mark_parsing(
+        self, job_id: str, *, detected_type: str = ""
+    ) -> LibraryIngestJob | None:
         """Transition a ``QUEUED`` job to ``PARSING`` and stamp ``started_at``.
 
         Args:
@@ -362,7 +1018,8 @@ class LibraryIngestJobRegistry:
         )
         self._jobs[index] = updated
         self._notify_listeners()
-        return replace(updated)
+        self._persist(updated)
+        return _copy_job(updated)
 
     def mark_writing(self, job_id: str) -> LibraryIngestJob | None:
         """Transition a ``PARSING`` job to ``WRITING``.
@@ -390,17 +1047,31 @@ class LibraryIngestJobRegistry:
             return None
         if current.state != IngestJobState.PARSING:
             return None
-        updated = replace(current, state=IngestJobState.WRITING)
+        updated = replace(
+            current,
+            state=IngestJobState.WRITING,
+            progress={"phase": "writing", "message": "Saving to Library"},
+        )
         self._jobs[index] = updated
         self._notify_listeners()
-        return replace(updated)
+        self._persist(updated)
+        return _copy_job(updated)
 
-    def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
+    def mark_done(
+        self,
+        job_id: str,
+        *,
+        media_id: int,
+        progress: dict[str, Any] | None = None,
+        content_hash: str | None = None,
+    ) -> LibraryIngestJob | None:
         """Transition a job to ``DONE`` and stamp ``finished_at``/``finished_at_wall``.
 
         Args:
             job_id: The job to transition.
             media_id: The resulting media row id.
+            progress: Optional structured progress payload.
+            content_hash: Optional content hash for deduplication lookups.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -421,19 +1092,38 @@ class LibraryIngestJobRegistry:
         current = self._jobs[index]
         if current.superseded or current.dismissed:
             return None
+        if current.origin != "local":
+            logger.warning(
+                f"mark_done called for server job {job_id}; ignoring "
+                "(a server completion must record remote_media_id)."
+            )
+            return None
         updated = replace(
             current,
             state=IngestJobState.DONE,
             media_id=media_id,
+            progress=progress,
+            content_hash=content_hash,
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
+        self._persist(updated)
         self._notify_listeners()
-        return replace(updated)
+        return _copy_job(updated)
 
     def mark_failed(
-        self, job_id: str, *, error: str, permanent: bool = False
+        self,
+        job_id: str,
+        *,
+        error: str,
+        permanent: bool = False,
+        error_detail: dict[str, Any] | None = None,
+        progress: dict[str, Any] | None = None,
+        stt_failure_provenance: (
+            FailedTranscriptionAttempt | dict[str, Any] | None
+        ) = None,
+        require_persisted: bool = False,
     ) -> LibraryIngestJob | None:
         """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
@@ -445,6 +1135,13 @@ class LibraryIngestJobRegistry:
                 ``LibraryIngestJob.permanent``'s docstring). ``False`` by
                 default so every pre-existing caller keeps today's
                 always-retryable behavior.
+            error_detail: Optional structured error payload.
+            progress: Optional structured progress payload captured at
+                failure time.
+            stt_failure_provenance: Complete sanitized context for this
+                job's failed STT attempt.
+            require_persisted: Persist before exposing the terminal row or
+                notifying listeners. Used by two-phase Research intake only.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -466,19 +1163,240 @@ class LibraryIngestJobRegistry:
         current = self._jobs[index]
         if current.superseded or current.dismissed:
             return None
+        normalized_stt_failure = (
+            load_failed_transcription_attempt(
+                dump_failed_transcription_attempt(stt_failure_provenance)
+            )
+            if stt_failure_provenance is not None
+            else None
+        )
         updated = replace(
             current,
             state=IngestJobState.FAILED,
             error=error,
             permanent=permanent,
+            error_detail=error_detail,
+            progress=progress,
+            stt_failure_provenance=normalized_stt_failure,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
+        self._notify_listeners()
+        return _copy_job(updated)
+
+    def mark_remote_done(
+        self, job_id: str, *, remote_media_id: str | None = None
+    ) -> LibraryIngestJob | None:
+        """Finish a ``server``-origin job that has no local media row.
+
+        ``mark_done`` requires a ``media_id`` because a *local* completion that
+        wrote nothing is a bug (task-677). A server completion has no row in
+        *this* machine's media DB, so it needs its own terminal path rather than
+        weakening that invariant for everyone.
+
+        The resulting job has ``media_id`` unset, so the queue row's "Open in
+        Library" stays withheld: the content lives in the server's library, not
+        this machine's.
+
+        Note that a completed job's ``result`` *does* carry a ``media_id``
+        (confirmed live: ``{"status": "Success", "media_id": 1125, ...}``) -- an
+        earlier version of this docstring claimed the response held only counts,
+        which came from ``MediaIngestJobStatus.result`` being mistyped as the
+        reading-list import model. It is deliberately still not stored here:
+        that id addresses a row in the *server's* library, and ``media_id`` on a
+        job means a row in the local one. Conflating them would point "Open in
+        Library" at a wrong or absent local row. Opening a server-ingested item
+        needs a server-aware affordance instead (task-700).
+
+        Args:
+            job_id: The job to finish.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, not ``server``-origin, or already finished.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.origin != "server":
+            logger.warning(
+                f"mark_remote_done called for local job {job_id}; ignoring "
+                "(a local completion must record a media_id)."
+            )
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.DONE,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+            # The server's own row id, when it reported one. Not media_id: see
+            # the field's own note on why the two id spaces stay separate.
+            remote_media_id=(
+                str(remote_media_id)
+                if remote_media_id is not None
+                else current.remote_media_id
+            ),
+        )
+        self._jobs[index] = updated
+        self._persist(updated)
+        self._notify_listeners()
+        return _copy_job(updated)
+
+    def update_progress(
+        self,
+        job_id: str,
+        *,
+        progress: dict[str, Any] | None,
+        persist: bool = True,
+    ) -> LibraryIngestJob | None:
+        """Attach in-flight progress to a running job.
+
+        Local jobs only ever report progress at completion; a server job
+        reports it *while* running (a long transcription, say), which is why
+        this exists as its own seam rather than a ``mark_*`` argument.
+
+        Args:
+            job_id: The job to annotate.
+            progress: Structured progress payload, or ``None`` to clear it.
+            persist: Whether this update should write through to the attached
+                store. Local live parse ticks set this false; server
+                reconciliation retains the default true behavior.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, or already finished (late progress must not reopen a
+            settled row).
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        if current.progress == progress:
+            return _copy_job(current)
+        before = _copy_job(current)
+        updated = replace(current, progress=deepcopy(progress))
+        self._jobs[index] = updated
+        self._notify_progress_listeners(before, _copy_job(updated))
+        if persist:
+            self._persist(updated)
+        return _copy_job(updated)
+
+    def mark_cancelled(
+        self,
+        job_id: str,
+        *,
+        reason: str = "",
+        require_persisted: bool = False,
+    ) -> LibraryIngestJob | None:
+        """Transition a still-running job to ``CANCELLED``.
+
+        A cancellation is neither a success nor an error: recording it as
+        ``FAILED`` would offer Retry for something nobody wants retried, and
+        would read as a problem the user did not cause. Unlike ``mark_failed``
+        this *is* guarded -- a job that already reached ``DONE``, ``FAILED`` or
+        ``CANCELLED`` is finished, and a late cancellation must not rewrite its
+        outcome.
+
+        Args:
+            job_id: The job to transition.
+            reason: Optional human-readable reason, stored in ``error`` since
+                that is the field the queue row already surfaces.
+            require_persisted: Persist before exposing the terminal row or
+                notifying listeners. Used by two-phase Research intake only.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is unknown,
+            hidden, or already finished. Unknown ids never raise, matching the
+            other registry mutators.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state in _TERMINAL_STATES:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.CANCELLED,
+            error=reason,
+            finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
+        )
+        if require_persisted:
+            self._persist_required(updated)
+            self._jobs[index] = updated
+        else:
+            self._jobs[index] = updated
+            self._persist(updated)
+        self._notify_listeners()
+        return _copy_job(updated)
+
+    def mark_skipped(
+        self,
+        job_id: str,
+        *,
+        reason: str,
+        error_detail: dict[str, Any] | None = None,
+    ) -> LibraryIngestJob | None:
+        """Transition a job to ``SKIPPED`` (task-2220 owner ruling).
+
+        For files the pipeline never attempts (unsupported type inside a
+        folder selection): a neutral terminal outcome, cleared by Clear
+        finished, dismissible like a failure, never offered Retry
+        (``requeue`` is FAILED-only and would no-op).
+
+        Args:
+            job_id: The job to transition.
+            reason: A sanitized, single-line explanation.
+            error_detail: Optional structured payload (category etc.).
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is
+            unknown or hidden.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        updated = replace(
+            current,
+            state=IngestJobState.SKIPPED,
+            error=reason,
+            error_detail=error_detail,
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
+        self._persist(updated)
         self._notify_listeners()
-        return replace(updated)
+        return _copy_job(updated)
 
-    def requeue(self, job_id: str) -> LibraryIngestJob | None:
+    def requeue(
+        self,
+        job_id: str,
+        *,
+        ingest_options: dict[str, Any] | None = None,
+        dispatch_held: bool = False,
+    ) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
         Only works on a ``FAILED``, not-yet-hidden, not-``permanent`` job --
@@ -496,32 +1414,53 @@ class LibraryIngestJobRegistry:
         point on, and every further ``mark_parsing``/``mark_writing``/
         ``mark_done``/``mark_failed``/``requeue``/``dismiss`` call against
         its ``job_id`` becomes a safe no-op. A brand-new job with a
-        brand-new ``job_id`` and fresh timestamps is appended, copying only the form fields
+        brand-new ``job_id`` and fresh timestamps is appended, copying the form fields
         (``source_path``/``title``/``author``/``keywords``/
-        ``perform_analysis``/``chunk_enabled``/``chunk_size``) -- so the
-        canvas queue shows exactly ONE row per retried file, not two.
+        ``perform_analysis``/``chunk_enabled``/``chunk_size``) plus the
+        ``detected_type`` classification -- a pure function of
+        ``source_path`` (task 160): the dispatcher no longer re-derives the
+        type at dispatch, so carrying it forward is what keeps a retried
+        audio/video job bound by the heavy-lane cap. The original ``batch_id``
+        is also retained so retry provenance and queue grouping stay in the
+        same batch. Runtime fields
+        (``media_id``/``error``/``started_at``/``finished_at``/...) reset --
+        so the canvas queue shows exactly ONE row per retried file, not two.
 
         Args:
             job_id: The failed job to requeue.
+            ingest_options: Optional replacement option snapshot for an explicit
+                user-selected recovery action. Omitted retries preserve the
+                source snapshot unchanged.
+            dispatch_held: Persist the replacement as ineligible until its
+                Research operation points to the new job. Requires a store.
 
         Returns:
             The newly appended ``QUEUED`` job (a copy), or ``None`` when
             ``job_id`` is unknown, not currently ``FAILED``, or already
-            hidden.
+            hidden, or when its durable retry-pair transaction fails.
         """
         index = self._find_index(job_id)
         if index is None:
             return None
         source = self._jobs[index]
+        if type(dispatch_held) is not bool:
+            raise TypeError("dispatch_held must be bool")
+        if dispatch_held and self._store is None:
+            raise RuntimeError("An ingest-job persistence store is required.")
+        unsupported = (
+            source.error_detail is not None
+            and source.error_detail.get("category") == "unsupported_file_type"
+        )
         if (
             source.state != IngestJobState.FAILED
             or source.superseded
             or source.dismissed
             or source.permanent
+            or unsupported
         ):
             return None
         new_job = LibraryIngestJob(
-            job_id=self._allocate_job_id(),
+            job_id=f"ingest-job-{self._next_id}",
             source_path=source.source_path,
             title=source.title,
             author=source.author,
@@ -529,18 +1468,40 @@ class LibraryIngestJobRegistry:
             perform_analysis=source.perform_analysis,
             chunk_enabled=source.chunk_enabled,
             chunk_size=source.chunk_size,
+            detected_type=source.detected_type,
+            ingest_options=deepcopy(
+                source.ingest_options if ingest_options is None else ingest_options
+            ),
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
+            retry_count=source.retry_count + 1,
+            origin=source.origin,
+            batch_id=source.batch_id,
+            retry_of_job_id=source.job_id,
+            research_source_operation_id=source.research_source_operation_id,
+            dispatch_held=dispatch_held,
+            retry_source_failure_provenance=deepcopy(source.stt_failure_provenance),
         )
-        self._jobs[index] = replace(source, superseded=True)
+        superseded_source = replace(source, superseded=True)
+        if self._store is not None:
+            try:
+                self._store.upsert_retry(superseded_source, new_job)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"ingest retry persist failed: {source.job_id}"
+                )
+                return None
+        self._next_id += 1
+        self._jobs[index] = superseded_source
         self._jobs.append(new_job)
         self._notify_listeners()
-        return replace(new_job)
+        return _copy_job(new_job)
 
     def dismiss(self, job_id: str) -> LibraryIngestJob | None:
-        """Hide a ``FAILED`` job from ``jobs()``/``counts()``.
+        """Hide a ``FAILED`` or ``CANCELLED`` job from ``jobs()``/``counts()``.
 
-        (L3b AB wave, B2) Valid ONLY for a ``FAILED``, not-yet-hidden job --
+        (L3b AB wave, B2; widened for cancellations in task-684.2.) Valid
+        ONLY for a ``FAILED``/``CANCELLED``, not-yet-hidden job --
         calling this on a job in any other state, an unknown id, or an
         already ``superseded``/``dismissed`` id is a no-op that returns
         ``None`` and does not fire the listener. On success the job is
@@ -556,19 +1517,25 @@ class LibraryIngestJobRegistry:
 
         Returns:
             The dismissed job (a copy, ``dismissed=True``), or ``None``
-            when ``job_id`` is unknown, not currently ``FAILED``, or
+            when ``job_id`` is unknown, not currently ``FAILED``/
+            ``CANCELLED``, or
             already hidden.
         """
         index = self._find_index(job_id)
         if index is None:
             return None
         current = self._jobs[index]
-        if current.state != IngestJobState.FAILED or current.superseded or current.dismissed:
+        if (
+            current.state not in _DISMISSIBLE_STATES
+            or current.superseded
+            or current.dismissed
+        ):
             return None
         updated = replace(current, dismissed=True)
         self._jobs[index] = updated
         self._notify_listeners()
-        return replace(updated)
+        self._persist(updated)
+        return _copy_job(updated)
 
     def clear_finished(self) -> int:
         """Remove every ``DONE``/``FAILED`` job (visible or already hidden).
@@ -585,18 +1552,43 @@ class LibraryIngestJobRegistry:
             The number of jobs actually removed (0 when there was nothing
             to clear -- a no-op that does not fire the listener).
         """
-        before = len(self._jobs)
-        self._jobs = [
-            job
-            for job in self._jobs
-            if job.state not in (IngestJobState.DONE, IngestJobState.FAILED)
-        ]
-        removed = before - len(self._jobs)
+        removed_jobs = [job for job in self._jobs if job.state in _TERMINAL_STATES]
+        self._jobs = [job for job in self._jobs if job.state not in _TERMINAL_STATES]
+        removed = len(removed_jobs)
         if removed:
             self._notify_listeners()
+            for job in removed_jobs:
+                self._persist_delete(job.job_id)
         return removed
 
     # -- reads -----------------------------------------------------
+
+    def find_active_source_matches(
+        self,
+        sources: Iterable[str],
+        *,
+        origin: str,
+    ) -> tuple[LibraryIngestJob, ...]:
+        """Return visible active jobs matching any supplied source.
+
+        Results retain the registry's internal insertion order and are fresh
+        copies, preserving the registry's copy-on-read contract.
+        """
+        keys = {
+            key
+            for source in sources
+            if (key := _active_source_key_or_none(source, origin=origin)) is not None
+        }
+        if not keys:
+            return ()
+        matches: list[LibraryIngestJob] = []
+        for job in self._jobs:
+            if job.superseded or job.dismissed or job.state not in ACTIVE_INGEST_STATES:
+                continue
+            job_key = _active_source_key_or_none(job.source_path, origin=job.origin)
+            if job_key in keys:
+                matches.append(_copy_job(job))
+        return tuple(matches)
 
     def jobs(self) -> tuple[LibraryIngestJob, ...]:
         """Return an immutable, newest-first snapshot of all visible jobs.
@@ -610,9 +1602,26 @@ class LibraryIngestJobRegistry:
             registry state (see the module docstring).
         """
         return tuple(
-            replace(job)
+            _copy_job(job)
             for job in reversed(self._jobs)
             if not (job.superseded or job.dismissed)
+        )
+
+    def count_duplicate_done(self) -> int:
+        """Count visible DONE jobs whose outcome was a dedup match.
+
+        Iterates the internal list directly -- no ``_copy_job`` deep copies
+        -- because the batch-settle toast asks on EVERY registry tick and
+        ``jobs()``'s snapshot cost would be paid twice per tick alongside
+        the canvas-state build (task-2042 review). Same visibility filter
+        as ``jobs()``/``counts()``.
+
+        Returns:
+            The number of visible DONE jobs carrying the writer's
+            ``INGEST_DUPLICATE_PROGRESS_PREFIX`` progress marker.
+        """
+        return count_duplicate_done_jobs(
+            job for job in self._jobs if not (job.superseded or job.dismissed)
         )
 
     def counts(self) -> dict[str, int]:
@@ -632,3 +1641,215 @@ class LibraryIngestJobRegistry:
                 continue
             counts[job.state.value] += 1
         return counts
+
+    def parsing_count_for_types(self, types: frozenset[str]) -> int:
+        """Count visible ``PARSING`` jobs whose ``detected_type`` is in ``types``.
+
+        Excludes ``superseded``/``dismissed`` jobs, matching ``counts()`` so
+        the heavy-lane in-flight count aligns with the total-slot accounting.
+
+        Args:
+            types: The ``detected_type`` values to count (e.g. the heavy set
+                ``{"audio", "video"}`` for the transcription cap).
+
+        Returns:
+            The number of currently-``PARSING``, non-hidden jobs whose
+            ``detected_type`` is in ``types``.
+        """
+        return sum(
+            1
+            for job in self._jobs
+            if job.state == IngestJobState.PARSING
+            and not job.superseded
+            and not job.dismissed
+            and job.detected_type in types
+        )
+
+    def get_job(self, job_id: str) -> LibraryIngestJob | None:
+        """Return a copy of the job with ``job_id``, or ``None`` if unknown.
+
+        Looks at the registry's internal job list (including hidden jobs)
+        so detail handlers can resolve a job even after it has been
+        superseded or dismissed.
+
+        Args:
+            job_id: The registry-assigned job id.
+
+        Returns:
+            A shallow copy of the stored job, or ``None`` when ``job_id``
+            is not found.
+        """
+        for job in self._jobs:
+            if job.job_id == job_id:
+                return _copy_job(job)
+        return None
+
+
+# -- restore (Task 2, 161) --------------------------------------------------
+
+
+@dataclass
+class RestorePlan:
+    """The pure result of :func:`plan_restore`, ready to feed a registry/store.
+
+    Attributes:
+        jobs: The full seq-ascending job list to hand to
+            ``LibraryIngestJobRegistry.restore`` -- interrupted jobs
+            normalized to ``FAILED`` and the oldest jobs pruned when the
+            persisted row count exceeds ``max_persisted``.
+        next_id: The next ``job_id`` sequence number the registry should
+            resume allocating from.
+        upsert: The subset of ``jobs`` that changed relative to the
+            persisted rows (only the normalized-to-``FAILED`` jobs) and so
+            must be re-persisted to the store to keep it in sync.
+        delete_ids: The ``job_id``s of jobs pruned for exceeding
+            ``max_persisted`` -- must be deleted from the store.
+    """
+
+    jobs: list["LibraryIngestJob"]
+    next_id: int
+    upsert: list["LibraryIngestJob"]  # normalized jobs to re-persist
+    delete_ids: list[str]  # pruned jobs to delete from the store
+
+
+_INTERRUPTED_STATES = (
+    IngestJobState.QUEUED,
+    IngestJobState.PARSING,
+    IngestJobState.WRITING,
+)
+
+
+def _job_from_row(row: dict) -> "LibraryIngestJob":
+    """Rebuild a :class:`LibraryIngestJob` from a persisted store row.
+
+    Args:
+        row: A dict-like row as returned by
+            ``LibraryIngestJobsDB`` (see that module for the schema).
+
+    Returns:
+        The reconstructed job. The monotonic-clock fields
+        (``submitted_at``/``started_at``/``finished_at``) are NOT
+        round-trippable across a process restart (``time.monotonic()`` has
+        no fixed epoch) -- they are left at their dataclass defaults
+        (``0.0``/``None``/``None``).
+    """
+    operation_id = row.get("research_source_operation_id")
+    if operation_id is not None:
+        operation_id = validate_source_operation_id(operation_id)
+    raw_dispatch_held = row.get("dispatch_held", 0)
+    if raw_dispatch_held not in {0, 1, False, True}:
+        raise ValueError("dispatch_held must be stored as 0 or 1")
+    return LibraryIngestJob(
+        job_id=row["job_id"],
+        source_path=row["source_path"],
+        title=row["title"] or "",
+        author=row["author"] or "",
+        keywords=tuple(json.loads(row["keywords"] or "[]")),
+        perform_analysis=bool(row["perform_analysis"]),
+        chunk_enabled=bool(row["chunk_enabled"]),
+        chunk_size=int(row["chunk_size"]),
+        state=IngestJobState(row["state"]),
+        detected_type=row["detected_type"] or "",
+        media_id=row["media_id"],
+        error=row["error"] or "",
+        finished_at_wall=row["finished_at_wall"] or "",
+        superseded=bool(row["superseded"]),
+        dismissed=bool(row["dismissed"]),
+        permanent=bool(row["permanent"]),
+        retry_count=int(row["retry_count"]),
+        ingest_options=json.loads(row.get("ingest_options") or "{}"),
+        error_detail=json.loads(row["error_detail"])
+        if row.get("error_detail")
+        else None,
+        progress=json.loads(row["progress"]) if row.get("progress") else None,
+        content_hash=row.get("content_hash"),
+        origin=row.get("origin") or "local",
+        remote_job_id=row.get("remote_job_id"),
+        batch_id=row.get("batch_id"),
+        remote_media_id=row.get("remote_media_id"),
+        retry_of_job_id=row.get("retry_of_job_id"),
+        stt_failure_provenance=(
+            load_failed_transcription_attempt(row["stt_failure_provenance_json"])
+            if row.get("stt_failure_provenance_json")
+            else None
+        ),
+        retry_source_failure_provenance=(
+            load_failed_transcription_attempt(
+                row["retry_source_failure_provenance_json"]
+            )
+            if row.get("retry_source_failure_provenance_json")
+            else None
+        ),
+        research_source_operation_id=operation_id,
+        dispatch_held=bool(raw_dispatch_held),
+        # monotonic fields are not round-trippable -- leave defaults.
+        submitted_at=0.0,
+        started_at=None,
+        finished_at=None,
+    )
+
+
+def plan_restore(rows: list[dict], *, max_persisted: int, now_iso: str) -> RestorePlan:
+    """Pure planning step for restoring a registry from persisted rows.
+
+    Args:
+        rows: Persisted job rows, seq-ascending (oldest first) -- the same
+            order ``LibraryIngestJobRegistry._jobs`` maintains internally.
+        max_persisted: The maximum number of rows to keep; anything beyond
+            this, oldest-by-seq first, is pruned. A non-positive cap
+            (``<= 0``) is treated as "keep everything" -- a misconfigured
+            cap must never wipe all history.
+        now_iso: The wall-clock timestamp (``datetime.now(timezone.utc).
+            isoformat()``) to stamp onto jobs normalized as interrupted.
+
+    Returns:
+        A :class:`RestorePlan` with jobs still ``QUEUED``/``PARSING``/
+        ``WRITING`` at the time of persistence normalized to ``FAILED``
+        (an app restart abandons those jobs -- see the module docstring's
+        accepted v1 limits on parse/write loss on quit) with the error
+        ``"Interrupted by app restart"``, ``permanent=False`` (so they
+        remain retryable), and ``finished_at_wall=now_iso``. ``retry_count``
+        is preserved, not reset. When ``max_persisted >= 1`` and
+        ``len(rows) > max_persisted``, oldest settled/interrupted history beyond
+        the cap is dropped from ``jobs`` and returned in ``delete_ids``. Held
+        queued Research rows are never pruned before reconciliation; if holds
+        alone exceed the history cap, the safety barrier wins over the cap.
+    """
+    jobs = [_job_from_row(r) for r in rows]  # rows are seq-ascending
+    normalized_ids: set[str] = set()
+    for i, job in enumerate(jobs):
+        if job.state in _INTERRUPTED_STATES and not (
+            job.state is IngestJobState.QUEUED and job.dispatch_held
+        ):
+            jobs[i] = replace(
+                job,
+                state=IngestJobState.FAILED,
+                error="Interrupted by app restart",
+                permanent=False,
+                finished_at_wall=now_iso,
+            )
+            normalized_ids.add(job.job_id)
+    next_id = max((int(j.job_id.rsplit("-", 1)[-1]) for j in jobs), default=0) + 1
+    delete_ids: list[str] = []
+    # Guard the cap: only prune for a positive cap that is actually exceeded.
+    # A non-positive cap keeps everything (never wipe all history on a
+    # misconfig) -- and it also sidesteps Python's ``-0 == 0`` footgun, where
+    # ``jobs[:-max_persisted]``/``jobs[-max_persisted:]`` with ``max_persisted
+    # == 0`` would slice ``[:0]``/``[0:]`` (prune nothing) and a NEGATIVE cap
+    # would slice with a positive index and silently delete the oldest rows.
+    if max_persisted >= 1 and len(jobs) > max_persisted:
+        held_ids = {
+            job.job_id
+            for job in jobs
+            if job.state is IngestJobState.QUEUED and job.dispatch_held
+        }
+        ordinary_slots = max(max_persisted - len(held_ids), 0)
+        ordinary_ids = [job.job_id for job in jobs if job.job_id not in held_ids]
+        keep_ids = held_ids | set(
+            ordinary_ids[-ordinary_slots:] if ordinary_slots else ()
+        )
+        pruned = [job for job in jobs if job.job_id not in keep_ids]
+        delete_ids = [j.job_id for j in pruned]
+        jobs = [job for job in jobs if job.job_id in keep_ids]
+    upsert = [j for j in jobs if j.job_id in normalized_ids]  # kept + normalized
+    return RestorePlan(jobs=jobs, next_id=next_id, upsert=upsert, delete_ids=delete_ids)

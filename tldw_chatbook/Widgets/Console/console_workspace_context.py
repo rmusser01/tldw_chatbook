@@ -2,42 +2,448 @@
 
 from __future__ import annotations
 
-from typing import Any
+import dataclasses
 
+from typing import Any, Literal
+
+from rich.cells import cell_len
+from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_COLLAPSED, GLYPH_EXPANDED
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_RUN_MARKER_GLYPHS,
+    CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH,
+)
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_COLLAPSED,
+    GLYPH_EXPANDED,
+)
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    console_conversation_status_detail,
+    CONSOLE_DEFAULT_CONVERSATION_DETAIL,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
     ConsoleConversationBrowserState,
 )
 from tldw_chatbook.Workspaces.display_state import (
-    CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
     ConsoleWorkspaceContextState,
-    ConsoleWorkspaceConversationSectionState,
 )
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 
+class ConsoleBrowserSearchInput(Input):
+    """Search input whose initial value never echoes as a user edit.
+
+    TASK-1900. `ConsoleWorkspaceContextTray.sync_state` re-mounts a fresh
+    search input on every sync that actually changes anything -- which, while
+    the user is typing, is every one of them (TASK-15454 narrowed the tray's
+    recompose to changed states, so a no-op sync no longer replaces this
+    widget; a real search still does). Textual's
+    `Input._watch_value` posts `Changed` for a constructor-set value
+    unconditionally -- its `_initial_value` flag only positions the cursor --
+    and that echo travels the message pump, so on a busy machine it lands
+    AFTER the user typed a newer query. The screen's `Changed` handler
+    cannot tell an echo from typing: it overwrote the newer query with the
+    older one and bumped the search token, silently discarding the fresh
+    in-flight search. Symptom at user level: type "alpha", then quickly
+    "beta" -- the search reverts to "alpha".
+
+    The fix removes the echo at the source instead of teaching the handler
+    to guess: the value is applied in `on_mount` inside
+    `self.prevent(Input.Changed)`, Textual's documented mechanism for a
+    programmatic set without a message. The invariant the handler relies on
+    -- every `Changed` from this box is a real edit -- becomes true.
+    """
+
+    def __init__(
+        self, *args: object, initial_value: str = "", **kwargs: object
+    ) -> None:
+        """Store the display value without arming the reactive.
+
+        Args:
+            *args: Forwarded to `Input` unchanged.
+            initial_value: Query text to display once mounted. Deliberately
+                NOT passed to `Input(value=...)` -- that is the echo path.
+            **kwargs: Forwarded to `Input` unchanged.
+        """
+        super().__init__(*args, **kwargs)
+        self._initial_display_value = initial_value
+
+    def on_mount(self) -> None:
+        """Apply the initial value silently, then behave like any Input."""
+        if self._initial_display_value:
+            with self.prevent(Input.Changed):
+                self.value = self._initial_display_value
+
+
+# One vocabulary for persisted-but-not-archived chats across surfaces:
+# "saved chat". Rows reach this map with either a workspace-membership role
+# ("workspace-thread"/"workspace") or a persisted conversation state
+# ("in-progress" is the default state normalize_conversation_row assigns) --
+# all of them mean the same thing to the user: a chat that is saved locally
+# and not currently open in a tab. Library Browse ▸ Conversations lists the
+# same records, so these labels must not contradict its copy.
 _STATUS_LABELS = {
-    "workspace-thread": "workspace",
-    "workspace": "workspace",
+    "workspace-thread": "saved",
+    "workspace": "saved",
+    "in-progress": "saved",
     "active": "active",
     "open": "open",
 }
-_STATUS_DETAIL_LABELS = {
-    "workspace-thread": "saved workspace",
-    "workspace": "saved workspace",
-    "active": "active session",
-    "open": "open session",
-}
-_MAX_CONVERSATION_ROW_TITLE = 20
+# TASK-356: the "saved chat"/"active session"/"open session" detail vocabulary
+# now lives once in conversation_browser_state.console_conversation_status_detail
+# (which `_conversation_detail_status` below delegates to); the former local
+# `_STATUS_DETAIL_LABELS` copy was removed to keep a single source of truth.
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
+
+_TITLE_WRAP_MAX_LINES = 2
+_MIN_TITLE_WRAP_BUDGET = 10
+_ROW_ELLIPSIS = "…"
+# Shared fallback for a conversation with no usable title. Used by both the
+# wrap helper and ``ConsoleWorkspaceContextTray._conversation_title`` so the
+# two normalizations cannot drift.
+_UNTITLED_CONVERSATION = "Untitled conversation"
+
+
+def _cut_prefix_cells(text: str, budget: int) -> str:
+    """Return the longest prefix of ``text`` that fits within ``budget`` cells."""
+    used = 0
+    for index, char in enumerate(text):
+        width = cell_len(char)
+        if used + width > budget:
+            return text[:index]
+        used += width
+    return text
+
+
+def truncate_console_row_cells(text: str, budget: int) -> str:
+    """Truncate raw row text to at most ``budget`` terminal cells.
+
+    Cell-aware (CJK/emoji safe). Appends an ellipsis only when truncation
+    actually occurred. Operates on raw text -- markup escaping happens later
+    in ``format_console_conversation_row_label``.
+
+    Args:
+        text: Raw (unescaped) row text to fit.
+        budget: Maximum width in terminal cells; clamped to a floor of 1.
+
+    Returns:
+        The text unchanged when it already fits, otherwise the longest
+        cell-measured prefix that leaves room for a trailing ellipsis, with
+        the ellipsis appended.
+    """
+    budget = max(1, int(budget))
+    text = str(text)
+    if cell_len(text) <= budget:
+        return text
+    keep = _cut_prefix_cells(text, budget - cell_len(_ROW_ELLIPSIS))
+    return f"{keep.rstrip()}{_ROW_ELLIPSIS}"
+
+
+def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
+    """Word-wrap a raw conversation title into at most two budget-width lines.
+
+    Widths are measured in terminal cells, not characters. Spaceless tokens
+    longer than one line hard-break at the budget. When two lines are still
+    insufficient the second line is ellipsized. The budget is clamped to
+    ``_MIN_TITLE_WRAP_BUDGET`` to avoid degenerate wraps on absurdly narrow
+    rails. Blank titles normalize to ``_UNTITLED_CONVERSATION`` (the shared
+    fallback ``ConsoleWorkspaceContextTray._conversation_title`` also uses).
+
+    Args:
+        title: Raw (unescaped) conversation title to wrap.
+        budget: Target line width in terminal cells; clamped up to a floor of
+            ``_MIN_TITLE_WRAP_BUDGET``.
+
+    Returns:
+        A tuple of one or two raw text lines, each at most ``budget`` cells
+        wide; the second line carries a trailing ellipsis when the title
+        still overflows two lines.
+    """
+    budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
+    remaining = (
+        sanitize_character_display_label(
+            title,
+            max_characters=1_000,
+        )
+        or _UNTITLED_CONVERSATION
+    )
+    lines: list[str] = []
+    while remaining:
+        if len(lines) == _TITLE_WRAP_MAX_LINES - 1:
+            lines.append(truncate_console_row_cells(remaining, budget))
+            break
+        if cell_len(remaining) <= budget:
+            lines.append(remaining)
+            break
+        head = _cut_prefix_cells(remaining, budget)
+        on_boundary = head.endswith(" ") or (
+            len(head) < len(remaining) and remaining[len(head)] == " "
+        )
+        if on_boundary:
+            lines.append(head.rstrip())
+            remaining = remaining[len(head) :].lstrip()
+            continue
+        break_at = head.rfind(" ")
+        if break_at > 0:
+            lines.append(remaining[:break_at].rstrip())
+            remaining = remaining[break_at + 1 :].lstrip()
+        else:
+            lines.append(head)
+            remaining = remaining[len(head) :].lstrip()
+    return tuple(lines)
+
+
+def wrap_console_plain_text_uncapped(text: str, budget: int) -> tuple[str, ...]:
+    """Word-wrap ``text`` into budget-width lines with NO cap on line count
+    and no ellipsis.
+
+    TASK-1142 round-2 review (Qodo, PR #1050): ``_empty_copy_line_count``
+    used to call ``wrap_console_conversation_title``, which intentionally
+    hard-caps at ``_TITLE_WRAP_MAX_LINES`` (2) and ellipsizes the remainder
+    -- correct for a row TITLE (which really is rendered that way), but an
+    empty-copy ``Static`` has no such cap: Rich wraps it to as many lines
+    as it needs. Any empty-copy string that legitimately needs 3+ lines
+    (a narrower rail, longer copy, a future localization) would silently
+    undercount again through the capped helper, re-opening the exact
+    clipping bug TASK-1142 round 1 fixed (a later section's header pushed
+    out of the tray's own visible bounds). This is the SAME greedy
+    word-wrap rule ``wrap_console_conversation_title`` uses per line
+    (word-boundary wrap; a single token longer than one line hard-breaks
+    at the budget) with the two-line cap removed, so it cannot disagree
+    with that helper for text that already fits within the cap -- this is
+    strictly what it would compute with the cap lifted.
+
+    Args:
+        text: Raw text to wrap (already-rendered plain copy, not a title --
+            no blank-text fallback is applied).
+        budget: Target line width in terminal cells; clamped up to a floor
+            of ``_MIN_TITLE_WRAP_BUDGET``.
+
+    Returns:
+        A tuple of one or more raw text lines, each at most ``budget``
+        cells wide (an over-length spaceless token is the sole exception,
+        hard-broken at the budget instead). Empty for blank/whitespace-only
+        input.
+    """
+    budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
+    remaining = str(text).strip()
+    if not remaining:
+        return ()
+    lines: list[str] = []
+    while remaining:
+        if cell_len(remaining) <= budget:
+            lines.append(remaining)
+            break
+        head = _cut_prefix_cells(remaining, budget)
+        on_boundary = head.endswith(" ") or (
+            len(head) < len(remaining) and remaining[len(head)] == " "
+        )
+        if on_boundary:
+            lines.append(head.rstrip())
+            remaining = remaining[len(head) :].lstrip()
+            continue
+        break_at = head.rfind(" ")
+        if break_at > 0:
+            lines.append(remaining[:break_at].rstrip())
+            remaining = remaining[break_at + 1 :].lstrip()
+        else:
+            lines.append(head)
+            remaining = remaining[len(head) :].lstrip()
+    return tuple(lines)
+
+
+#: TASK-31429: resolved fleet glyph -> the row colour class for that run
+#: state (`.console-workspace-conversation-row-<ConsoleRunMarker.value>`).
+#: The browser pipeline threads glyph strings, not the enum, so this is the
+#: same glyph-keyed shape as `CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH`.
+_ROW_STATE_CLASS_BY_GLYPH: dict[str, str] = {
+    glyph: f"console-workspace-conversation-row-{marker.value}"
+    for marker, glyph in CONSOLE_RUN_MARKER_GLYPHS.items()
+    if glyph
+}
+
+
+def _selected_conversation_active_class(selected_summary: str | None) -> str:
+    """Class suffix that paints the active-chat line in the active hue.
+
+    TASK-31429: the same Static also carries the "No active …" placeholder,
+    which must stay muted -- so the hue rides a class that is present only
+    when a real summary is being named.
+    """
+    return " console-workspace-selected-conversation-active" if selected_summary else ""
+
+
+def _row_marker(run_marker: str, starred: bool) -> str:
+    """Return the glyph prefix for a conversation row's first name line.
+
+    TASK-23200: favourite state used to live in a separate full-height star
+    column. That column became the action-menu asterisk, which is one row
+    tall, so the favourite marker moved here -- beside the title, where it
+    costs no extra vertical space and reads as a property of the chat rather
+    than as a control.
+
+    Args:
+        run_marker: The resolved fleet run-marker glyph, possibly empty.
+        starred: Whether the conversation is locally favourited.
+
+    Returns:
+        The combined prefix, empty for an unmarked, unfavourited row so it
+        still wraps exactly as a bare title.
+    """
+    marker = str(run_marker or "").strip()
+    if not starred:
+        return marker
+    return f"*{marker}" if marker else "*"
+
+
+def _marker_prefixed_name_lines(
+    title: str, run_marker: str, budget: int
+) -> tuple[str, ...]:
+    """Wrap ``title`` and prefix the first line with its fleet run-marker glyph.
+
+    Parallel-agents spec PA-T8: ``run_marker`` is already the resolved glyph
+    string (``ConsoleConversationBrowserRow.run_marker``, empty for the
+    steady state), so an unmarked row wraps exactly as it did before this
+    helper existed -- no stray leading space. When a marker is present, the
+    wrap budget is reduced by the glyph's cell width *before* wrapping (not
+    prefixed after) so the first rendered line still fits the row's actual
+    width, and the blank-title fallback in ``wrap_console_conversation_title``
+    still triggers off the raw (unprefixed) title.
+
+    This is the SAME helper both ``_compose_conversation_browser_row``
+    (render) and ``_conversation_browser_rows_height`` (height precompute)
+    call, so the two can never disagree about rendered line count -- the
+    same invariant ``_conversation_browser_rows_height``'s docstring already
+    documents for the un-marked case.
+    """
+    marker = str(run_marker or "").strip()
+    if not marker:
+        return wrap_console_conversation_title(title, budget)
+    prefix = f"{marker} "
+    adjusted_budget = max(_MIN_TITLE_WRAP_BUDGET, budget - cell_len(prefix))
+    lines = wrap_console_conversation_title(title, adjusted_budget)
+    if not lines:
+        return lines
+    return (f"{prefix}{lines[0]}", *lines[1:])
+
+
+def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
+    """Return `" — <meaning>"` for a non-empty fleet run-marker glyph, else "".
+
+    Fleet-UX expert review F4 (task-1233): sidebar row and header tooltips
+    decode whichever marker glyph they carry in context, same as Console
+    session tab tooltips (``ConsoleSessionSurface._session_tab_tooltip``).
+    An unrecognized or empty glyph (the steady state) adds no suffix, so a
+    caller can always append this unconditionally.
+    """
+    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(
+        str(marker_glyph or "").strip(), ""
+    )
+    return f" — {meaning}" if meaning else ""
+
+
+def _marker_aware_tooltip(text: str, marker_glyph: str) -> str:
+    """Return an escaped, period-terminated tooltip sentence for ``text``.
+
+    Single assembly point for every sidebar tooltip this module builds
+    (conversation rows, section headers, group headers), so all three
+    agree on both the escaping discipline and the trailing-period
+    convention (task-1233 review round 1):
+
+    * ``text`` is the sentence so far -- e.g. a title plus a bracket-
+      wrapped status badge ("Alpha [saved]"), or "Expand Workspaces" --
+      with the marker meaning (if any) and final period NOT yet applied.
+      The whole assembled sentence is escaped exactly once, HERE, after
+      every raw fragment (title, status badge, marker meaning) has been
+      concatenated. An earlier round escaped only the title fragment and
+      left a literal ``"[saved]"`` status badge un-escaped: Rich/Textual
+      markup parsing reads an unescaped ``"["`` as a style-tag start, and
+      an *unrecognized* tag name like ``"saved"`` is silently DROPPED from
+      the rendered text rather than shown literally -- confirmed via
+      ``Content.from_markup("...[saved]...").plain`` in this venv, which
+      loses the word entirely. Escaping fragment-by-fragment is fragile
+      (it is easy to add a new bracket-bearing fragment and forget it);
+      escaping the fully-assembled sentence once, here, is not.
+    * Every tooltip this module builds ends in a period, matching Console
+      session tab tooltips' existing, already-pinned convention
+      (``ConsoleSessionSurface._session_tab_tooltip``), whether or not a
+      marker is present.
+    """
+    return _escape_markup(f"{text}{_marker_meaning_tooltip_suffix(marker_glyph)}.")
+
+
+# Pre-measurement fallback for the tray's usable row width. Only the first
+# frame before `_fit_height_to_content` measures the real width renders with
+# it; the guarded relabel pass corrects it immediately (see
+# `_maybe_relabel_for_width`).
+_FALLBACK_ROW_CONTENT_WIDTH = 20
+# Grouped-browser rows share their line with the star control (width 3 +
+# 1 margin) and carry 1 cell of button padding per side.
+_BROWSER_ROW_CHROME_WIDTH = 6
+# Every row button carries a 1-line bottom margin (see the row CSS).
+_ROW_BOTTOM_MARGIN = 1
+# Minimum measured-width change (in cells) that triggers a relabel recompose
+# after the first measurement. The rail body scrollbar is one cell wide
+# (`scrollbar-size: 1 1`), so adding or removing rows -- e.g. collapsing a
+# browser section -- toggles the scrollbar and shifts `content_region.width`
+# by exactly one cell. `scrollbar-gutter: stable` reserves that cell in the
+# real app, but a one-cell change never alters two-line wrapping and must not
+# provoke a recompose regardless: recomposing on it would race an in-progress
+# state-change recompose (observed as a collapse failing to render) and, in
+# any environment where the gutter CSS is absent, oscillate the relabel.
+_RELABEL_MIN_WIDTH_DELTA = 2
+
+
+def _conversation_row_render_height(name_line_count: int, subagent_count: int) -> int:
+    """Return the button height for a row: name lines + metadata line,
+    plus a dedicated badge line when this conversation has historical
+    sub-agent runs (see `format_console_conversation_row_label`)."""
+    height = max(1, int(name_line_count)) + 1
+    if subagent_count > 0:
+        height += 1
+    return height
+
+
+def format_console_conversation_row_label(
+    title: str, *, subagent_count: int = 0
+) -> str:
+    """Return a markup-safe conversation-row label with an optional badge.
+
+    The badge renders on its own trailing line rather than being appended to
+    whatever line ``title`` already ends on. Conversation rows already pack a
+    marker, a (possibly ellipsized) title, and a secondary detail line
+    (workspace / status / age) whose combined length is unbounded -- if the
+    badge shared that last line, a long secondary line could push the badge
+    past the rail's rendered width and clip it (observed as a bare ``[1`` in
+    the agent-runtime live gate; see task-226). Giving the badge its own
+    short, fixed-length line decouples its visibility from how long the
+    other lines happen to be.
+
+    Args:
+        title: Raw row label text (escaped before any markup is appended).
+            May already contain newlines (e.g. a title line plus a secondary
+            detail line); the badge is appended as one further line.
+        subagent_count: Historical sub-agent run count for this conversation.
+            When greater than zero, a dim ``[N Sub-Agents]`` badge is
+            appended on its own line.
+
+    Returns:
+        Rich-markup text safe to render via ``Text.from_markup``.
+    """
+    base = _escape_markup(str(title))
+    if subagent_count > 0:
+        return f"{base}\n[dim]\\[{subagent_count} Sub-Agents][/dim]"
+    return base
 
 
 class ConsoleWorkspaceStatusPair(Horizontal):
@@ -57,6 +463,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         *,
         label_id: str,
         value_id: str,
+        label_width_floor: int = 13,
         **kwargs: Any,
     ) -> None:
         """Initialize the label/value status row.
@@ -66,6 +473,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             value: User-facing row value.
             label_id: Textual widget id for the label cell.
             value_id: Textual widget id for the value cell.
+            label_width_floor: Minimum label-column width in terminal cells.
             **kwargs: Additional keyword arguments passed to ``Horizontal``.
         """
         super().__init__(classes="console-workspace-status-pair", **kwargs)
@@ -73,6 +481,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.value = value
         self.label_id = label_id
         self.value_id = value_id
+        self.label_width_floor = max(1, int(label_width_floor))
         self.styles.height = "auto"
         self.styles.min_height = 1
 
@@ -88,8 +497,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        label_widget.styles.width = 10
-        label_widget.styles.min_width = 10
+        # Keep one gutter cell after the label. Most status rows retain the
+        # original 13-cell floor; a caller may lower it for a deliberately
+        # concise label when the security-relevant value needs the extra cell.
+        label_width = max(
+            self.label_width_floor,
+            min(17, cell_len(self.label) + 1),
+        )
+        label_widget.styles.width = label_width
+        label_widget.styles.min_width = label_width
         yield label_widget
 
         value_widget = Static(
@@ -99,23 +515,138 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             markup=False,
         )
         value_widget.styles.width = "1fr"
-        value_widget.styles.min_width = 0
+        # Preserve the established 23-cell combined floor. Longer labels may
+        # shrink the value to 6 cells and use the existing ellipsis + tooltip
+        # behavior instead of widening the whole rail.
+        value_widget.styles.min_width = max(6, 23 - label_width)
+        # TASK-384: at narrow rail widths the value column shrinks to a few cells
+        # and a value like "Default" word-wrapped into a "Def / aul / t" letter
+        # stack. Truncate the whole token with an ellipsis on one line instead,
+        # and keep the full value reachable on hover.
+        value_widget.styles.text_wrap = "nowrap"
+        value_widget.styles.text_overflow = "ellipsis"
+        if self.value:
+            # Tooltips render Rich markup (unlike the markup=False value above),
+            # so escape the raw value or bracket tokens in a workspace name would
+            # be interpreted/styled instead of shown literally (Qodo #821).
+            value_widget.tooltip = _escape_markup(self.value)
         yield value_widget
 
 
-class ConsoleWorkspaceContextTray(Vertical):
+class _ComposeReadView:
+    """Attribute-recording view of the tray state, live only during compose.
+
+    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
+    delta in a field this tray's ``content`` never renders (probe-observed:
+    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
+    still forced a full recompose -- and its paint-blocking App batch. The
+    tray now records which top-level state fields ``compose`` actually reads,
+    exactly as it already records the row signature of what it builds, and
+    the guard skips when only unread fields changed.
+
+    The view delegates everything to the real state; reads observed while it
+    is live can only ADD fields to the recorded set, so interleaved readers
+    during a compose window bias toward recomposing more, never less.
+    """
+
+    __slots__ = ("_target", "_reads")
+
+    def __init__(self, target: object, reads: set) -> None:
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_reads", reads)
+
+    def __getattr__(self, name: str):
+        if not name.startswith("_"):
+            self._reads.add(name)
+        return getattr(self._target, name)
+
+    def __eq__(self, other: object) -> bool:
+        return self._target == getattr(other, "_target", other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __bool__(self) -> bool:
+        return self._target is not None
+
+    def __repr__(self) -> str:
+        return f"_ComposeReadView({self._target!r})"
+
+
+class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
+
+    #: (row id, row key) pairs for the grouped-browser rows the last COMPLETED
+    #: `compose()` built, or None when `compose` has not finished for this
+    #: instance (never started, or abandoned part-way). Only
+    #: `_can_skip_recompose` reads it; None means "no proof, recompose".
+    #: Class attribute so an instance that never composed still answers None.
+    _composed_row_signature: tuple[tuple[str, str], ...] | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_row_signature: list[tuple[str, str]] | None = None
+    #: Ordered ids of the FIXED (non-row) controls the last completed
+    #: `compose()` built. The Sessions and Workspaces projections build no
+    #: rows at all, so the row signature above is empty for them and proves
+    #: nothing -- this is what carries their DOM evidence (task-15454 review
+    #: round 1). Populated through `_record_composed_node`; the pin in
+    #: `Tests/UI/test_console_workspace_tray_recompose_guard.py` reds if a
+    #: control is ever added to those two projections without recording it.
+    _composed_fixed_signature: tuple[str, ...] | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_fixed_signature: list[str] | None = None
+
+    class WorkspaceFilesRequested(Message):
+        """Typed request to inspect one stable workspace without activation."""
+
+        def __init__(self, workspace_id: str, *, expected_available: bool = False) -> None:
+            super().__init__()
+            self.workspace_id = str(workspace_id or "").strip()
+            self.expected_available = bool(expected_available)
+
+    class Relabeled(Message):
+        """Posted after a width-driven relabel recompose.
+
+        A relabel rebuilds the tray's children from compose(), which
+        discards any controls the screen mounted out-of-band (the
+        transitional legacy "New conversation" alias). The screen listens
+        for this message and re-applies them.
+        """
 
     def __init__(
         self,
         state: ConsoleWorkspaceContextState,
         *,
         show_heading: bool = True,
+        content: Literal["all", "session", "workspace", "conversations"] = "all",
         **kwargs: Any,
     ) -> None:
+        """Initialize a scoped Console workspace-context projection.
+
+        Args:
+            state: Shared workspace context snapshot rendered by the tray.
+            show_heading: Whether the tray should render its own heading.
+            content: Portion of the shared snapshot to render. ``all`` keeps
+                the legacy combined layout; the other values render one peer
+                rail section.
+            **kwargs: Additional arguments forwarded to Textual's ``Vertical``.
+        """
         super().__init__(**kwargs)
+        # TASK-26836: `state` is a property. `_state_field_reads` is a live
+        # set only while compose runs; `_composed_state_reads` is the frozen
+        # record of which top-level fields the LAST completed compose read.
+        self._state: Any = None
+        self._state_field_reads: set[str] | None = None
+        self._composed_state_reads: frozenset[str] | None = None
         self.state = state
         self.show_heading = show_heading
+        self.content = content
+        self._row_content_width = _FALLBACK_ROW_CONTENT_WIDTH
+        self._row_owner_width = 0
+        # False until the first real content-width measurement is adopted.
+        # The first measurement always relabels (to replace the pre-measure
+        # fallback budget); later ones apply the hysteresis threshold.
+        self._row_width_measured = False
+        self._workspace_tree_context_data: Any | None = None
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -140,6 +671,18 @@ class ConsoleWorkspaceContextTray(Vertical):
 
         self.call_after_refresh(self._fit_height_to_content)
 
+    @property
+    def state(self) -> Any:
+        """The tray's display state; records field reads during compose."""
+        reads = self._state_field_reads
+        if reads is None or self._state is None:
+            return self._state
+        return _ComposeReadView(self._state, reads)
+
+    @state.setter
+    def state(self, value: Any) -> None:
+        self._state = value
+
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace context tray from new display state.
 
@@ -149,6 +692,32 @@ class ConsoleWorkspaceContextTray(Vertical):
         Returns:
             None.
         """
+        # TASK-251 -- DEVIATION FROM THE BRIEF, documented in the task-251
+        # report: the brief's Change 2 asked for the same
+        # `if state == self.state: return` guard `ConsoleRunInspector` uses.
+        # Measured against the real test suite, that guard broke click
+        # targeting on grouped browser rows (workspace-conversation search
+        # + resume flows) -- skipping `refresh(recompose=True)` also skips
+        # rebuilding the row children, and this widget's own scroll/fit-pass
+        # (`_schedule_recomposed_content_fit`) alone does not settle correct
+        # on-screen regions for the (unrebuilt) existing children.
+        #
+        # TASK-15454 re-guards this, NARROWLY. The lesson from the revert is
+        # that state equality alone is not evidence the DOM shows that
+        # state: the tray can hold state X while its children say something
+        # else, and the unconditional recompose was what healed that. So
+        # `_can_skip_recompose` skips only when the mounted DOM is *proved*
+        # to be the DOM this state produced -- see its docstring. Every case
+        # the revert was about (fresh instance, unsettled/emptied children,
+        # a recompose already latched) fails that proof and recomposes
+        # exactly as before.
+        if self._can_skip_recompose(state):
+            # TASK-26836: adopt the state even when the DOM needs no rebuild
+            # (the delta may live entirely in fields this tray never
+            # renders); otherwise the same unread delta re-diffs forever and
+            # the screen-side equality skip never re-arms.
+            self.state = state
+            return
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
@@ -157,6 +726,142 @@ class ConsoleWorkspaceContextTray(Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
+        """Return True only when the mounted DOM already IS ``state``'s DOM.
+
+        TASK-15454. This is deliberately not the value-equality guard the
+        siblings use. The reverted TASK-251 guard failed because
+        ``state == self.state`` answers "does the tray remember this state",
+        not "is the tray *showing* it" -- and those two came apart (a fresh
+        tray from a full-screen recompose, or one whose rows were superseded
+        before they settled, remembers rows it is not displaying). Skipping
+        there left the grouped-browser rows unbuilt and the click targets
+        with them.
+
+        So all six of these must hold before a recompose is skipped:
+
+        1. The rail has pushed at least one state into THIS instance
+           (``_console_workspace_context_synced``, set by
+           ``ConsoleLeftRail.sync_workspace_context`` after each push, and
+           dying with the widget). This is the same per-instance marker the
+           screen-side skip already uses, and it is what preserves the
+           TASK-344/349 one-time healing push for a fresh instance.
+        2. ``compose`` has run to completion for this instance, so there is
+           a recorded signature of the rows it built.
+        3. No recompose is already latched (``_recompose_required``): the
+           DOM is about to change, so it is not evidence of anything.
+        4. The tray is mounted and has children at all.
+        5. The state is value-equal.
+        6. The DOM still matches what ``compose`` recorded building, on BOTH
+           halves:
+           - the grouped-browser rows, in order, by (row id, row key). That
+             pair is exactly the identity Console click routing dispatches on
+             (`on_button_pressed` matches the id prefix, then reads `row_key`/
+             `conversation_id` off the button), so a match means every dynamic
+             click target is present, in place, and pointing at the same
+             conversation it did before;
+           - the FIXED controls, in order, by id. Without this half the
+             evidence would be vacuous for the Sessions and Workspaces
+             projections, which build no rows: their row signature is empty
+             and would trivially match anything, degenerating the guard back
+             toward the reverted full-equality shape (task-15454 review round
+             1). Now the Workspaces projection proves its Switch / New / RAG
+             Scope buttons and their rows are still mounted, and the Sessions
+             projection proves its status pair and summary line are.
+
+        Nodes mounted into the tray from OUTSIDE ``compose`` are ignored
+        rather than treated as drift: the screen mounts the transitional
+        ``#console-new-workspace-conversation`` alias directly into the
+        Conversations tray, and requiring exact DOM equality would make that
+        tray permanently unskippable.
+
+        Args:
+            state: The incoming display state.
+
+        Returns:
+            True when recomposing would rebuild an identical DOM.
+        """
+        if not getattr(self, "_console_workspace_context_synced", False):
+            return False
+        composed_rows = self._composed_row_signature
+        composed_fixed = self._composed_fixed_signature
+        if composed_rows is None or composed_fixed is None:
+            return False
+        if getattr(self, "_recompose_required", False):
+            return False
+        if not self.is_mounted or not self.children:
+            return False
+        if state != self._state:
+            # TASK-26836: not value-equal -- but a recompose is only owed if
+            # a field the last completed compose actually READ changed. The
+            # read set is recorded at compose time (see `compose`), so this
+            # cannot go stale against compose edits; with no record, fall
+            # back to recomposing, exactly as before.
+            reads = self._composed_state_reads
+            if reads is None:
+                return False
+            for field_info in dataclasses.fields(state):
+                name = field_info.name
+                if name in reads and getattr(state, name) != getattr(
+                    self._state, name
+                ):
+                    return False
+            # Only unrendered fields changed: the mounted DOM provably does
+            # not depend on this delta. Fall through to the DOM signature
+            # proof (condition 6) before skipping.
+        mounted_rows, mounted_fixed = self._mounted_signatures(composed_fixed)
+        return mounted_rows == composed_rows and mounted_fixed == composed_fixed
+
+    def _mounted_signatures(
+        self,
+        expected_fixed_ids: tuple[str, ...],
+    ) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+        """Read both DOM signatures out of the live tree in one walk.
+
+        Read from the live DOM rather than from state, so it can contradict
+        what the tray believes -- which is the whole point (see
+        ``_can_skip_recompose``).
+
+        Args:
+            expected_fixed_ids: The fixed-control ids ``compose`` recorded.
+                Only these are collected, so an out-of-band mount elsewhere
+                in the tray never registers as drift.
+
+        Returns:
+            ``(row signature, fixed-id signature)``, each in DOM order.
+        """
+        wanted = set(expected_fixed_ids)
+        rows: list[tuple[str, str]] = []
+        fixed: list[str] = []
+        for node in self.query("*"):
+            node_id = str(getattr(node, "id", "") or "")
+            if node.has_class("console-workspace-conversation-row"):
+                rows.append((node_id, str(getattr(node, "row_key", "") or "")))
+            elif node_id in wanted:
+                fixed.append(node_id)
+        return tuple(rows), tuple(fixed)
+
+    def _record_composed_node(self, widget: Any) -> Any:
+        """Record one fixed (non-row) control built by the running compose pass.
+
+        Returns ``widget`` so a call site stays a single expression
+        (``yield self._record_composed_node(Button(...))``). A no-op outside
+        a compose pass, and for a widget with no id.
+
+        Args:
+            widget: The freshly built control.
+
+        Returns:
+            ``widget``, unchanged.
+        """
+        collector = self._composing_fixed_signature
+        if collector is None:
+            return widget
+        widget_id = str(getattr(widget, "id", "") or "")
+        if widget_id:
+            collector.append(widget_id)
+        return widget
 
     def _nearest_scroll_parent(self) -> Any | None:
         """Return the nearest ancestor that owns vertical scrolling.
@@ -169,9 +874,8 @@ class ConsoleWorkspaceContextTray(Vertical):
             if getattr(ancestor, "id", None) == "console-left-rail-body":
                 return ancestor
         for ancestor in self.ancestors:
-            if (
-                getattr(ancestor, "max_scroll_y", 0) > 0
-                and callable(getattr(ancestor, "scroll_to", None))
+            if getattr(ancestor, "max_scroll_y", 0) > 0 and callable(
+                getattr(ancestor, "scroll_to", None)
             ):
                 return ancestor
         return None
@@ -181,7 +885,34 @@ class ConsoleWorkspaceContextTray(Vertical):
         *,
         restore_scroll_y: int | None = None,
     ) -> None:
-        """Schedule bounded fit passes after recomposing tray content.
+        """Schedule a single fit pass after recomposing tray content.
+
+        TASK-1191: this used to fan out into two `call_later` hops plus a
+        0.01s scroll-restore timer on every sync, theorized (commit
+        1115fa624) as compensating for recompose settling child layout over
+        "more than one message turn" in scrolled rails. TASK-1142 investigated
+        that theory twice (looking for a click-eating race) and could not
+        reproduce it under 15 rapid sync cycles. What TASK-1142 round 1/2
+        *did* find, twice, was an actual bug in this area: the grouped
+        browser's own auto-height ESTIMATE
+        (`_conversation_browser_list_height`) undercounting wrapped
+        empty-copy/row lines, silently clipping later siblings out of the
+        tray's box. That is a height-computation bug, not a layout-timing
+        one, and it is now fixed with wrap-aware, budget-based estimators
+        (`_empty_copy_line_count`, `_marker_prefixed_name_lines`) so the
+        conversation list's height is set explicitly at compose time
+        (`_compose_conversation_browser`) rather than discovered from
+        settled geometry.
+        `call_after_refresh` -- the same primitive `on_mount`/`on_resize`
+        already use for this exact job -- defers the callback until Textual
+        has processed the pending refresh (recompose + layout), so
+        `virtual_region` is current when `_fit_height_to_content` reads it.
+        See `_fit_height_to_content`'s own docstring for why that single
+        read is trustworthy (not just deferred-until-current). One deferred
+        pass is sufficient; a second pass is still scheduled by
+        `_maybe_relabel_for_width` itself, but only on the rare occasions a
+        relabel is actually needed (first real width measurement, or a
+        multi-cell width change) -- not unconditionally on every sync.
 
         Args:
             restore_scroll_y: Parent rail scroll offset to restore after fitting.
@@ -194,16 +925,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             self._fit_height_to_content()
             self._restore_parent_scroll(restore_scroll_y)
 
-        # Recompose settles child layout over more than one message turn in
-        # scrolled rails; a fixed follow-up pass avoids a layout feedback loop.
-        self.call_later(fit_and_restore_scroll)
-        self.call_later(lambda: self.call_later(fit_and_restore_scroll))
-        if restore_scroll_y is not None:
-            self.set_timer(
-                0.01,
-                lambda: self._restore_parent_scroll(restore_scroll_y),
-                name="console-workspace-context-scroll-restore",
-            )
+        self.call_after_refresh(fit_and_restore_scroll)
 
     def _restore_parent_scroll(self, scroll_y: int | None) -> None:
         """Restore the parent rail scroll position after a deferred fit pass.
@@ -222,8 +944,128 @@ class ConsoleWorkspaceContextTray(Vertical):
         if callable(scroll_to):
             scroll_to(y=max(0, scroll_y), animate=False)
 
+    def _should_relabel_at_width(self, measured: int) -> bool:
+        """Return whether a measured content width warrants a rewrap recompose.
+
+        The first measurement always relabels, replacing the pre-measurement
+        fallback budget. Afterwards a change is honored only when it moves at
+        least ``_RELABEL_MIN_WIDTH_DELTA`` cells, so a one-cell scrollbar
+        toggle (from rows being added or removed) neither races a concurrent
+        state-change recompose nor oscillates the relabel.
+
+        Args:
+            measured: Freshly measured content-region width in cells.
+
+        Returns:
+            True when the tray should recompose to rewrap at ``measured``.
+        """
+        if not self._row_width_measured:
+            return measured != self._row_content_width
+        return abs(measured - self._row_content_width) >= _RELABEL_MIN_WIDTH_DELTA
+
+    def _maybe_relabel_for_width(self) -> bool:
+        """Rewrap row labels when the measured content width has changed.
+
+        The check lives in the fit pass rather than ``on_resize`` because the
+        tray's frame variant (solid <-> none) changes the *content* width
+        without changing the outer size, so no resize event fires for it.
+        ``_should_relabel_at_width`` is what prevents recompose feedback loops:
+        steady-state passes and one-cell scrollbar-toggle flaps are free, so a
+        section collapse (which toggles the scrollbar) never spawns a recompose
+        that would race its own state-change recompose. Returns True when a
+        relabel recompose was scheduled (the caller should skip fitting; the
+        scheduled passes re-fit after the recompose).
+        """
+        region = getattr(self, "content_region", None)
+        if region is None or region.width <= 0:
+            return False
+        measured = int(region.width)
+        should_relabel = self._should_relabel_at_width(measured)
+        scroll_parent = self._nearest_scroll_parent()
+        owner_region = getattr(scroll_parent, "content_region", None)
+        owner_width = max(
+            0,
+            int(getattr(owner_region, "width", 0) or getattr(self.region, "width", 0)),
+        )
+        prior_owner_width = self._row_owner_width
+        owner_width_changed = bool(
+            prior_owner_width and owner_width != prior_owner_width
+        )
+        self._row_owner_width = owner_width
+        # Showing/mounting a child can make Textual settle this tray's frame
+        # and content region two cells narrower without changing the owning
+        # rail viewport. That is not new wrapping space and recomposing for it
+        # would discard out-of-band controls. A real two-cell resize changes
+        # the owner width too and must retain the established relabel contract.
+        if (
+            self._row_width_measured
+            and should_relabel
+            and not owner_width_changed
+            and abs(measured - self._row_content_width) == _RELABEL_MIN_WIDTH_DELTA
+        ):
+            should_relabel = False
+        # Latch on the first *real* measurement regardless of whether it
+        # relabels: when the measured width coincides with the fallback the
+        # decision is a no-op, but the tray has still been measured, so a
+        # later one-cell change must be treated as a scrollbar flap (hysteresis
+        # branch), not as another first measurement.
+        self._row_width_measured = True
+        if not should_relabel:
+            return False
+        self._row_content_width = measured
+        scroll_parent = self._nearest_scroll_parent()
+        parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
+        restore_scroll_y = int(parent_scroll_y) if parent_scroll_y is not None else None
+        self.refresh(recompose=True)
+        if self.is_mounted:
+            self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+            self.post_message(self.Relabeled())
+        return True
+
     def _fit_height_to_content(self) -> None:
         """Expose the full tray content height to the parent scroll container.
+
+        TASK-1191: called from a single deferred `call_after_refresh` pass
+        (see `_schedule_recomposed_content_fit`), not several. One pass is
+        trustworthy here, not merely convenient, for two independent
+        reasons:
+
+        1. Every child's height is either resolved synchronously within
+           Textual's own layout pass or set explicitly before it. The
+           grouped conversation list's height is computed up front from
+           state at compose time (`_conversation_browser_list_height`,
+           wrap-aware since TASK-1142) rather than discovered from settled
+           geometry. The remaining top-level children -- free-text
+           `Static`s like `console-workspace-recovery` / `recovery_copy`
+           included -- are still plain WRAPPING Statics with no explicit
+           height, but Textual resolves a `Static`'s wrapped auto-height
+           synchronously as part of arranging its parent, in the same
+           layout pass `call_after_refresh` waits for; it is not a
+           multi-turn process for any of them. Nothing here is
+           fixed-height; the point is that "wrapped" and "settles over
+           several message turns" are not the same claim, and only the
+           first is true.
+        2. `#console-left-rail-body`'s CSS pins `scrollbar-gutter: stable`
+           (see that rule's own comment) specifically so this tray's
+           content width -- and therefore every wrapped child's line
+           count -- cannot shift out from under an already-scheduled fit
+           pass just because a row was added/removed and the scrollbar
+           toggled. Do not remove that CSS without re-auditing this
+           single-pass assumption.
+        3. TASK-2154.3: when a fit pass lands mid-recompose (its own relabel
+           pass just rebuilt the children), every child's virtual height
+           still reads 0, so the loop below computes a 1-row "content"
+           height. Latching that shrunk the tray to one row until the next
+           unrelated fit pass -- observed deterministically at a 30-col
+           rail (the left rail's new TASK-2154.3 minimum) as the Details
+           section overlapping the conversation list. With two or more
+           children a settled layout ALWAYS yields a bottom of at least 2
+           (the tray composes four or more children unconditionally), so a
+           bottom of exactly 1 means "not laid out yet": defer one more
+           pass instead of latching. Termination is guaranteed because a
+           displayed tray's children are laid out within the pending
+           refresh, and a hidden one already returned above on
+           ``region.height <= 0``.
 
         Returns:
             None.
@@ -231,6 +1073,9 @@ class ConsoleWorkspaceContextTray(Vertical):
 
         region = getattr(self, "region", None)
         if region is None or region.height <= 0:
+            return
+
+        if self._maybe_relabel_for_width():
             return
 
         content_top = 0
@@ -245,6 +1090,14 @@ class ConsoleWorkspaceContextTray(Vertical):
                 content_bottom,
                 child_virtual.y + child_virtual.height,
             )
+
+        if content_bottom == 1 and len(self.children) > 1:
+            # Mid-recompose: no child has a laid-out height yet (see point 3
+            # in the docstring). Defer one more pass rather than latch a
+            # bogus one-row height.
+            if self.is_mounted and self.display:
+                self.call_after_refresh(self._fit_height_to_content)
+            return
 
         target_height = max(1, content_bottom - content_top)
         # When the tray is nested inside a collapsible left-rail section body,
@@ -289,58 +1142,6 @@ class ConsoleWorkspaceContextTray(Vertical):
         """
         return Static(str(text), id=id, classes=classes, markup=False)
 
-    def _conversation_section(self) -> ConsoleWorkspaceConversationSectionState:
-        """Return section state, adapting legacy row-only snapshots.
-
-        Returns:
-            Conversation section state for the currently mounted tray state.
-        """
-        section = self.state.conversation_section
-        if section is not None:
-            return section
-        selected = next(
-            (row for row in self.state.conversation_rows if row.selected),
-            None,
-        )
-        selected_summary = (
-            (
-                f"{self._conversation_title(selected.title)} - "
-                f"{self._conversation_detail_status(selected.status) or 'conversation'}"
-            )
-            if selected is not None
-            else "No active conversation."
-        )
-        return ConsoleWorkspaceConversationSectionState(
-            workspace_id="",
-            collapsed=False,
-            query="",
-            selected_summary=selected_summary,
-            rows=self.state.conversation_rows,
-            workspace_total_count=len(self.state.conversation_rows),
-            result_total_count=None,
-            status_copy="",
-            empty_copy=self.state.conversation_empty_copy,
-            search_enabled=False,
-            new_conversation_enabled=self.state.new_conversation_enabled,
-        )
-
-    @staticmethod
-    def _conversation_count_title(
-        section: ConsoleWorkspaceConversationSectionState,
-    ) -> str:
-        """Return the Conversations heading with a stable workspace count.
-
-        Args:
-            section: Conversation section state to summarize.
-
-        Returns:
-            Heading text containing the workspace conversation count.
-        """
-        count = section.workspace_total_count
-        if count is None:
-            count = len(section.rows)
-        return f"Conversations ({count})"
-
     @staticmethod
     def _conversation_button(
         text: str,
@@ -348,54 +1149,123 @@ class ConsoleWorkspaceContextTray(Vertical):
         id: str,
         conversation_id: str,
         tooltip_label: str | None = None,
+        run_marker: str = "",
         selected: bool = False,
+        subagent_count: int = 0,
+        name_line_count: int = 1,
     ) -> Button:
+        # Escaped-then-markup rendering round-trips plain text unchanged while
+        # letting `format_console_conversation_row_label` safely append a dim
+        # "[N Sub-Agents]" badge when this conversation has historical runs.
+        label = format_console_conversation_row_label(
+            text, subagent_count=subagent_count
+        )
         button = Button(
-            Text(str(text)),
+            Text.from_markup(label),
             id=id,
             classes="console-workspace-conversation-row",
             compact=True,
         )
         button.conversation_id = conversation_id
-        button.tooltip = f"Switch to {tooltip_label or text.lstrip('> ').strip()}"
+        fallback_tooltip = text.splitlines()[0].strip() if text else text
+        # TASK-1233 AC#1 (review round 1): `_marker_aware_tooltip` escapes
+        # the whole "Switch to <tooltip_label or fallback_tooltip>" sentence
+        # exactly once (both branches -- neither is pre-escaped here) and
+        # appends the marker meaning + trailing period. See its docstring
+        # for why per-fragment escaping at the call site missed a literal
+        # "[" in a bracket-wrapped status badge; pre-escaping either branch
+        # here too would double-escape it instead.
+        button.tooltip = _marker_aware_tooltip(
+            f"Switch to {tooltip_label or fallback_tooltip}",
+            run_marker,
+        )
         button.set_class(selected, "console-workspace-conversation-row-selected")
-        button.styles.height = 2
-        button.styles.min_height = 2
+        # TASK-31429: the fleet glyph's state also colours the row text; the
+        # `-selected` rule is ordered after these in the stylesheet so a
+        # selected row keeps the active hue.
+        state_class = _ROW_STATE_CLASS_BY_GLYPH.get(str(run_marker or "").strip())
+        if state_class:
+            button.add_class(state_class)
+        row_height = _conversation_row_render_height(name_line_count, subagent_count)
+        button.styles.height = row_height
+        button.styles.min_height = row_height
         return button
 
     @staticmethod
-    def _legacy_conversation_list_height(
-        section: ConsoleWorkspaceConversationSectionState,
+    def _conversation_browser_rows_height(
+        rows: tuple[ConsoleConversationBrowserRow, ...],
+        budget: int,
     ) -> int:
-        """Return the full content height for legacy conversation rows.
+        """Total height for a row sequence: per-row button height (from the
+        same wrap the labels use, so the two cannot disagree) plus margin."""
+        return sum(
+            _conversation_row_render_height(
+                len(
+                    _marker_prefixed_name_lines(
+                        row.title, _row_marker(row.run_marker, row.starred), budget
+                    )
+                ),
+                row.subagent_count,
+            )
+            + _ROW_BOTTOM_MARGIN
+            for row in rows
+        )
 
-        Args:
-            section: Legacy conversation section state.
+    @staticmethod
+    def _empty_copy_line_count(text: str, budget: int) -> int:
+        """Return the rendered line count for an empty-copy Static at
+        ``budget`` cells wide.
 
-        Returns:
-            Height needed to render every row without internal scrolling.
+        TASK-1142 round 1 review: ``_conversation_browser_list_height`` used
+        to assume every empty-copy line ("No starred conversations." etc.)
+        always renders as exactly one row. Unlike a row title, this Static
+        is NOT reduced by ``_BROWSER_ROW_CHROME_WIDTH`` (there is no star
+        column beside it), so at the tray's real content width it can (and
+        does) wrap to two lines while the flat-constant heuristic still
+        counted one. That single missing row silently undercounted the
+        `#console-workspace-conversations` container's explicit height,
+        clipping whatever composed after it -- including a LATER section's
+        entire header, caret and all -- out of the tray's own visible
+        bounds. Confirmed via a coordinate-honest repro: after a real click
+        collapsed "Chats", "Chats"'s own re-expand caret vanished from the
+        rendered pane entirely (not just off in a click-miss sense -- not
+        painted at all), because "No starred conversations." and "No
+        workspace conversations." both silently wrapped to two lines above
+        it.
+
+        TASK-1142 round-2 review (Qodo, PR #1050): the first fix here called
+        ``wrap_console_conversation_title``, which hard-caps at two lines
+        and ellipsizes -- correct for a row title, but an empty-copy
+        ``Static`` wraps with no such cap. Any empty-copy string that
+        legitimately needs 3+ lines would silently undercount again through
+        that capped helper. Now uses ``wrap_console_plain_text_uncapped``
+        instead, which is the same per-line word-wrap rule with the cap
+        removed -- see its docstring for why a dedicated helper (rather
+        than reusing the row-title one) is required.
         """
-
-        if not section.rows:
-            return _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
         return max(
             _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
-            len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
+            len(wrap_console_plain_text_uncapped(text, budget)),
         )
 
     @staticmethod
     def _conversation_browser_list_height(
         browser: ConsoleConversationBrowserState,
+        row_title_budget: int,
+        empty_copy_budget: int,
     ) -> int:
         """Return the full content height for the grouped browser rows.
 
         Args:
-            browser: Grouped conversation browser state.
-
-        Returns:
-            Height needed to render every visible browser row.
+            browser: The grouped browser state being measured.
+            row_title_budget: Wrap budget for row titles (reduced for the
+                star column, matches ``_browser_title_budget()``).
+            empty_copy_budget: Wrap budget for empty-copy lines, which span
+                the tray's full row width with no star-column reduction
+                (matches ``_row_content_width``) -- see
+                ``_empty_copy_line_count`` for why this must differ from
+                ``row_title_budget``.
         """
-
         height = 0
         for section in browser.sections:
             height += _CONVERSATION_BROWSER_HEADER_HEIGHT
@@ -407,210 +1277,372 @@ class ConsoleWorkspaceContextTray(Vertical):
                     if group.collapsed:
                         continue
                     if group.rows:
-                        height += (
-                            len(group.rows)
-                            * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+                        height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+                            group.rows, row_title_budget
                         )
                     elif group.empty_copy:
-                        height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                        height += ConsoleWorkspaceContextTray._empty_copy_line_count(
+                            group.empty_copy, empty_copy_budget
+                        )
                 continue
             if section.rows:
-                height += (
-                    len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+                height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+                    section.rows, row_title_budget
                 )
             elif section.empty_copy:
-                height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                height += ConsoleWorkspaceContextTray._empty_copy_line_count(
+                    section.empty_copy, empty_copy_budget
+                )
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
-        if self.show_heading:
-            yield self._static(
-                self.state.heading,
-                id="console-workspace-context-title",
-                classes="destination-section",
+        """Compose this tray's projection of the shared workspace snapshot.
+
+        One tray class serves several rail sections; ``self.content`` selects
+        which projection is built, so this yields a different subtree in each
+        case. ``"all"`` is the combined form used outside the split rail.
+
+        Returns:
+            The heading (when ``show_heading``), the workspace-context rows,
+            and the grouped conversation browser -- each included only when
+            ``content`` selects it. Since TASK-23199 the conversations
+            projection also carries the active-chat summary, which the
+            retired Sessions projection used to own.
+        """
+        # TASK-15454: record the row signature of THIS pass so
+        # `_can_skip_recompose` can later check the mounted DOM against what
+        # was actually built, not against what `self.state` claims. The
+        # signature is published only after the generator runs to the end --
+        # a pass abandoned part-way (Textual closing the generator) leaves it
+        # None, which forbids skipping.
+        collected: list[tuple[str, str]] = []
+        collected_fixed: list[str] = []
+        state_reads: set[str] = set()
+        self._composing_row_signature = collected
+        self._composing_fixed_signature = collected_fixed
+        self._composed_row_signature = None
+        self._composed_fixed_signature = None
+        self._state_field_reads = state_reads
+        self._composed_state_reads = None
+        try:
+            if self.show_heading:
+                yield self._record_composed_node(
+                    self._static(
+                        self.state.heading,
+                        id="console-workspace-context-title",
+                        classes="destination-section",
+                    )
+                )
+
+            if self.content in {"all", "workspace"}:
+                yield from self._compose_workspace_context()
+
+            if self.content in {"all", "session"}:
+                yield from self._compose_session_context(
+                    show_selected_summary=self.content == "session"
+                )
+
+            # TASK-26836: read the browser state only when this content mode
+            # renders it -- the read set drives the recompose guard, and an
+            # unconditional read here made the workspaces tray rebuild for
+            # every browser delta (the probe-observed wasted batch).
+            browser = (
+                self.state.conversation_browser
+                if self.content in {"all", "conversations"}
+                else None
             )
-        yield self._static(
-            self._workspace_selector_label(),
-            id="console-active-workspace",
-            classes="console-workspace-status-row console-workspace-selector-row",
+            if browser is not None:
+                yield from self._compose_conversation_browser(
+                    browser,
+                    show_heading=self.content == "all",
+                    # TASK-23199 folded the Sessions section into this one.
+                    # The active-chat summary was the only thing Sessions
+                    # rendered, so it moves here rather than being dropped:
+                    # it carries "<title> - <workspace>", which the grouped
+                    # rows below cannot show for the selected chat alone.
+                    show_selected_summary=self.content in {"all", "conversations"},
+                )
+        finally:
+            self._composing_row_signature = None
+            self._composing_fixed_signature = None
+            self._state_field_reads = None
+        self._composed_row_signature = tuple(collected)
+        self._composed_fixed_signature = tuple(collected_fixed)
+        self._composed_state_reads = frozenset(state_reads)
+
+    def _compose_workspace_context(self) -> ComposeResult:
+        """Render active workspace identity and workspace-scoped actions.
+
+        TASK-15454 review round 1: every id-carrying control built here goes
+        through ``_record_composed_node``, because this projection
+        (``#console-workspaces-context``) builds no grouped-browser rows and
+        would otherwise contribute NO DOM evidence to ``_can_skip_recompose``.
+        Anything added here must be recorded too -- pinned by
+        ``test_the_fixed_projections_record_every_control_they_build``, which
+        reds on an unrecorded control rather than letting the guard quietly
+        lose its evidence. (``ConsoleWorkspaceStatusPair`` composes its own
+        label/value Statics; that subtree is its business, not this
+        signature's.)
+        """
+
+        workspace_value = self.state.workspace_name or self._workspace_selector_label()
+        yield self._record_composed_node(
+            ConsoleWorkspaceStatusPair(
+                "Workspace",
+                workspace_value,
+                label_id="console-active-workspace-label",
+                value_id="console-active-workspace-value",
+                id="console-active-workspace",
+            )
         )
-        if self.state.change_workspace_enabled:
-            yield Button(
-                "Change workspace",
+
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-action-row",
+                classes="console-workspace-action-row",
+            )
+        ):
+            switch_button = Button(
+                "Switch",
                 id="console-change-workspace",
                 classes="console-workspace-action",
                 compact=True,
+                disabled=not self.state.change_workspace_enabled,
             )
-            if self.state.change_workspace_recovery:
-                yield self._static(
-                    self.state.change_workspace_recovery,
-                    id="console-change-workspace-recovery",
-                    classes="console-workspace-recovery",
-                )
-        if self.state.recovery_copy:
-            yield self._static(
-                self.state.recovery_copy,
-                id="console-workspace-recovery",
-                classes="console-workspace-recovery",
-            )
-
-        browser = self.state.conversation_browser
-        if browser is not None:
-            yield from self._compose_conversation_browser(browser)
-        else:
-            yield from self._compose_legacy_conversation_section()
-
-    def _compose_legacy_conversation_section(self) -> ComposeResult:
-        """Render the transitional active-workspace conversation section."""
-
-        section = self._conversation_section()
-        section_controls_enabled = self.state.conversation_section is not None
-        with Horizontal(
-            id="console-workspace-conversations-header",
-            classes="console-workspace-conversations-header",
-        ):
-            title = self._static(
-                self._conversation_count_title(section),
-                id="console-workspace-conversations-title",
-                classes="destination-section",
-            )
-            title.styles.width = "1fr"
-            yield title
-            toggle_label = GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED
-            toggle = Button(
-                toggle_label,
-                id="console-workspace-conversations-toggle",
-                classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
-                ),
-                compact=True,
-                disabled=not section_controls_enabled,
-            )
-            toggle.tooltip = (
-                "Expand Conversations"
-                if section.collapsed
-                else "Collapse Conversations"
-            )
-            toggle.styles.width = 3
-            toggle.styles.min_width = 3
-            yield toggle
-        yield self._static(
-            section.selected_summary or "No active conversation.",
-            id="console-workspace-selected-conversation",
-            classes="console-workspace-selected-conversation",
-        )
-        if not section.collapsed:
-            with Horizontal(
-                id="console-workspace-conversation-search-row",
-                classes="console-workspace-conversation-search-row",
+            switch_button.styles.min_width = 5
+            switch_button.styles.width = "auto"
+            # TASK-2154.3 (LY-06): the block reason used to render as an
+            # always-on Static under the buttons, so "Add another workspace
+            # before switching." read as an error before the user had
+            # expressed any intent. The reason now lives on the disabled
+            # button's tooltip -- visible exactly when the user reaches for
+            # the control it justifies (Textual renders tooltips for
+            # disabled widgets). Genuine workspace-service failures still
+            # surface proactively through `recovery_copy` below.
+            if (
+                not self.state.change_workspace_enabled
+                and self.state.change_workspace_recovery
             ):
-                search_input = Input(
-                    value=section.query,
-                    placeholder="Search workspace conversations",
-                    id="console-workspace-conversation-search",
-                    classes="console-workspace-conversation-search",
-                    disabled=not section.search_enabled,
-                )
-                search_input.styles.width = "1fr"
-                yield search_input
-                clear_button = Button(
-                    "Clear",
-                    id="console-workspace-conversation-search-clear",
-                    classes=(
-                        "console-workspace-action "
-                        "console-workspace-conversation-search-clear"
-                    ),
-                    compact=True,
-                    disabled=(
-                        not section.search_enabled
-                        or not bool(str(section.query or "").strip())
-                    ),
-                )
-                clear_button.tooltip = "Clear conversation search"
-                yield clear_button
-            if section.status_copy:
-                yield self._static(
-                    section.status_copy,
-                    id="console-workspace-conversation-search-status",
-                    classes="console-workspace-empty-copy",
-                )
-            if section.error_copy:
-                yield self._static(
-                    section.error_copy,
-                    id="console-workspace-conversation-search-error",
+                switch_button.tooltip = self.state.change_workspace_recovery
+            yield self._record_composed_node(switch_button)
+            new_button = Button(
+                "New",
+                id="console-new-workspace",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.new_workspace_enabled,
+            )
+            new_button.styles.min_width = 5
+            new_button.styles.width = "auto"
+            yield self._record_composed_node(new_button)
+            scope_button = Button(
+                "RAG",
+                id="console-workspace-rag-scope-open",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not self.state.rag_scope_enabled,
+            )
+            scope_button.styles.min_width = 5
+            scope_button.styles.width = "auto"
+            scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
+            yield self._record_composed_node(scope_button)
+        # TASK-25712: the contextual Star/Unstar button and its
+        # selection-context line are retired. The tree's chat rows now open
+        # the shared conversation action menu (Favourite lives there), and
+        # workspace rows open the workspace action menu -- the same
+        # one-asterisk-per-row pattern the grouped browser adopted in
+        # TASK-23200. The ``s`` star-toggle binding on the tree remains.
+
+        # This is deliberately its own row: the primary workspace action row
+        # is geometry constrained and cannot safely absorb another control.
+        # Keep it adjacent to the primary actions so keyboard traversal reaches
+        # Show Files before the workspace search/status controls.
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-files-row",
+                classes="console-workspace-action-row",
+            )
+        ):
+            files_button = Button(
+                "Show Files",
+                id="console-workspace-files-open",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            files_button.workspace_id = self.state.workspace_id
+            files_button.workspace_files_expected_available = bool(
+                self.state.workspace_files_available
+            )
+            files_button.tooltip = (
+                "Show files for this workspace"
+                if self.state.workspace_files_available
+                else "No local folders are attached. Add one in Settings."
+            )
+            yield self._record_composed_node(files_button)
+
+        yield self._record_composed_node(
+            ConsoleBrowserSearchInput(
+                initial_value=self.state.workspace_query,
+                placeholder="Search workspaces",
+                id="console-workspace-search",
+                classes="console-workspace-search",
+            )
+        )
+        if self.state.workspace_loading:
+            yield self._record_composed_node(
+                self._static(
+                    "Searching…",
+                    id="console-workspace-search-status",
                     classes="console-workspace-recovery",
                 )
-            conversation_list = Vertical(id="console-workspace-conversations")
-            conversation_list.styles.height = self._legacy_conversation_list_height(
-                section
             )
-            conversation_list.styles.min_height = 0
-            with conversation_list:
-                if section.rows:
-                    for index, row in enumerate(section.rows):
-                        marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
-                        title = self._conversation_title(row.title)
-                        visible_title = self._conversation_visible_title(title)
-                        status = self._conversation_status(row.status)
-                        detail = self._conversation_detail_status(row.status)
-                        status_suffix = f" [{status}]" if status else ""
-                        secondary = detail or "conversation"
-                        yield self._conversation_button(
-                            f"{marker}{visible_title}\n  {secondary}",
-                            id=f"console-workspace-conversation-{index}",
-                            conversation_id=row.conversation_id,
-                            tooltip_label=f"{title}{status_suffix}",
-                            selected=row.selected,
-                        )
-                else:
-                    yield self._static(
-                        section.empty_copy or self.state.conversation_empty_copy,
-                        id="console-workspace-empty-conversations",
-                        classes="console-workspace-empty-copy",
-                    )
-            if section.new_conversation_enabled:
-                yield Button(
-                    "New conversation",
-                    id="console-new-workspace-conversation",
-                    classes="console-workspace-action",
-                    compact=True,
+        elif self.state.workspace_error:
+            yield self._record_composed_node(
+                self._static(
+                    self.state.workspace_error,
+                    id="console-workspace-search-status",
+                    classes="console-workspace-recovery",
                 )
-                if self.state.new_conversation_recovery:
-                    yield self._static(
-                        self.state.new_conversation_recovery,
-                        id="console-new-workspace-conversation-recovery",
-                        classes="console-workspace-recovery",
+            )
+            if self.state.workspace_retry_available:
+                yield self._record_composed_node(
+                    Button(
+                        "Retry",
+                        id="console-workspace-search-retry",
+                        classes="console-workspace-action",
+                        compact=True,
                     )
+                )
+
+        if self.state.recovery_copy:
+            yield self._record_composed_node(
+                self._static(
+                    self.state.recovery_copy,
+                    id="console-workspace-recovery",
+                    classes="console-workspace-recovery",
+                )
+            )
+
+    def sync_workspace_tree_context(self, data: Any | None) -> bool:
+        """Record the Tree cursor row; the star seam is retired (TASK-25712).
+
+        The contextual Star/Unstar button this used to drive is gone -- chat
+        rows open the shared conversation action menu and workspace rows the
+        workspace action menu. The cursor truth is still recorded because
+        width relabels rebuild the tray and nothing else owns it. Always
+        returns False: no visibility can change any more, and the rail's
+        reconcile decision reads that as "nothing to refit".
+        """
+
+        self._workspace_tree_context_data = data
+        return False
+
+    def _reconcile_workspace_action_owners(self) -> None:
+        """Re-fit the bounded owner's local geometry after the action-row fit.
+
+        TASK-22203: this used to also request the rail-wide allocation
+        reconcile (``console-left-rail``), so every workspace<->conversation
+        cursor crossing ran the full 7-section, ~45-``query_one`` rail
+        measure (measured: 45 rail ``query_one`` + 1 allocation pass + 8
+        section reconciles per arrow key). The action row's one-row flip only
+        needs the owning bounded section to re-fit its fixed chrome against
+        its existing allocation, so the request is SCOPED — the bounded
+        section runs the same reconcile but skips the demand-change
+        escalation into the allocator. Genuine content changes still escalate
+        through the ordinary (unscoped) reconcile requests issued by state
+        pushes and resizes. The known, bounded trade: while the rail has
+        spare space, the section keeps its current allocation until the next
+        genuine allocation trigger instead of growing by the flipped row.
+        """
+
+        for ancestor in self.ancestors:
+            if getattr(ancestor, "id", None) == "console-bounded-section-workspace":
+                request_scoped = getattr(
+                    ancestor, "request_scoped_reconcile", None
+                )
+                if callable(request_scoped):
+                    request_scoped()
+                    return
+                request_reconcile = getattr(ancestor, "request_reconcile", None)
+                if callable(request_reconcile):
+                    request_reconcile()
+                return
+
+    def _compose_session_context(
+        self,
+        *,
+        show_selected_summary: bool,
+    ) -> ComposeResult:
+        """Render the active session identity without workspace controls.
+
+        TASK-15454 review round 1: like ``_compose_workspace_context``, this
+        projection (``#console-session-context``) builds no grouped-browser
+        rows, so every id-carrying control it builds is recorded through
+        ``_record_composed_node`` to give ``_can_skip_recompose`` real DOM
+        evidence. See that method's docstring for the pin that enforces it.
+        """
+
+        # TASK-23199: a "Conversation" status pair stood here and was not
+        # worth its row in EITHER state. `scope_label` is derived from a
+        # PERSISTED conversation id, so an unsaved native session rendered
+        # "Conversation  None" directly above that same chat's name -- true,
+        # but it reads as a contradiction -- while a saved one rendered
+        # "Conversation  This conversation", a tautology. The useful fact,
+        # which chat is active, is on the selected-summary row below, which
+        # now also carries the durable id as its hover detail.
+
+        if show_selected_summary:
+            browser = self.state.conversation_browser
+            selected_summary = browser.selected_summary if browser is not None else ""
+            active_row = self._static(
+                selected_summary or "No active session.",
+                id="console-workspace-selected-conversation",
+                classes=(
+                    "console-workspace-selected-conversation "
+                    "console-session-selected-conversation"
+                    + _selected_conversation_active_class(selected_summary)
+                ),
+            )
+            if self.state.scope_detail:
+                # Inherited from the retired scope pair: the raw durable id
+                # stays a hover detail rather than occupying a rail row.
+                active_row.tooltip = f"Conversation id: {self.state.scope_detail}"
+            yield self._record_composed_node(active_row)
 
     def _compose_conversation_browser(
         self,
         browser: ConsoleConversationBrowserState,
+        *,
+        show_heading: bool = True,
+        show_selected_summary: bool = True,
     ) -> ComposeResult:
         """Render the grouped all-workspaces conversation browser."""
 
-        with Horizontal(
-            id="console-workspace-conversations-header",
-            classes="console-workspace-conversations-header",
-        ):
-            title = self._static(
-                "Conversations",
-                id="console-workspace-conversations-title",
-                classes="destination-section",
+        if show_heading:
+            with Horizontal(
+                id="console-workspace-conversations-header",
+                classes="console-rail-header console-workspace-conversations-header",
+            ):
+                title = self._static(
+                    "Conversations",
+                    id="console-workspace-conversations-title",
+                    classes="console-rail-section-title",
+                )
+                title.styles.width = "1fr"
+                yield title
+        if show_selected_summary:
+            yield self._static(
+                browser.selected_summary or "No active conversation.",
+                id="console-workspace-selected-conversation",
+                classes="console-workspace-selected-conversation"
+                + _selected_conversation_active_class(browser.selected_summary),
             )
-            title.styles.width = "1fr"
-            yield title
-        yield self._static(
-            browser.selected_summary or "No active conversation.",
-            id="console-workspace-selected-conversation",
-            classes="console-workspace-selected-conversation",
-        )
         with Horizontal(
             id="console-workspace-conversation-search-row",
             classes="console-workspace-conversation-search-row",
         ):
-            search_input = Input(
-                value=browser.query,
+            search_input = ConsoleBrowserSearchInput(
+                initial_value=browser.query,
                 placeholder="Search conversations",
                 id="console-workspace-conversation-search",
                 classes="console-workspace-conversation-search",
@@ -641,16 +1673,14 @@ class ConsoleWorkspaceContextTray(Vertical):
                 id="console-workspace-conversation-search-error",
                 classes="console-workspace-recovery",
             )
-        if not browser.marks_available:
-            yield self._static(
-                "Local stars unavailable",
-                id="console-conversation-browser-marks-unavailable",
-                classes="console-workspace-recovery",
-            )
 
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
-        conversation_list.styles.height = self._conversation_browser_list_height(browser)
+        conversation_list.styles.height = self._conversation_browser_list_height(
+            browser,
+            self._browser_title_budget(),
+            self._row_content_width,
+        )
         conversation_list.styles.min_height = 0
         with conversation_list:
             for section in browser.sections:
@@ -693,11 +1723,18 @@ class ConsoleWorkspaceContextTray(Vertical):
                         )
                     continue
                 if section.rows:
+                    # Flat sections have no workspace group header. The Starred
+                    # section pins conversations from multiple workspaces, so the
+                    # workspace is the differentiator that keeps same-titled rows
+                    # distinguishable; the all-global Chats section does not need
+                    # it (Qodo #812).
+                    show_workspace = section.section_id == "starred"
                     for row in section.rows:
                         yield from self._compose_conversation_browser_row(
                             row,
                             row_index,
                             marks_available=browser.marks_available,
+                            show_workspace=show_workspace,
                         )
                         row_index += 1
                 elif section.empty_copy:
@@ -711,29 +1748,59 @@ class ConsoleWorkspaceContextTray(Vertical):
         self,
         section: ConsoleConversationBrowserSection,
     ) -> ComposeResult:
-        """Render one grouped browser section header."""
+        """Render one grouped browser section header.
 
+        TASK-912 AC#1: collapsing a top-level section (Starred/Workspaces/
+        Chats) hides every row -- and every workspace group -- beneath it,
+        so any fleet run-marker glyph among them is otherwise invisible.
+        When collapsed AND `section.run_marker` is non-empty (the
+        most-urgent glyph across the section's full pre-cap contents,
+        computed in `conversation_browser_state`), it is appended to the
+        header label -- same plain-string threading and `markup=False`
+        Static the group-header marker already uses.
+
+        TASK-912 review fix round 1: an expanded flat section (Starred/
+        Chats -- `"workspaces"` never carries its own `rows`, so this is
+        always empty there) is subject to the identical per-section row cap
+        as a workspace group, and shows every row's own marker just like an
+        expanded group does -- UNLESS the section's row count exceeds the
+        cap, in which case `section.capped_run_marker` (the most-urgent
+        glyph among only the hidden overflow rows) is borrowed onto the
+        header instead, mirroring `_compose_conversation_browser_group_
+        header` exactly. A visible marked row within the cap needs no
+        header echo, which is exactly what `capped_run_marker` excludes.
+        """
+
+        label = section.label
+        if section.collapsed and section.run_marker:
+            label = f"{label} {section.run_marker}"
+        elif not section.collapsed and section.capped_run_marker:
+            label = f"{label} {section.capped_run_marker}"
         with Horizontal(classes="console-conversation-browser-section-header"):
             title = self._static(
-                section.label,
+                label,
                 id=f"console-conversation-browser-{section.section_id}-title",
                 classes="console-conversation-browser-section-title",
             )
             yield title
             toggle = Button(
-                GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED,
+                resolve_glyph(GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED),
                 id=f"console-conversation-browser-section-toggle-{section.section_id}",
                 classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
+                    "console-workspace-action console-workspace-conversations-toggle"
                 ),
                 compact=True,
             )
             toggle.group_id = f"section:{section.section_id}"
-            toggle.tooltip = (
-                f"Expand {section.label}"
-                if section.collapsed
-                else f"Collapse {section.label}"
+            # TASK-1233 AC#1: decode whichever aggregate marker the header
+            # itself is currently showing (same collapsed/capped split as
+            # the label above) rather than inventing a new tooltip surface.
+            header_marker = (
+                section.run_marker if section.collapsed else section.capped_run_marker
+            )
+            action_verb = "Expand" if section.collapsed else "Collapse"
+            toggle.tooltip = _marker_aware_tooltip(
+                f"{action_verb} {section.label}", header_marker
             )
             yield toggle
 
@@ -742,31 +1809,81 @@ class ConsoleWorkspaceContextTray(Vertical):
         group: ConsoleConversationBrowserGroup,
         index: int,
     ) -> ComposeResult:
-        """Render one workspace group header."""
+        """Render one workspace group header.
+
+        PA-T8 review fix round 1 (IMPORTANT 2): a collapsed group hides its
+        rows entirely, so any fleet run-marker glyph on those rows is
+        otherwise invisible -- defeating "which workspace's agents are busy
+        is visible at a glance" for exactly the user who collapsed the
+        group. When collapsed AND at least one hidden row carries a marker,
+        the single most-urgent glyph (``group.run_marker``, precomputed in
+        ``conversation_browser_state._build_workspace_groups``) is appended
+        to the header label, same plain-string threading the row label
+        prefix already uses (this Static renders with ``markup=False``, so
+        no separate escaping step applies here either). An expanded group
+        already shows every row's own marker, so its header stays
+        unchanged -- UNLESS the group's row count exceeds
+        `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT`: a marked row pushed
+        past that cap is hidden despite the group being expanded, so
+        `group.capped_run_marker` (the most-urgent glyph among only the
+        hidden overflow rows, TASK-912 AC#2) is borrowed onto the header in
+        that case instead. A visible marked row within the cap needs no
+        header echo, which is exactly what `capped_run_marker` excludes.
+        """
 
         with Horizontal(classes="console-conversation-browser-group-header"):
+            label = group.label
+            if group.collapsed and group.run_marker:
+                label = f"{label} {group.run_marker}"
+            elif not group.collapsed and group.capped_run_marker:
+                label = f"{label} {group.capped_run_marker}"
             title = self._static(
-                group.label,
+                label,
                 id=f"console-conversation-browser-group-title-{index}",
                 classes="console-conversation-browser-group-title",
             )
             yield title
             toggle = Button(
-                GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED,
+                resolve_glyph(GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED),
                 id=f"console-conversation-browser-group-toggle-{index}",
                 classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
+                    "console-workspace-action console-workspace-conversations-toggle"
                 ),
                 compact=True,
             )
             toggle.group_id = group.group_id
-            toggle.tooltip = (
-                f"Expand {group.label}"
-                if group.collapsed
-                else f"Collapse {group.label}"
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            toggle.styles.max_width = 3
+            # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
+            # as the label above, decoded into the already-existing toggle
+            # tooltip rather than a new tooltip surface.
+            header_marker = (
+                group.run_marker if group.collapsed else group.capped_run_marker
+            )
+            action_verb = "Expand" if group.collapsed else "Collapse"
+            toggle.tooltip = _marker_aware_tooltip(
+                f"{action_verb} {group.label}", header_marker
             )
             yield toggle
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Translate the active workspace's Show Files control into a typed intent."""
+        button_id = str(event.button.id or "")
+        if button_id != "console-workspace-files-open":
+            return
+        event.stop()
+        workspace_id = str(
+            getattr(event.button, "workspace_id", "") or DEFAULT_WORKSPACE_ID
+        ).strip()
+        self.post_message(
+            self.WorkspaceFilesRequested(
+                workspace_id,
+                expected_available=bool(
+                    getattr(event.button, "workspace_files_expected_available", False)
+                ),
+            )
+        )
 
     def _compose_conversation_browser_row(
         self,
@@ -774,61 +1891,110 @@ class ConsoleWorkspaceContextTray(Vertical):
         index: int,
         *,
         marks_available: bool,
+        show_workspace: bool = False,
     ) -> ComposeResult:
-        """Render one grouped browser row plus its local star control."""
+        """Render one grouped browser row plus its local star control.
+
+        ``show_workspace`` carries the owning workspace into the subtitle for rows
+        rendered without a workspace group header (the cross-workspace Starred
+        section), where it is the disambiguator (Qodo #812).
+        """
 
         with Horizontal(classes="console-conversation-browser-row-line"):
+            budget = self._browser_title_budget()
             title = self._conversation_title(row.title)
-            visible_title = self._conversation_visible_title(title)
+            name_lines = _marker_prefixed_name_lines(
+                row.title, _row_marker(row.run_marker, row.starred), budget
+            )
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
-            secondary_parts = [
-                part
-                for part in (row.workspace_label, detail, row.updated_label)
-                if str(part or "").strip()
-            ]
-            secondary = " - ".join(secondary_parts) or "conversation"
-            marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
-            status_suffix = f" [{status}]" if status else ""
-            row_button = Button(
-                Text(f"{marker}{visible_title}\n  {secondary}"),
-                id=f"console-workspace-conversation-{index}",
-                classes="console-workspace-conversation-row",
-                compact=True,
+            secondary_copy = (
+                self._conversation_row_secondary(
+                    detail,
+                    row.updated_label,
+                    workspace_label=row.workspace_label if show_workspace else "",
+                )
+                or "conversation"
             )
-            row_button.tooltip = f"Switch to {title}{status_suffix}"
+            if row.queued_count:
+                secondary_copy = f"{secondary_copy} · Queue {row.queued_count}"
+            secondary = truncate_console_row_cells(secondary_copy, budget)
+            status_suffix = f" [{status}]" if status else ""
+            # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
+            # PRE-escape, pre-period sentence body -- `_conversation_button`
+            # passes it straight to `_marker_aware_tooltip`, which escapes
+            # the whole thing (title + this bracket-wrapped status badge)
+            # exactly once. Escaping only `title` here, as an earlier round
+            # did, left the literal "[" in `status_suffix` un-escaped: Rich/
+            # Textual markup parsing reads it as a style-tag start and
+            # silently drops the unrecognized "saved"/etc. tag -- the word
+            # never reaches the rendered tooltip at all.
+            row_button = self._conversation_button(
+                "\n".join((*name_lines, secondary)),
+                id=f"console-workspace-conversation-{index}",
+                conversation_id=row.conversation_id or row.row_key,
+                tooltip_label=f"{title}{status_suffix}",
+                run_marker=row.run_marker,
+                selected=row.selected,
+                subagent_count=row.subagent_count,
+                name_line_count=len(name_lines),
+            )
             row_button.row_key = row.row_key
-            row_button.conversation_id = row.conversation_id or row.row_key
+            # TASK-15454: this pair is the row's click identity; `compose`
+            # publishes the collected sequence once it finishes.
+            if self._composing_row_signature is not None:
+                self._composing_row_signature.append(
+                    (str(row_button.id or ""), str(row.row_key or ""))
+                )
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id
-            row_button.set_class(row.selected, "console-workspace-conversation-row-selected")
-            row_button.styles.height = 2
-            row_button.styles.min_height = 2
             row_button.styles.width = "1fr"
             row_button.styles.min_width = 0
+            if not row.openable:
+                # TASK-717: a prior open proved this record is missing; the
+                # row must stop presenting as an openable conversation.
+                row_button.disabled = True
+                row_button.add_class("console-workspace-conversation-row-broken")
+                row_button.tooltip = (
+                    "This conversation's record is missing and cannot be opened."
+                )
             yield row_button
 
-            star_disabled = not marks_available or not row.star_enabled
-            star_button = Button(
-                "*" if row.starred else ".",
-                id=f"console-conversation-star-{index}",
-                classes="console-workspace-action console-conversation-star",
+            # TASK-23200: this control used to be a star that toggled a
+            # favourite and nothing else. On a fresh install the marks
+            # service is often absent, so it shipped DISABLED, stretched to
+            # the full height of a multi-line row, and was explained by the
+            # developer-facing line "Local stars unavailable" -- a column of
+            # dead vertical space (2026-08-29 UX audit). It is now an
+            # asterisk that opens the row's action menu: favourite, status,
+            # archive, rename, delete. The menu itself decides what is
+            # available, and says why when something is not, so this control
+            # is never disabled and never needs an apology line beside it.
+            #
+            # One row tall, not the row's full height: favourite state is
+            # carried by the marker beside the title (see
+            # ``_marker_prefixed_name_lines``), so the column no longer has
+            # to be tall enough to show it.
+            menu_button = Button(
+                "*",
+                id=f"console-conversation-actions-{index}",
+                classes="console-workspace-action console-conversation-actions",
                 compact=True,
-                disabled=star_disabled,
             )
-            if not marks_available:
-                star_button.tooltip = "Local stars unavailable"
-            elif not row.star_enabled:
-                star_button.tooltip = "Send or save this conversation before starring."
-            else:
-                star_button.tooltip = (
-                    "Unstar conversation" if row.starred else "Star conversation"
-                )
-            star_button.row_key = row.row_key
-            star_button.conversation_id = row.conversation_id
-            star_button.starred = row.starred
-            yield star_button
+            menu_button.styles.height = 1
+            menu_button.styles.min_height = 1
+            menu_button.tooltip = f"Actions for {title}"
+            menu_button.row_key = row.row_key
+            menu_button.conversation_id = row.conversation_id
+            # PR #2262 review: Copy-as-markdown reads open native sessions
+            # live; the asterisk needs the same identity the row button
+            # carries, or unsaved rows gate Copy as empty.
+            menu_button.native_session_id = row.native_session_id
+            menu_button.starred = row.starred
+            menu_button.marks_available = marks_available
+            menu_button.conversation_title = row.title
+            yield menu_button
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""
@@ -840,15 +2006,20 @@ class ConsoleWorkspaceContextTray(Vertical):
     @staticmethod
     def _conversation_title(title: str) -> str:
         """Return a readable conversation label."""
-        return str(title).strip() or "Untitled conversation"
+        return (
+            sanitize_character_display_label(
+                title,
+                max_characters=1_000,
+            )
+            or _UNTITLED_CONVERSATION
+        )
 
-    @staticmethod
-    def _conversation_visible_title(title: str) -> str:
-        """Return a rail-safe visible title that does not clip in narrow panes."""
-        readable = ConsoleWorkspaceContextTray._conversation_title(title)
-        if len(readable) <= _MAX_CONVERSATION_ROW_TITLE:
-            return readable
-        return f"{readable[: _MAX_CONVERSATION_ROW_TITLE - 3].rstrip()}..."
+    def _browser_title_budget(self) -> int:
+        """Cells available to grouped-browser row text."""
+        return max(
+            _MIN_TITLE_WRAP_BUDGET,
+            self._row_content_width - _BROWSER_ROW_CHROME_WIDTH,
+        )
 
     @staticmethod
     def _conversation_status(status: str) -> str:
@@ -860,8 +2031,53 @@ class ConsoleWorkspaceContextTray(Vertical):
 
     @staticmethod
     def _conversation_detail_status(status: str) -> str:
-        """Return second-line row metadata for row disambiguation."""
-        normalized = str(status or "").strip().lower()
-        if not normalized:
-            return ""
-        return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))
+        """Return second-line row metadata for row disambiguation.
+
+        TASK-356: delegates to the shared vocabulary so the rail and the
+        Ctrl+K switcher never disagree on the same conversation's state.
+        """
+        return console_conversation_status_detail(status)
+
+    @staticmethod
+    def _conversation_row_secondary(
+        detail: str,
+        updated_label: str,
+        *,
+        workspace_label: str = "",
+    ) -> str:
+        """Compress the row's second line to just its differentiator.
+
+        TASK-374: the subtitle used to read ``<workspace> - saved chat - <age>``
+        on every row, so only the age differed and half the section's vertical
+        space carried no information. For a row under a workspace group header the
+        workspace is redundant and ``saved chat`` is the common default -- so keep
+        the age always and the state only when it is a non-default differentiator.
+
+        ``workspace_label`` is supplied only for rows rendered WITHOUT a workspace
+        group header -- the cross-workspace ``Starred`` section -- where the
+        workspace is itself the differentiator that keeps same-titled
+        conversations from different workspaces distinguishable (Qodo #812).
+
+        Args:
+            detail: The friendly state label from ``_conversation_detail_status``.
+            updated_label: The compact relative age (e.g. ``2d``).
+            workspace_label: The owning workspace, included as the leading
+                differentiator only for header-less sections; omitted otherwise.
+
+        Returns:
+            The age alone for a default saved grouped row, ``<workspace> - <age>``
+            for a starred cross-workspace row, ``<state> - <age>`` when the state
+            differentiates, or ``""`` when nothing is present.
+        """
+        parts = [
+            part
+            for part in (
+                workspace_label,
+                detail
+                if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL
+                else "",
+                updated_label,
+            )
+            if str(part or "").strip()
+        ]
+        return " - ".join(parts)

@@ -2,14 +2,50 @@
 
 from __future__ import annotations
 
-from textual import on
+from dataclasses import dataclass
+
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
-class ConsoleEditMessageModal(ModalScreen[str | None]):
+
+@dataclass(frozen=True)
+class ConsoleEditResult:
+    """Outcome of the edit modal: the (possibly unchanged) text, and whether
+    the caller asked to fork a new branch (Console branching Phase B) rather
+    than edit the message in place."""
+
+    text: str
+    resend: bool
+
+
+class _EditMessageTextArea(TextArea):
+    """TextArea that ignores keys typed before the modal appeared.
+
+    TASK-360: the edit action dispatches through a Button.Pressed hop and an
+    async modal push; keys pressed in that gap (e.g. a retry `e` because
+    nothing visibly happened) used to land here as text and silently corrupt
+    the draft. A key whose event time predates the modal's mount was aimed
+    at whatever the user was looking at then — never at this textarea.
+    """
+
+    opened_at: float | None = None
+
+    async def _on_key(self, event: events.Key) -> None:
+        if self.opened_at is not None and event.time < self.opened_at:
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
+
+
+class ConsoleEditMessageModal(
+    SafeModalDismissMixin, ModalScreen[ConsoleEditResult | None]
+):
     """Edit an existing Console transcript message without using the composer."""
 
     DEFAULT_CSS = """
@@ -32,7 +68,8 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
 
     #console-edit-message-body {
         width: 100%;
-        height: 16;
+        height: 1fr;
+        min-height: 8;
     }
 
     #console-edit-message-error {
@@ -49,44 +86,86 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
     }
 
     #console-edit-message-cancel,
-    #console-edit-message-save {
+    #console-edit-message-save,
+    #console-edit-message-resend {
         width: 10;
         min-width: 10;
         height: 3;
         min-height: 3;
     }
+
+    #console-edit-message-resend {
+        width: 18;
+        min-width: 18;
+    }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-edit-message-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
-    def __init__(self, *, content: str) -> None:
+    def __init__(
+        self,
+        *,
+        content: str,
+        can_resend: bool = False,
+        clears_generation_provenance: bool = False,
+    ) -> None:
         super().__init__()
         self._content = content
+        self._can_resend = can_resend
+        self._clears_generation_provenance = clears_generation_provenance
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-edit-message-modal"):
             yield Static("Edit Message", classes="console-modal-header")
+            if self._clears_generation_provenance:
+                context_copy = (
+                    "Editing this generated answer. Saving clears model thinking and "
+                    "provider continuation for this answer. Cancel keeps both intact."
+                )
+            elif self._can_resend:
+                context_copy = (
+                    "Editing existing transcript message. Save keeps the edit in "
+                    "place; Edit & resend creates a new response branch in this chat "
+                    "and gets a fresh reply."
+                )
+            else:
+                context_copy = "Editing existing transcript message. This will not create a new prompt."
             yield Static(
-                "Editing existing transcript message. This will not create a new prompt.",
+                context_copy,
                 id="console-edit-message-context",
                 markup=False,
             )
-            yield TextArea(self._content, id="console-edit-message-body")
+            yield _EditMessageTextArea(self._content, id="console-edit-message-body")
             yield Static("", id="console-edit-message-error", markup=False)
             with Horizontal(id="console-edit-message-actions"):
                 yield Button("Cancel", id="console-edit-message-cancel")
-                yield Button("Save", id="console-edit-message-save", variant="primary")
+                yield Button(
+                    "Save",
+                    id="console-edit-message-save",
+                    variant="default" if self._can_resend else "primary",
+                )
+                if self._can_resend:
+                    yield Button(
+                        "Edit & resend",
+                        id="console-edit-message-resend",
+                        variant="primary",
+                    )
 
-    def on_mount(self) -> None:
-        self.query_one("#console-edit-message-body", TextArea).focus()
-
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
+    # Textual supplies the event while composing MRO message handlers, so this
+    # event-shaped handler is not an OO override of the mixin hook.
+    def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
+        # Event time shares the clock domain of Key.time — the stale-key
+        # guard compares against it (TASK-360).
+        self._opened_at = event.time
+        area = self.query_one("#console-edit-message-body", _EditMessageTextArea)
+        area.opened_at = event.time
+        area.focus()
 
     @on(Button.Pressed, "#console-edit-message-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#console-edit-message-save")
     def _save(self, event: Button.Pressed) -> None:
@@ -97,4 +176,15 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
                 "Message content cannot be blank."
             )
             return
-        self.dismiss(edited_content)
+        self.dismiss(ConsoleEditResult(text=edited_content, resend=False))
+
+    @on(Button.Pressed, "#console-edit-message-resend")
+    def _resend(self, event: Button.Pressed) -> None:
+        event.stop()
+        edited_content = self.query_one("#console-edit-message-body", TextArea).text
+        if not edited_content.strip():
+            self.query_one("#console-edit-message-error", Static).update(
+                "Message content cannot be blank."
+            )
+            return
+        self.dismiss(ConsoleEditResult(text=edited_content, resend=True))

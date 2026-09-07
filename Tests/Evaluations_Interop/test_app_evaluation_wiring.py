@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 
-def test_app_wires_server_evaluation_scope_when_provider_backed_service_has_no_client(monkeypatch):
+def test_app_wires_server_evaluation_scope_when_provider_backed_service_has_no_client(
+    monkeypatch,
+):
     from tldw_chatbook import app as app_module
 
     class LocalUnavailable:

@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "c3afd08488f0cbd0e3bb8199ae1cf7e1",
+        "chunk_index": 1,
+        "chunk_method": "json",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "{\n  \"data\": [\n    {\n      \"item\": 0,\n      \"text\": \"value 0\"\n    },\n    {\n      \"item\": 1,\n      \"text\": \"value 1\"\n    },\n    {\n      \"item\": 2,\n      \"text\": \"value 2\"\n    },\n    {\n      \"item\": 3,\n      \"text\": \"value 3\"\n    },\n    {\n      \"item\": 4,\n      \"text\": \"value 4\"\n    },\n    {\n      \"item\": 5,\n      \"text\": \"value 5\"\n    },\n    {\n      \"item\": 6,\n      \"text\": \"value 6\"\n    },\n    {\n      \"item\": 7,\n      \"text\": \"value 7\"\n    },\n    {\n      \"item\": 8,\n      \"text\": \"value 8\"\n    },\n    {\n      \"item\": 9,\n      \"text\": \"value 9\"\n    },\n    {\n      \"item\": 10,\n      \"text\": \"value 10\"\n    },\n    {\n      \"item\": 11,\n      \"text\": \"value 11\"\n    },\n    {\n      \"item\": 12,\n      \"text\": \"value 12\"\n    },\n    {\n      \"item\": 13,\n      \"text\": \"value 13\"\n    },\n    {\n      \"item\": 14,\n      \"text\": \"value 14\"\n    },\n    {\n      \"item\": 15,\n      \"text\": \"value 15\"\n    },\n    {\n      \"item\": 16,\n      \"text\": \"value 16\"\n    },\n    {\n      \"item\": 17,\n      \"text\": \"value 17\"\n    },\n    {\n      \"item\": 18,\n      \"text\": \"value 18\"\n    },\n    {\n      \"item\": 19,\n      \"text\": \"value 19\"\n    }\n  ]\n}"
+    }
+  ],
+  "outcome": "ok"
+}

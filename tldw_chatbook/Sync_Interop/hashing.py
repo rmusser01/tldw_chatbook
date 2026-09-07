@@ -5,6 +5,7 @@ safe with any deterministic hash. This canonical form exists for cross-client pa
 (chat.message dedupe, restore/preview local-inventory comparison): all chatbook
 clients must hash identical payloads to identical digests.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -12,6 +13,18 @@ import json
 from typing import Any, Mapping
 
 HASH_VERSION = 1
+
+
+def canonical_thinking_blocks_json(value: object) -> str:
+    """Return one supported thinking envelope's canonical JSON representation."""
+    from tldw_chatbook.Chat.thinking_blocks import (
+        dump_thinking_blocks_json,
+        parse_thinking_blocks_json,
+    )
+
+    canonical = dump_thinking_blocks_json(parse_thinking_blocks_json(value))
+    assert canonical is not None
+    return canonical
 
 
 def canonical_payload_hash(payload: Mapping[str, Any]) -> str:
@@ -25,5 +38,7 @@ def canonical_payload_hash(payload: Mapping[str, Any]) -> str:
     Returns:
         Versioned SHA-256 digest string in ``sha256:<hex>`` format.
     """
-    encoded = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

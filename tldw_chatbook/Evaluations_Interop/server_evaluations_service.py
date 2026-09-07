@@ -3,32 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    BatchEvaluationRequest,
-    CreateEvaluationRequest,
-    EmbeddingsABTestConfig,
-    EmbeddingsABTestCreateRequest,
-    EmbeddingsABTestRunRequest,
-    EvaluationBenchmarkRunRequest,
-    EvaluationDatasetCreateRequest,
-    EvaluationHistoryRequest,
-    EvaluationRecipeDatasetValidationRequest,
-    EvaluationRecipeRunCreateRequest,
-    EvaluationRunCreateRequest,
-    RecipeDatasetValidationRequest,
-    RecipeRunCreateRequest,
-    SyntheticEvalGenerationRequest,
-    SyntheticEvalPromotionRequest,
-    SyntheticEvalReviewRequest,
-    TLDWAPIClient,
-    UpdateEvaluationRequest,
-    WebhookRegistrationRequest,
-    WebhookTestRequest,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        TLDWAPIClient,
+    )
 
 
 class ServerEvaluationsService:
@@ -76,13 +59,17 @@ class ServerEvaluationsService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server evaluation operations.")
+        raise ValueError(
+            "TLDW API client is required for server evaluation operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -91,11 +78,14 @@ class ServerEvaluationsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server evaluation action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -180,6 +170,9 @@ class ServerEvaluationsService:
         dataset: Any = None,
         metadata: Any = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import CreateEvaluationRequest
+
         self._enforce(self._dataset_action_id("create"))
         request = CreateEvaluationRequest(
             name=name,
@@ -200,22 +193,31 @@ class ServerEvaluationsService:
         eval_spec: Any = None,
         metadata: Any = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import UpdateEvaluationRequest
+
         self._enforce(self._dataset_action_id("update"))
         request = UpdateEvaluationRequest(
             description=description,
             eval_spec=eval_spec,
             metadata=metadata,
         )
-        return self._dump_model(await self._require_client().update_evaluation(eval_id, request))
+        return self._dump_model(
+            await self._require_client().update_evaluation(eval_id, request)
+        )
 
     async def delete_evaluation(self, eval_id: str) -> None:
         self._enforce(self._dataset_action_id("delete"))
         await self._require_client().delete_evaluation(eval_id)
 
-    async def list_datasets(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    async def list_datasets(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
         self._enforce(self._dataset_action_id("list"))
         payload = self._dump_model(
-            await self._require_client().list_evaluation_datasets(limit=limit, offset=offset)
+            await self._require_client().list_evaluation_datasets(
+                limit=limit, offset=offset
+            )
         )
         return list(payload.get("data", []))
 
@@ -245,6 +247,9 @@ class ServerEvaluationsService:
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import EvaluationDatasetCreateRequest
+
         self._enforce(self._dataset_action_id("create"))
         request = EvaluationDatasetCreateRequest(
             name=name,
@@ -252,7 +257,9 @@ class ServerEvaluationsService:
             samples=samples,
             metadata=metadata,
         )
-        return self._dump_model(await self._require_client().create_evaluation_dataset(request))
+        return self._dump_model(
+            await self._require_client().create_evaluation_dataset(request)
+        )
 
     async def delete_dataset(self, dataset_id: str) -> None:
         self._enforce(self._dataset_action_id("delete"))
@@ -292,6 +299,9 @@ class ServerEvaluationsService:
         webhook_url: str | None = None,
         run_name: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import EvaluationRunCreateRequest
+
         self._enforce(self._run_action_id("launch"))
         del target_id, run_name
         request = EvaluationRunCreateRequest(
@@ -300,7 +310,9 @@ class ServerEvaluationsService:
             config=config or {},
             webhook_url=webhook_url,
         )
-        return self._dump_model(await self._require_client().create_evaluation_run(eval_id, request))
+        return self._dump_model(
+            await self._require_client().create_evaluation_run(eval_id, request)
+        )
 
     async def get_run_artifacts(self, run_id: str) -> dict[str, Any]:
         self._enforce(self._run_action_id("observe"))
@@ -315,7 +327,9 @@ class ServerEvaluationsService:
 
     async def cancel_run(self, run_id: str) -> dict[str, Any]:
         self._enforce(self._run_action_id("update"))
-        return self._dump_model(await self._require_client().cancel_evaluation_run(run_id))
+        return self._dump_model(
+            await self._require_client().cancel_evaluation_run(run_id)
+        )
 
     async def create_or_update_rag_pipeline_preset(
         self,
@@ -347,7 +361,9 @@ class ServerEvaluationsService:
 
     async def get_rag_pipeline_preset(self, name: str) -> dict[str, Any]:
         self._enforce(self._rag_pipeline_action_id("detail"))
-        return self._dump_model(await self._require_client().get_evaluation_rag_pipeline_preset(name))
+        return self._dump_model(
+            await self._require_client().get_evaluation_rag_pipeline_preset(name)
+        )
 
     async def delete_rag_pipeline_preset(self, name: str) -> None:
         self._enforce(self._rag_pipeline_action_id("delete"))
@@ -355,7 +371,9 @@ class ServerEvaluationsService:
 
     async def cleanup_rag_pipeline(self) -> dict[str, Any]:
         self._enforce(self._rag_pipeline_action_id("launch"))
-        return self._dump_model(await self._require_client().cleanup_evaluation_rag_pipeline())
+        return self._dump_model(
+            await self._require_client().cleanup_evaluation_rag_pipeline()
+        )
 
     async def create_embeddings_abtest(
         self,
@@ -389,7 +407,11 @@ class ServerEvaluationsService:
 
     async def get_embeddings_abtest_status(self, test_id: str) -> dict[str, Any]:
         self._enforce(self._abtest_action_id("detail"))
-        return self._dump_model(await self._require_client().get_evaluation_embeddings_abtest_status(test_id))
+        return self._dump_model(
+            await self._require_client().get_evaluation_embeddings_abtest_status(
+                test_id
+            )
+        )
 
     async def get_embeddings_abtest_results(
         self,
@@ -437,7 +459,9 @@ class ServerEvaluationsService:
 
     async def delete_embeddings_abtest(self, test_id: str) -> dict[str, Any]:
         self._enforce(self._abtest_action_id("delete"))
-        return self._dump_model(await self._require_client().delete_evaluation_embeddings_abtest(test_id))
+        return self._dump_model(
+            await self._require_client().delete_evaluation_embeddings_abtest(test_id)
+        )
 
     async def generate_synthetic_drafts(
         self,
@@ -452,6 +476,9 @@ class ServerEvaluationsService:
         seed_examples: list[dict[str, Any]] | None = None,
         target_sample_count: int = 0,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyntheticEvalGenerationRequest
+
         self._enforce(self._synthetic_action_id("launch"))
         request = SyntheticEvalGenerationRequest(
             recipe_kind=recipe_kind,
@@ -464,7 +491,9 @@ class ServerEvaluationsService:
             seed_examples=seed_examples or [],
             target_sample_count=target_sample_count,
         )
-        return self._dump_model(await self._require_client().generate_synthetic_evaluation_drafts(request))
+        return self._dump_model(
+            await self._require_client().generate_synthetic_evaluation_drafts(request)
+        )
 
     async def list_synthetic_queue(
         self,
@@ -497,6 +526,9 @@ class ServerEvaluationsService:
         action_payload: dict[str, Any] | None = None,
         resulting_review_state: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyntheticEvalReviewRequest
+
         self._enforce(self._synthetic_action_id("update"))
         request = SyntheticEvalReviewRequest(
             action=action,
@@ -505,7 +537,9 @@ class ServerEvaluationsService:
             resulting_review_state=resulting_review_state,
         )
         return self._dump_model(
-            await self._require_client().review_synthetic_evaluation_sample(sample_id, request)
+            await self._require_client().review_synthetic_evaluation_sample(
+                sample_id, request
+            )
         )
 
     async def promote_synthetic_samples(
@@ -517,6 +551,9 @@ class ServerEvaluationsService:
         dataset_metadata: dict[str, Any] | None = None,
         promotion_reason: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SyntheticEvalPromotionRequest
+
         self._enforce(self._synthetic_action_id("create"))
         request = SyntheticEvalPromotionRequest(
             sample_ids=sample_ids,
@@ -525,15 +562,21 @@ class ServerEvaluationsService:
             dataset_metadata=dataset_metadata or {},
             promotion_reason=promotion_reason,
         )
-        return self._dump_model(await self._require_client().promote_synthetic_evaluation_samples(request))
+        return self._dump_model(
+            await self._require_client().promote_synthetic_evaluation_samples(request)
+        )
 
     async def list_benchmarks(self) -> dict[str, Any]:
         self._enforce(self._benchmark_action_id("list"))
-        return self._dump_model(await self._require_client().list_evaluation_benchmarks())
+        return self._dump_model(
+            await self._require_client().list_evaluation_benchmarks()
+        )
 
     async def get_benchmark(self, benchmark_name: str) -> dict[str, Any]:
         self._enforce(self._benchmark_action_id("detail"))
-        return self._dump_model(await self._require_client().get_evaluation_benchmark(benchmark_name))
+        return self._dump_model(
+            await self._require_client().get_evaluation_benchmark(benchmark_name)
+        )
 
     async def run_benchmark(
         self,
@@ -566,6 +609,9 @@ class ServerEvaluationsService:
         retry_count: int | None = None,
         timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebhookRegistrationRequest
+
         self._enforce(self._webhook_action_id("create"))
         request = WebhookRegistrationRequest(
             url=url,
@@ -574,32 +620,55 @@ class ServerEvaluationsService:
             retry_count=retry_count,
             timeout_seconds=timeout_seconds,
         )
-        return self._dump_model(await self._require_client().register_evaluation_webhook(request))
+        return self._dump_model(
+            await self._require_client().register_evaluation_webhook(request)
+        )
 
     async def list_webhooks(self) -> list[dict[str, Any]]:
         self._enforce(self._webhook_action_id("list"))
-        return list(self._dump_model(await self._require_client().list_evaluation_webhooks()) or [])
+        return list(
+            self._dump_model(await self._require_client().list_evaluation_webhooks())
+            or []
+        )
 
     async def unregister_webhook(self, url: str) -> dict[str, Any]:
         self._enforce(self._webhook_action_id("delete"))
-        return self._dump_model(await self._require_client().unregister_evaluation_webhook(url))
+        return self._dump_model(
+            await self._require_client().unregister_evaluation_webhook(url)
+        )
 
     async def test_webhook(self, url: str) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WebhookTestRequest
+
         self._enforce(self._webhook_action_id("launch"))
-        return self._dump_model(await self._require_client().test_evaluation_webhook(WebhookTestRequest(url=url)))
+        return self._dump_model(
+            await self._require_client().test_evaluation_webhook(
+                WebhookTestRequest(url=url)
+            )
+        )
 
     async def list_recipe_manifests(self) -> list[dict[str, Any]]:
         self._enforce(self._recipe_action_id("list"))
-        return list(self._dump_model(await self._require_client().list_evaluation_recipe_manifests()) or [])
+        return list(
+            self._dump_model(
+                await self._require_client().list_evaluation_recipe_manifests()
+            )
+            or []
+        )
 
     async def get_recipe_manifest(self, recipe_id: str) -> dict[str, Any]:
         self._enforce(self._recipe_action_id("detail"))
-        return self._dump_model(await self._require_client().get_evaluation_recipe_manifest(recipe_id))
+        return self._dump_model(
+            await self._require_client().get_evaluation_recipe_manifest(recipe_id)
+        )
 
     async def get_recipe_launch_readiness(self, recipe_id: str) -> dict[str, Any]:
         self._enforce(self._recipe_action_id("observe"))
         return self._dump_model(
-            await self._require_client().get_evaluation_recipe_launch_readiness(recipe_id)
+            await self._require_client().get_evaluation_recipe_launch_readiness(
+                recipe_id
+            )
         )
 
     async def validate_recipe_dataset(
@@ -610,6 +679,9 @@ class ServerEvaluationsService:
         dataset: Any = None,
         run_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import RecipeDatasetValidationRequest
+
         self._enforce(self._recipe_action_id("launch"))
         request = RecipeDatasetValidationRequest(
             dataset_id=dataset_id,
@@ -617,7 +689,9 @@ class ServerEvaluationsService:
             run_config=run_config or {},
         )
         return self._dump_model(
-            await self._require_client().validate_evaluation_recipe_dataset(recipe_id, request)
+            await self._require_client().validate_evaluation_recipe_dataset(
+                recipe_id, request
+            )
         )
 
     async def create_recipe_run(
@@ -629,6 +703,9 @@ class ServerEvaluationsService:
         run_config: dict[str, Any] | None = None,
         force_rerun: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import RecipeRunCreateRequest
+
         self._enforce(self._recipe_action_id("launch"))
         request = RecipeRunCreateRequest(
             dataset_id=dataset_id,
@@ -636,12 +713,20 @@ class ServerEvaluationsService:
             run_config=run_config or {},
             force_rerun=force_rerun,
         )
-        return self._dump_model(await self._require_client().create_evaluation_recipe_run(recipe_id, request))
+        return self._dump_model(
+            await self._require_client().create_evaluation_recipe_run(
+                recipe_id, request
+            )
+        )
 
     async def get_recipe_run(self, run_id: str) -> dict[str, Any]:
         self._enforce(self._recipe_action_id("observe"))
-        return self._dump_model(await self._require_client().get_evaluation_recipe_run(run_id))
+        return self._dump_model(
+            await self._require_client().get_evaluation_recipe_run(run_id)
+        )
 
     async def get_recipe_run_report(self, run_id: str) -> dict[str, Any]:
         self._enforce(self._recipe_action_id("observe"))
-        return self._dump_model(await self._require_client().get_evaluation_recipe_run_report(run_id))
+        return self._dump_model(
+            await self._require_client().get_evaluation_recipe_run_report(run_id)
+        )

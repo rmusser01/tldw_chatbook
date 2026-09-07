@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.Server_Runtime_Interop.server_runtime_scope_service import ServerRuntimeScopeService
+from tldw_chatbook.Server_Runtime_Interop.server_runtime_scope_service import (
+    ServerRuntimeScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -50,7 +52,10 @@ class FakeServerRuntimeService:
 
     async def list_config_providers(self):
         self.calls.append(("list_config_providers",))
-        return {"providers": [{"name": "openai", "configured": True}], "any_configured": True}
+        return {
+            "providers": [{"name": "openai", "configured": True}],
+            "any_configured": True,
+        }
 
     async def validate_provider_key(self, **kwargs):
         self.calls.append(("validate_provider_key", kwargs))
@@ -88,10 +93,14 @@ async def test_server_runtime_scope_service_routes_server_operations_and_normali
     docs = await scope.get_docs_info(mode="server")
     limits = await scope.get_flashcards_import_limits(mode="server")
     tokenizer = await scope.get_tokenizer_config(mode="server")
-    updated = await scope.update_tokenizer_config(mode="server", tokenizer_mode="char_approx", divisor=5)
+    updated = await scope.update_tokenizer_config(
+        mode="server", tokenizer_mode="char_approx", divisor=5
+    )
     jobs = await scope.get_jobs_config(mode="server")
     providers = await scope.list_config_providers(mode="server")
-    validation = await scope.validate_provider_key(mode="server", provider="openai", api_key="sk-test")
+    validation = await scope.validate_provider_key(
+        mode="server", provider="openai", api_key="sk-test"
+    )
 
     assert health["record_id"] == "server:runtime:health"
     assert liveness["record_id"] == "server:runtime:liveness"
@@ -139,9 +148,13 @@ async def test_server_runtime_scope_service_routes_server_operations_and_normali
 @pytest.mark.asyncio
 async def test_server_runtime_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeServerRuntimeService()
-    scope = ServerRuntimeScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = ServerRuntimeScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
-    with pytest.raises(ValueError, match="Server runtime/config discovery is server-only"):
+    with pytest.raises(
+        ValueError, match="Server runtime/config discovery is server-only"
+    ):
         await scope.get_health(mode="local")
 
     assert server.calls == []

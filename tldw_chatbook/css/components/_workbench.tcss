@@ -47,6 +47,65 @@
     min-height: 1;
 }
 
+/* task-523: red cue when the Roleplay Console handoff provider is unready.
+   `status-blocked` lands on the DestinationHeader (#personas-header); the
+   badge word is the child #workbench-header-status (also .ds-status-badge,
+   whose app-tier `color: $ds-text-primary` this id+class+descendant selector
+   outranks so the "Blocked" word actually turns red). */
+#personas-header.status-blocked .workbench-header-status {
+    color: $ds-status-blocked;
+}
+
+/* Resume is briefly disabled while Roleplay dispatches exact typed navigation.
+   Neutralize the generic opacity stack and keep the busy label readable while
+   the raised surface and dim treatment still distinguish the disabled state. */
+#personas-conversation-resume:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: none;
+}
+
+/* App-tier console-action classes are one-line by default. The preview's
+   explicit three-row control stack needs three-line hit targets. */
+#personas-conversation-resume,
+#personas-conversation-continue-console,
+#personas-conversation-back,
+#personas-conversation-open-library,
+#personas-conversation-back-source {
+    height: 3;
+    min-height: 3;
+}
+
+#personas-conversations-search {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    border: none;
+}
+
+/* At the 52x20 floor the saved-chat preview owns the single pane. Keep full
+   action labels and transcript rows visible instead of spending its cells on
+   the separate test-chat toggle, collapsed rails and nested panel border. */
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-preview-pane {
+    display: none;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-work-area {
+    border: none;
+    padding: 0;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-conversation-navigation-actions {
+    layout: vertical;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active .personas-conversation-navigation-action {
+    width: 100%;
+    padding: 0;
+}
+
 .workbench-command-strip,
 .workbench-mode-strip {
     height: 1;
@@ -74,8 +133,25 @@
     text-style: bold;
 }
 
+/* TASK-1801: this bar stacked THREE dimmers and measured 1.45:1 live --
+   `$ds-text-disabled` is an alpha token (~38%), `.is-disabled` adds
+   `opacity: 0.55`, and Textual's Button:disabled adds `text-style: bold dim`
+   plus `color: auto 50%`. None of that is visible from any single rule.
+
+   Note the class: this bar uses `is-disabled`, NOT `console-action-disabled`.
+   An earlier edit to the latter measured no change at all and was reverted
+   rather than shipped unverified.
+
+   Neutralising the opacity layer and stating the colour bright enough to
+   survive Textual's halving (which `text-style: none` does NOT clear --
+   verified by measuring the running app) gets this to ~3.6:1. This bar's
+   background is lighter than the composer menu's near-black, so 4.5:1 is
+   not reachable while `dim` still halves the result; DESIGN.md states 3:1
+   as the floor for disabled controls for exactly this reason. */
 .workbench-action.is-disabled {
-    color: $ds-text-disabled;
+    color: rgb(245,245,245);
+    opacity: 1;
+    text-style: none;
 }
 
 .workbench-mode {
@@ -211,4 +287,67 @@
 
 .density-compact .workbench-pane {
     padding: 0 1;
+}
+
+/* task-31825: the auto height trigger, distinct from `.density-compact`
+   above (the user's own global density preference, and on Console an
+   inner `#console-shell` wrapper it manages itself -- reusing that class
+   name here would let the two signals fight over the same selector).
+   `BaseAppScreen.VERTICAL_BREAKPOINTS` puts `shell-header-compact` on the
+   screen itself at/below the 24-row floor (task-31419's 80x24
+   measurement), so any `.workbench-header` under it -- every plain
+   DestinationHeader caller, with no per-screen CSS of its own -- picks up
+   the same compact geometry `.density-compact` already declares. A screen
+   with its own higher-specificity override (Console's `#console-workbench-
+   header.console-header-inline`, Lab's `.lab-header-inline`, Research
+   Workspace's `#research-workspace-header .workbench-header`) keeps its
+   existing shape unchanged, same as it does against `.density-compact`
+   today. */
+.shell-header-compact .workbench-header {
+    min-height: 1;
+    padding: 0 1;
+}
+
+.shell-header-compact .workbench-header-subtitle {
+    display: none;
+}
+
+/* task-1232 round 1 (fleet-UX expert review F2, Critical fix): the F1 help
+   overlay used to be a bare, unstyled Vertical -- Textual's own defaults
+   (height: 1fr, overflow: hidden hidden) silently clipped anything past the
+   fold with no scrollbar. Mirrors ConsoleScopePickerModal's bounded-panel +
+   scrollable-body + pinned-footer shape (_agentic_terminal.tcss
+   #console-scope-picker-modal / #console-scope-picker-list). */
+WorkbenchHelpPanel {
+    align: center middle;
+}
+
+#workbench-help-panel {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: 1 2;
+}
+
+#workbench-help-scroll {
+    height: 1fr;
+    min-height: 3;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+#workbench-help-body {
+    width: 100%;
+    height: auto;
+}
+
+#workbench-help-close {
+    width: auto;
+    height: auto;
+    margin: 1 0 0 0;
 }

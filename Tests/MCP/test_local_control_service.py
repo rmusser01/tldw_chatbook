@@ -5,7 +5,6 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -14,9 +13,24 @@ import tldw_chatbook.MCP.client as mcp_client_module
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
-from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
+from tldw_chatbook.MCP.server import (
+    _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION,
+    _signature_to_input_schema,
+    _signature_to_prompt_arguments,
+    describe_local_mcp_capabilities,
+)
 
 
+# Fix Round H (PR-T3 review), Item 2c: not a fake-vs-real key-set pin
+# candidate -- every method below stores/returns REAL domain dataclasses
+# already imported from `local_store.py` (`LocalExternalMCPProfile`,
+# `LocalGovernanceRule`, ...), not independently-invented shapes, so a
+# signature or field drift in the real `LocalMCPStore` raises a loud
+# TypeError/AttributeError at the first call -- the opposite of the
+# silent-drift failure mode a pin exists to catch. See the POLICY comment
+# above `FakeLocalMCPControlService` in
+# Tests/MCP/test_unified_control_plane_service.py for the full policy and
+# contrast with `FakeLocalRuntimeDelegate` below, which IS pinned.
 class FakeLocalStore:
     def __init__(self) -> None:
         self.profiles = {
@@ -104,7 +118,9 @@ class FakeLocalStore:
     def delete_approval_request(self, request_id: str):
         original_count = len(self.approval_requests)
         self.approval_requests = [
-            request for request in self.approval_requests if request.request_id != request_id
+            request
+            for request in self.approval_requests
+            if request.request_id != request_id
         ]
         return len(self.approval_requests) != original_count
 
@@ -114,7 +130,9 @@ class FakeLocalStore:
 
     def record_runtime_activity(self, entry, limit: int = 50):
         saved_entry = dict(entry)
-        saved_entry.setdefault("activity_id", f"activity-{len(self.runtime_activity) + 1}")
+        saved_entry.setdefault(
+            "activity_id", f"activity-{len(self.runtime_activity) + 1}"
+        )
         self.runtime_activity.append(saved_entry)
         if len(self.runtime_activity) > limit:
             self.runtime_activity = self.runtime_activity[-limit:]
@@ -151,6 +169,10 @@ class FakeLocalRuntimeDelegate:
                 "resources/read",
                 "prompts/get",
             ],
+            # Item 4 (PR-T3 fix round D): mirrors the real delegate's new
+            # `unavailable_request_methods` field (`_UNAVAILABLE_DIRECT_
+            # METHODS`) -- this fake's own shape must not drift from it.
+            "unavailable_request_methods": ["tools/call"],
         }
 
     def get_protocol_diagnostics(self):
@@ -162,7 +184,11 @@ class FakeLocalRuntimeDelegate:
             "supports_batch": True,
             "methods": [
                 {"name": "tools/list", "supported": True},
-                {"name": "tools/call", "supported": True},
+                # Fix Round C, Item 1: `tools/call` is refused
+                # unconditionally by the real delegate's `request()`, so
+                # diagnostics must not advertise it as callable -- this
+                # fake mirrors that shape (`_UNAVAILABLE_DIRECT_METHODS`).
+                {"name": "tools/call", "supported": False},
             ],
             "manifest": {"tools": 2, "resources": 1, "prompts": 1},
             "implementation": {
@@ -203,7 +229,9 @@ class FakeLocalRuntimeDelegate:
             "issues": [],
         }
 
-    async def execute_tool(self, tool_name: str, arguments: dict[str, object] | None = None):
+    async def execute_tool(
+        self, tool_name: str, arguments: dict[str, object] | None = None
+    ):
         payload = {"tool_name": tool_name, "arguments": dict(arguments or {})}
         self.calls.append(("tool.execute", payload))
         return {"ok": True, **payload}
@@ -211,9 +239,15 @@ class FakeLocalRuntimeDelegate:
     async def read_resource(self, resource_uri: str):
         payload = {"resource_uri": resource_uri}
         self.calls.append(("resource.read", payload))
-        return {"uri": resource_uri, "mimeType": "text/plain", "content": "resource-body"}
+        return {
+            "uri": resource_uri,
+            "mimeType": "text/plain",
+            "content": "resource-body",
+        }
 
-    async def get_prompt(self, prompt_name: str, arguments: dict[str, object] | None = None):
+    async def get_prompt(
+        self, prompt_name: str, arguments: dict[str, object] | None = None
+    ):
         payload = {"prompt_name": prompt_name, "arguments": dict(arguments or {})}
         self.calls.append(("prompt.get", payload))
         return [{"role": "assistant", "content": f"prompt:{prompt_name}"}]
@@ -236,6 +270,53 @@ class FakeLocalRuntimeDelegate:
         ]
 
 
+def test_fake_local_runtime_delegate_protocol_shapes_match_the_real_delegate():
+    """Item 3 (PR-T3 fix round F). `FakeLocalRuntimeDelegate.get_protocol_
+    capabilities()`/`get_protocol_diagnostics()` above are hand-maintained
+    to mirror `LocalMCPRuntimeDelegate`'s real methods of the same name --
+    enforced by nothing but a comment at each ("this fake's own shape must
+    not drift", "fake mirrors that shape"). Not hypothetical on this
+    branch: an earlier round's two fake-based tests stayed GREEN while the
+    real-delegate test went RED for the identical scenario, and the
+    fake-based assertions were briefly mistaken (by a reviewer, and in
+    relaying it) for real-delegate coverage. A fake that drifts from
+    reality is how a suite ends up certifying a lie.
+
+    Pins the top-level key SETS only, not values -- the fake's values are
+    hardcoded literals (`protocol_version="2025-03-26"`,
+    `mcp_sdk_available=False`, ...) while the real ones are computed
+    (`self._PROTOCOL_VERSION`, `MCP_AVAILABLE`, a manifest-derived
+    `methods`/`implementation`), so those legitimately differ and this
+    test does not compare them. What must never drift is WHICH FIELDS
+    exist: a future change to either real method (a renamed or added key)
+    that this fake does not also get would otherwise stay invisible to
+    every test written against the fake, exactly as it did before.
+
+    Fix Round H (PR-T3 review), Item 2a: `get_runtime_health()` is a THIRD
+    hand-mirrored method of this same fake/real pair, previously pinned by
+    nothing at all -- not even the comment-only "must not drift" discipline
+    the other two had. Verified before adding this line: temporarily adding
+    a bogus key to the real delegate's `get_runtime_health()` left all 43
+    OTHER tests across this file and `test_unified_control_plane_service.py`
+    green (44 collected total; only this NEW assertion caught it) -- the
+    raw-JSON Advanced dump renders whatever this method returns verbatim to
+    the user, so a silently-diverged fake would certify a rendering
+    scenario a real run could never produce. Same policy as the two lines
+    above: key SETS only."""
+    real_delegate = LocalMCPRuntimeDelegate(manifest_provider=lambda: {})
+    fake_delegate = FakeLocalRuntimeDelegate()
+
+    assert set(fake_delegate.get_protocol_capabilities().keys()) == set(
+        real_delegate.get_protocol_capabilities().keys()
+    )
+    assert set(fake_delegate.get_protocol_diagnostics().keys()) == set(
+        real_delegate.get_protocol_diagnostics().keys()
+    )
+    assert set(fake_delegate.get_runtime_health().keys()) == set(
+        real_delegate.get_runtime_health().keys()
+    )
+
+
 class FakeMCPClient:
     def __init__(self) -> None:
         self.connected = []
@@ -243,9 +324,16 @@ class FakeMCPClient:
         self.describe_calls = []
         self.sessions = {}
 
-    async def connect_to_server(self, server_id: str, command: str, args=None, env=None):
+    async def connect_to_server(
+        self, server_id: str, command: str, args=None, env=None
+    ):
         self.connected.append(
-            {"server_id": server_id, "command": command, "args": args or [], "env": env or {}}
+            {
+                "server_id": server_id,
+                "command": command,
+                "args": args or [],
+                "env": env or {},
+            }
         )
         self.sessions[server_id] = {
             "server_id": server_id,
@@ -369,7 +457,7 @@ class FakeJSONRPCProcess:
                                 {
                                     "name": f"remote_tool_{self.process_id}",
                                     "description": "Remote tool",
-                                    "inputSchema": {},
+                                    "inputSchema": {"type": "object"},
                                 }
                             ]
                         },
@@ -535,22 +623,35 @@ def test_local_control_service_uses_real_local_manifest_helper_by_default():
     manifest = describe_local_mcp_capabilities()
 
     assert inventory == manifest
-    assert any(tool["name"] == "search_rag" for tool in inventory["tools"])
-    assert any(tool["description"] == "Search the RAG database for relevant content." for tool in inventory["tools"])
-    assert any(resource["uri"] == "note://{note_id}" for resource in inventory["resources"])
-    assert any(prompt["name"] == "summarize_conversation" for prompt in inventory["prompts"])
+    search_rag = next(
+        tool for tool in inventory["tools"] if tool["name"] == "search_rag"
+    )
+    assert (
+        search_rag["description"]
+        == "Search media using the active RAG profile unless keyword search is forced."
+    )
+    assert any(
+        resource["uri"] == "note://{note_id}" for resource in inventory["resources"]
+    )
+    assert any(
+        prompt["name"] == "summarize_conversation" for prompt in inventory["prompts"]
+    )
 
 
 def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
-    server_path = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP" / "server.py"
+    server_path = (
+        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "MCP" / "server.py"
+    )
     module_node = ast.parse(server_path.read_text(encoding="utf-8"))
 
-    def _registered_entries(method_name: str, decorator_name: str) -> list[dict[str, str]]:
+    def _registered_entries(
+        method_name: str, decorator_name: str
+    ) -> list[dict[str, object]]:
         for node in module_node.body:
             if isinstance(node, ast.ClassDef) and node.name == "TldwMCPServer":
                 for child in node.body:
                     if isinstance(child, ast.FunctionDef) and child.name == method_name:
-                        entries: list[dict[str, str]] = []
+                        entries: list[dict[str, object]] = []
                         for nested in child.body:
                             if not isinstance(nested, ast.AsyncFunctionDef):
                                 continue
@@ -558,14 +659,37 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
                                 if not isinstance(decorator, ast.Call):
                                     continue
                                 func = decorator.func
-                                if not isinstance(func, ast.Attribute) or func.attr != decorator_name:
+                                if (
+                                    not isinstance(func, ast.Attribute)
+                                    or func.attr != decorator_name
+                                ):
                                     continue
-                                entry = {
+                                entry: dict[str, object] = {
                                     "name": nested.name,
-                                    "description": (ast.get_docstring(nested) or "").strip().splitlines()[0].strip(),
+                                    "description": (ast.get_docstring(nested) or "")
+                                    .strip()
+                                    .splitlines()[0]
+                                    .strip(),
                                 }
                                 if decorator_name == "resource":
                                     entry["uri"] = decorator.args[0].value
+                                if decorator_name == "tool":
+                                    # Reuse the real mapper here -- this
+                                    # mirror's job is pinning the AST *walk*
+                                    # (does it find the same
+                                    # functions/decorators), not
+                                    # re-deriving the schema mapping rules a
+                                    # second time.
+                                    input_schema = _signature_to_input_schema(nested)
+                                    if nested.name == "search_rag":
+                                        input_schema["properties"]["use_semantic"][
+                                            "description"
+                                        ] = _SEARCH_RAG_USE_SEMANTIC_DESCRIPTION
+                                    entry["inputSchema"] = input_schema
+                                elif decorator_name == "prompt":
+                                    entry["arguments"] = _signature_to_prompt_arguments(
+                                        nested
+                                    )
                                 entries.append(entry)
                                 break
                         return entries
@@ -576,12 +700,50 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
     expected_resources = _registered_entries("_register_resources", "resource")
     expected_prompts = _registered_entries("_register_prompts", "prompt")
 
-    assert helper_manifest["tools"] == expected_tools
+    # task-1337 (plan Task 9): the manifest now appends the 18
+    # descriptor-backed Library tools after the AST-derived legacy entries.
+    # This mirror keeps owning the legacy AST-walk alignment (first N tools,
+    # resources, prompts); Tests/MCP/test_library_tools.py owns the
+    # descriptor tail.
+    assert helper_manifest["tools"][: len(expected_tools)] == expected_tools
     assert helper_manifest["resources"] == expected_resources
     assert helper_manifest["prompts"] == expected_prompts
-    assert any(item["uri"] == "note://{note_id}" for item in helper_manifest["resources"])
-    assert any(item["description"] == "Search notes by content or title." for item in helper_manifest["tools"])
-    assert any(item["description"] == "Generate a prompt to summarize a conversation." for item in helper_manifest["prompts"])
+    assert any(
+        item["uri"] == "note://{note_id}" for item in helper_manifest["resources"]
+    )
+    assert any(
+        item["description"] == "Search notes by content or title."
+        for item in helper_manifest["tools"]
+    )
+    assert any(
+        item["description"] == "Generate a prompt to summarize a conversation."
+        for item in helper_manifest["prompts"]
+    )
+
+
+def test_manifest_tools_carry_input_schema():
+    manifest = describe_local_mcp_capabilities()
+    tools = {t["name"]: t for t in manifest["tools"]}
+    # search_rag: query is required str; media_types is Optional[List[str]]
+    schema = tools["search_rag"]["inputSchema"]
+    assert schema["type"] == "object"
+    assert schema["properties"]["query"] == {"type": "string"}
+    assert "query" in schema["required"]
+    mt = schema["properties"]["media_types"]
+    assert mt["type"] == ["array", "null"] and mt["items"] == {"type": "string"}
+    assert "media_types" not in schema["required"]
+
+
+def test_every_builtin_tool_has_object_schema():
+    for tool in describe_local_mcp_capabilities()["tools"]:
+        assert tool["inputSchema"]["type"] == "object", tool["name"]
+
+
+def test_schema_defaults_recorded():
+    tools = {t["name"]: t for t in describe_local_mcp_capabilities()["tools"]}
+    # search_rag's limit param defaults to 10 (int, literal default)
+    prop = tools["search_rag"]["inputSchema"]["properties"]["limit"]
+    assert prop.get("default") is not None
 
 
 def test_local_control_service_exposes_overview_external_servers_and_governance():
@@ -619,7 +781,9 @@ def test_local_control_service_exposes_overview_external_servers_and_governance(
 
 def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_save():
     store = FakeLocalStore()
-    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
 
     saved = service.save_external_profile(
         {
@@ -647,7 +811,9 @@ def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_save
 
 def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_object_save():
     store = FakeLocalStore()
-    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
     profile = LocalExternalMCPProfile(
         profile_id="profile-c",
         command="python",
@@ -673,7 +839,9 @@ def test_local_control_service_rejects_legacy_env_literal_bypass_on_profile_obje
 
 def test_local_control_service_rejects_invalid_profile_writes(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
-    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
 
     with pytest.raises(ValueError, match="profile_id"):
         service.save_external_profile(
@@ -694,9 +862,34 @@ def test_local_control_service_rejects_invalid_profile_writes(tmp_path):
     assert store.get_profile("profile-b") is None
 
 
+def test_local_control_service_rejects_colon_bearing_profile_id(tmp_path):
+    """I3: `save_external_profile()` is the single entry point both the
+    profile-save form and the mcpServers import batch route through
+    (`UnifiedMCPControlPlaneService.save_local_profile()`) -- a colon in
+    profile_id would corrupt `HubTool.tool_id` routing
+    (`"local:a::b::search"` partitions ambiguously), so both `"a::b"` and
+    `"a:b"` must be rejected here, at the real choke point, not just at
+    `LocalMCPStore.save_profile()` in isolation."""
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
+
+    with pytest.raises(ValueError, match="profile_id"):
+        service.save_external_profile({"profile_id": "a::b", "command": "python"})
+
+    with pytest.raises(ValueError, match="profile_id"):
+        service.save_external_profile({"profile_id": "a:b", "command": "python"})
+
+    assert store.get_profile("a::b") is None
+    assert store.get_profile("a:b") is None
+
+
 def test_local_control_service_rejects_invalid_governance_rule_writes(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
-    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
 
     with pytest.raises(ValueError, match="rule_id"):
         service.save_governance_rule(
@@ -730,7 +923,9 @@ def test_local_control_service_rejects_invalid_governance_rule_writes(tmp_path):
 
 def test_local_control_service_deletes_governance_rules(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
-    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
     service.save_governance_rule(
         {
             "rule_id": "rule-a",
@@ -747,7 +942,9 @@ def test_local_control_service_deletes_governance_rules(tmp_path):
 
 def test_local_control_service_previews_governance_decisions(tmp_path):
     store = LocalMCPStore(tmp_path / "local_mcp_store.json")
-    service = LocalMCPControlService(store=store, client=FakeMCPClient(), manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=FakeMCPClient(), manifest_provider=lambda: {}
+    )
     service.save_governance_rule(
         {
             "rule_id": "rule-a",
@@ -788,7 +985,9 @@ async def test_local_control_service_executes_local_inventory_runtime_actions():
 
     tool_result = await service.execute_tool("search_notes", {"query": "roadmap"})
     resource_result = await service.read_resource("note://123")
-    prompt_result = await service.get_prompt("summarize_conversation", {"conversation_id": 4})
+    prompt_result = await service.get_prompt(
+        "summarize_conversation", {"conversation_id": 4}
+    )
 
     assert tool_result == {
         "source": "local",
@@ -836,7 +1035,10 @@ async def test_local_control_service_executes_local_inventory_runtime_actions():
         },
     }
     assert runtime_delegate.calls == [
-        ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}),
+        (
+            "tool.execute",
+            {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+        ),
         ("resource.read", {"resource_uri": "note://123"}),
         (
             "prompt.get",
@@ -914,6 +1116,10 @@ async def test_local_control_service_exposes_runtime_status_and_protocol_helpers
                 "resources/read",
                 "prompts/get",
             ],
+            # Item 4 (PR-T3 fix round D): the fixture's `get_protocol_
+            # capabilities()` (above) now returns this field too -- kept in
+            # sync here since `get_advanced()` passes it through verbatim.
+            "unavailable_request_methods": ["tools/call"],
         },
         "protocol_diagnostics": {
             "adapter": "direct_in_process",
@@ -923,7 +1129,11 @@ async def test_local_control_service_exposes_runtime_status_and_protocol_helpers
             "supports_batch": True,
             "methods": [
                 {"name": "tools/list", "supported": True},
-                {"name": "tools/call", "supported": True},
+                # Fix Round C, Item 1: `tools/call` is refused
+                # unconditionally by the real delegate's `request()`, so
+                # diagnostics must not advertise it as callable -- this
+                # fake mirrors that shape (`_UNAVAILABLE_DIRECT_METHODS`).
+                {"name": "tools/call", "supported": False},
             ],
             "manifest": {"tools": 2, "resources": 1, "prompts": 1},
             "implementation": {
@@ -1112,6 +1322,40 @@ def test_local_runtime_delegate_reports_runtime_health_from_lifecycle():
 
 
 @pytest.mark.asyncio
+async def test_governance_denial_raises_the_typed_mcp_governance_denied_error():
+    """task-2537 (PR-T3 fix round B, item 3): `_require_runtime_
+    governance_allowed()`'s deny branch raises the dedicated
+    `MCPGovernanceDenied` subclass, not a bare `PermissionError` -- so
+    `mcp_workbench._is_permission_refusal()` can tell "governance refused
+    this call" apart from an unrelated `PermissionError` a tool's own body
+    might raise. Also proves the existing `except PermissionError`
+    contract still holds (the type IS a `PermissionError`)."""
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-notes-list",
+            "capability_id": "notes.list.local",
+            "decision": "deny",
+            "notes": "Local note listing is blocked.",
+        }
+    )
+
+    from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+
+    with pytest.raises(MCPGovernanceDenied) as exc_info:
+        await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    assert isinstance(exc_info.value, PermissionError)
+    assert str(exc_info.value) == "Denied by local governance: notes.list.local"
+
+
+@pytest.mark.asyncio
 async def test_local_control_service_previews_and_enforces_runtime_governance():
     runtime_delegate = FakeLocalRuntimeDelegate()
     service = LocalMCPControlService(
@@ -1155,7 +1399,10 @@ async def test_local_control_service_previews_and_enforces_runtime_governance():
 
     batch_result = await service.run_runtime_batch(
         [
-            {"method": "tools/call", "params": {"name": "search_notes", "arguments": {"query": "roadmap"}}},
+            {
+                "method": "tools/call",
+                "params": {"name": "search_notes", "arguments": {"query": "roadmap"}},
+            },
             {"method": "tools/list", "params": {}},
         ]
     )
@@ -1229,7 +1476,9 @@ async def test_local_control_service_creates_and_resolves_local_runtime_approval
         {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
     )
 
-    approved_request = service.approve_approval_request(approval_requests[0]["request_id"])
+    approved_request = service.approve_approval_request(
+        approval_requests[0]["request_id"]
+    )
     tool_result = await service.execute_tool("search_notes", {"query": "roadmap"})
 
     assert initial_preview == {
@@ -1247,9 +1496,17 @@ async def test_local_control_service_creates_and_resolves_local_runtime_approval
     assert pending_preview["approval_status"] == "pending"
     assert pending_preview["approval_request_id"] == approval_requests[0]["request_id"]
     assert approved_request["status"] == "approved"
-    assert service.list_approval_requests(status="approved")[0]["request_id"] == approval_requests[0]["request_id"]
+    assert (
+        service.list_approval_requests(status="approved")[0]["request_id"]
+        == approval_requests[0]["request_id"]
+    )
     assert service.list_approval_requests(status="pending") == []
-    assert service.list_approval_requests(resolved_action_id="notes.list.local")[0]["status"] == "approved"
+    assert (
+        service.list_approval_requests(resolved_action_id="notes.list.local")[0][
+            "status"
+        ]
+        == "approved"
+    )
     assert tool_result["governance"] == {
         "resolved_action_id": "notes.list.local",
         "registry_capability_id": "notes_workspaces",
@@ -1260,7 +1517,10 @@ async def test_local_control_service_creates_and_resolves_local_runtime_approval
         "approval_status": "approved",
     }
     assert runtime_delegate.calls == [
-        ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}),
+        (
+            "tool.execute",
+            {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+        ),
     ]
     assert service.delete_approval_request(approval_requests[0]["request_id"]) is True
     assert service.list_approval_requests() == []
@@ -1333,7 +1593,9 @@ async def test_local_control_service_exposes_recent_runtime_activity():
 
 
 @pytest.mark.asyncio
-async def test_local_control_service_persists_runtime_activity_across_instances(tmp_path):
+async def test_local_control_service_persists_runtime_activity_across_instances(
+    tmp_path,
+):
     store_path = tmp_path / "local_mcp_store.json"
     first_service = LocalMCPControlService(
         store=LocalMCPStore(store_path),
@@ -1378,7 +1640,9 @@ async def test_local_control_service_persists_runtime_activity_across_instances(
 async def test_local_control_service_connects_profile_and_persists_discovery_snapshot():
     store = FakeLocalStore()
     client = FakeMCPClient()
-    service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=client, manifest_provider=lambda: {}
+    )
 
     with patch.dict(
         os.environ,
@@ -1409,7 +1673,9 @@ async def test_local_control_service_connects_profile_and_persists_discovery_sna
 async def test_local_control_service_rejects_empty_capability_snapshots():
     store = FakeLocalStore()
     client = EmptySnapshotClient()
-    service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=client, manifest_provider=lambda: {}
+    )
 
     with patch.dict(os.environ, {"API_KEY": "resolved-api-key"}, clear=True):
         with pytest.raises(RuntimeError):
@@ -1422,9 +1688,13 @@ async def test_local_control_service_rejects_empty_capability_snapshots():
 async def test_local_control_service_tests_refreshes_disconnects_and_deletes_external_profiles():
     store = FakeLocalStore()
     client = FakeMCPClient()
-    service = LocalMCPControlService(store=store, client=client, manifest_provider=lambda: {})
+    service = LocalMCPControlService(
+        store=store, client=client, manifest_provider=lambda: {}
+    )
 
-    with patch.dict(os.environ, {"API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True):
+    with patch.dict(
+        os.environ, {"API_KEY": "resolved-api-key", "PATH": "/usr/bin"}, clear=True
+    ):
         test_result = await service.test_external_profile("profile-a")
         await service.connect_profile("profile-a")
         refreshed = await service.refresh_external_profile("profile-a")
@@ -1454,9 +1724,40 @@ async def test_local_control_service_describes_connected_server_from_client_cach
             "command": "python",
             "args": ["-m", "demo.server"],
             "connected_at": "2026-04-22T10:00:00Z",
-            "tools": [type("Tool", (), {"name": "remote_tool", "description": "Remote tool", "inputSchema": {}})()],
-            "resources": [type("Resource", (), {"uri": "remote://resource", "name": "Remote Resource", "description": "Remote resource", "mimeType": "text/plain"})()],
-            "prompts": [type("Prompt", (), {"name": "remote_prompt", "description": "Remote prompt", "arguments": []})()],
+            "tools": [
+                type(
+                    "Tool",
+                    (),
+                    {
+                        "name": "remote_tool",
+                        "description": "Remote tool",
+                        "inputSchema": {},
+                    },
+                )()
+            ],
+            "resources": [
+                type(
+                    "Resource",
+                    (),
+                    {
+                        "uri": "remote://resource",
+                        "name": "Remote Resource",
+                        "description": "Remote resource",
+                        "mimeType": "text/plain",
+                    },
+                )()
+            ],
+            "prompts": [
+                type(
+                    "Prompt",
+                    (),
+                    {
+                        "name": "remote_prompt",
+                        "description": "Remote prompt",
+                        "arguments": [],
+                    },
+                )()
+            ],
         }
     }
 
@@ -1500,14 +1801,23 @@ async def test_mcp_client_connect_to_server_uses_stdio_jsonrpc_flow(monkeypatch)
         "args": ["-m", "demo.server"],
         "env": {"API_KEY": "resolved-api-key"},
     }
-    methods = [message["method"] for message in process.client_messages if "method" in message]
+    methods = [
+        message["method"] for message in process.client_messages if "method" in message
+    ]
     assert methods[:2] == ["initialize", "notifications/initialized"]
     assert "tools/list" in methods
     assert "resources/list" in methods
     assert "prompts/list" in methods
     assert process.client_messages[0]["params"]["clientInfo"]["name"] == "test-client"
-    assert process.client_messages[1] == {"jsonrpc": "2.0", "method": "notifications/initialized"}
-    ping_response = next(message for message in process.client_messages if message.get("id") == "server-ping-1")
+    assert process.client_messages[1] == {
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+    }
+    ping_response = next(
+        message
+        for message in process.client_messages
+        if message.get("id") == "server-ping-1"
+    )
     assert ping_response["id"] == "server-ping-1"
     assert ping_response["result"] == {}
     assert client.servers["profile-a"]["command"] == "python"
@@ -1518,7 +1828,9 @@ async def test_mcp_client_connect_to_server_uses_stdio_jsonrpc_flow(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_same_server_id(monkeypatch):
+async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_same_server_id(
+    monkeypatch,
+):
     created_processes: list[FakeJSONRPCProcess] = []
 
     async def fake_create_subprocess_exec(command, *args, **kwargs):
@@ -1535,8 +1847,12 @@ async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_sa
 
     client = mcp_client_module.MCPClient(name="test-client")
 
-    first_connected = await client.connect_to_server("profile-a", "python", args=["-m", "demo.one"])
-    second_connected = await client.connect_to_server("profile-a", "python", args=["-m", "demo.two"])
+    first_connected = await client.connect_to_server(
+        "profile-a", "python", args=["-m", "demo.one"]
+    )
+    second_connected = await client.connect_to_server(
+        "profile-a", "python", args=["-m", "demo.two"]
+    )
 
     assert first_connected is True
     assert second_connected is True
@@ -1551,7 +1867,9 @@ async def test_mcp_client_connect_to_server_cleans_up_existing_connection_for_sa
 
 
 @pytest.mark.asyncio
-async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(monkeypatch):
+async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
+    monkeypatch,
+):
     created_processes: list[FakeJSONRPCProcess] = []
 
     async def fake_create_subprocess_exec(command, *args, **kwargs):
@@ -1567,23 +1885,174 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(mo
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     client = mcp_client_module.MCPClient(name="test-client")
-    connected = await client.connect_to_server("profile-a", "python", args=["-m", "demo.server"])
+    connected = await client.connect_to_server(
+        "profile-a", "python", args=["-m", "demo.server"]
+    )
 
     assert connected is True
 
-    tool_result = await client.call_tool("profile-a", "remote_tool_1", {"topic": "news"})
+    tool_result = await client.call_tool(
+        "profile-a", "remote_tool_1", {"topic": "news"}
+    )
     resource_result = await client.read_resource("profile-a", "remote://resource/1")
-    prompt_result = await client.get_prompt("profile-a", "remote_prompt_1", {"topic": "news"})
+    prompt_result = await client.get_prompt(
+        "profile-a", "remote_prompt_1", {"topic": "news"}
+    )
 
-    assert tool_result == {"result": [{"type": "text", "text": "tool-result-remote_tool_1"}]}
+    assert tool_result == {
+        "result": [{"type": "text", "text": "tool-result-remote_tool_1"}]
+    }
     assert resource_result == {
         "uri": "remote://resource/1",
         "content": "resource-body",
         "mimeType": "text/plain",
+        "_meta": {},
     }
     assert prompt_result == [{"role": "assistant", "content": "prompt-body"}]
 
-    methods = [message["method"] for message in created_processes[0].client_messages if "method" in message]
+    methods = [
+        message["method"]
+        for message in created_processes[0].client_messages
+        if "method" in message
+    ]
     assert "tools/call" in methods
     assert "resources/read" in methods
     assert "prompts/get" in methods
+
+
+# -- task-1337 (plan Task 9): Library tool policy mapping ----------------------
+#
+# Each current descriptor-backed ``library_*`` tool resolves to a read action
+# owned by its Library item type (list/search -> the type's ``list`` action,
+# get -> its ``detail`` action). Both ``tool.execute`` previews and
+# ``tools/call`` runtime requests resolve through the same mapping, with the
+# generic MCP trigger retained as the fallback seam for unknown names.
+
+_LIBRARY_TOOL_POLICY_EXPECTATIONS = {
+    "library_list_media": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_get_media": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_search_media": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_list_notes": ("notes.list.local", "notes_workspaces"),
+    "library_get_note": ("notes.detail.local", "notes_workspaces"),
+    "library_search_notes": ("notes.list.local", "notes_workspaces"),
+    "library_list_prompts": ("prompts.list.local", "prompts_chatbooks"),
+    "library_get_prompt": ("prompts.detail.local", "prompts_chatbooks"),
+    "library_search_prompts": ("prompts.list.local", "prompts_chatbooks"),
+    "library_list_skills": ("skills.list.local", "server_skills"),
+    "library_get_skill": ("skills.detail.local", "server_skills"),
+    "library_search_skills": ("skills.list.local", "server_skills"),
+    "library_list_conversations": ("chat.list.local", "chat"),
+    "library_get_conversation": ("chat.detail.local", "chat"),
+    "library_search_conversations": ("chat.list.local", "chat"),
+    # chunking-agent-tools siblings: the read tools ride the existing media
+    # read path (spec §6 "no new verbs") at the matching LEVEL -- structure
+    # and chunk fetch are single-item detail reads (by id, like get), spec
+    # list is a browse-level listing. spec_save resolves to its OWN write
+    # action (Task 4's deadline carry: the moment the save handler went
+    # live, the provisional derived READ mapping had to stop -- a live
+    # write must never resolve to a read action under policy).
+    "library_get_media_structure": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_get_media_chunk": (
+        "media.reading.detail.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_list_chunk_specs": (
+        "media.reading.list.local",
+        "media_reading_ingestion_sources",
+    ),
+    "library_save_chunk_spec": ("library.templates.save.local", "library_collections"),
+    "library_rechunk_media": ("library.media.rechunk.local", "library_collections"),
+    # student-workflow (Task 1, spec §4): the note write resolves to its OWN
+    # local Library write action -- never the derived notes read a note-typed
+    # tool would otherwise fall to.
+    "library_save_note": ("library.notes.save.local", "library_collections"),
+}
+
+
+def _library_policy_control_service() -> LocalMCPControlService:
+    return LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=FakeLocalRuntimeDelegate(),
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS.items()),
+    ids=sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS),
+)
+def test_library_tools_resolve_to_type_owned_read_actions(tool_name, expected):
+    service = _library_policy_control_service()
+    expected_action_id, expected_capability_id = expected
+
+    preview = service.preview_runtime_access(
+        "tool.execute", {"tool_name": tool_name, "arguments": {}}
+    )
+
+    assert preview["resolved_action_id"] == expected_action_id
+    assert preview["registry_capability_id"] == expected_capability_id
+    assert preview["decision"] == "inherit"
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS.items()),
+    ids=sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS),
+)
+def test_library_tools_call_requests_use_the_same_mapping(tool_name, expected):
+    service = _library_policy_control_service()
+    expected_action_id, expected_capability_id = expected
+
+    preview = service.preview_runtime_access(
+        "runtime.request",
+        {
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": {}},
+        },
+    )
+
+    assert preview["resolved_action_id"] == expected_action_id
+    assert preview["registry_capability_id"] == expected_capability_id
+
+
+def test_unknown_tools_keep_the_generic_mcp_trigger_fallback():
+    service = _library_policy_control_service()
+
+    preview = service.preview_runtime_access(
+        "tool.execute", {"tool_name": "not_a_real_tool", "arguments": {}}
+    )
+
+    assert preview["resolved_action_id"] == "mcp.runtime.trigger.local"
+    assert preview["registry_capability_id"] == "local_mcp_runtime"
+
+
+def test_control_service_forwards_its_policy_enforcer_to_the_default_delegate():
+    """Task 5 (chunking-agent-tools, spec §6): the control service's
+    enforcer rides into the runtime delegate it builds by default, so the
+    lazily-composed shared Library service (and through it the chunk tools)
+    is gated on the local MCP surface."""
+    from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+    enforcer = object()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        policy_enforcer=enforcer,
+    )
+
+    assert service.runtime_delegate._policy_enforcer is enforcer

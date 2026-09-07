@@ -1,0 +1,51 @@
+name: Backlog Guard
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'backlog/tasks/**'
+      # Archiving or completing a file moves it between these directories
+      # without freeing its id, so a move alone can create a collision.
+      - 'backlog/completed/**'
+      - 'backlog/archive/tasks/**'
+      - 'scripts/check_backlog_task_ids.py'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'backlog/tasks/**'
+      # Archiving or completing a file moves it between these directories
+      # without freeing its id, so a move alone can create a collision.
+      - 'backlog/completed/**'
+      - 'backlog/archive/tasks/**'
+      - 'scripts/check_backlog_task_ids.py'
+
+# One PUSH run per workflow per ref: a new push supersedes the previous run instead of
+# queueing another alongside it. Without this, every push to `dev` stacked a full
+# run - 50+ obsolete runs accumulated, all competing for the shared account pool.
+# The event name is part of the group so different trigger types (push,
+# pull_request, schedule) never cancel each other, and `main` is never cancelled
+# so its history stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
+
+jobs:
+  duplicate-task-ids:
+    name: No duplicate backlog task IDs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fail on duplicate backlog task IDs
+        run: |
+          # TASK-19572 moved this out of inline shell and into a stdlib-only
+          # script, because derived-artifacts.yml (the one required check) has
+          # to run the same test and two hand-maintained copies would drift.
+          # The script checks both namespaces the repo relies on -- the filename
+          # prefix and the YAML frontmatter `id:` -- since they disagree after a
+          # hand-edited rename and the backlog CLI resolves by frontmatter.
+          python scripts/check_backlog_task_ids.py

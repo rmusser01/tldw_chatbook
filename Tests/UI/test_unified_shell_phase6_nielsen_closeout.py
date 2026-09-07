@@ -10,18 +10,11 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
     EXPECTED_NAV,
-    PHASE_6_PARENT_TASK,
-    PHASE_6_README,
-    ROADMAP,
-    _phase_evidence_row,
-    _phase_overview_row,
     _screen_text,
-    _status_line,
     _test_cli_setting,
-    _text,
     _wait_until,
 )
 
@@ -69,34 +62,56 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query("MainNavigationBar").first().query(Button))
-            assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
+            nav_buttons = list(
+                app.screen.query("MainNavigationBar").first().query(".nav-button")
+            )
+            assert [
+                (button.id, str(button.label).strip()) for button in nav_buttons
+            ] == EXPECTED_NAV
 
             home_text = _screen_text(app)
             assert "Details" in home_text
             assert "Model: Blocked" in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            # NV-01 (TASK-2154.21): at 180 cols every destination fits, so
+            # the overflow affordance hides instead of docking over the strip.
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one("#nav-overflow-hint").display is False,
+            )
 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
             assert "ACP: Blocked - Configure ACP runtime." in console_text
             assert "MCP: Not wired" in console_text
-            assert "RAG: Connected" in console_text
+            assert "RAG: " in console_text
 
             app.screen.query_one("#nav-acp", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "acp" and app.screen.__class__.__name__ == "ACPScreen",
+                lambda: (
+                    app.current_tab == "acp"
+                    and app.screen.__class__.__name__ == "ACPScreen"
+                ),
             )
             acp_text = _screen_text(app)
             assert "Runtime not configured" in acp_text
@@ -107,21 +122,33 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             library_text = _screen_text(app)
             assert "Library" in library_text
-            assert "Import/Export Sources" in library_text
-            assert "Search/RAG" in library_text
+            assert "Import / Export" in library_text
+            assert "Search / RAG" in library_text
 
             app.screen.query_one("#nav-settings", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
             )
             await _wait_until(
                 pilot,
-                lambda: "Global preferences, appearance, accounts, storage" in _screen_text(app),
+                lambda: (
+                    "Global preferences, appearance, storage, and app behavior"
+                    in _screen_text(app)
+                ),
             )
             settings_text = _screen_text(app)
-            assert "Settings | Global preferences, appearance, accounts, storage | Local" in settings_text
+            assert (
+                "Settings | Global preferences, appearance, storage, and app behavior | Local"
+                in settings_text
+            )

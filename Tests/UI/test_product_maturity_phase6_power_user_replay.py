@@ -12,8 +12,9 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from tldw_chatbook.app import TldwCli
 
 
@@ -47,6 +48,9 @@ REQUIRED_WORKFLOWS = {
     "study-loop",
     "recovery-loop",
 }
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 
 
 def _text(path: Path) -> str:
@@ -55,7 +59,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _screen_text(app) -> str:
@@ -140,7 +146,19 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before capturing screen text.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
+            )
+            await _wait_until(
+                pilot,
+                lambda: "Ctrl+P" in _screen_text(app),
             )
             home_text = _screen_text(app)
             assert "Start in Console" in home_text
@@ -150,7 +168,10 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             app.screen.query_one("#home-primary-action", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             console_text = _screen_text(app)
             assert "Console" in console_text
@@ -162,7 +183,10 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             # The retired hub's "Search/RAG" / "Study Dashboard" /
             # "Import/Export Sources" action-region copy is gone; the rail
@@ -173,20 +197,30 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             library_text = _screen_text(app)
             assert "Search / RAG" in library_text
             assert "Study decks" in library_text
-            assert "Import media" in library_text
+            assert "Import…" in library_text
             assert "Collections" in library_text
             assert not app.screen.query("#library-row-ingest-import-export")
 
             app.screen.query_one("#library-row-browse-search", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and "Library Search/RAG" in _screen_text(app),
+                lambda: (
+                    app.current_tab == "library"
+                    and bool(app.screen.query("#library-search-rag-panel"))
+                ),
             )
 
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
+            )
+            await _wait_until(
+                pilot,
+                lambda: bool(app.screen.query("#library-row-ingest-import-media")),
             )
             # Import media is now a first-class canvas row (not a deep-link
             # to the standalone Ingest screen): pressing it mounts the real
@@ -195,8 +229,10 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library"
-                and bool(app.screen.query("#library-ingest-canvas")),
+                lambda: (
+                    app.current_tab == "library"
+                    and bool(app.screen.query("#library-ingest-canvas"))
+                ),
             )
 
             app.open_console_for_live_work(
@@ -209,13 +245,19 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             )
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             live_work_text = _screen_text(app)
             assert "Source: Watchlists" in live_work_text
             assert "Title: Daily security feed" in live_work_text
             assert "Action: Open Watchlists run" in live_work_text
-            assert "Recovery: Review the Watchlists run details or retry from Watchlists." in live_work_text
+            assert (
+                "Recovery: Review the Watchlists run details or retry from Watchlists."
+                in live_work_text
+            )
 
             # The Watchlists-run detail lives on the subscriptions screen,
             # which is gated behind optional dependencies (feedparser etc.);
@@ -223,15 +265,24 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             from tldw_chatbook.UI.Navigation import screen_registry
 
             subscriptions_route = screen_registry._SCREEN_ROUTES.get("subscriptions")
-            if subscriptions_route is not None and subscriptions_route.dependencies_available():
-                app.screen.query_one("#console-live-work-primary-action", Button).press()
+            if (
+                subscriptions_route is not None
+                and subscriptions_route.dependencies_available()
+            ):
+                app.screen.query_one(
+                    "#console-live-work-primary-action", Button
+                ).press()
                 await _wait_until(
                     pilot,
-                    lambda: app.current_tab == "subscriptions"
-                    and app.screen.__class__.__name__ == "SubscriptionScreen",
+                    lambda: (
+                        app.current_tab == "subscriptions"
+                        and app.screen.__class__.__name__ == "SubscriptionScreen"
+                    ),
                 )
                 subscription_window = app.screen.subscription_window
                 assert subscription_window is not None
                 assert subscription_window.initial_tab == "watchlist-runs"
-                assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
-
+                assert (
+                    subscription_window._selected_watchlist_run_id
+                    == "local:watchlist_run:91"
+                )

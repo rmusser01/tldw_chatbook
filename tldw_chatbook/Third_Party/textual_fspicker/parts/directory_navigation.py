@@ -36,6 +36,33 @@ from ..safe_tests import is_dir, is_file, is_symlink
 
 
 ##############################################################################
+def _human_readable_size(size_bytes: int) -> str:
+    """Format a byte count as bytes/KB/MB/GB.
+
+    tldw_chatbook task-2859 item 6: kept local to this vendored module
+    (no import from the host app's ``Utils`` package) so this fork stays
+    a self-contained, easily-diffable copy of upstream textual-fspicker.
+
+    Args:
+        size_bytes: The raw byte count.
+
+    Returns:
+        A short human-readable string, e.g. ``"512 B"``, ``"29.9 KB"``,
+        ``"4.2 MB"``.
+    """
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    size_kb = size_bytes / 1024
+    if size_kb < 1024:
+        return f"{size_kb:.1f} KB"
+    size_mb = size_kb / 1024
+    if size_mb < 1024:
+        return f"{size_mb:.1f} MB"
+    size_gb = size_mb / 1024
+    return f"{size_gb:.1f} GB"
+
+
+##############################################################################
 class DirectoryEntryStyling(NamedTuple):
     """Styling for directory entries."""
 
@@ -93,7 +120,10 @@ class DirectoryEntry(Option):
             location: The location to get the modification time for.
 
         Returns:
-            The formatted modification time, to the nearest second.
+            The formatted modification time, to the nearest minute
+            (tldw_chatbook task-2859 item 6: second-precision timestamps
+            were noise no file browser needs; the picker's own 20-cell
+            column has room to spare either way).
         """
         try:
             mtime = location.stat().st_mtime
@@ -108,24 +138,33 @@ class DirectoryEntry(Option):
             #
             # https://github.com/davep/textual-fspicker/issues/6#issuecomment-2669234263
             mdatetime = datetime.fromtimestamp(0)
-        return mdatetime.isoformat().replace("T", " ")
+        return mdatetime.strftime("%Y-%m-%d %H:%M")
 
     @staticmethod
     def _size(location: Path) -> str:
-        """Get a formatted size for the given location.
+        """Get a human-readable size for the given location.
+
+        (task-3304, MI-15) Humanized -- the raw ``st_size`` integer rendered
+        with no unit, so "512" read as a mystery number (and, on directory
+        rows, as a fake size). Directories return no size at all: their
+        ``st_size`` is filesystem bookkeeping, not content.
 
         Args:
             location: The location to get the size for.
 
         Returns:
-            The formatted size.
+            The size formatted as bytes/KB/MB/GB (tldw_chatbook task-2859
+            item 6: a raw byte count like "30624" forced every reader to
+            do their own division; the fixed-width size column (10 cells,
+            right-justified) has room for any of these).
         """
+        if is_dir(location):
+            return ""
         try:
             entry_size = location.stat().st_size
         except FileNotFoundError:
             entry_size = 0
-        # TODO: format well for a file browser.
-        return str(entry_size)
+        return _human_readable_size(entry_size)
 
     def _style(self, base: Style, location: Path) -> Style:
         """Decide the best style to use.
@@ -290,6 +329,10 @@ class DirectoryNavigation(OptionList):
         self._mounted = False
         self.location = MakePath.of(location).expanduser().absolute()
         self._entries: list[DirectoryEntry] = []
+        #: A file to highlight in the list once the next directory load lands.
+        #: Lets a full path typed in the path bar land ON the file instead of
+        #: on ``..`` after navigating to its parent (TASK-378).
+        self._pending_highlight: Path | None = None
 
     @property
     def location(self) -> Path:
@@ -313,6 +356,69 @@ class DirectoryNavigation(OptionList):
         """Settle the highlight somewhere useful if it's not anywhere."""
         if self.highlighted is None:
             self.highlighted = 0
+
+    def show_and_highlight(self, target: Path) -> None:
+        """Navigate to ``target``'s directory and highlight ``target`` in the list.
+
+        The directory load runs in a worker, so the highlight is applied when the
+        display next repopulates (or immediately when the directory is already
+        shown). Lets a full file path typed into the path bar land on the file
+        rather than on ``..`` (TASK-378).
+
+        Args:
+            target: The file to reveal and highlight.
+        """
+        target = MakePath.of(target).expanduser().absolute()
+        parent = target.parent
+        self._pending_highlight = target
+        if self._mounted and parent == self._location:
+            # Already showing the right directory; highlight now.
+            self._apply_pending_highlight()
+        else:
+            # Changing the location triggers the async reload; the highlight is
+            # applied when `_repopulate_display` runs on completion.
+            self.location = parent
+
+    def _apply_pending_highlight(self, *, final: bool = False) -> bool:
+        """Highlight the pending target if it is present in the current listing.
+
+        The pending request is cleared only once it is resolved -- either the
+        entry was found and highlighted, the load has finished with the entry
+        absent (``final``), or the user navigated to a different directory. A
+        not-yet-found target during an in-flight load is KEPT so the post-load
+        ``_repopulate_display`` can still apply it (the immediate same-directory
+        call may run before the options are populated).
+
+        Args:
+            final: ``True`` when called after a completed directory load, so a
+                target still absent is genuinely gone and the request is dropped;
+                ``False`` for the speculative same-directory fast path, which
+                leaves an unmatched target pending for the post-load pass.
+
+        Returns:
+            ``True`` when a matching entry was found and highlighted.
+        """
+        target = self._pending_highlight
+        if target is None:
+            return False
+        if target.parent != self._location:
+            # Navigated elsewhere before the target loaded; abandon it.
+            self._pending_highlight = None
+            return False
+        for index in range(self.option_count):
+            option = self.get_option_at_index(index)
+            if (
+                isinstance(option, DirectoryEntry)
+                and option.location.name == target.name
+            ):
+                self._pending_highlight = None
+                self.highlighted = index
+                return True
+        if final:
+            # The directory has finished loading and the target is not present;
+            # stop retrying so a stale request cannot linger.
+            self._pending_highlight = None
+        return False
 
     @property
     def is_root(self) -> bool:
@@ -388,7 +494,11 @@ class DirectoryNavigation(OptionList):
                     entry for entry in self._entries if not self.hide(entry.location)
                 )
             )
-        self._settle_highlight()
+        # Honor a pending "reveal this file" request from the path bar before
+        # falling back to the default top-of-list highlight (TASK-378). This runs
+        # after a completed load, so an absent target is resolved (final=True).
+        if not self._apply_pending_highlight(final=True):
+            self._settle_highlight()
 
     @work(exclusive=True, thread=True)
     def _load(self) -> None:
@@ -400,16 +510,22 @@ class DirectoryNavigation(OptionList):
         # or the sort order be changed, or something, we're going to keep a
         # parallel copy of *all* possible options for the list and then
         # populate from that.
-        self._entries = []
+        #
+        # (task-2160) Build into a LOCAL list and publish atomically at the
+        # end: two rapid loads (the location and show-files watchers both
+        # fire around mount) used to interleave -- the superseded worker
+        # kept appending into the attribute the fresh worker had just
+        # rebound, double-listing every entry it got to before its
+        # cooperative cancel check.
+        entries: list[DirectoryEntry] = []
 
-        # Now loop over the directory, looking for directories within and
-        # streaming them into the list via the app thread.
+        # Now loop over the directory, looking for directories within.
         worker = get_current_worker()
         styles = self._styles
         try:
             for entry in self._location.iterdir():
                 if is_dir(entry) or (is_file(entry) and self.show_files):
-                    self._entries.append(
+                    entries.append(
                         DirectoryEntry(self._location / entry.name, styles)
                     )
                 if worker.is_cancelled:
@@ -417,8 +533,11 @@ class DirectoryNavigation(OptionList):
         except PermissionError:
             self.post_message(self.PermissionError(self, self._location))
 
-        # Now that we've loaded everything up, let's make the call to update
-        # the display.
+        # Now that we've loaded everything up, publish and make the call to
+        # update the display.
+        if worker.is_cancelled:
+            return
+        self._entries = entries
         self.app.call_from_thread(self._repopulate_display)
 
     def _watch__location(self) -> None:

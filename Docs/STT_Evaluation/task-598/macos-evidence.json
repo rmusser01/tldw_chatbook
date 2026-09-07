@@ -1,0 +1,446 @@
+{
+  "schema_version": 1,
+  "evidence_label": "isolated_macos_external_mode_in_memory_production_path",
+  "generated_at": "2026-08-11T22:18:36Z",
+  "tested_commit": "e18a4e4d7c391a8c2633f629092288b33b589688",
+  "final_review_commit": "bdd2f25e33d94058c11fe89238793284b89a37d0",
+  "status": "passed",
+  "task_status": "In Progress",
+  "host": {
+    "mac_version": "15.6",
+    "machine": "arm64",
+    "onnxruntime_available_providers": [
+      "CoreMLExecutionProvider",
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "packages": {
+      "onnx-asr": "0.12.0",
+      "onnxruntime": "1.27.0"
+    },
+    "python": {
+      "implementation": "CPython",
+      "version": "3.12.11"
+    },
+    "release": "24.6.0",
+    "runtime_execution_provider": "CPUExecutionProvider",
+    "system": "Darwin"
+  },
+  "automated_verification": {
+    "selection": {
+      "base": "origin/dev...HEAD",
+      "diff_filter": "ACMR",
+      "changed_python_files": 49,
+      "changed_package_modules": [
+        "tldw_chatbook/Library/ingest_capabilities.py",
+        "tldw_chatbook/Library/server_ingest_request.py",
+        "tldw_chatbook/Local_Ingestion/parakeet_v2_artifact.py",
+        "tldw_chatbook/Local_Ingestion/transcription_service.py",
+        "tldw_chatbook/Model_Artifacts/__init__.py",
+        "tldw_chatbook/Model_Artifacts/service.py",
+        "tldw_chatbook/STT/dispatch_coordinator.py",
+        "tldw_chatbook/STT/executor.py",
+        "tldw_chatbook/STT/executor_worker.py",
+        "tldw_chatbook/STT/parakeet_dispatch.py",
+        "tldw_chatbook/STT/parakeet_external.py",
+        "tldw_chatbook/STT/parakeet_sources.py",
+        "tldw_chatbook/UI/LLM_Management_Window.py",
+        "tldw_chatbook/UI/Screens/library_screen.py",
+        "tldw_chatbook/UI/Screens/llm_screen.py",
+        "tldw_chatbook/UI/Screens/model_browser_state.py",
+        "tldw_chatbook/UI/Screens/model_curated_view.py",
+        "tldw_chatbook/UI/Screens/model_external_view.py",
+        "tldw_chatbook/UI/Screens/model_installed_view.py",
+        "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py",
+        "tldw_chatbook/UI/Wizards/first_run_speech_step_state.py",
+        "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+        "tldw_chatbook/Widgets/ModelArtifacts/activation_controls.py",
+        "tldw_chatbook/app.py",
+        "tldw_chatbook/config.py"
+      ],
+      "changed_test_files": [
+        "Tests/App/test_submit_library_ingest_job.py",
+        "Tests/Library/test_library_ingest_runner.py",
+        "Tests/Local_Ingestion/test_parakeet_v2_artifact.py",
+        "Tests/Local_Ingestion/test_transcription_service_parakeet_buffer_wav.py",
+        "Tests/Model_Artifacts/test_service.py",
+        "Tests/STT/test_dispatch_coordinator.py",
+        "Tests/STT/test_local_stt_executor.py",
+        "Tests/STT/test_parakeet_dispatch.py",
+        "Tests/STT/test_parakeet_external.py",
+        "Tests/STT/test_parakeet_onnx.py",
+        "Tests/STT/test_parakeet_sources.py",
+        "Tests/STT/test_transcription_service_facade.py",
+        "Tests/UI/test_destination_shells.py",
+        "Tests/UI/test_first_run_wizard_live_contract.py",
+        "Tests/UI/test_library_ingest_canvas.py",
+        "Tests/UI/test_llm_screen_lab_adoption.py",
+        "Tests/UI/test_model_artifact_widgets.py",
+        "Tests/UI/test_model_browser_state.py",
+        "Tests/UI/test_model_curated_view.py",
+        "Tests/UI/test_model_external_view.py",
+        "Tests/UI/test_model_installed_view.py",
+        "Tests/UI/test_parakeet_v2_install_ui.py",
+        "Tests/Wizards/test_first_run_speech_step.py",
+        "Tests/Wizards/test_first_run_speech_step_state.py"
+      ]
+    },
+    "changed_test_union": {
+      "command": [
+        "../../.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/App/test_submit_library_ingest_job.py",
+        "Tests/Library/test_library_ingest_runner.py",
+        "Tests/Local_Ingestion/test_parakeet_v2_artifact.py",
+        "Tests/Local_Ingestion/test_transcription_service_parakeet_buffer_wav.py",
+        "Tests/Model_Artifacts/test_service.py",
+        "Tests/STT/test_dispatch_coordinator.py",
+        "Tests/STT/test_local_stt_executor.py",
+        "Tests/STT/test_parakeet_dispatch.py",
+        "Tests/STT/test_parakeet_external.py",
+        "Tests/STT/test_parakeet_onnx.py",
+        "Tests/STT/test_parakeet_sources.py",
+        "Tests/STT/test_transcription_service_facade.py",
+        "Tests/UI/test_destination_shells.py",
+        "Tests/UI/test_first_run_wizard_live_contract.py",
+        "Tests/UI/test_library_ingest_canvas.py",
+        "Tests/UI/test_llm_screen_lab_adoption.py",
+        "Tests/UI/test_model_artifact_widgets.py",
+        "Tests/UI/test_model_browser_state.py",
+        "Tests/UI/test_model_curated_view.py",
+        "Tests/UI/test_model_external_view.py",
+        "Tests/UI/test_model_installed_view.py",
+        "Tests/UI/test_parakeet_v2_install_ui.py",
+        "Tests/Wizards/test_first_run_speech_step.py",
+        "Tests/Wizards/test_first_run_speech_step_state.py",
+        "-q"
+      ],
+      "whole_union_runs": 2,
+      "status": "failed",
+      "result": {
+        "passed": 1262,
+        "failed": 3,
+        "skipped": 1,
+        "warnings": 9,
+        "duration_seconds": 376.78
+      },
+      "initial_result": {
+        "commit": "e18a4e4d7c391a8c2633f629092288b33b589688",
+        "passed": 1248,
+        "failed": 6,
+        "skipped": 1,
+        "warnings": 16,
+        "duration_seconds": 356.88
+      },
+      "failures": [
+        {
+          "node": "Tests/Local_Ingestion/test_parakeet_v2_artifact.py::test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture",
+          "classification": "sandbox_loopback_bind_denied",
+          "detail": "PermissionError [Errno 1] Operation not permitted while binding 127.0.0.1.",
+          "isolated_rerun": "passed outside the sandbox in a combined two-node run: 2 passed in 1.62 seconds"
+        },
+        {
+          "node": "Tests/Local_Ingestion/test_parakeet_v2_artifact.py::test_vad_only_preflight_and_provision_never_include_a_parakeet_root",
+          "classification": "sandbox_loopback_bind_denied",
+          "detail": "PermissionError [Errno 1] Operation not permitted while binding 127.0.0.1.",
+          "isolated_rerun": "passed outside the sandbox in a combined two-node run: 2 passed in 1.62 seconds"
+        },
+        {
+          "node": "Tests/STT/test_parakeet_dispatch.py::test_resolver_never_loads_download_layers_and_fails_without_installed_artifact",
+          "classification": "union_import_state",
+          "isolated_rerun": "passed in 0.37 seconds"
+        }
+      ]
+    },
+    "static_analysis": {
+      "ruff_check": {
+        "status": "failed_pre_existing_origin_dev_findings",
+        "current_findings": 2,
+        "origin_dev_findings": 6,
+        "retained_findings": [
+          "Tests/Library/test_library_ingest_runner.py:3663 F841 local variable job is assigned to but never used",
+          "Tests/Library/test_library_ingest_runner.py:3900 F401 SimpleNamespace imported but unused"
+        ]
+      },
+      "ruff_format_check": {
+        "status": "failed_pre_existing_origin_dev_format_debt",
+        "current_would_reformat": 33,
+        "current_already_formatted": 16,
+        "origin_dev_would_reformat": 35,
+        "origin_dev_already_formatted": 8,
+        "current_failures_also_failed_on_origin_dev": true,
+        "bulk_format_applied": false
+      },
+      "changed_package_py_compile": {
+        "status": "passed",
+        "module_count": 25,
+        "pycache_redirected_outside_repository": true
+      },
+      "git_diff_check": "passed",
+      "added_line_path_privacy_scan": "passed; only synthetic test paths and the intended Path.home() picker default were found",
+      "placeholder_scan": "passed; only intentional control-flow pass statements, NoMatches handling, cancellation cleanup, and an existing UI placeholder field were found",
+      "source_logging_scan": "passed; external paths are not logged by the external source modules",
+      "activation_scan": "passed; managed-copy installation does not auto-activate",
+      "download_scan": "passed; source resolution and runtime dispatch do not call acquisition or download layers",
+      "vad_ownership_scan": "passed; the source service resolves the exact managed VAD dependency"
+    }
+  },
+  "profile_isolation": {
+    "established_before_app_import": true,
+    "explicit_scratch_data_dir": true,
+    "real_managed_store_after": {
+      "exists": true,
+      "file_count": 0,
+      "path_size_mtime_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "total_bytes": 0
+    },
+    "real_managed_store_before": {
+      "exists": true,
+      "file_count": 0,
+      "path_size_mtime_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "total_bytes": 0
+    },
+    "real_managed_store_unchanged": true,
+    "real_profile_after": {
+      "content_and_metadata_sha256": "a7148bf77e9fc62670e83d5e31ed37caf387c6460c83567bdd2f08472ce90fbf",
+      "exists": true,
+      "file_count": 10
+    },
+    "real_profile_before": {
+      "content_and_metadata_sha256": "a7148bf77e9fc62670e83d5e31ed37caf387c6460c83567bdd2f08472ce90fbf",
+      "exists": true,
+      "file_count": 10
+    },
+    "real_profile_unchanged": true,
+    "scratch_config_sha256_after": "1329581bc2180a8ff9f76bee1f3a833ffb81136a4f98fe51c332d0f40e53dc38",
+    "scratch_config_sha256_before": "1329581bc2180a8ff9f76bee1f3a833ffb81136a4f98fe51c332d0f40e53dc38",
+    "scratch_path_redacted": true,
+    "variables_redirected": [
+      "HOME",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+      "TLDW_CONFIG_PATH"
+    ]
+  },
+  "external_source": {
+    "bytes_and_mtimes_unchanged": true,
+    "descriptor": {
+      "artifact_id": "parakeet-v2",
+      "model_id": "nemo-parakeet-tdt-0.6b-v2",
+      "precision": "int8",
+      "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+      "variant": "int8"
+    },
+    "files_after": {
+      "config.json": {
+        "mode": 420,
+        "mtime_ns": 1786207453188724500,
+        "sha256": "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+        "size_bytes": 97
+      },
+      "decoder_joint-model.int8.onnx": {
+        "mode": 420,
+        "mtime_ns": 1786207538112571400,
+        "sha256": "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3",
+        "size_bytes": 8998286
+      },
+      "encoder-model.int8.onnx": {
+        "mode": 420,
+        "mtime_ns": 1786207536366380300,
+        "sha256": "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155",
+        "size_bytes": 652184014
+      },
+      "vocab.txt": {
+        "mode": 420,
+        "mtime_ns": 1786207453478154500,
+        "sha256": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+        "size_bytes": 9384
+      }
+    },
+    "files_before": {
+      "config.json": {
+        "mode": 420,
+        "mtime_ns": 1786207453188724500,
+        "sha256": "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+        "size_bytes": 97
+      },
+      "decoder_joint-model.int8.onnx": {
+        "mode": 420,
+        "mtime_ns": 1786207538112571400,
+        "sha256": "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3",
+        "size_bytes": 8998286
+      },
+      "encoder-model.int8.onnx": {
+        "mode": 420,
+        "mtime_ns": 1786207536366380300,
+        "sha256": "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155",
+        "size_bytes": 652184014
+      },
+      "vocab.txt": {
+        "mode": 420,
+        "mtime_ns": 1786207453478154500,
+        "sha256": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+        "size_bytes": 9384
+      }
+    },
+    "materialization": "hardlinks from previously verified TASK-602 evidence",
+    "ownership": "user_owned_scratch_materialization",
+    "path_committed": false,
+    "snapshot_token": "cca9c35c996a98a4daaecf6e103f7a43f0c91e1a0f7ff598f2f1a9ce1f3e4a91"
+  },
+  "managed_dependency": {
+    "bytes_and_mtimes_unchanged": true,
+    "files_after": {
+      "manifest.json": {
+        "mode": 420,
+        "mtime_ns": 1786207540343654400,
+        "sha256": "7ff3183aec653f36126e54f6a69bb9c74be4fe245924331a6589a3eaf7c0608f",
+        "size_bytes": 1381
+      },
+      "silero_vad.onnx": {
+        "mode": 420,
+        "mtime_ns": 1786207540337364700,
+        "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+        "size_bytes": 2327524
+      }
+    },
+    "files_before": {
+      "manifest.json": {
+        "mode": 420,
+        "mtime_ns": 1786207540343654400,
+        "sha256": "7ff3183aec653f36126e54f6a69bb9c74be4fe245924331a6589a3eaf7c0608f",
+        "size_bytes": 1381
+      },
+      "silero_vad.onnx": {
+        "mode": 420,
+        "mtime_ns": 1786207540337364700,
+        "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+        "size_bytes": 2327524
+      }
+    },
+    "managed_parakeet_entries_after": {
+      "active": [],
+      "artifacts": [],
+      "ready": []
+    },
+    "managed_parakeet_entries_before": {
+      "active": [],
+      "artifacts": [],
+      "ready": []
+    },
+    "parakeet_root_installed_or_activated": false,
+    "path_committed": false,
+    "reference": {
+      "artifact_id": "silero-vad",
+      "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+      "variant": "f32"
+    },
+    "store_kind": "scratch_vad_only"
+  },
+  "production_path": {
+    "bounded_timeout_seconds": 120,
+    "classification": "in_memory_production_path_fallback",
+    "input": {
+      "channels": 1,
+      "disk_staged_by_runtime": false,
+      "duration_seconds": 4.7025,
+      "fixture_sha256": "8025642b1da904543a336b0239ceb51f241e8c7d0610060993f13dbea81d9f07",
+      "fixture_size_bytes": 150558,
+      "kind": "known in-memory PCM from TASK-602 synthetic WAV",
+      "pcm_bytes": 150480,
+      "sample_rate_hz": 16000,
+      "sample_width_bytes": 2
+    },
+    "microphone_capture": false,
+    "mounted_user_surface": false,
+    "output": {
+      "duration_seconds": 4.7025,
+      "logical_segments": [
+        "The local transcription stack is working on this Mac and does not need a network connection."
+      ],
+      "provenance": {
+        "artifact_dependencies": [
+          {
+            "artifact_id": "silero-vad",
+            "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+            "variant": "f32"
+          }
+        ],
+        "artifact_root": null,
+        "attempt_id": "eecbfc7794f543f5a010e17785bbc4b1",
+        "batch_id": null,
+        "detected_language": null,
+        "effective_device": "cpu",
+        "effective_language": "en",
+        "failed_attempt": null,
+        "job_id": null,
+        "model_id": "nemo-parakeet-tdt-0.6b-v2",
+        "precision": "int8",
+        "produced_capabilities": {
+          "capitalization": true,
+          "diarization": false,
+          "punctuation": true,
+          "timestamps": "none",
+          "vad": false
+        },
+        "provider_id": "parakeet-onnx",
+        "requested_device": "cpu",
+        "requested_language": "en",
+        "retry_of_attempt_id": null,
+        "retry_of_job_id": null,
+        "schema_version": 1,
+        "task": "transcribe",
+        "warnings": []
+      },
+      "text": "The local transcription stack is working on this Mac and does not need a network connection.",
+      "transcription_model": "nemo-parakeet-tdt-0.6b-v2"
+    },
+    "ownership": {
+      "coordinator_is_app_singleton": true,
+      "executor_is_app_singleton": true,
+      "source_service_is_app_singleton": true
+    },
+    "path": [
+      "TldwCli._ensure_parakeet_source_service",
+      "TranscriptionService.transcribe_buffer",
+      "TldwCli._ensure_local_stt_dispatch_coordinator",
+      "TldwCli._ensure_local_stt_executor",
+      "ParakeetOnnxRuntime CPU"
+    ],
+    "timed_out": false,
+    "timings": {
+      "app_init_seconds": 0.3010266670025885,
+      "descriptor_verification_seconds": 0.26914458302780986,
+      "runtime_payload_exposes_internal_timings": false,
+      "shutdown_seconds": 0.03917783289216459,
+      "transcription_wall_seconds": 2.284186708042398
+    }
+  },
+  "limitations": [
+    "This is one Apple-silicon macOS host, not cross-platform evidence.",
+    "The smoke used known in-memory PCM, not a mounted picker or microphone.",
+    "The coordinator buffer payload does not expose internal model-load and inference timings; wall time is recorded.",
+    "Hardlinked scratch artifacts were read-only inputs and were not copied into the managed store.",
+    "Because the app was deliberately unmounted, a caught final Library top-up callback could not marshal to an active UI; transcription and ordered shutdown still completed."
+  ],
+  "requirement_self_review": {
+    "external_root_verified_and_used_in_place": true,
+    "no_external_model_copy_into_managed_store": true,
+    "managed_vad_only": true,
+    "external_root_not_activated": true,
+    "artifact_root_provenance_is_null": true,
+    "exact_vad_dependency_in_provenance": true,
+    "external_and_vad_hashes_and_mtimes_invariant": true,
+    "real_profile_and_store_invariant": true,
+    "runtime_network_used": false,
+    "committed_machine_local_paths": false
+  },
+  "open_gates": [
+    "The exact changed-test union is not fully green: two loopback fixtures were sandbox-blocked and two UI test-double mismatches reproduce in isolation.",
+    "Linux x86_64 source verification, copy/delete, and real ONNX CPU smoke.",
+    "Linux aarch64 source verification, copy/delete, and real ONNX CPU smoke.",
+    "Windows x86_64 source verification, copy/delete, and real ONNX CPU smoke.",
+    "macOS x86_64 source verification, copy/delete, and real ONNX CPU smoke."
+  ]
+}

@@ -21,8 +21,7 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
 
 
 class EventStreamTransport(Protocol):
-    def stream(self, cursor: EventCursor) -> Any:
-        ...
+    def stream(self, cursor: EventCursor) -> Any: ...
 
 
 class EventCursorStateStore(Protocol):
@@ -34,25 +33,22 @@ class EventCursorStateStore(Protocol):
         stream_name: str,
         stream_instance_id: str,
         authenticated_principal_id: str | None = None,
-    ) -> EventCursor:
-        ...
+    ) -> EventCursor: ...
 
-    def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
-        ...
+    def is_duplicate_event(self, event: NormalizedEventRecord) -> bool: ...
 
     def acknowledge_event(
         self,
         event: NormalizedEventRecord,
         *,
         expected_cursor: str | None,
-    ) -> CursorAdvanceResult:
-        ...
+    ) -> CursorAdvanceResult: ...
 
-    def remember_event(self, event: NormalizedEventRecord) -> Any:
-        ...
+    def remember_event(self, event: NormalizedEventRecord) -> Any: ...
 
-    def reset_cursor(self, cursor: EventCursor, *, reason: str = "stale_cursor") -> CursorAdvanceResult:
-        ...
+    def reset_cursor(
+        self, cursor: EventCursor, *, reason: str = "stale_cursor"
+    ) -> CursorAdvanceResult: ...
 
 
 class StaleCursorError(RuntimeError):
@@ -84,7 +80,9 @@ class _CancelledByEvent(Exception):
     pass
 
 
-async def _await_with_cancel(awaitable: Awaitable[Any], cancel_event: asyncio.Event | None) -> Any:
+async def _await_with_cancel(
+    awaitable: Awaitable[Any], cancel_event: asyncio.Event | None
+) -> Any:
     if cancel_event is None:
         return await awaitable
     if cancel_event.is_set():
@@ -92,7 +90,9 @@ async def _await_with_cancel(awaitable: Awaitable[Any], cancel_event: asyncio.Ev
 
     task = asyncio.ensure_future(awaitable)
     cancel_task = asyncio.create_task(cancel_event.wait())
-    done, _ = await asyncio.wait({task, cancel_task}, return_when=asyncio.FIRST_COMPLETED)
+    done, _ = await asyncio.wait(
+        {task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+    )
     if task in done:
         cancel_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -105,7 +105,9 @@ async def _await_with_cancel(awaitable: Awaitable[Any], cancel_event: asyncio.Ev
     raise _CancelledByEvent
 
 
-async def _maybe_await_with_cancel(value: Any, cancel_event: asyncio.Event | None) -> Any:
+async def _maybe_await_with_cancel(
+    value: Any, cancel_event: asyncio.Event | None
+) -> Any:
     if cancel_event is not None and cancel_event.is_set():
         raise _CancelledByEvent
     if inspect.isawaitable(value):
@@ -159,7 +161,9 @@ class EventObserver:
 
         while True:
             if cancel_event is not None and cancel_event.is_set():
-                return EventObserverResult(handled_events=handled_events, reset=last_reset, cancelled=True)
+                return EventObserverResult(
+                    handled_events=handled_events, reset=last_reset, cancelled=True
+                )
 
             cursor = self.store.get_cursor(
                 source_authority=source_authority,
@@ -176,9 +180,13 @@ class EventObserver:
                 try:
                     while True:
                         try:
-                            event = await _await_with_cancel(anext(iterator), cancel_event)
+                            event = await _await_with_cancel(
+                                anext(iterator), cancel_event
+                            )
                         except StopAsyncIteration:
-                            return EventObserverResult(handled_events=handled_events, reset=last_reset)
+                            return EventObserverResult(
+                                handled_events=handled_events, reset=last_reset
+                            )
 
                         if cancel_event is not None and cancel_event.is_set():
                             return EventObserverResult(
@@ -189,10 +197,14 @@ class EventObserver:
                         if self.store.is_duplicate_event(event):
                             continue
 
-                        should_ack = bool(await _maybe_await_with_cancel(handler(event), cancel_event))
+                        should_ack = bool(
+                            await _maybe_await_with_cancel(handler(event), cancel_event)
+                        )
                         handled_events += 1
                         if should_ack:
-                            advance = self.store.acknowledge_event(event, expected_cursor=expected_ack_cursor)
+                            advance = self.store.acknowledge_event(
+                                event, expected_cursor=expected_ack_cursor
+                            )
                             if advance.status is CursorAdvanceStatus.ADVANCED:
                                 self.store.remember_event(event)
                                 expected_ack_cursor = advance.cursor.cursor
@@ -202,24 +214,34 @@ class EventObserver:
                                 last_reset = advance
 
                         if max_events is not None and handled_events >= max_events:
-                            return EventObserverResult(handled_events=handled_events, reset=last_reset)
+                            return EventObserverResult(
+                                handled_events=handled_events, reset=last_reset
+                            )
                 finally:
                     await _close_iterator(iterator)
 
             except _CancelledByEvent:
-                return EventObserverResult(handled_events=handled_events, reset=last_reset, cancelled=True)
+                return EventObserverResult(
+                    handled_events=handled_events, reset=last_reset, cancelled=True
+                )
             except StaleCursorError:
                 last_reset = self.store.reset_cursor(cursor, reason="stale_cursor")
             except UnsupportedCursorError:
-                last_reset = self.store.reset_cursor(cursor, reason="unsupported_cursor")
+                last_reset = self.store.reset_cursor(
+                    cursor, reason="unsupported_cursor"
+                )
             except Exception:
                 if reconnects >= max_reconnects:
                     raise
 
             reconnects += 1
             if reconnects > max_reconnects:
-                return EventObserverResult(handled_events=handled_events, reset=last_reset)
+                return EventObserverResult(
+                    handled_events=handled_events, reset=last_reset
+                )
             try:
                 await _maybe_await_with_cancel(self.backoff(reconnects), cancel_event)
             except _CancelledByEvent:
-                return EventObserverResult(handled_events=handled_events, reset=last_reset, cancelled=True)
+                return EventObserverResult(
+                    handled_events=handled_events, reset=last_reset, cancelled=True
+                )

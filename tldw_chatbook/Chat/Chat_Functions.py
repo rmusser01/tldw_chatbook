@@ -12,46 +12,94 @@ Key Features:
 - Character card management, including saving, loading, and updating character data.
 - Chat dictionary processing for keyword-based text replacement and token budget management.
 """
+
 #
 # Imports
 import base64
+import inspect
 import json
 import logging
 import os
-import random
 import re
-import tempfile
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
-import warnings
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional, Union, Literal
+from datetime import datetime
+from typing import List, Dict, Any, Tuple, Optional, Union, Literal, Mapping
+
 #
 # 3rd-party Libraries
 from loguru import logger
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # Configure logger with context
 logger = logger.bind(module="Chat_Functions")
 
 #
 # Local Imports
-from .Chat_Deps import ChatBadRequestError, ChatConfigurationError, ChatAPIError, \
-    ChatProviderError, ChatRateLimitError, ChatAuthenticationError
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError, CharactersRAGDBError
-from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_openai, chat_with_anthropic, chat_with_cohere, \
-    chat_with_groq, chat_with_openrouter, chat_with_deepseek, chat_with_mistral, chat_with_huggingface, chat_with_google, \
-    chat_with_moonshot, chat_with_zai
-from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import chat_with_aphrodite, chat_with_local_llm, chat_with_ollama, \
-    chat_with_kobold, chat_with_llama, chat_with_oobabooga, chat_with_tabbyapi, chat_with_vllm, chat_with_custom_openai, \
-    chat_with_custom_openai_2, chat_with_mlx_lm
-from tldw_chatbook.Utils.Utils import generate_unique_filename, logging
-from tldw_chatbook.Utils.path_validation import validate_path
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.config import load_settings
-from .chat_persistence_service import ChatPersistenceService
+from .Chat_Deps import (  # noqa: E402
+    ChatBadRequestError,
+    ChatConfigurationError,
+    ChatAPIError,
+    ChatProviderError,
+    ChatRateLimitError,
+    ChatAuthenticationError,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
+    CharactersRAGDB,
+    InputError,
+    ConflictError,
+    CharactersRAGDBError,
+)
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import (  # noqa: E402
+    chat_with_openai,
+    chat_with_anthropic,
+    chat_with_cohere,
+    chat_with_groq,
+    chat_with_openrouter,
+    chat_with_deepseek,
+    chat_with_mistral,
+    chat_with_huggingface,
+    chat_with_google,
+    chat_with_moonshot,
+    chat_with_zai,
+)
+from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
+    chat_with_aphrodite,
+    chat_with_local_llm,
+    chat_with_ollama,
+    chat_with_kobold,
+    chat_with_llama,
+    chat_with_oobabooga,
+    chat_with_tabbyapi,
+    chat_with_vllm,
+    chat_with_custom_openai,
+    chat_with_custom_openai_2,
+    chat_with_mlx_lm,
+)
+from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
+from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
+from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
+    is_sensitive_llm_request,
+    safe_llm_error_detail,
+    safe_llm_exception_message,
+)
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
+from tldw_chatbook.config import load_settings  # noqa: E402
+from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
+from .provider_continuation import (  # noqa: E402
+    ProviderContinuationCheckpoint,
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+)
+from .assistant_generation_state import (  # noqa: E402
+    normalize_assistant_generation_state,
+)
+from .thinking_blocks import (  # noqa: E402
+    THINKING_EXPORT_WARNING,
+    normalize_thinking_history_policy,
+    thinking_envelope_to_exchange,
+)
 #
 ####################################################################################################
 #
@@ -61,55 +109,117 @@ from .chat_persistence_service import ChatPersistenceService
 DEFAULT_CHARACTER_NAME = "Default Character"
 DEFAULT_CHARACTER_DESCRIPTION = "This is a default character created by the system."
 
-class ResponseFormat(BaseModel):
-    type: Literal["text", "json_object"] = Field("text", description="Must be one of `text` or `json_object`.")
 
-def approximate_token_count(history):
-    try:
-        total_text = ''
-        for user_msg, bot_msg in history:
-            if user_msg:
-                total_text += user_msg + ' '
-            if bot_msg:
-                total_text += bot_msg + ' '
-        total_tokens = len(total_text.split())
-        return total_tokens
-    except Exception as e:
-        logger.error(f"Error calculating token count: {str(e)}")
-        return 0
+class ResponseFormat(BaseModel):
+    type: Literal["text", "json_object"] = Field(
+        "text", description="Must be one of `text` or `json_object`."
+    )
+
 
 # 1. Dispatch table for handler functions
 API_CALL_HANDLERS = {
-    'openai': chat_with_openai,
-    'anthropic': chat_with_anthropic,
-    'cohere': chat_with_cohere,
-    'groq': chat_with_groq,
-    'openrouter': chat_with_openrouter,
-    'deepseek': chat_with_deepseek,
-    'mistral': chat_with_mistral,
-    'mistralai': chat_with_mistral,  # Handle both 'mistral' and 'MistralAI' API types
-    'google': chat_with_google,
-    'huggingface': chat_with_huggingface,
-    'moonshot': chat_with_moonshot,
-    'zai': chat_with_zai,
-    'llama_cpp': chat_with_llama,
-    'koboldcpp': chat_with_kobold,
-    'oobabooga': chat_with_oobabooga,
-    'tabbyapi': chat_with_tabbyapi,
-    'vllm': chat_with_vllm,
-    'local-llm': chat_with_local_llm,
-    'ollama': chat_with_ollama,
-    'aphrodite': chat_with_aphrodite,
-    'custom-openai-api': chat_with_custom_openai,
-    'custom-openai-api-2': chat_with_custom_openai_2,
-    'mlx_lm': chat_with_mlx_lm,
+    "openai": chat_with_openai,
+    "anthropic": chat_with_anthropic,
+    "cohere": chat_with_cohere,
+    "groq": chat_with_groq,
+    "openrouter": chat_with_openrouter,
+    "deepseek": chat_with_deepseek,
+    "mistral": chat_with_mistral,
+    "mistralai": chat_with_mistral,  # Handle both 'mistral' and 'MistralAI' API types
+    "google": chat_with_google,
+    "huggingface": chat_with_huggingface,
+    "moonshot": chat_with_moonshot,
+    "zai": chat_with_zai,
+    "qwencloud": chat_with_qwencloud,
+    "llama_cpp": chat_with_llama,
+    "koboldcpp": chat_with_kobold,
+    "oobabooga": chat_with_oobabooga,
+    "tabbyapi": chat_with_tabbyapi,
+    "vllm": chat_with_vllm,
+    "local-llm": chat_with_local_llm,
+    "ollama": chat_with_ollama,
+    "aphrodite": chat_with_aphrodite,
+    "custom-openai-api": chat_with_custom_openai,
+    "custom-openai-api-2": chat_with_custom_openai_2,
+    "mlx_lm": chat_with_mlx_lm,
     # Map local_* provider names to their handler functions
-    'local_llamacpp': chat_with_llama,
-    'local_llamafile': chat_with_llama,
-    'local_ollama': chat_with_ollama,
-    'local_vllm': chat_with_vllm,
-    'local_mlx_lm': chat_with_mlx_lm,
+    "local_llamacpp": chat_with_llama,
+    "local_llamafile": chat_with_llama,
+    "local_ollama": chat_with_ollama,
+    "local_vllm": chat_with_vllm,
+    "local_mlx_lm": chat_with_mlx_lm,
 }
+
+EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
+PROVIDERS_WITH_PROVIDER_NAME = frozenset(
+    {
+        "llama_cpp",
+        "vllm",
+        "ollama",
+        "mlx_lm",
+        "vllm_api",
+        "mlx",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_vllm",
+        "local_ollama",
+        "local_mlx_lm",
+    }
+)
+
+
+def _project_instruction_messages_for_handler(
+    endpoint: str, messages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Copy request rows and remove internal origin tags where not consumed."""
+    preserve = endpoint in EPHEMERAL_GROUPING_ENDPOINTS
+    return [
+        dict(message)
+        if preserve or EPHEMERAL_ORIGIN_KEY not in message
+        else {
+            key: value for key, value in message.items() if key != EPHEMERAL_ORIGIN_KEY
+        }
+        for message in messages
+    ]
+
+
+# Keep this list explicit rather than deriving it from ``API_CALL_HANDLERS``.
+# The parity test then forces every newly registered chat handler through the
+# sensitive auxiliary-request audit before it can silently join the dispatch
+# surface.
+SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "cohere",
+        "groq",
+        "openrouter",
+        "deepseek",
+        "mistral",
+        "mistralai",
+        "google",
+        "huggingface",
+        "moonshot",
+        "zai",
+        "qwencloud",
+        "llama_cpp",
+        "koboldcpp",
+        "oobabooga",
+        "tabbyapi",
+        "vllm",
+        "local-llm",
+        "ollama",
+        "aphrodite",
+        "custom-openai-api",
+        "custom-openai-api-2",
+        "mlx_lm",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_ollama",
+        "local_vllm",
+        "local_mlx_lm",
+    }
+)
 """
 A dispatch table mapping API endpoint names (e.g., 'openai') to their
 corresponding handler functions (e.g., `chat_with_openai`). This is used by
@@ -120,541 +230,585 @@ FIXME: The mappings and handlers should be validated for correctness.
 # 2. Parameter mapping for each provider
 # Maps generic chat_api_call param name to provider-specific param name
 PROVIDER_PARAM_MAP = {
-    'openai': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'maxp': 'maxp',
-        'model': 'model',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'user_identifier': 'user',
-        'reasoning_effort': 'reasoning_effort',
-        'reasoning_summary': 'reasoning_summary',
-        'verbosity': 'verbosity',
+    "qwencloud": {
+        "messages_payload": "input_data",
+        "model": "model",
+        "api_key": "api_key",
+        "system_message": "system_message",
+        "temp": "temp",
+        "streaming": "streaming",
+        "topp": "topp",
+        "topk": "topk",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "presence_penalty": "presence_penalty",
+        "response_format": "response_format",
+        "n": "n",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "reasoning_effort": "reasoning_effort",
+        "api_base_url": "api_base_url",
+        "api_mode": "api_mode",
     },
-    'anthropic': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_prompt',
-        'streaming': 'streaming',
-        'model': 'model',
-        'topp': 'topp',
-        'topk': 'topk',
-        'tools': 'tools',
+    "openai": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "maxp": "maxp",
+        "model": "model",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
+        "reasoning_summary": "reasoning_summary",
+        "verbosity": "verbosity",
+    },
+    "anthropic": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "model": "model",
+        "topp": "topp",
+        "topk": "topk",
+        "tools": "tools",
         #'tool_choice': 'tool_choice',
-        'max_tokens': 'max_tokens',  # Anthropic uses max_tokens
-        'stop': 'stop_sequences',  # Anthropic uses stop_sequences
-        'thinking_effort': 'thinking_effort',
-        'thinking_budget_tokens': 'thinking_budget_tokens',
+        "max_tokens": "max_tokens",  # Anthropic uses max_tokens
+        "stop": "stop_sequences",  # Anthropic uses stop_sequences
+        "thinking_effort": "thinking_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
+        # Console-only opt-in for the per-turn cache_control breakpoint.
+        # Deliberately absent from every other provider's map: the loop below
+        # only forwards mapped keys, so non-Anthropic calls drop it silently.
+        "prompt_caching": "prompt_caching",
     },
-    'cohere': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_prompt',
-        'streaming': 'streaming',
-        'model': 'model',
-        'topp': 'topp',
-        'topk': 'topk',
-        'tools': 'tools',
+    "cohere": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "model": "model",
+        "topp": "topp",
+        "topk": "topk",
+        "tools": "tools",
         #'tool_choice': 'tool_choice',
-        'max_tokens': 'max_tokens',
-        'stop': 'stop_sequences',
-        'seed': 'seed',
-        'n': 'num_generations',
-        'frequency_penalty': 'frequency_penalty',
-        'presence_penalty': 'presence_penalty',
+        "max_tokens": "max_tokens",
+        "stop": "stop_sequences",
+        "seed": "seed",
+        "n": "num_generations",
+        "frequency_penalty": "frequency_penalty",
+        "presence_penalty": "presence_penalty",
     },
-    'groq': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'maxp': 'maxp',
-        'model':'model', # Groq also uses top_p, handled by chat_with_groq
-        'max_tokens': 'max_tokens',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "groq": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "maxp": "maxp",
+        "model": "model",  # Groq also uses top_p, handled by chat_with_groq
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "max_tokens": "max_tokens",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
     },
-    'openrouter': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',  # OpenRouter expects min_p not minp
-        'model':'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'user_identifier': 'user',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
+    "openrouter": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",  # OpenRouter expects min_p not minp
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "user_identifier": "user",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
     },
-    'deepseek': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'topp',
-        'model':'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',  # if supported
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "deepseek": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "topp",
+        "model": "model",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",  # if supported
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
     },
-    'mistral': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'topp',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'random_seed',  # Mistral uses random_seed
-        'topk': 'top_k',  # Mistral uses top_k
+    "mistral": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "topp",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "random_seed",  # Mistral uses random_seed
+        "topk": "top_k",  # Mistral uses top_k
     },
-    'mistralai': {  # Same mapping as 'mistral'
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'topp',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'random_seed',  # Mistral uses random_seed
-        'topk': 'top_k',  # Mistral uses top_k
+    "mistralai": {  # Same mapping as 'mistral'
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "topp",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "random_seed",  # Mistral uses random_seed
+        "topk": "top_k",  # Mistral uses top_k
     },
-    'google': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'topp',
-        'topk': 'topk',
-        'tools': 'tools',
+    "google": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "topp",
+        "topk": "topk",
+        "tools": "tools",
         #'tool_choice': 'tool_choice',
-        'model':'model',
-        'max_tokens': 'max_output_tokens',
-        'stop': 'stop_sequences',  # List of strings
-        'n': 'candidate_count',
+        "model": "model",
+        "max_tokens": "max_output_tokens",
+        "stop": "stop_sequences",  # List of strings
+        "n": "candidate_count",
     },
-    'huggingface': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'model':'model',
-        'max_tokens': 'max_tokens',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'seed': 'seed',
-        'stop': 'stop',  # often 'stop_sequences'
+    "huggingface": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "topp": "top_p",
+        "topk": "top_k",
+        "seed": "seed",
+        "stop": "stop",  # often 'stop_sequences'
     },
-    'llama_cpp': { # Has api_url as a positional argument which needs special handling if not None
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
-        'system_message': 'system_prompt',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'model':'model',
+    "llama_cpp": {  # Has api_url as a positional argument which needs special handling if not None
+        "api_key": "api_key",
+        "temp": "temp",  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
+        "messages_payload": "input_data",
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
         #'tools': 'tools',
         #'tool_choice': 'tool_choice',
-        'max_tokens': 'n_predict', # Common for llama.cpp server
-        'seed': 'seed',
-        'stop': 'stop', # list of strings
-        'response_format': 'response_format', # if OpenAI compatible endpoint
-        'logit_bias': 'logit_bias',
-        'n': 'n_probs', # FIXME: n_probs mapping might not be direct.
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
+        "max_tokens": "n_predict",  # Common for llama.cpp server
+        "seed": "seed",
+        "stop": "stop",  # list of strings
+        "response_format": "response_format",  # if OpenAI compatible endpoint
+        "logit_bias": "logit_bias",
+        "n": "n_probs",  # FIXME: n_probs mapping might not be direct.
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'koboldcpp': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'llm_fixed_tokens_kobold': 'fixed_tokens_mode', # Added
-        'prompt': 'custom_prompt_input',
-        'temperature': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'model':'model',
-        'max_tokens': 'max_length',  # or 'max_context_length'
-        'stop': 'stop_sequence',  # Often a list
-        'n': 'num_responses',
-        'seed': 'seed',
+    "koboldcpp": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "llm_fixed_tokens_kobold": "fixed_tokens_mode",  # Added
+        "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "model": "model",
+        "max_tokens": "max_length",  # or 'max_context_length'
+        "stop": "stop_sequence",  # Often a list
+        "n": "num_responses",
+        "seed": "seed",
     },
-    'oobabooga': { # api_url also a consideration like llama.cpp
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
-        'system_message': 'system_prompt', # often part of messages or specific param
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'model':'model',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'max_tokens': 'max_tokens', # or 'max_new_tokens'
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'user_identifier': 'user',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "oobabooga": {  # api_url also a consideration like llama.cpp
+        "api_key": "api_key",
+        "temp": "temp",  # audit task-286: was a dead 'temperature' key (temp silently dropped); handler takes temp
+        "messages_payload": "input_data",
+        "system_message": "system_prompt",  # often part of messages or specific param
+        "streaming": "streaming",
+        "topp": "top_p",
+        "model": "model",
+        "topk": "top_k",
+        "minp": "min_p",
+        "max_tokens": "max_tokens",  # or 'max_new_tokens'
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "user_identifier": "user_identifier",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
     },
-    'tabbyapi': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_input',
-        'temp': 'temperature',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'model':'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
+    "tabbyapi": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
     },
-    'vllm': { # vllm_api_url consideration
-                'api_key': 'api_key', 'messages_payload': 'input_data', 'prompt': 'custom_prompt_input',
-        'temp': 'temperature', 'system_message': 'system_prompt', 'streaming': 'streaming',
-        'topp': 'top_p', 'topk': 'top_k', 'minp': 'min_p', 'model': 'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
-        'user_identifier': 'user',
+    "vllm": {  # vllm_api_url consideration
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temperature",
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'local-llm': {
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temperature',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'model':'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
+    "local-llm": {
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'ollama': { # api_url consideration
-        'api_key': 'api_key', # api_key is not used by ollama directly, url is more important
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt', # This is 'prompt' for generate, 'messages' for chat
-        'temp': 'temperature',
-        'system_message': 'system_message', # Part of request body
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'model': 'model',
-        'max_tokens': 'num_predict', # For generate endpoint, chat might be different
-        'seed': 'seed',
-        'stop': 'stop', # list of strings
-        'response_format': 'format', # 'json' string
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "ollama": {  # api_url consideration
+        "api_key": "api_key",  # api_key is not used by ollama directly, url is more important
+        "messages_payload": "input_data",
+        "temp": "temperature",
+        "system_message": "system_message",  # Part of request body
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "model": "model",
+        "max_tokens": "num_predict",  # For generate endpoint, chat might be different
+        "seed": "seed",
+        "stop": "stop",  # list of strings
+        "response_format": "format",  # 'json' string
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
     },
-    'aphrodite': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temp': 'temperature',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'user_identifier': 'user',
+    "aphrodite": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temperature",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "user_identifier": "user_identifier",
     },
-    'custom-openai-api': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'maxp': 'maxp',
-        'minp':'minp',
-        'topk':'topk',
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'user_identifier': 'user',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
+    "custom-openai-api": {
+        "api_key": "api_key",
+        "api_key_resolved": "api_key_resolved",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "maxp": "maxp",
+        "minp": "minp",
+        "topk": "topk",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "user_identifier": "user_identifier",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'custom-openai-api-2': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'user_identifier': 'user',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
+    "custom-openai-api-2": {
+        "api_key": "api_key",
+        "api_key_resolved": "api_key_resolved",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "user_identifier": "user_identifier",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'mlx_lm': {
-        'api_key': 'api_key', # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg', # This would be caught by **kwargs in chat_with_mlx_lm if passed
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'model': 'model', # In chat_with_mlx_lm, 'model' parameter is the model_path
-        'max_tokens': 'max_tokens',
+    "mlx_lm": {
+        "api_key": "api_key",  # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "model": "model",  # In chat_with_mlx_lm, 'model' parameter is the model_path
+        "max_tokens": "max_tokens",
         # chat_api_call uses 'topp', 'topk', 'minp' as its generic names.
         # chat_with_mlx_lm (via _chat_with_openai_compatible_local_server) expects 'top_p', 'top_k', 'min_p'.
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'stop': 'stop',
-        'seed': 'seed',
-        'response_format': 'response_format',
-        'n': 'n',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logit_bias': 'logit_bias',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
-        'user_identifier': 'user_identifier',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "stop": "stop",
+        "seed": "seed",
+        "response_format": "response_format",
+        "n": "n",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logit_bias": "logit_bias",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "user_identifier": "user_identifier",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
         # api_url is a direct kwarg to chat_with_mlx_lm, not typically mapped from these generic chat_api_call args.
         # It's usually derived from config within the function itself or passed via UI directly to server start.
     },
     # Local provider mappings (same as their non-local counterparts)
-    'local_llamacpp': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
-        'system_message': 'system_prompt',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'model':'model',
-        'max_tokens': 'n_predict',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'logit_bias': 'logit_bias',
-        'n': 'n_probs',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "local_llamacpp": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
+        "max_tokens": "n_predict",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "logit_bias": "logit_bias",
+        "n": "n_probs",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'local_llamafile': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temperature': 'temperature',
-        'system_message': 'system_prompt',
-        'streaming': 'streaming',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'model':'model',
-        'max_tokens': 'n_predict',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'logit_bias': 'logit_bias',
-        'n': 'n_probs',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "local_llamafile": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",  # audit task-286: generic name is 'temp'; the 'temperature' key was dead
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "model": "model",
+        "max_tokens": "n_predict",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "logit_bias": "logit_bias",
+        "n": "n_probs",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'local_ollama': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt',
-        'temp': 'temperature',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'model': 'model',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'max_tokens': 'num_predict',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'format',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
+    "local_ollama": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temperature",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "model": "model",
+        "topp": "top_p",
+        "topk": "top_k",
+        "max_tokens": "num_predict",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "format",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
     },
-    'local_vllm': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_input',
-        'temp': 'temperature',
-        'system_message': 'system_prompt',
-        'streaming': 'streaming',
-        'model': 'model',
-        'topk': 'top_k',
-        'topp': 'top_p',
-        'minp': 'min_p',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'logit_bias': 'logit_bias',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logprobs': 'logprobs',
-        'user_identifier': 'user_identifier',
+    "local_vllm": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temperature",
+        "system_message": "system_prompt",
+        "streaming": "streaming",
+        "model": "model",
+        "topk": "top_k",
+        "topp": "top_p",
+        "minp": "min_p",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "logit_bias": "logit_bias",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logprobs": "logprobs",
+        "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'local_mlx_lm': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'topp': 'top_p',
-        'topk': 'top_k',
-        'minp': 'min_p',
-        'stop': 'stop',
-        'seed': 'seed',
-        'response_format': 'response_format',
-        'n': 'n',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'logit_bias': 'logit_bias',
-        'logprobs': 'logprobs',
-        'top_logprobs': 'top_logprobs',
-        'user_identifier': 'user_identifier',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
+    "local_mlx_lm": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "topp": "top_p",
+        "topk": "top_k",
+        "minp": "min_p",
+        "stop": "stop",
+        "seed": "seed",
+        "response_format": "response_format",
+        "n": "n",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "logit_bias": "logit_bias",
+        "logprobs": "logprobs",
+        "top_logprobs": "top_logprobs",
+        "user_identifier": "user_identifier",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
-    'moonshot': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'maxp': 'maxp',
-        'model': 'model',
-        'tools': 'tools',
-        'tool_choice': 'tool_choice',
-        'presence_penalty': 'presence_penalty',
-        'frequency_penalty': 'frequency_penalty',
-        'max_tokens': 'max_tokens',
-        'seed': 'seed',
-        'stop': 'stop',
-        'response_format': 'response_format',
-        'n': 'n',
-        'user_identifier': 'user',
+    "moonshot": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "maxp": "maxp",
+        "model": "model",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "presence_penalty": "presence_penalty",
+        "frequency_penalty": "frequency_penalty",
+        "max_tokens": "max_tokens",
+        "seed": "seed",
+        "stop": "stop",
+        "response_format": "response_format",
+        "n": "n",
+        "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
+        "provider_continuations": "provider_continuations",
+        "request_timeout": "request_timeout",
+        "request_retries": "request_retries",
+        "request_retry_delay": "request_retry_delay",
     },
-    'zai': {
-        'api_key': 'api_key',
-        'messages_payload': 'input_data',
-        'prompt': 'custom_prompt_arg',
-        'temp': 'temp',
-        'system_message': 'system_message',
-        'streaming': 'streaming',
-        'maxp': 'maxp',  # maps to top_p
-        'model': 'model',
-        'max_tokens': 'max_tokens',
-        'tools': 'tools',
+    "zai": {
+        "api_key": "api_key",
+        "messages_payload": "input_data",
+        "temp": "temp",
+        "system_message": "system_message",
+        "streaming": "streaming",
+        "maxp": "maxp",  # maps to top_p
+        "model": "model",
+        "max_tokens": "max_tokens",
+        "tools": "tools",
+        "tool_choice": "tool_choice",
+        "stop": "stop",
+        "response_format": "response_format",
+        "user_identifier": "user",
+        "reasoning_effort": "reasoning_effort",
+        "provider_continuations": "provider_continuations",
+        "request_timeout": "request_timeout",
+        "request_retries": "request_retries",
+        "request_retry_delay": "request_retry_delay",
     },
     # Add other providers here
 }
@@ -665,18 +819,106 @@ consistent interface while adapting to the idiosyncrasies of different providers
 FIXME: The mappings should be validated for correctness and completeness for each provider.
 """
 
+
+def extract_response_content(resp: Any) -> str:
+    """Extract the assistant text from a non-streaming ``chat_api_call`` result.
+
+    ``chat_api_call`` returns the provider handler's full response. For the
+    common OpenAI-shaped dict that is ``resp["choices"][0]["message"]["content"]``;
+    some paths return a flat ``{"content": ...}``. Returns "" for any missing/
+    malformed/None content. Never raises.
+
+    Args:
+        resp: A ``chat_api_call`` non-streaming return value (dict), or any value.
+
+    Returns:
+        The assistant text as a str, or "" when it cannot be found or is not a string.
+    """
+    if not isinstance(resp, dict):
+        return resp if isinstance(resp, str) else ""
+    choices = resp.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    message = first.get("message") if isinstance(first, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None:
+        content = resp.get("content")
+    if not content:
+        return ""
+    return content if isinstance(content, str) else str(content)
+
+
+def safe_endpoint_for_display(api_endpoint: Any) -> str:
+    """Return an endpoint string that is safe to log, label, or raise.
+
+    TASK-17165. `api_endpoint` is caller-supplied text, and a mis-ordered
+    caller can put a CREDENTIAL there -- `BaseReranker._call_llm_impl` does
+    exactly that today (TASK-17065), which is how an API key reached an
+    ERROR log line, an INFO line on every call, and a metrics label.
+
+    The rule is an ALLOWLIST, not a blocklist: a registered endpoint is safe
+    by definition and prints verbatim, so real diagnostics stay readable;
+    anything else is unknown-provenance text and is elided to its length.
+    Pattern-matching key SHAPES would miss any credential that does not look
+    like one, and this sink cannot know what it was handed.
+
+    Args:
+        api_endpoint: The raw endpoint argument, of any type.
+
+    Returns:
+        The lowercased endpoint when registered, else a redaction marker
+        carrying only its length.
+    """
+    text = str(api_endpoint or "")
+    lowered = text.lower()
+    if lowered in API_CALL_HANDLERS:
+        return lowered
+    return f"<unrecognised endpoint, {len(text)} chars, redacted>"
+
+
+#: The one label an unrecognised endpoint may contribute to metrics.
+UNRECOGNISED_ENDPOINT_LABEL = "<unrecognised>"
+
+
+def safe_endpoint_for_metrics(api_endpoint: Any) -> str:
+    """Return a BOUNDED label for the endpoint dimension.
+
+    TASK-17165 redacted the endpoint's VALUE from logs, labels and errors,
+    and Qodo (PR #1759) caught what that left behind: the redaction marker
+    embeds ``{len(text)} chars``, so N unrecognised endpoints of N different
+    lengths still mint N distinct metric series. Redacting the value is not
+    the same as bounding the cardinality, and this label lands in exported
+    metrics where unbounded series cost memory and scrape size.
+
+    So metrics and diagnostics diverge deliberately: a registered endpoint
+    labels itself (a closed set, one series each), and everything else
+    collapses to a single constant. The length stays in the LOG line, where
+    it tells an operator what shape of value arrived and costs nothing.
+
+    Args:
+        api_endpoint: The raw endpoint argument, of any type.
+
+    Returns:
+        The lowercased endpoint when registered, else
+        ``UNRECOGNISED_ENDPOINT_LABEL``.
+    """
+    lowered = str(api_endpoint or "").lower()
+    return lowered if lowered in API_CALL_HANDLERS else UNRECOGNISED_ENDPOINT_LABEL
+
+
 def chat_api_call(
     api_endpoint: str,
-    messages_payload: List[Dict[str, Any]], # CHANGED from input_data, prompt
+    messages_payload: List[Dict[str, Any]],  # CHANGED from input_data, prompt
     api_key: Optional[str] = None,
     temp: Optional[float] = None,
-    system_message: Optional[str] = None, # Still passed separately, some providers might use it, others expect it in messages_payload
+    system_message: Optional[
+        str
+    ] = None,  # Still passed separately, some providers might use it, others expect it in messages_payload
     streaming: Optional[bool] = None,
     minp: Optional[float] = None,
-    maxp: Optional[float] = None, # Often maps to top_p
+    maxp: Optional[float] = None,  # Often maps to top_p
     model: Optional[str] = None,
     topk: Optional[int] = None,
-    topp: Optional[float] = None, # Often maps to top_p
+    topp: Optional[float] = None,  # Often maps to top_p
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     logit_bias: Optional[Dict[str, float]] = None,
@@ -687,16 +929,29 @@ def chat_api_call(
     max_tokens: Optional[int] = None,
     seed: Optional[int] = None,
     stop: Optional[Union[str, List[str]]] = None,
-    response_format: Optional[Dict[str, str]] = None,  # Expects {'type': 'text' | 'json_object'}
+    response_format: Optional[
+        Dict[str, str]
+    ] = None,  # Expects {'type': 'text' | 'json_object'}
     n: Optional[int] = None,
-    user_identifier: Optional[str] = None,  # Renamed from 'user' to avoid conflict with 'user' role in messages
+    user_identifier: Optional[
+        str
+    ] = None,  # Renamed from 'user' to avoid conflict with 'user' role in messages
     reasoning_effort: Optional[str] = None,
     reasoning_summary: Optional[str] = None,
     verbosity: Optional[str] = None,
     thinking_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
-    llm_fixed_tokens_kobold: Optional[bool] = False # Added
-    ):
+    prompt_caching: Optional[bool] = None,
+    llm_fixed_tokens_kobold: Optional[bool] = False,  # Added
+    api_base_url: Optional[str] = None,
+    api_mode: Optional[str] = None,
+    provider_continuations: Tuple[ProviderContinuationCheckpoint, ...] = (),
+    request_timeout: Optional[float] = None,
+    request_retries: Optional[int] = None,
+    request_retry_delay: Optional[float] = None,
+    *,
+    api_key_resolved: bool | None = None,
+):
     """
     Acts as a unified dispatcher to call various LLM API providers.
 
@@ -709,7 +964,12 @@ def chat_api_call(
         api_endpoint: The identifier for the target LLM provider (e.g., "openai", "anthropic").
         messages_payload: A list of message objects (OpenAI format: `{'role': ..., 'content': ...}`)
                           representing the conversation history and current user message.
+        api_base_url: Optional request-pinned provider endpoint override.
+        api_mode: Optional provider-specific external API mode. Only mapped
+            providers receive this value.
         api_key: The API key for the specified provider.
+        api_key_resolved: Whether a trusted caller made the final credential
+            decision, including an explicit keyless decision.
         temp: Temperature for sampling, controlling randomness.
         system_message: An optional system-level instruction for the LLM. How this is
                         used depends on the provider; some prepend it to messages, others
@@ -738,6 +998,10 @@ def chat_api_call(
         verbosity: Provider-specific response verbosity setting for OpenAI-compatible reasoning models.
         thinking_effort: Provider-specific thinking level for Anthropic-style thinking models.
         thinking_budget_tokens: Optional thinking token budget for Anthropic-style thinking models.
+        prompt_caching: Anthropic-only opt-in for the per-turn `cache_control`
+            breakpoint (multi-turn callers such as the Console gateway). Only
+            `PROVIDER_PARAM_MAP["anthropic"]` maps it, so it is silently
+            dropped for every other provider.
 
     Returns:
         The LLM's response. This can be a string for non-streaming responses or
@@ -757,148 +1021,390 @@ def chat_api_call(
         :rtype: str | dict | Generator[str, Any, None]
     """
     endpoint_lower = api_endpoint.lower()
-    logger.info(f"Chat API Call - Routing to endpoint: {endpoint_lower}")
-    log_counter("chat_api_call_attempt", labels={"api_endpoint": endpoint_lower})
+    # TASK-17165: never echo the raw value -- these two fire on EVERY call,
+    # not just failures, and the label additionally lands in exported
+    # metrics (where it is also an unbounded-cardinality hazard).
+    endpoint_display = safe_endpoint_for_display(api_endpoint)
+    logger.info(f"Chat API Call - Routing to endpoint: {endpoint_display}")
+    # The LABEL is bounded (Qodo PR-1759); the log line above keeps the
+    # length. Redacting a value and bounding a dimension are different jobs.
+    log_counter(
+        "chat_api_call_attempt",
+        labels={"api_endpoint": safe_endpoint_for_metrics(api_endpoint)},
+    )
     start_time = time.time()
 
     handler = API_CALL_HANDLERS.get(endpoint_lower)
     if not handler:
-        logger.error(f"Unsupported API endpoint requested: {api_endpoint}")
-        raise ValueError(f"Unsupported API endpoint: {api_endpoint}")
+        logger.error(f"Unsupported API endpoint requested: {endpoint_display}")
+        # The message lists what IS valid instead of echoing what was passed:
+        # more useful for a genuine typo, and safe when the value is a
+        # credential (TASK-17165).
+        raise ValueError(
+            f"Unsupported API endpoint: {endpoint_display}. "
+            f"Valid endpoints: {', '.join(sorted(API_CALL_HANDLERS))}"
+        )
 
-    params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
-    call_kwargs = {}
+    messages_payload = _project_instruction_messages_for_handler(
+        endpoint_lower, messages_payload
+    )
 
-    # Construct kwargs for the handler function based on the map
-    # This requires careful mapping and ensuring the handler functions are adapted.
-
-    # Generic parameters available from chat_api_call signature
+    # Generic parameters available from chat_api_call, derived from the
+    # function's own signature so the dispatcher can never drift from it —
+    # a hand-maintained dict here previously allowed map keys that existed
+    # on the signature but were still silently dropped (PR #668 review).
     available_generic_params = {
-        'api_key': api_key,
-        'messages_payload': messages_payload, # This is the core change
-        'temp': temp,
-        'system_message': system_message,
-        'streaming': streaming,
-        'minp': minp,
-        'maxp': maxp, # Will be mapped to top_p by some providers
-        'model': model,
-        'topk': topk,
-        'topp': topp, # Will be mapped to top_p by some providers
-        'logprobs': logprobs,
-        'top_logprobs': top_logprobs,
-        'logit_bias': logit_bias,
-        'presence_penalty': presence_penalty,
-        'frequency_penalty': frequency_penalty,
-        'tools': tools,
-        'tool_choice': tool_choice,
-        'max_tokens': max_tokens,
-        'seed': seed,
-        'stop': stop,
-        'response_format': response_format,
-        'n': n,
-        'user_identifier': user_identifier,
-        'reasoning_effort': reasoning_effort,
-        'reasoning_summary': reasoning_summary,
-        'verbosity': verbosity,
-        'thinking_effort': thinking_effort,
-        'thinking_budget_tokens': thinking_budget_tokens,
-        'llm_fixed_tokens_kobold': llm_fixed_tokens_kobold # Added
+        name: value
+        for name, value in locals().items()
+        if name in _CHAT_API_GENERIC_PARAMS
     }
+    call_kwargs = project_chat_handler_kwargs(endpoint_lower, available_generic_params)
+    params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
 
-    for generic_param_name, provider_param_name in params_map.items():
-        if generic_param_name in available_generic_params and available_generic_params[generic_param_name] is not None:
-            call_kwargs[provider_param_name] = available_generic_params[generic_param_name]
-        if generic_param_name == 'prompt' and endpoint_lower == 'cohere':
-             pass # Specific handling for Cohere's prompt is assumed to be within chat_with_cohere
-
-    if call_kwargs.get(params_map.get('api_key', 'api_key')):
-         logger.info("Debug - Chat API Call - API key provided.")
-
-    # Add provider_name to kwargs only for handlers that support it
-    # Some local providers use this for dynamic configuration loading
-    PROVIDERS_WITH_PROVIDER_NAME = {
-        'llama_cpp', 'vllm', 'ollama', 'mlx_lm', 'vllm_api', 'mlx',
-        'local_llamacpp', 'local_llamafile', 'local_vllm', 'local_ollama', 'local_mlx_lm'
-    }
-    
-    if endpoint_lower in PROVIDERS_WITH_PROVIDER_NAME:
-        call_kwargs['provider_name'] = endpoint_lower
+    if call_kwargs.get(params_map.get("api_key", "api_key")):
+        logger.info("Debug - Chat API Call - API key provided.")
 
     try:
-        logger.debug(f"Calling handler {handler.__name__} with kwargs: { {k: (type(v) if k != params_map.get('api_key') else 'key_hidden') for k,v in call_kwargs.items()} }")
+        logger.debug(
+            f"Calling handler {handler.__name__} with kwargs: { {k: (type(v) if k != params_map.get('api_key') else 'key_hidden') for k, v in call_kwargs.items()} }"
+        )
         response = handler(**call_kwargs)
 
         call_duration = time.time() - start_time
-        log_histogram("chat_api_call_duration", call_duration, labels={"api_endpoint": endpoint_lower})
+        log_histogram(
+            "chat_api_call_duration",
+            call_duration,
+            labels={"api_endpoint": endpoint_lower},
+        )
         log_counter("chat_api_call_success", labels={"api_endpoint": endpoint_lower})
 
+        # Provider handlers disagree on return shape: cloud and local
+        # OpenAI-compatible handlers return the raw normalized response DICT
+        # (tool_calls, finish_reason, usage -- the Console gateway parses
+        # all of these), so chat_api_call must pass dicts through UNCHANGED
+        # (an earlier normalization to content strings here broke the
+        # Console's tool/continuation paths). String-expecting consumers
+        # extract content via ``chat_reply_text`` (task-16331 correction).
+        # Usage recording reads the dict without altering it.
+        if isinstance(response, dict):
+            choices = response.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str):
+                    usage = response.get("usage")
+                    if not isinstance(usage, dict):
+                        usage = {}  # absent usage -> estimates path, not an AttributeError
+                    try:
+                        from .usage_recorder import active_recorder
+
+                        recorder = active_recorder()
+                        # Providers normalize to the OpenAI chat shape but
+                        # may keep their own usage field names (Anthropic:
+                        # input_tokens/output_tokens); OpenAI names win when
+                        # both are present (task-16335). Exact counts when
+                        # the provider reported usage, estimates otherwise.
+                        usage_prompt = usage.get("prompt_tokens")
+                        if usage_prompt is None:
+                            usage_prompt = usage.get("input_tokens")
+                        usage_completion = usage.get("completion_tokens")
+                        if usage_completion is None:
+                            usage_completion = usage.get("output_tokens")
+                        if (
+                            recorder is not None
+                            and isinstance(usage, dict)
+                            and (
+                                usage_prompt is not None or usage_completion is not None
+                            )
+                        ):
+                            recorder.record_usage(
+                                prompt_tokens=usage_prompt,
+                                completion_tokens=usage_completion,
+                            )
+                        elif recorder is not None:
+                            recorder.record_exchange(
+                                prompt_text=_estimate_prompt_text(
+                                    messages_payload, system_message
+                                ),
+                                completion_text=content,
+                            )
+                    except Exception:  # noqa: BLE001 - accounting must never break a call
+                        logger.debug("usage recording skipped", exc_info=True)
+
         if isinstance(response, str):
-             logger.debug(f"Debug - Chat API Call - Response (first 500 chars): {response[:500]}...")
-        elif hasattr(response, '__iter__') and not isinstance(response, (str, bytes, dict)):
-             logger.debug(f"Debug - Chat API Call - Response: Streaming Generator")
+            logger.debug(
+                f"Debug - Chat API Call - Response type=str; length={len(response)}"
+            )
+            # task-16329: token-usage plumbing. When a usage scope is active
+            # (research budget ledger), record estimated prompt/completion
+            # tokens for this exchange. One contextvar get when no scope is
+            # active -- zero behavior change for every other caller.
+            try:
+                from .usage_recorder import active_recorder
+
+                recorder = active_recorder()
+                if recorder is not None:
+                    recorder.record_exchange(
+                        prompt_text=_estimate_prompt_text(
+                            messages_payload, system_message
+                        ),
+                        completion_text=response,
+                    )
+            except Exception:  # noqa: BLE001 - accounting must never break a call
+                logger.debug("usage recording skipped", exc_info=True)
+        elif hasattr(response, "__iter__") and not isinstance(
+            response, (str, bytes, dict)
+        ):
+            logger.debug("Debug - Chat API Call - Response: Streaming Generator")
         else:
-             logger.debug(f"Debug - Chat API Call - Response Type: {type(response)}")
+            logger.debug(f"Debug - Chat API Call - Response Type: {type(response)}")
         return response
 
     # --- Exception Mapping (copied from your original, ensure it's still relevant) ---
     except requests.exceptions.HTTPError as e:
-        status_code = getattr(e.response, 'status_code', 500)
-        error_text = getattr(e.response, 'text', str(e))
-        log_message_base = f"{endpoint_lower} API call failed with status {status_code}"
-
-        # Log safely first
-        try:
-            logger.opt(exception=False).error("{}. Details: {}", log_message_base, error_text[:500])
-        except Exception as log_e:
-            logger.error(f"Error during logging HTTPError details: {log_e}")
-
-        detail_message = f"API call to {endpoint_lower} failed with status {status_code}. Response: {error_text[:200]}"
+        status_code = getattr(e.response, "status_code", 500)
+        raw_error_text = getattr(e.response, "text", None)
+        if raw_error_text is None:
+            raw_error_text = safe_llm_exception_message(e)
+        error_text = str(safe_llm_error_detail(raw_error_text))
+        logger.error(
+            "{} API call failed; status={}; reason=http_error",
+            endpoint_lower,
+            status_code,
+        )
         if status_code == 401:
-            raise ChatAuthenticationError(provider=endpoint_lower,
-                                          message=f"Authentication failed for {endpoint_lower}. Check API key. Detail: {error_text[:200]}")
+            raise ChatAuthenticationError(
+                provider=endpoint_lower,
+                message=f"Authentication failed for {endpoint_lower}. Check API key. Detail: {error_text[:200]}",
+            )
         elif status_code == 429:
-            raise ChatRateLimitError(provider=endpoint_lower,
-                                     message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}")
+            # TASK-25901 AC#2: carry the provider's own Retry-After when it is
+            # a usable number of seconds; the retry backoff honours it.
+            retry_after_header = None
+            try:
+                raw_retry_after = getattr(e.response, "headers", {}).get(
+                    "Retry-After"
+                )
+                if raw_retry_after is not None:
+                    retry_after_header = float(str(raw_retry_after).strip())
+            except (TypeError, ValueError):
+                retry_after_header = None
+            raise ChatRateLimitError(
+                provider=endpoint_lower,
+                message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}",
+                retry_after=retry_after_header,
+            )
         elif 400 <= status_code < 500:
-            raise ChatBadRequestError(provider=endpoint_lower,
-                                      message=f"Bad request to {endpoint_lower} (Status {status_code}). Detail: {error_text[:200]}")
+            # Carry the REAL status: 402/403 mean the money or quota is gone,
+            # which the fallback chain treats differently from a malformed
+            # request (TASK-25902 review C3c). Type unchanged for catchers.
+            raise ChatBadRequestError(
+                provider=endpoint_lower,
+                message=f"Bad request to {endpoint_lower} (Status {status_code}). Detail: {error_text[:200]}",
+                status_code=status_code,
+            )
         elif 500 <= status_code < 600:
-            raise ChatProviderError(provider=endpoint_lower,
-                                    message=f"Error from {endpoint_lower} server (Status {status_code}). Detail: {error_text[:200]}",
-                                    status_code=status_code)
+            raise ChatProviderError(
+                provider=endpoint_lower,
+                message=f"Error from {endpoint_lower} server (Status {status_code}). Detail: {error_text[:200]}",
+                status_code=status_code,
+            )
         else:
-            raise ChatAPIError(provider=endpoint_lower,
-                               message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
-                               status_code=status_code)
+            raise ChatAPIError(
+                provider=endpoint_lower,
+                message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
+                status_code=status_code,
+            )
     except requests.exceptions.RequestException as e:
-        logger.opt(exception=False).error(f"Network error connecting to {endpoint_lower}: {e}")
-        raise ChatProviderError(provider=endpoint_lower, message=f"Network error: {e}", status_code=504)
-    except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError, ChatConfigurationError, ChatProviderError,
-            ChatAPIError) as e_chat_direct:
+        logger.error(
+            "Network error connecting to {}; error_type={}",
+            endpoint_lower,
+            type(e).__name__,
+        )
+        error_detail = safe_llm_exception_message(e)
+        raise ChatProviderError(
+            provider=endpoint_lower,
+            message=f"Network error: {error_detail}",
+            status_code=504,
+        )
+    except (
+        ChatAuthenticationError,
+        ChatRateLimitError,
+        ChatBadRequestError,
+        ChatConfigurationError,
+        ChatProviderError,
+        ChatAPIError,
+    ) as e_chat_direct:
         # This catches cases where the handler itself has already processed an error
         # (e.g. non-HTTP error, or it decided to raise a specific Chat*Error type)
         # and raises one of our custom exceptions.
         status_code = getattr(e_chat_direct, "status_code", 0)
-        logger.opt(exception=isinstance(status_code, int) and status_code >= 500).error(
-            "Handler for {} directly raised: {} - {}",
+        logger.error(
+            "Handler for {} directly raised; error_type={}; status={}",
             endpoint_lower,
             type(e_chat_direct).__name__,
-            e_chat_direct.message,
+            status_code,
         )
+        if is_sensitive_llm_request():
+            safe_message = f"{type(e_chat_direct).__name__} from {endpoint_lower}."
+            if isinstance(e_chat_direct, ChatAuthenticationError):
+                raise ChatAuthenticationError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatRateLimitError):
+                raise ChatRateLimitError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatBadRequestError):
+                raise ChatBadRequestError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatConfigurationError):
+                raise ChatConfigurationError(
+                    provider=endpoint_lower, message=safe_message
+                ) from None
+            if isinstance(e_chat_direct, ChatProviderError):
+                raise ChatProviderError(
+                    provider=endpoint_lower,
+                    message=safe_message,
+                    status_code=status_code,
+                ) from None
+            raise ChatAPIError(
+                provider=endpoint_lower,
+                message=safe_message,
+                status_code=status_code,
+            ) from None
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
-        logger.opt(exception=True).error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}")
+        logger.error(
+            "Chat API call setup failed for {}; error_type={}; "
+            "reason=invalid_parameter",
+            endpoint_lower,
+            type(e).__name__,
+        )
         error_type = "Configuration/Parameter Error"
         if "Unsupported API endpoint" in str(e):
-            raise ChatConfigurationError(provider=endpoint_lower, message=f"Unsupported API endpoint: {endpoint_lower}")
+            safe_endpoint = safe_endpoint_for_display(endpoint_lower)
+            raise ChatConfigurationError(
+                provider=safe_endpoint,
+                message=f"Unsupported API endpoint: {safe_endpoint}",
+            )
         else:
-            raise ChatBadRequestError(provider=endpoint_lower, message=f"{error_type} for {endpoint_lower}: {e}")
+            error_detail = safe_llm_exception_message(e)
+            raise ChatBadRequestError(
+                provider=endpoint_lower,
+                message=f"{error_type} for {endpoint_lower}: {error_detail}",
+            )
     except Exception as e:
-        logger.exception(
-            f"Unexpected internal error in chat_api_call for {endpoint_lower}: {e}")
-        raise ChatAPIError(provider=endpoint_lower,
-                           message=f"An unexpected internal error occurred in chat_api_call for {endpoint_lower}: {str(e)}",
-                           status_code=500)
+        logger.error(
+            "Unexpected internal error in chat_api_call for {}; error_type={}",
+            endpoint_lower,
+            type(e).__name__,
+        )
+        error_detail = safe_llm_exception_message(e)
+        raise ChatAPIError(
+            provider=endpoint_lower,
+            message=(
+                "An unexpected internal error occurred in chat_api_call for "
+                f"{endpoint_lower}: {error_detail}"
+            ),
+            status_code=500,
+        )
+
+
+def _estimate_prompt_text(messages_payload: Any, system_message: Optional[str]) -> str:
+    """Text used for ESTIMATED prompt tokens (task-16814): the system
+    message is part of the prompt and must count; multimodal content lists
+    contribute only their text parts so base64 image payloads cannot
+    explode the estimate."""
+    parts: list = []
+    if system_message:
+        parts.append(str(system_message))
+    for message in messages_payload or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+    return "\n".join(part for part in parts if part)
+
+
+def chat_reply_text(response: Any) -> str:
+    """Best-effort assistant text out of one ``chat_api_call`` reply
+    (task-16331 correction).
+
+    Provider handlers disagree on shape: handlers returning strings pass
+    through; handlers returning OpenAI-shaped response dicts (cloud AND
+    local OpenAI-compatible providers -- tool_calls/finish_reason/usage for
+    the Console gateway) extract ``choices[0].message.content`` (or the
+    legacy ``choices[0].text``). Anything unparseable yields "" so string
+    consumers' existing falsy/fallback handling applies -- never a dict
+    that would silently fail every downstream parse.
+    """
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content
+            text = choices[0].get("text")
+            if isinstance(text, str):
+                return text
+    return ""
+
+
+_CHAT_API_GENERIC_PARAMS = frozenset(inspect.signature(chat_api_call).parameters) - {
+    "api_endpoint"
+}
+"""The dispatcher's generic parameter names — the single source of truth is
+``chat_api_call``'s own signature (see ``available_generic_params``)."""
+
+
+def project_chat_handler_kwargs(
+    api_endpoint: str,
+    generic_values: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Project generic dispatcher values through Chatbook-owned provider rules."""
+
+    endpoint = api_endpoint.lower()
+    params_map = PROVIDER_PARAM_MAP.get(endpoint, {})
+    bound = inspect.signature(chat_api_call).bind_partial(
+        api_endpoint=endpoint, **dict(generic_values)
+    )
+    bound.apply_defaults()
+    available = {
+        name: value
+        for name, value in bound.arguments.items()
+        if name in _CHAT_API_GENERIC_PARAMS
+    }
+    messages = available.get("messages_payload")
+    if not isinstance(messages, list):
+        raise TypeError("messages_payload must be a list")
+    available["messages_payload"] = _project_instruction_messages_for_handler(
+        endpoint, messages
+    )
+    projected = {
+        provider_name: available[generic_name]
+        for generic_name, provider_name in params_map.items()
+        if generic_name in available and available[generic_name] is not None
+    }
+    if available.get("api_base_url") is not None:
+        projected["api_base_url"] = available["api_base_url"]
+    if endpoint in PROVIDERS_WITH_PROVIDER_NAME:
+        projected["provider_name"] = endpoint
+    return projected
 
 
 def chat(
@@ -917,7 +1423,7 @@ def chat(
     model: Optional[str] = None,
     topp: Optional[float] = None,
     topk: Optional[int] = None,
-    chatdict_entries: Optional[List[Any]] = None, # Should be List[ChatDictionary]
+    chatdict_entries: Optional[List[Any]] = None,  # Should be List[ChatDictionary]
     max_tokens: int = 500,
     strategy: str = "sorted_evenly",
     current_image_input: Optional[Dict[str, str]] = None,
@@ -935,9 +1441,9 @@ def chat(
     llm_frequency_penalty: Optional[float] = None,
     llm_tools: Optional[List[Dict[str, Any]]] = None,
     llm_tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    llm_fixed_tokens_kobold: Optional[bool] = False, # Added
-    strip_thinking_tags: bool = True # Added for thinking tag stripping
-) -> Union[str, Any]: # Any for streaming generator
+    llm_fixed_tokens_kobold: Optional[bool] = False,  # Added
+    strip_thinking_tags: bool = True,  # Added for thinking tag stripping
+) -> Union[str, Any]:  # Any for streaming generator
     """
     Orchestrates a chat interaction with an LLM, handling message processing,
     RAG, multimodal content, and chat dictionary features.
@@ -998,24 +1504,61 @@ def chat(
         Catches internal exceptions and returns an error message string.
         Exceptions from `chat_api_call` might propagate if not handled by its own try-except blocks.
     """
-    log_counter("chat_attempt_multimodal", labels={"api_endpoint": api_endpoint, "image_mode": image_history_mode})
+    log_counter(
+        "chat_attempt_multimodal",
+        labels={"api_endpoint": api_endpoint, "image_mode": image_history_mode},
+    )
     start_time = time.time()
 
     try:
-        logging.info(f"Debug - Chat Function - Input Text: '{message}', Image provided: {'Yes' if current_image_input else 'No'}")
+        logging.info(
+            "Debug - Chat Function - Input type=%s; length=%d; image_provided=%s",
+            type(message).__name__,
+            len(message),
+            bool(current_image_input),
+        )
         if current_image_input:
-            logging.info(f"DEBUG: current_image_input contents: {current_image_input.keys() if isinstance(current_image_input, dict) else type(current_image_input)}")
+            logging.info(
+                "DEBUG: current_image_input type=%s; key_count=%d",
+                type(current_image_input).__name__,
+                len(current_image_input)
+                if isinstance(current_image_input, dict)
+                else 0,
+            )
             if isinstance(current_image_input, dict):
-                logging.info(f"DEBUG: has base64_data={bool(current_image_input.get('base64_data'))}, mime_type={current_image_input.get('mime_type')}")
-        logging.info(f"Debug - Chat Function - History length: {len(history)}, Image History Mode: {image_history_mode}")
+                logging.info(
+                    "DEBUG: image has_base64_data=%s; has_mime_type=%s",
+                    bool(current_image_input.get("base64_data")),
+                    bool(current_image_input.get("mime_type")),
+                )
         logging.info(
-            f"Debug - Chat Function - LLM Max Tokens: {llm_max_tokens}, LLM Seed: {llm_seed}, LLM Stop: {llm_stop}, LLM N: {llm_n}")
+            f"Debug - Chat Function - History length: {len(history)}, Image History Mode: {image_history_mode}"
+        )
         logging.info(
-            f"Debug - Chat Function - LLM User Identifier: {llm_user_identifier}, LLM Logprobs: {llm_logprobs}, LLM Top Logprobs: {llm_top_logprobs}")
+            "Debug - Chat Function - LLM options: max_tokens=%s; seed_set=%s; "
+            "stop_type=%s; n=%s; user_identifier_set=%s; logprobs=%s; "
+            "top_logprobs=%s",
+            llm_max_tokens,
+            llm_seed is not None,
+            type(llm_stop).__name__ if llm_stop is not None else "none",
+            llm_n,
+            llm_user_identifier is not None,
+            llm_logprobs,
+            llm_top_logprobs,
+        )
         logging.info(
-            f"Debug - Chat Function - LLM Logit Bias: {llm_logit_bias}, LLM Presence Penalty: {llm_presence_penalty}, LLM Frequency Penalty: {llm_frequency_penalty}")
-        logging.info(
-            f"Debug - Chat Function - LLM Tools: {llm_tools}, LLM Tool Choice: {llm_tool_choice}, LLM Response Format (dict): {llm_response_format}")
+            "Debug - Chat Function - Structured options: logit_bias_count=%d; "
+            "presence_penalty=%s; frequency_penalty=%s; tools_count=%d; "
+            "tool_choice_type=%s; response_format_type=%s",
+            len(llm_logit_bias or {}),
+            llm_presence_penalty,
+            llm_frequency_penalty,
+            len(llm_tools or []),
+            type(llm_tool_choice).__name__ if llm_tool_choice is not None else "none",
+            type(llm_response_format).__name__
+            if llm_response_format is not None
+            else "none",
+        )
 
         # Ensure selected_parts is a list
         if not isinstance(selected_parts, (list, tuple)):
@@ -1029,8 +1572,14 @@ def chat(
                 message, chatdict_entries, max_tokens=max_tokens, strategy=strategy
             )
             dict_duration = time.time() - dict_start_time
-            log_histogram("chat_dictionary_processing_duration", dict_duration, labels={"api_endpoint": api_endpoint})
-            log_counter("chat_dictionary_applied", labels={"api_endpoint": api_endpoint})
+            log_histogram(
+                "chat_dictionary_processing_duration",
+                dict_duration,
+                labels={"api_endpoint": api_endpoint},
+            )
+            log_counter(
+                "chat_dictionary_applied", labels={"api_endpoint": api_endpoint}
+            )
 
         # --- Construct messages payload for the LLM API (OpenAI format) ---
         llm_messages_payload: List[Dict[str, Any]] = []
@@ -1049,89 +1598,160 @@ def chat(
         #      it uses it directly there.
         # This way, `chat()` doesn't need to know the specifics of each API for system prompts
 
-
         # 2. Process History (now expecting list of OpenAI message dicts)
         last_user_image_url_from_history: Optional[str] = None
-        
+
         history_start_time = time.time()
         history_message_count = len(history)
         history_image_count = 0
 
         for hist_msg_obj in history:
             role = hist_msg_obj.get("role")
-            original_content = hist_msg_obj.get("content") # This can be str or list of parts
+            original_content = hist_msg_obj.get(
+                "content"
+            )  # This can be str or list of parts
 
             processed_hist_content_parts = []
 
-            if isinstance(original_content, str): # Simple text history message
-                processed_hist_content_parts.append({"type": "text", "text": original_content})
-            elif isinstance(original_content, list): # Already structured content
+            if isinstance(original_content, str):  # Simple text history message
+                processed_hist_content_parts.append(
+                    {"type": "text", "text": original_content}
+                )
+            elif isinstance(original_content, list):  # Already structured content
                 for part in original_content:
                     if part.get("type") == "text":
                         processed_hist_content_parts.append(part)
                     elif part.get("type") == "image_url":
                         history_image_count += 1
-                        image_url_data = part.get("image_url", {}).get("url", "") # data URI
+                        image_url_data = part.get("image_url", {}).get(
+                            "url", ""
+                        )  # data URI
                         if image_history_mode == "send_all":
                             processed_hist_content_parts.append(part)
-                            if role == "user": last_user_image_url_from_history = image_url_data
-                        elif image_history_mode == "send_last_user_image" and role == "user":
-                            last_user_image_url_from_history = image_url_data # Track, add later
+                            if role == "user":
+                                last_user_image_url_from_history = image_url_data
+                        elif (
+                            image_history_mode == "send_last_user_image"
+                            and role == "user"
+                        ):
+                            last_user_image_url_from_history = (
+                                image_url_data  # Track, add later
+                            )
                         elif image_history_mode == "tag_past":
                             mime_type_part = "image"
-                            if image_url_data.startswith("data:image/") and ";base64," in image_url_data:
-                                try: 
-                                    mime_type_part = image_url_data.split(';base64,')[0].split('/')[-1]
-                                except (IndexError, ValueError) as e:
-                                    logger.debug(f"Failed to parse image MIME type from data URL: {e}")
+                            if (
+                                image_url_data.startswith("data:image/")
+                                and ";base64," in image_url_data
+                            ):
+                                try:
+                                    mime_type_part = image_url_data.split(";base64,")[
+                                        0
+                                    ].split("/")[-1]
+                                except (IndexError, ValueError):
+                                    logger.debug(
+                                        "Failed to parse image MIME type from data URL; "
+                                        "reason=invalid_data_url"
+                                    )
                                     # mime_type_part remains "image"
-                            processed_hist_content_parts.append({"type": "text", "text": f"<image: prior_history.{mime_type_part}>"})
+                            processed_hist_content_parts.append(
+                                {
+                                    "type": "text",
+                                    "text": f"<image: prior_history.{mime_type_part}>",
+                                }
+                            )
                         # "ignore_past": do nothing, image part is skipped
 
-            if processed_hist_content_parts: # Add if content remains
-                llm_messages_payload.append({"role": role, "content": processed_hist_content_parts})
+            if processed_hist_content_parts:  # Add if content remains
+                llm_messages_payload.append(
+                    {"role": role, "content": processed_hist_content_parts}
+                )
 
         # Handle "send_last_user_image" - append it to the last user message in payload if applicable
-        if image_history_mode == "send_last_user_image" and last_user_image_url_from_history:
+        if (
+            image_history_mode == "send_last_user_image"
+            and last_user_image_url_from_history
+        ):
             appended_to_last = False
-            for i in range(len(llm_messages_payload) -1, -1, -1): # Iterate backwards
+            for i in range(len(llm_messages_payload) - 1, -1, -1):  # Iterate backwards
                 if llm_messages_payload[i]["role"] == "user":
                     # Ensure content is a list
                     if not isinstance(llm_messages_payload[i]["content"], list):
-                        llm_messages_payload[i]["content"] = [{"type": "text", "text": str(llm_messages_payload[i]["content"])}]
+                        llm_messages_payload[i]["content"] = [
+                            {
+                                "type": "text",
+                                "text": str(llm_messages_payload[i]["content"]),
+                            }
+                        ]
 
                     # Avoid duplicates if already processed (e.g., if history was already "send_all" style)
-                    is_duplicate = any(p.get("type") == "image_url" and p.get("image_url", {}).get("url") == last_user_image_url_from_history for p in llm_messages_payload[i]["content"])
+                    is_duplicate = any(
+                        p.get("type") == "image_url"
+                        and p.get("image_url", {}).get("url")
+                        == last_user_image_url_from_history
+                        for p in llm_messages_payload[i]["content"]
+                    )
                     if not is_duplicate:
-                        llm_messages_payload[i]["content"].append({"type": "image_url", "image_url": {"url": last_user_image_url_from_history}})
+                        llm_messages_payload[i]["content"].append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": last_user_image_url_from_history},
+                            }
+                        )
                     appended_to_last = True
                     break
-            if not appended_to_last: # No user message in history, or image already there
-                 logging.debug(f"Could not append last_user_image_from_history, no suitable prior user message or already present. Image: {last_user_image_url_from_history[:60]}...")
-        
+            if (
+                not appended_to_last
+            ):  # No user message in history, or image already there
+                logging.debug(
+                    "Could not append last user image from history; "
+                    "reason=no_suitable_user_message"
+                )
+
         # Log history processing metrics
         history_duration = time.time() - history_start_time
-        log_histogram("chat_history_processing_duration", history_duration, labels={"api_endpoint": api_endpoint})
-        log_histogram("chat_history_message_count", history_message_count, labels={"api_endpoint": api_endpoint})
-        log_histogram("chat_history_image_count", history_image_count, labels={
-            "api_endpoint": api_endpoint, 
-            "image_mode": image_history_mode
-        })
-
+        log_histogram(
+            "chat_history_processing_duration",
+            history_duration,
+            labels={"api_endpoint": api_endpoint},
+        )
+        log_histogram(
+            "chat_history_message_count",
+            history_message_count,
+            labels={"api_endpoint": api_endpoint},
+        )
+        log_histogram(
+            "chat_history_image_count",
+            history_image_count,
+            labels={"api_endpoint": api_endpoint, "image_mode": image_history_mode},
+        )
 
         # 3. Add RAG Content (prepended to current user's text)
         rag_text_prefix = ""
         if media_content and selected_parts:
             rag_start_time = time.time()
             rag_text_prefix = "\n\n".join(
-                [f"{part.capitalize()}: {media_content.get(part, '')}" for part in selected_parts if media_content.get(part)]
-            ).strip()
-            if rag_text_prefix:
+                f"{part.capitalize()}: {media_content.get(part, '')}"
+                for part in selected_parts
+                if media_content.get(part)
+            )
+            if "evidence" not in selected_parts:
+                rag_text_prefix = rag_text_prefix.strip()
+            if rag_text_prefix.strip():
                 rag_text_prefix += "\n\n---\n\n"
                 rag_duration = time.time() - rag_start_time
-                log_histogram("chat_rag_processing_duration", rag_duration, labels={"api_endpoint": api_endpoint})
-                log_histogram("chat_rag_content_length", len(rag_text_prefix), labels={"api_endpoint": api_endpoint})
-                log_counter("chat_rag_content_added", labels={"api_endpoint": api_endpoint})
+                log_histogram(
+                    "chat_rag_processing_duration",
+                    rag_duration,
+                    labels={"api_endpoint": api_endpoint},
+                )
+                log_histogram(
+                    "chat_rag_content_length",
+                    len(rag_text_prefix),
+                    labels={"api_endpoint": api_endpoint},
+                )
+                log_counter(
+                    "chat_rag_content_added", labels={"api_endpoint": api_endpoint}
+                )
 
         # 4. Construct Current User Message (text + optional new image)
         current_user_content_parts: List[Dict[str, Any]] = []
@@ -1141,56 +1761,104 @@ def chat(
         # it should be part of the user's text. If it's more like a persona or ongoing rule,
         # it's better in `system_message`. Let's assume it's for this turn.
         final_text_for_current_message = processed_text_message
-        if custom_prompt: # Prepend custom_prompt if it exists
-            final_text_for_current_message = f"{custom_prompt}\n\n{final_text_for_current_message}"
+        if custom_prompt:  # Prepend custom_prompt if it exists
+            final_text_for_current_message = (
+                f"{custom_prompt}\n\n{final_text_for_current_message}"
+            )
 
-        final_text_for_current_message = f"{rag_text_prefix}{final_text_for_current_message}".strip()
+        final_text_for_current_message = (
+            f"{rag_text_prefix}{final_text_for_current_message}".strip()
+        )
 
         if final_text_for_current_message:
-            current_user_content_parts.append({"type": "text", "text": final_text_for_current_message})
+            current_user_content_parts.append(
+                {"type": "text", "text": final_text_for_current_message}
+            )
 
-        if current_image_input and current_image_input.get('base64_data') and current_image_input.get('mime_type'):
-            logging.info(f"DEBUG: Adding image to current_user_content_parts: mime_type={current_image_input['mime_type']}, base64_data_length={len(current_image_input['base64_data'])}")
+        if (
+            current_image_input
+            and current_image_input.get("base64_data")
+            and current_image_input.get("mime_type")
+        ):
+            logging.info(
+                f"DEBUG: Adding image to current_user_content_parts: mime_type={current_image_input['mime_type']}, base64_data_length={len(current_image_input['base64_data'])}"
+            )
             image_url = f"data:{current_image_input['mime_type']};base64,{current_image_input['base64_data']}"
-            current_user_content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
-            logging.info(f"✅ Successfully added image to message payload for {api_endpoint}/{model}")
+            current_user_content_parts.append(
+                {"type": "image_url", "image_url": {"url": image_url}}
+            )
+            logging.info(
+                f"✅ Successfully added image to message payload for {api_endpoint}/{model}"
+            )
         else:
             if current_image_input:
-                logging.warning(f"Image input provided but missing required data: has_base64={bool(current_image_input.get('base64_data'))}, has_mime_type={bool(current_image_input.get('mime_type'))}")
+                logging.warning(
+                    f"Image input provided but missing required data: has_base64={bool(current_image_input.get('base64_data'))}, has_mime_type={bool(current_image_input.get('mime_type'))}"
+                )
 
-        if not current_user_content_parts: # Should only happen if message, custom_prompt, RAG, and image are all empty/None
-             logging.warning("Current user message has no text or image content parts. Sending a placeholder.")
-             current_user_content_parts.append({"type": "text", "text": "(No user input for this turn)"})
+        if not current_user_content_parts:  # Should only happen if message, custom_prompt, RAG, and image are all empty/None
+            logging.warning(
+                "Current user message has no text or image content parts. Sending a placeholder."
+            )
+            current_user_content_parts.append(
+                {"type": "text", "text": "(No user input for this turn)"}
+            )
 
-        llm_messages_payload.append({"role": "user", "content": current_user_content_parts})
+        llm_messages_payload.append(
+            {"role": "user", "content": current_user_content_parts}
+        )
 
         # Temperature and other LLM params
         temperature_float = 0.7
-        try: temperature_float = float(temperature) if temperature is not None else 0.7
-        except ValueError: logging.warning(f"Invalid temperature '{temperature}', using 0.7.")
+        try:
+            temperature_float = float(temperature) if temperature is not None else 0.7
+        except ValueError:
+            logging.warning(
+                "Invalid temperature; reason=value_error; using_default=0.7"
+            )
 
-        logging.debug(f"Debug - Chat Function - Final LLM Payload (structure, image data truncated):")
+        logging.debug("Debug - Chat Function - Final LLM payload structure:")
         for i, msg_p in enumerate(llm_messages_payload):
             content_log = []
             if isinstance(msg_p.get("content"), list):
-                for part_idx, part_c in enumerate(msg_p["content"]):
-                    if part_c.get("type") == "text": content_log.append(f"text: '{part_c['text'][:30]}...'")
-                    elif part_c.get("type") == "image_url": content_log.append(f"image: '{part_c['image_url']['url'][:40]}...'")
-            logging.debug(f"  Msg {i}: Role: {msg_p['role']}, Content: [{', '.join(content_log)}]")
+                for part_c in msg_p["content"]:
+                    if part_c.get("type") == "text":
+                        content_log.append(
+                            f"text(length={len(part_c.get('text', ''))})"
+                        )
+                    elif part_c.get("type") == "image_url":
+                        image_url_value = part_c.get("image_url", {}).get("url", "")
+                        content_log.append(f"image_url(length={len(image_url_value)})")
+            logging.debug(
+                "  Msg %d: content_type=%s; parts=[%s]",
+                i,
+                type(msg_p.get("content")).__name__,
+                ", ".join(content_log),
+            )
 
-        logging.debug(f"Debug - Chat Function - Temperature: {temperature}")
+        logging.debug(
+            "Debug - Chat Function - Temperature configured: %s",
+            temperature_float,
+        )
         logging.debug("Debug - Chat Function - API key provided: %s", bool(api_key))
-        logging.debug(f"Debug - Chat Function - Prompt: {custom_prompt}")
+        logging.debug(
+            "Debug - Chat Function - Custom prompt length: %d",
+            len(custom_prompt) if custom_prompt else 0,
+        )
 
         #####################################################################
         # --- Adapt payload for specific provider requirements ---
         #####################################################################
-        final_api_payload_for_provider = llm_messages_payload  # Default to the multimodal one
+        final_api_payload_for_provider = (
+            llm_messages_payload  # Default to the multimodal one
+        )
 
-        if api_endpoint.lower() == 'deepseek':
-            logging.info("Adapting message payload for DeepSeek (text-only string content).")
+        if api_endpoint.lower() == "deepseek":
+            logging.info(
+                "Adapting message payload for DeepSeek (text-only string content)."
+            )
             adapted_payload_for_deepseek = []
-            for msg_obj in llm_messages_payload:
+            for message_index, msg_obj in enumerate(llm_messages_payload):
                 role = msg_obj.get("role")
                 content_input = msg_obj.get("content")
 
@@ -1206,12 +1874,19 @@ def chat(
                             # You already log warnings about image handling during payload construction if current_image_input is present.
                             # This is an additional safeguard if history contains images.
                             logging.warning(
-                                f"DeepSeek (API: {api_endpoint}) does not support images. Image part in role '{role}' will be ignored.")
-                elif isinstance(content_input, str):  # If content somehow became a string already
+                                "DeepSeek does not support images; "
+                                f"message_index={message_index}; image_ignored=true"
+                            )
+                elif isinstance(
+                    content_input, str
+                ):  # If content somehow became a string already
                     text_parts.append(content_input)
                 else:
                     logging.warning(
-                        f"Unexpected content type for role '{role}' in payload for DeepSeek: {type(content_input)}. Attempting to coerce to string.")
+                        "Unexpected DeepSeek content type; "
+                        f"message_index={message_index}; "
+                        f"content_type={type(content_input).__name__}"
+                    )
                     text_parts.append(str(content_input))
 
                 final_text_content = "\n".join(text_parts).strip()
@@ -1221,19 +1896,24 @@ def chat(
                 # For now, we'll pass the potentially empty string.
                 if image_detected_and_ignored and not final_text_content:
                     logging.debug(
-                        f"Message for role '{role}' contained only an image (ignored for DeepSeek), resulting in empty text content.")
+                        "DeepSeek message contained only an ignored image; "
+                        f"message_index={message_index}"
+                    )
 
-                adapted_payload_for_deepseek.append({"role": role, "content": final_text_content})
+                adapted_payload_for_deepseek.append(
+                    {"role": role, "content": final_text_content}
+                )
 
             final_api_payload_for_provider = adapted_payload_for_deepseek
 
-            # Optional: Re-log the adapted payload for DeepSeek to confirm its structure
             logging.debug("Debug - Chat Function - Adapted LLM Payload for DeepSeek:")
             for i, msg_p in enumerate(final_api_payload_for_provider):
-                # Ensure content is logged even if it's long by truncating
-                content_preview = str(msg_p.get('content', ''))[:100] + (
-                    '...' if len(str(msg_p.get('content', ''))) > 100 else '')
-                logging.debug(f"  Msg {i}: Role: {msg_p['role']}, Content: '{content_preview}'")
+                logging.debug(
+                    "  Msg %d: content_type=%s; content_length=%d",
+                    i,
+                    type(msg_p.get("content")).__name__,
+                    len(str(msg_p.get("content", ""))),
+                )
 
         # --- Call the LLM via the updated chat_api_call ---
         response = chat_api_call(
@@ -1243,7 +1923,11 @@ def chat(
             temp=temperature_float,
             system_message=system_message,
             streaming=streaming,
-            minp=minp, maxp=maxp, model=model, topp=topp, topk=topk,
+            minp=minp,
+            maxp=maxp,
+            model=model,
+            topp=topp,
+            topk=topk,
             # Pass through new params from ChatCompletionRequest
             max_tokens=llm_max_tokens,
             seed=llm_seed,
@@ -1258,7 +1942,7 @@ def chat(
             frequency_penalty=llm_frequency_penalty,
             tools=llm_tools,
             tool_choice=llm_tool_choice,
-            llm_fixed_tokens_kobold=llm_fixed_tokens_kobold # Added
+            llm_fixed_tokens_kobold=llm_fixed_tokens_kobold,  # Added
         )
 
         if streaming:
@@ -1266,83 +1950,151 @@ def chat(
             return response
         else:
             chat_duration = time.time() - start_time
-            log_histogram("chat_duration_multimodal", chat_duration, labels={"api_endpoint": api_endpoint})
-            log_counter("chat_success_multimodal", labels={"api_endpoint": api_endpoint})
-            logging.debug(f"Chat Function - Response (first 500 chars): {str(response)[:500]}")
+            log_histogram(
+                "chat_duration_multimodal",
+                chat_duration,
+                labels={"api_endpoint": api_endpoint},
+            )
+            log_counter(
+                "chat_success_multimodal", labels={"api_endpoint": api_endpoint}
+            )
+            logging.debug(
+                "Chat Function - Response type=%s; length=%d",
+                type(response).__name__,
+                len(response) if isinstance(response, (str, bytes)) else 0,
+            )
 
             loaded_config_data = load_settings()
-            post_gen_replacement_config = loaded_config_data.get('chat_dictionaries', {}).get('post_gen_replacement')
+            post_gen_replacement_config = loaded_config_data.get(
+                "chat_dictionaries", {}
+            ).get("post_gen_replacement")
             if post_gen_replacement_config and isinstance(response, str):
-                post_gen_replacement_dict_path = loaded_config_data.get('chat_dictionaries', {}).get('post_gen_replacement_dict')
-                if post_gen_replacement_dict_path and os.path.exists(post_gen_replacement_dict_path):
+                post_gen_replacement_dict_path = loaded_config_data.get(
+                    "chat_dictionaries", {}
+                ).get("post_gen_replacement_dict")
+                if post_gen_replacement_dict_path and os.path.exists(
+                    post_gen_replacement_dict_path
+                ):
                     try:
-                        parsed_dict_entries = parse_user_dict_markdown_file(post_gen_replacement_dict_path)
+                        parsed_dict_entries = parse_user_dict_markdown_file(
+                            post_gen_replacement_dict_path
+                        )
                         if parsed_dict_entries:
                             post_gen_chat_dict_objects = [
-                                ChatDictionary(key=k, content=str(v)) for k, v in parsed_dict_entries.items()
+                                ChatDictionary(key=k, content=str(v))
+                                for k, v in parsed_dict_entries.items()
                             ]
                             if post_gen_chat_dict_objects:
-                                response = process_user_input(response, post_gen_chat_dict_objects)
-                                # The original warning log can be removed or changed to a debug log if successfully applied.
+                                response = process_user_input(
+                                    response, post_gen_chat_dict_objects
+                                )
                                 logging.debug(
-                                    f"Response after post-gen replacement (first 500 chars): {str(response)[:500]}")
+                                    "Post-generation replacement complete; "
+                                    f"response_length={len(response)}"
+                                )
                             else:
-                                logging.debug("Post-gen dictionary parsed but resulted in no ChatDictionary objects.")
+                                logging.debug(
+                                    "Post-gen dictionary parsed but resulted in no ChatDictionary objects."
+                                )
                         else:
                             logging.debug(
-                                f"Post-gen replacement dictionary at {post_gen_replacement_dict_path} was empty or failed to parse.")
+                                "Post-generation replacement dictionary empty "
+                                "or unavailable"
+                            )
 
-                        logging.debug(f"Response after post-gen replacement (first 500 chars): {str(response)[:500]}")
+                        logging.debug(
+                            "Post-generation processing complete; "
+                            f"response_length={len(response)}"
+                        )
                     except Exception as e_post_gen:
-                        logging.error(f"Error during post-generation replacement: {e_post_gen}", exc_info=True)
+                        logging.error(
+                            "Error during post-generation replacement; "
+                            "reason=processing_failure; error_type=%s",
+                            type(e_post_gen).__name__,
+                        )
                 else:
-                    logging.warning("Post-gen replacement enabled but dict file not found/configured.")
+                    logging.warning(
+                        "Post-gen replacement enabled but dict file not found/configured."
+                    )
             # For non-streaming, apply stripping logic if enabled
-            logging.info(f"Non-streaming response - strip_thinking_tags setting: {strip_thinking_tags}")
+            logging.info(
+                f"Non-streaming response - strip_thinking_tags setting: {strip_thinking_tags}"
+            )
             if not streaming and isinstance(response, str) and strip_thinking_tags:
                 # Regex to find all <think>...</think> blocks, non-greedy
                 # Match both <think> and <thinking> tags
-                think_blocks = list(re.finditer(r"<think(?:ing)?>.*?</think(?:ing)?>", response, re.DOTALL))
+                think_blocks = list(
+                    re.finditer(
+                        r"<think(?:ing)?>.*?</think(?:ing)?>", response, re.DOTALL
+                    )
+                )
 
                 if len(think_blocks) > 1:
-                    logging.debug(f"Processing thinking tags for non-streaming. Found {len(think_blocks)} blocks.")
+                    logging.debug(
+                        f"Processing thinking tags for non-streaming. Found {len(think_blocks)} blocks."
+                    )
                     # Keep only the last think block
                     text_parts = []
                     last_kept_block_end = 0
                     for i, block in enumerate(think_blocks):
-                        if i < len(think_blocks) - 1: # This is a block to remove
-                            text_parts.append(response[last_kept_block_end:block.start()]) # Text before this block
-                            last_kept_block_end = block.end() # Skip this block
+                        if i < len(think_blocks) - 1:  # This is a block to remove
+                            text_parts.append(
+                                response[last_kept_block_end : block.start()]
+                            )  # Text before this block
+                            last_kept_block_end = block.end()  # Skip this block
                     # Add the text after the last removed block, which includes the final think block and any subsequent text
                     text_parts.append(response[last_kept_block_end:])
                     response = "".join(text_parts)
-                    logging.debug(f"Response after stripping all but last think block: {response[:200]}...")
-                elif think_blocks: # Only one block, or stripping not needed / done
-                    logging.info(f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one.")
-            elif not streaming and isinstance(response, str) and not strip_thinking_tags:
-                logging.info(f"Not stripping thinking tags from non-streaming response - setting is disabled")
+                    logging.debug(
+                        "Response thinking-tag stripping complete; "
+                        f"response_length={len(response)}"
+                    )
+                elif think_blocks:  # Only one block, or stripping not needed / done
+                    logging.info(
+                        f"Thinking tags: {len(think_blocks)} block(s) found, no stripping needed or already processed if only one."
+                    )
+            elif (
+                not streaming and isinstance(response, str) and not strip_thinking_tags
+            ):
+                logging.info(
+                    "Not stripping thinking tags from non-streaming response - setting is disabled"
+                )
 
             # For streaming=True, stripping logic should be applied by the receiver
             # of the stream (e.g., in app.py's on_stream_done event handler).
             return response
 
     except Exception as e:
-        log_counter("chat_error_multimodal", labels={"api_endpoint": api_endpoint, "error": str(e)})
-        logging.error(f"Error in multimodal chat function: {str(e)}", exc_info=True)
+        error_reason = (
+            "validation_failure"
+            if isinstance(e, ValidationError)
+            else "unexpected_error"
+        )
+        log_counter(
+            "chat_error_multimodal",
+            labels={"api_endpoint": api_endpoint, "reason": error_reason},
+        )
+        logging.error(
+            "Error in multimodal chat function; reason=%s; error_type=%s",
+            error_reason,
+            type(e).__name__,
+        )
         # Consider if the error format should change from just a string
         return f"An error occurred in the chat function: {str(e)}"
 
 
-def parse_tool_calls_from_response(response: Union[str, Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+def parse_tool_calls_from_response(
+    response: Union[str, Dict[str, Any]],
+) -> Optional[List[Dict[str, Any]]]:
     """
     Extract tool calls from LLM response, handling various provider formats.
-    
+
     Args:
         response: The LLM response, either as a string or dict
-        
+
     Returns:
         List of tool calls in OpenAI format, or None if no tool calls found
-        
+
     Example tool call format:
     [{
         "id": "call_function_name_timestamp",
@@ -1360,30 +2112,32 @@ def parse_tool_calls_from_response(response: Union[str, Dict[str, Any]]) -> Opti
         except json.JSONDecodeError:
             logging.debug("Response is not valid JSON, no tool calls to extract")
             return None
-    
+
     if not isinstance(response, dict):
         return None
-    
+
     # Check for tool calls in various locations
     tool_calls = None
-    
+
     # OpenAI format: response.message.tool_calls
     if isinstance(response.get("message"), dict):
         tool_calls = response["message"].get("tool_calls")
-    
+
     # Alternative: tool_calls at root level
     if not tool_calls:
         tool_calls = response.get("tool_calls")
-    
+
     # Legacy format: single function_call
     if not tool_calls and "function_call" in response.get("message", {}):
         func_call = response["message"]["function_call"]
-        tool_calls = [{
-            "id": f"call_{func_call.get('name', 'unknown')}_{int(time.time())}",
-            "type": "function",
-            "function": func_call
-        }]
-    
+        tool_calls = [
+            {
+                "id": f"call_{func_call.get('name', 'unknown')}_{int(time.time())}",
+                "type": "function",
+                "function": func_call,
+            }
+        ]
+
     # Anthropic format: check for tool_use in stop_reason
     if not tool_calls and response.get("stop_reason") == "tool_use":
         # Tool calls might be in content blocks
@@ -1392,15 +2146,17 @@ def parse_tool_calls_from_response(response: Union[str, Dict[str, Any]]) -> Opti
             tool_calls = []
             for block in content:
                 if block.get("type") == "tool_use":
-                    tool_calls.append({
-                        "id": block.get("id", f"call_{int(time.time())}"),
-                        "type": "function",
-                        "function": {
-                            "name": block.get("name"),
-                            "arguments": json.dumps(block.get("input", {}))
+                    tool_calls.append(
+                        {
+                            "id": block.get("id", f"call_{int(time.time())}"),
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name"),
+                                "arguments": json.dumps(block.get("input", {})),
+                            },
                         }
-                    })
-    
+                    )
+
     # Validate tool calls format
     if tool_calls and isinstance(tool_calls, list):
         valid_calls = []
@@ -1413,13 +2169,15 @@ def parse_tool_calls_from_response(response: Union[str, Dict[str, Any]]) -> Opti
                     call["type"] = "function"
                 valid_calls.append(call)
         return valid_calls if valid_calls else None
-    
+
     return None
 
 
 def save_chat_history_to_db_wrapper(
     db: CharactersRAGDB,
-    chatbot_history: List[Dict[str, Any]], # CHANGED: Expects List of OpenAI message objects
+    chatbot_history: List[
+        Dict[str, Any]
+    ],  # CHANGED: Expects List of OpenAI message objects
     conversation_id: Optional[str],
     # Renamed for clarity: these are for identifying the character for association,
     # not for the content of the messages themselves.
@@ -1471,10 +2229,31 @@ def save_chat_history_to_db_wrapper(
         - `Optional[str]`: The conversation ID (new or existing). None on critical failure
                            to create a conversation entry.
         - `str`: A status message indicating success or failure.
+
+    Raises:
+        ImportError: If `chat_persistence_service` cannot be imported. The import is
+            deferred (TASK-23112) and deliberately sits above the `try` below, so a
+            broken or partial install surfaces as an ImportError here rather than
+            being swallowed into a "save failed" status string. Every other failure
+            mode is still reported through the returned status message.
     """
+    # Deferred (TASK-23112 / ADR-097): a module-scope import here put
+    # `chat_persistence_service` and 17 of its dependencies on the
+    # `import tldw_chatbook.app` closure (app.py reaches this module through
+    # Library.library_local_rag_search_service), breaching the 660-module
+    # ratchet. This is the service's only construction site in this module and
+    # this function runs only on a user-driven save -- never at import time,
+    # never during `TldwCli.__init__`. Kept ABOVE the `try` below so an import
+    # failure surfaces as an ImportError instead of being swallowed into a
+    # "save failed" status string. Guarded by
+    # `Tests/Packaging/test_chat_persistence_import_closure.py`.
+    from .chat_persistence_service import ChatPersistenceService
+
     log_counter("save_chat_history_to_db_attempt")
     start_time = time.time()
-    logging.info(f"Saving chat history (OpenAI format). Conversation ID: {conversation_id}, Character: {character_name_for_chat}, Num messages: {len(chatbot_history)}")
+    logging.info(
+        f"Saving chat history (OpenAI format). Conversation ID: {conversation_id}, Character: {character_name_for_chat}, Num messages: {len(chatbot_history)}"
+    )
 
     try:
         # The DB connection is managed by the CharactersRAGDB instance (`db`)
@@ -1492,9 +2271,13 @@ def save_chat_history_to_db_wrapper(
         conversation_scope_type: Optional[str] = None
         conversation_workspace_id: Optional[str] = None
         persistence_service = ChatPersistenceService(db)
-        explicit_assistant_kind = str(assistant_kind).strip().lower() if assistant_kind else None
+        explicit_assistant_kind = (
+            str(assistant_kind).strip().lower() if assistant_kind else None
+        )
         explicit_assistant_id = str(assistant_id).strip() if assistant_id else None
-        explicit_persona_memory_mode = str(persona_memory_mode).strip() if persona_memory_mode else None
+        explicit_persona_memory_mode = (
+            str(persona_memory_mode).strip() if persona_memory_mode else None
+        )
 
         # --- Character Association Logic (largely same as your provided version) ---
         current_conversation_id = conversation_id
@@ -1511,40 +2294,67 @@ def save_chat_history_to_db_wrapper(
         existing_workspace_id = None
         if not is_new_conversation:
             try:
-                existing_conv_details = db.get_conversation_by_id(current_conversation_id)
+                existing_conv_details = db.get_conversation_by_id(
+                    current_conversation_id
+                )
                 if not existing_conv_details:
-                    logging.error(f"Cannot resave: Conversation {current_conversation_id} not found.")
-                    return current_conversation_id, f"Error: Conversation {current_conversation_id} not found for resaving."
+                    logging.error(
+                        f"Cannot resave: Conversation {current_conversation_id} not found."
+                    )
+                    return (
+                        current_conversation_id,
+                        f"Error: Conversation {current_conversation_id} not found for resaving.",
+                    )
                 existing_assistant_kind = existing_conv_details.get("assistant_kind")
                 existing_assistant_id = existing_conv_details.get("assistant_id")
                 existing_runtime_backend = existing_conv_details.get("runtime_backend")
                 existing_discovery_owner = existing_conv_details.get("discovery_owner")
-                existing_discovery_entity_id = existing_conv_details.get("discovery_entity_id")
+                existing_discovery_entity_id = existing_conv_details.get(
+                    "discovery_entity_id"
+                )
                 existing_scope_type = existing_conv_details.get("scope_type")
                 existing_workspace_id = existing_conv_details.get("workspace_id")
             except (InputError, ConflictError, CharactersRAGDBError) as e:
-                logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
+                logging.error(
+                    f"Error preparing existing conversation {current_conversation_id} for resave: {e}",
+                    exc_info=True,
+                )
                 return current_conversation_id, f"Error during resave prep: {e}"
 
-        conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
-        conversation_discovery_owner = discovery_owner or existing_discovery_owner or "general_chat"
+        conversation_runtime_backend = (
+            runtime_backend or existing_runtime_backend or "local"
+        )
+        conversation_discovery_owner = (
+            discovery_owner or existing_discovery_owner or "general_chat"
+        )
         conversation_discovery_entity_id = (
             discovery_entity_id
             if discovery_entity_id is not None
             else existing_discovery_entity_id
         )
-        conversation_scope_type = scope_type if scope_type is not None else existing_scope_type
-        conversation_workspace_id = workspace_id if workspace_id is not None else existing_workspace_id
+        conversation_scope_type = (
+            scope_type if scope_type is not None else existing_scope_type
+        )
+        conversation_workspace_id = (
+            workspace_id if workspace_id is not None else existing_workspace_id
+        )
 
         if explicit_assistant_kind == "persona":
             if not explicit_assistant_id:
-                return conversation_id, "Error: Persona conversations require an assistant_id."
+                return (
+                    conversation_id,
+                    "Error: Persona conversations require an assistant_id.",
+                )
             conversation_assistant_kind = "persona"
             conversation_assistant_id = explicit_assistant_id
             conversation_persona_memory_mode = explicit_persona_memory_mode
-            conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
+            conversation_runtime_backend = (
+                runtime_backend or existing_runtime_backend or "local"
+            )
             conversation_discovery_owner = discovery_owner or "ccp_persona"
-            conversation_discovery_entity_id = discovery_entity_id or explicit_assistant_id
+            conversation_discovery_entity_id = (
+                discovery_entity_id or explicit_assistant_id
+            )
             final_character_name_for_title = explicit_assistant_id
         else:
             char_lookup_name = character_name_for_chat
@@ -1552,46 +2362,61 @@ def save_chat_history_to_db_wrapper(
                 char_lookup_name = media_name_for_char_assoc
 
             if not char_lookup_name and media_content_for_char_assoc:
-                content_details = media_content_for_char_assoc.get('content')
+                content_details = media_content_for_char_assoc.get("content")
                 if isinstance(content_details, str):
                     try:
                         content_details = json.loads(content_details)
                     except json.JSONDecodeError:
                         content_details = {}
                 if isinstance(content_details, dict):
-                    char_lookup_name = content_details.get('title')
+                    char_lookup_name = content_details.get("title")
 
             if char_lookup_name:
                 try:
                     character = db.get_character_card_by_name(char_lookup_name)
                     if character:
-                        associated_character_id = character['id']
-                        final_character_name_for_title = character['name']
+                        associated_character_id = character["id"]
+                        final_character_name_for_title = character["name"]
                         conversation_assistant_kind = "character"
-                        conversation_assistant_id = str(character['id'])
-                        conversation_discovery_owner = discovery_owner or "ccp_character"
+                        conversation_assistant_id = str(character["id"])
+                        conversation_discovery_owner = (
+                            discovery_owner or "ccp_character"
+                        )
                         conversation_discovery_entity_id = (
                             discovery_entity_id
                             if discovery_entity_id is not None
-                            else str(character['id'])
+                            else str(character["id"])
                         )
-                        conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
+                        conversation_runtime_backend = (
+                            runtime_backend or existing_runtime_backend or "local"
+                        )
                         logging.info(
                             f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id})."
                         )
                     else:
-                        logging.error(f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted.")
-                        return conversation_id, f"Error: Specific character '{char_lookup_name}' intended for this chat was not found. Cannot save chat."
+                        logging.error(
+                            f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted."
+                        )
+                        return (
+                            conversation_id,
+                            f"Error: Specific character '{char_lookup_name}' intended for this chat was not found. Cannot save chat.",
+                        )
                 except CharactersRAGDBError as e:
-                    logging.error(f"DB error looking up specific character '{char_lookup_name}': {e}")
+                    logging.error(
+                        f"DB error looking up specific character '{char_lookup_name}': {e}"
+                    )
                     return conversation_id, f"DB error finding specific character: {e}"
             elif existing_assistant_kind == "persona" and existing_assistant_id:
                 conversation_assistant_kind = "persona"
                 conversation_assistant_id = str(existing_assistant_id)
-                conversation_persona_memory_mode = existing_conv_details.get("persona_memory_mode")
+                conversation_persona_memory_mode = existing_conv_details.get(
+                    "persona_memory_mode"
+                )
                 conversation_runtime_backend = existing_runtime_backend or "local"
                 conversation_discovery_owner = existing_discovery_owner or "ccp_persona"
-                conversation_discovery_entity_id = existing_discovery_entity_id or str(existing_assistant_id)
+                conversation_discovery_entity_id = existing_discovery_entity_id or str(
+                    existing_assistant_id
+                )
                 conversation_scope_type = existing_scope_type
                 conversation_workspace_id = existing_workspace_id
                 final_character_name_for_title = str(existing_assistant_id)
@@ -1611,9 +2436,15 @@ def save_chat_history_to_db_wrapper(
                         discovery_entity_id
                         or existing_conv_details.get("discovery_entity_id")
                     )
-                    conversation_scope_type = scope_type or existing_conv_details.get("scope_type")
-                    conversation_workspace_id = workspace_id or existing_conv_details.get("workspace_id")
-                logging.info("No specific character resolved for chat. Using generic conversation metadata.")
+                    conversation_scope_type = scope_type or existing_conv_details.get(
+                        "scope_type"
+                    )
+                    conversation_workspace_id = (
+                        workspace_id or existing_conv_details.get("workspace_id")
+                    )
+                logging.info(
+                    "No specific character resolved for chat. Using generic conversation metadata."
+                )
 
         if is_new_conversation:
             try:
@@ -1629,72 +2460,113 @@ def save_chat_history_to_db_wrapper(
                     scope_type=conversation_scope_type,
                     workspace_id=conversation_workspace_id,
                 )
-                if not current_conversation_id:  # Should not happen if add_conversation raises on failure
+                if (
+                    not current_conversation_id
+                ):  # Should not happen if add_conversation raises on failure
                     return None, "Failed to create new conversation in DB."
-                logging.info(f"Created new conv ID: {current_conversation_id} for char ID: {associated_character_id} ('{final_character_name_for_title}')")
+                logging.info(
+                    f"Created new conv ID: {current_conversation_id} for char ID: {associated_character_id} ('{final_character_name_for_title}')"
+                )
             except (InputError, ConflictError, CharactersRAGDBError) as e:
                 logging.error(f"Error creating new conversation: {e}", exc_info=True)
                 return None, f"Error creating conversation: {e}"
-        else: # Resaving existing conversation
-            logging.info(f"Resaving history for existing conv ID: {current_conversation_id}. Char context ID: {associated_character_id} ('{final_character_name_for_title}')")
+        else:  # Resaving existing conversation
+            logging.info(
+                f"Resaving history for existing conv ID: {current_conversation_id}. Char context ID: {associated_character_id} ('{final_character_name_for_title}')"
+            )
             try:
-                existing_character_id = existing_conv_details.get('character_id')
+                existing_character_id = existing_conv_details.get("character_id")
                 if existing_assistant_kind == "character":
                     if existing_character_id != associated_character_id:
-                        existing_char_of_conv = db.get_character_card_by_id(existing_character_id)
-                        existing_char_name = existing_char_of_conv['name'] if existing_char_of_conv else "ID "+str(existing_character_id)
+                        existing_char_of_conv = db.get_character_card_by_id(
+                            existing_character_id
+                        )
+                        existing_char_name = (
+                            existing_char_of_conv["name"]
+                            if existing_char_of_conv
+                            else "ID " + str(existing_character_id)
+                        )
                         logging.error(
                             f"Cannot resave: Conversation {current_conversation_id} (for char '{existing_char_name}') does not match current character context '{final_character_name_for_title}' (ID: {associated_character_id})."
                         )
-                        return current_conversation_id, "Error: Mismatch in character association for resaving chat. The conversation belongs to a different character."
+                        return (
+                            current_conversation_id,
+                            "Error: Mismatch in character association for resaving chat. The conversation belongs to a different character.",
+                        )
                 elif existing_assistant_kind == "persona":
-                    if conversation_assistant_kind != "persona" or conversation_assistant_id != existing_assistant_id:
+                    if (
+                        conversation_assistant_kind != "persona"
+                        or conversation_assistant_id != existing_assistant_id
+                    ):
                         logging.error(
                             f"Cannot resave: Conversation {current_conversation_id} belongs to persona '{existing_assistant_id}', but the current context resolves to '{conversation_assistant_id}'."
                         )
-                        return current_conversation_id, "Error: Mismatch in persona association for resaving chat. The conversation belongs to a different persona."
+                        return (
+                            current_conversation_id,
+                            "Error: Mismatch in persona association for resaving chat. The conversation belongs to a different persona.",
+                        )
                 elif conversation_assistant_kind in {"character", "persona"}:
                     logging.error(
                         f"Cannot resave: Conversation {current_conversation_id} is generic but current context resolves to {conversation_assistant_kind}."
                     )
-                    return current_conversation_id, "Error: Mismatch in assistant association for resaving chat. The conversation belongs to a different context."
+                    return (
+                        current_conversation_id,
+                        "Error: Mismatch in assistant association for resaving chat. The conversation belongs to a different context.",
+                    )
             except (InputError, ConflictError, CharactersRAGDBError) as e:
-                logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
+                logging.error(
+                    f"Error preparing existing conversation {current_conversation_id} for resave: {e}",
+                    exc_info=True,
+                )
                 return current_conversation_id, f"Error during resave prep: {e}"
         # --- End Create or Prepare Conversation ---
 
         # --- Save Messages (Handles new OpenAI format) ---
         try:
-            with db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # the nested hot messages writers save_history drives
+            # (transaction(immediate=) is depth-0 only); DEFERRED here re-opens
+            # the snapshot-upgrade "database is locked" window (see
+            # CharactersRAGDB.add_message's scoping comment).
+            with db.transaction(immediate=True):
                 message_save_count = persistence_service.save_history(
                     conversation_id=current_conversation_id,
                     chatbot_history=chatbot_history,
                 )
-                logging.info(f"Successfully saved {message_save_count} messages to conversation {current_conversation_id}.")
+                logging.info(
+                    f"Successfully saved {message_save_count} messages to conversation {current_conversation_id}."
+                )
 
-                conv_details_for_update = db.get_conversation_by_id(current_conversation_id)
+                conv_details_for_update = db.get_conversation_by_id(
+                    current_conversation_id
+                )
                 if conv_details_for_update:
                     db.update_conversation(
                         current_conversation_id,
                         {
-                            'title': conv_details_for_update.get('title'),
-                            'character_id': associated_character_id,
-                            'assistant_kind': conversation_assistant_kind,
-                            'assistant_id': conversation_assistant_id,
-                            'persona_memory_mode': conversation_persona_memory_mode,
-                            'runtime_backend': conversation_runtime_backend,
-                            'discovery_owner': conversation_discovery_owner,
-                            'discovery_entity_id': conversation_discovery_entity_id,
-                            'scope_type': conversation_scope_type,
-                            'workspace_id': conversation_workspace_id,
+                            "title": conv_details_for_update.get("title"),
+                            "character_id": associated_character_id,
+                            "assistant_kind": conversation_assistant_kind,
+                            "assistant_id": conversation_assistant_id,
+                            "persona_memory_mode": conversation_persona_memory_mode,
+                            "runtime_backend": conversation_runtime_backend,
+                            "discovery_owner": conversation_discovery_owner,
+                            "discovery_entity_id": conversation_discovery_entity_id,
+                            "scope_type": conversation_scope_type,
+                            "workspace_id": conversation_workspace_id,
                         },
-                        conv_details_for_update['version']
+                        conv_details_for_update["version"],
                     )
                 else:
-                    logging.error(f"Conversation {current_conversation_id} disappeared before final metadata update during save.")
+                    logging.error(
+                        f"Conversation {current_conversation_id} disappeared before final metadata update during save."
+                    )
 
         except (InputError, ConflictError, CharactersRAGDBError) as e:
-            logging.error(f"Error saving messages to conversation {current_conversation_id}: {e}", exc_info=True)
+            logging.error(
+                f"Error saving messages to conversation {current_conversation_id}: {e}",
+                exc_info=True,
+            )
             return current_conversation_id, f"Error saving messages: {e}"
         # --- End Save Messages ---
 
@@ -1706,7 +2578,9 @@ def save_chat_history_to_db_wrapper(
 
     except Exception as e:
         log_counter("save_chat_history_to_db_error", labels={"error": str(e)})
-        error_message = f"Failed to save chat history due to an unexpected error: {str(e)}"
+        error_message = (
+            f"Failed to save chat history due to an unexpected error: {str(e)}"
+        )
         logging.error(error_message, exc_info=True)
         return conversation_id, error_message
 
@@ -1716,7 +2590,9 @@ def save_chat_history(
     history: List[Union[Tuple[Optional[str], Optional[str]], Dict[str, Any]]],
     conversation_id: Optional[str],
     media_content: Optional[Dict[str, Any]],
-    db_instance: Optional[CharactersRAGDB] = None # Added for generate_chat_history_content
+    db_instance: Optional[
+        CharactersRAGDB
+    ] = None,  # Added for generate_chat_history_content
 ) -> Optional[str]:
     """
     Saves chat history to a uniquely named JSON file in a temporary directory.
@@ -1742,18 +2618,24 @@ def save_chat_history(
     log_counter("save_chat_history_attempt")
     start_time = time.time()
     try:
-        content, conversation_name = generate_chat_history_content(history, conversation_id, media_content)
+        content, conversation_name = generate_chat_history_content(
+            history, conversation_id, media_content, db_instance=db_instance
+        )
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_conversation_name = re.sub(r'[^a-zA-Z0-9_-]', '_', conversation_name)
+        safe_conversation_name = re.sub(r"[^a-zA-Z0-9_-]", "_", conversation_name)
         base_filename = f"{safe_conversation_name}_{timestamp}.json"
 
         # Create a secure temporary file
-        temp_file_path = create_secure_temp_file(content, suffix='.json', prefix='chat_export_')
+        temp_file_path = create_secure_temp_file(
+            content, suffix=".json", prefix="chat_export_"
+        )
 
         try:
             # Generate a unique filename
-            unique_filename = generate_unique_filename(os.path.dirname(temp_file_path), base_filename)
+            unique_filename = generate_unique_filename(
+                os.path.dirname(temp_file_path), base_filename
+            )
             final_path = os.path.join(os.path.dirname(temp_file_path), unique_filename)
 
             # Rename the temporary file to the unique filename
@@ -1773,7 +2655,9 @@ def save_chat_history(
         return None
 
 
-def get_conversation_name(conversation_id: Optional[str], db_instance: Optional[CharactersRAGDB] = None) -> Optional[str]:
+def get_conversation_name(
+    conversation_id: Optional[str], db_instance: Optional[CharactersRAGDB] = None
+) -> Optional[str]:
     """
     Retrieves the title of a conversation from the database.
 
@@ -1787,10 +2671,12 @@ def get_conversation_name(conversation_id: Optional[str], db_instance: Optional[
     if db_instance and conversation_id:
         try:
             conversation = db_instance.get_conversation_by_id(conversation_id)
-            if conversation and conversation.get('title'):
-                return conversation['title']
+            if conversation and conversation.get("title"):
+                return conversation["title"]
         except Exception as e:
-            logging.warning(f"Could not fetch conversation title from DB for {conversation_id}: {e}")
+            logging.warning(
+                f"Could not fetch conversation title from DB for {conversation_id}: {e}"
+            )
     # Fallback or if no DB instance provided
     # This part of the original logic is unclear how it worked without DB.
     # For now, returning None if not found in DB.
@@ -1801,7 +2687,7 @@ def generate_chat_history_content(
     history: List[Union[Tuple[Optional[str], Optional[str]], Dict[str, Any]]],
     conversation_id: Optional[str],
     media_content: Optional[Dict[str, Any]],
-    db_instance: Optional[CharactersRAGDB] = None
+    db_instance: Optional[CharactersRAGDB] = None,
 ) -> Tuple[str, str]:
     """
     Generates JSON content representing the chat history and determines a conversation name.
@@ -1825,19 +2711,36 @@ def generate_chat_history_content(
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Try to get conversation name from DB if possible
+    # Resolve DB-owned conversation metadata once so policy cannot silently
+    # downgrade when the owning lookup fails.
+    conversation = None
     conversation_name = None
-    if conversation_id:
-        conversation_name = get_conversation_name(conversation_id, db_instance)
+    if conversation_id is not None:
+        if db_instance is None:
+            raise ValueError("Conversation metadata is unavailable for export.")
+        try:
+            conversation = db_instance.get_conversation_by_id(conversation_id)
+        except Exception:
+            raise ValueError(
+                "Conversation metadata is unavailable for export."
+            ) from None
+        if not conversation:
+            raise ValueError("Conversation metadata is unavailable for export.")
+        if conversation and conversation.get("title"):
+            conversation_name = conversation["title"]
 
     if not conversation_name:  # Fallback logic
-        media_name_extracted = extract_media_name(media_content)  # media_content is the original complex object
+        media_name_extracted = extract_media_name(
+            media_content
+        )  # media_content is the original complex object
         if media_name_extracted:
             conversation_name = f"{media_name_extracted}-chat-{timestamp}"
         else:
             conversation_name = f"chat-{timestamp}"
 
-    chat_data = {
+    chat_data: Dict[str, Any] = {
+        "format": "tldw_chat_history",
+        "format_version": 1,
         "conversation_id": conversation_id,  # Can be None if new chat not yet saved to DB
         "conversation_name": conversation_name,
         "timestamp": timestamp,
@@ -1847,7 +2750,11 @@ def generate_chat_history_content(
         # Assuming 'history' is like chatbot: List[Tuple[Optional[str], Optional[str]]]
     }
 
-    current_turn = []
+    raw_policy = conversation.get("thinking_history_policy") if conversation else None
+    chat_data["thinking_history_policy"] = normalize_thinking_history_policy(raw_policy)
+
+    contains_private = False
+    contains_thinking = False
     for item in history:  # Iterating through the provided history structure
         if isinstance(item, tuple) and len(item) == 2:  # Expected (user_msg, bot_msg)
             user_msg, bot_msg = item
@@ -1855,13 +2762,89 @@ def generate_chat_history_content(
                 chat_data["history"].append({"role": "user", "content": user_msg})
             if bot_msg is not None:
                 chat_data["history"].append(
-                    {"role": "assistant", "content": bot_msg})  # Changed "bot" to "assistant" for consistency
-        elif isinstance(item, dict) and "role" in item and "content" in item:  # Already in desired format
-            chat_data["history"].append(item)
-        else:
-            logging.warning(f"Unexpected item format in history for JSON export: {item}")
+                    {"role": "assistant", "content": bot_msg}
+                )  # Changed "bot" to "assistant" for consistency
+        elif (
+            isinstance(item, dict) and "role" in item and "content" in item
+        ):  # Already in desired format
+            projected = {"role": item["role"], "content": item["content"]}
+            for source_key, export_key, expected_type in (
+                ("id", "id", str),
+                ("parent_message_id", "parent_id", str),
+                ("timestamp", "timestamp", str),
+                ("variant_number", "variant_number", int),
+                ("is_selected_variant", "is_selected_variant", bool),
+                ("total_variants", "total_variants", int),
+            ):
+                value = item.get(source_key)
+                if type(value) is expected_type:
+                    projected[export_key] = value
+            if "variant_of" in item and (
+                item["variant_of"] is None or isinstance(item["variant_of"], str)
+            ):
+                projected["variant_of"] = item["variant_of"]
 
-    return json.dumps(chat_data, indent=2), conversation_name  # Return the derived/fetched name
+            private_value = item.get("provider_continuation_json")
+            if private_value is None and isinstance(item.get("_private"), dict):
+                private_value = item["_private"].get("provider_continuation")
+            private = read_provider_continuation_json(private_value)
+            raw_state = item.get("assistant_generation_state")
+            if raw_state is not None and item["role"] != "assistant":
+                raise ValueError("Invalid assistant generation state on export.")
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=item["role"],
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        private.checkpoint is not None
+                        and private.checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise ValueError(
+                    "Invalid assistant generation state on export."
+                ) from None
+            if (
+                generation_state is not None
+                and generation_state.value == "continuation_active"
+                and (private.checkpoint is None or private.checkpoint.state != "active")
+            ):
+                raise ValueError("Invalid assistant generation state on export.")
+            if raw_state is not None:
+                projected["assistant_generation_state"] = (
+                    generation_state.value if generation_state is not None else None
+                )
+            thinking_value = item.get("thinking_blocks_json")
+            if thinking_value is not None:
+                if item["role"] != "assistant":
+                    raise ValueError("Invalid thinking owner on export.")
+                thinking_payload = thinking_envelope_to_exchange(thinking_value)
+                if thinking_payload is not None:
+                    projected["thinking_blocks"] = thinking_payload
+                    contains_thinking = contains_thinking or bool(
+                        thinking_payload["blocks"]
+                    )
+            if item["role"] == "assistant" and private.checkpoint is not None:
+                canonical = dump_provider_continuation_json(private.checkpoint)
+                projected["_private"] = {
+                    "provider_continuation": json.loads(canonical or "null")
+                }
+                contains_private = True
+            chat_data["history"].append(projected)
+        else:
+            logging.warning("Unexpected item format in history for JSON export.")
+
+    if contains_private:
+        chat_data["private_data_warning"] = (
+            "This JSON contains private provider continuation data."
+        )
+    if contains_private or contains_thinking:
+        chat_data["sensitive_data_warning"] = THINKING_EXPORT_WARNING
+
+    return json.dumps(
+        chat_data, indent=2, ensure_ascii=False
+    ), conversation_name  # Return the derived/fetched name
+
 
 def extract_media_name(media_content: Optional[Dict[str, Any]]) -> Optional[str]:
     """
@@ -1881,14 +2864,16 @@ def extract_media_name(media_content: Optional[Dict[str, Any]]) -> Optional[str]
         return None
 
     # Try to get from 'content' which might be a JSON string or a dict
-    content_field = media_content.get('content')
+    content_field = media_content.get("content")
     parsed_content = None
 
     if isinstance(content_field, str):
         try:
             parsed_content = json.loads(content_field)
         except json.JSONDecodeError:
-            logging.warning("Failed to parse media_content['content'] JSON string in extract_media_name")
+            logging.warning(
+                "Failed to parse media_content['content'] JSON string in extract_media_name"
+            )
             # It might be a plain string title itself, or not what we expect
             # For now, if it's a non-JSON string, we don't assume it's the name.
             parsed_content = {}
@@ -1897,32 +2882,41 @@ def extract_media_name(media_content: Optional[Dict[str, Any]]) -> Optional[str]
 
     if isinstance(parsed_content, dict):
         # Check common keys for a title or name
-        name = parsed_content.get('title') or \
-               parsed_content.get('name') or \
-               parsed_content.get('media_title') or \
-               parsed_content.get('webpage_title')
-        if name: return name
+        name = (
+            parsed_content.get("title")
+            or parsed_content.get("name")
+            or parsed_content.get("media_title")
+            or parsed_content.get("webpage_title")
+        )
+        if name:
+            return name
 
     # Fallback to top-level keys in media_content itself if 'content' didn't yield a name
-    name_top_level = media_content.get('title') or \
-                     media_content.get('name') or \
-                     media_content.get('media_title')
-    if name_top_level: return name_top_level
+    name_top_level = (
+        media_content.get("title")
+        or media_content.get("name")
+        or media_content.get("media_title")
+    )
+    if name_top_level:
+        return name_top_level
 
-    logging.warning(f"Could not extract a clear media name from media_content: {str(media_content)[:200]}")
+    logging.warning(
+        f"Could not extract a clear media name from media_content: {str(media_content)[:200]}"
+    )
     return None
+
 
 # FIXME
 # update_chat_content Note Parsing:
 #     Issue: raw_note_content_field can be a plain string or a JSON string. This dual nature can be brittle.
 #     Improvement: Enforce a consistent structure for notes.content in the database if it's meant to hold structured data. If it's always JSON, then json.loads can be used directly (with error handling). If it can be either, the current logic is a necessary workaround but adds complexity.
 def update_chat_content(
-        selected_item: Optional[str],
-        use_content: bool,
-        use_summary: bool,
-        use_prompt: bool,
-        item_mapping: Dict[str, str],
-        db_instance: CharactersRAGDB
+    selected_item: Optional[str],
+    use_content: bool,
+    use_summary: bool,
+    use_prompt: bool,
+    item_mapping: Dict[str, str],
+    db_instance: CharactersRAGDB,
 ) -> Tuple[Dict[str, str], List[str]]:
     """
     Fetches content from a database 'note' to be used as RAG context in a chat.
@@ -1969,15 +2963,21 @@ def update_chat_content(
     selected_parts_names: List[str] = []
 
     if selected_item and selected_item in item_mapping:
-        note_id = item_mapping[selected_item]  # Assuming media_id from mapping is a note_id (UUID string)
+        note_id = item_mapping[
+            selected_item
+        ]  # Assuming media_id from mapping is a note_id (UUID string)
 
         try:
             note_data = db_instance.get_note_by_id(note_id)
         except CharactersRAGDBError as e:
-            logging.error(f"Error fetching note {note_id} for chat content: {e}", exc_info=True)
+            logging.error(
+                f"Error fetching note {note_id} for chat content: {e}", exc_info=True
+            )
             note_data = None
         except Exception as e_gen:  # Catch any other unexpected error during DB fetch
-            logging.error(f"Unexpected error fetching note {note_id}: {e_gen}", exc_info=True)
+            logging.error(
+                f"Unexpected error fetching note {note_id}: {e_gen}", exc_info=True
+            )
             note_data = None
 
         if note_data:
@@ -1985,48 +2985,74 @@ def update_chat_content(
             # 1. A plain string (e.g., the main transcript/content).
             # 2. A JSON string containing structured data like {"content": "...", "summary": "...", "prompt": "..."}.
 
-            raw_note_content_field = note_data.get('content', '')  # The actual text from notes.content
+            raw_note_content_field = note_data.get(
+                "content", ""
+            )  # The actual text from notes.content
             structured_content_from_note: Dict[str, str] = {}
 
             # Try to parse raw_note_content_field as JSON
-            if isinstance(raw_note_content_field, str) and \
-                    raw_note_content_field.strip().startswith('{') and \
-                    raw_note_content_field.strip().endswith('}'):
+            if (
+                isinstance(raw_note_content_field, str)
+                and raw_note_content_field.strip().startswith("{")
+                and raw_note_content_field.strip().endswith("}")
+            ):
                 try:
                     parsed_json = json.loads(raw_note_content_field)
                     if isinstance(parsed_json, dict):
                         # Filter to ensure only string values are taken for safety
-                        structured_content_from_note = {k: str(v) for k, v in parsed_json.items() if
-                                                        isinstance(v, (str, int, float, bool))}
-                        logging.debug(f"Parsed note's content field (ID: {note_id}) as JSON.")
+                        structured_content_from_note = {
+                            k: str(v)
+                            for k, v in parsed_json.items()
+                            if isinstance(v, (str, int, float, bool))
+                        }
+                        logging.debug(
+                            f"Parsed note's content field (ID: {note_id}) as JSON."
+                        )
                     else:
                         # JSON, but not a dict. Treat main content as the raw string.
-                        structured_content_from_note['content'] = raw_note_content_field
+                        structured_content_from_note["content"] = raw_note_content_field
                         logging.debug(
-                            f"Note's content field (ID: {note_id}) was JSON but not a dict. Using raw string for 'content'.")
+                            f"Note's content field (ID: {note_id}) was JSON but not a dict. Using raw string for 'content'."
+                        )
                 except json.JSONDecodeError:
                     # Not valid JSON, treat it as the main 'content' part
-                    structured_content_from_note['content'] = raw_note_content_field
-                    logging.debug(f"Note's content field (ID: {note_id}) is not JSON. Using raw string for 'content'.")
+                    structured_content_from_note["content"] = raw_note_content_field
+                    logging.debug(
+                        f"Note's content field (ID: {note_id}) is not JSON. Using raw string for 'content'."
+                    )
             else:  # Not a JSON string, treat as main 'content'
-                structured_content_from_note['content'] = raw_note_content_field
-                logging.debug(f"Note's content field (ID: {note_id}) is a plain string. Using for 'content'.")
+                structured_content_from_note["content"] = raw_note_content_field
+                logging.debug(
+                    f"Note's content field (ID: {note_id}) is a plain string. Using for 'content'."
+                )
 
             # Populate `output_media_content_for_chat` based on `use_` flags and what's in `structured_content_from_note`
             if use_content and "content" in structured_content_from_note:
-                output_media_content_for_chat["content"] = structured_content_from_note["content"]
+                output_media_content_for_chat["content"] = structured_content_from_note[
+                    "content"
+                ]
                 selected_parts_names.append("content")
 
             if use_summary and "summary" in structured_content_from_note:
-                output_media_content_for_chat["summary"] = structured_content_from_note["summary"]
+                output_media_content_for_chat["summary"] = structured_content_from_note[
+                    "summary"
+                ]
                 selected_parts_names.append("summary")
-            elif use_summary and "content" in structured_content_from_note and "summary" not in output_media_content_for_chat:
+            elif (
+                use_summary
+                and "content" in structured_content_from_note
+                and "summary" not in output_media_content_for_chat
+            ):
                 # Fallback: if summary requested but not explicitly present, use first N words of content as summary?
                 # For now, only include if explicitly present.
-                logging.debug("Summary requested but not found in structured note content.")
+                logging.debug(
+                    "Summary requested but not found in structured note content."
+                )
 
             if use_prompt and "prompt" in structured_content_from_note:
-                output_media_content_for_chat["prompt"] = structured_content_from_note["prompt"]
+                output_media_content_for_chat["prompt"] = structured_content_from_note[
+                    "prompt"
+                ]
                 selected_parts_names.append("prompt")
 
             # Add note title as a part, if not already taken by 'content', 'summary', or 'prompt'
@@ -2044,22 +3070,34 @@ def update_chat_content(
             logging.debug(f"Selected part names for chat: {selected_parts_names}")
 
         else:  # Note not found
-            logging.warning(f"Note ID {note_id} (from selected_item '{selected_item}') not found in DB.")
+            logging.warning(
+                f"Note ID {note_id} (from selected_item '{selected_item}') not found in DB."
+            )
             # Return empty, as per original fallback
             output_media_content_for_chat = {}
             selected_parts_names = []
 
     else:  # No item selected or item not in mapping
-        log_counter("update_chat_content_error", labels={"error": str("No item selected or item not in mapping")})
-        logging.debug(f"Debug - Update Chat Content - No item selected or item not in mapping: {selected_item}")
+        log_counter(
+            "update_chat_content_error",
+            labels={"error": str("No item selected or item not in mapping")},
+        )
+        logging.debug(
+            f"Debug - Update Chat Content - No item selected or item not in mapping: {selected_item}"
+        )
         output_media_content_for_chat = {}
         selected_parts_names = []
 
     update_duration = time.time() - start_time
     log_histogram("update_chat_content_duration", update_duration)
-    log_counter("update_chat_content_success" if selected_parts_names else "update_chat_content_noop")
+    log_counter(
+        "update_chat_content_success"
+        if selected_parts_names
+        else "update_chat_content_noop"
+    )
 
     return output_media_content_for_chat, selected_parts_names
+
 
 #
 # End of Chat functions
@@ -2070,11 +3108,10 @@ def update_chat_content(
 #
 # Chat Dictionary Functions - Moved to Character_Chat/Chat_Dictionary_Lib.py
 # Import the functions for backward compatibility
-from ..Character_Chat.Chat_Dictionary_Lib import (
+from ..Character_Chat.Chat_Dictionary_Lib import (  # noqa: E402
     ChatDictionary,
     parse_user_dict_markdown_file,
     process_user_input,
-    TokenBudgetExceededWarning
 )
 
 #
@@ -2086,10 +3123,11 @@ from ..Character_Chat.Chat_Dictionary_Lib import (
 #
 # Character Card Functions
 
+
 def save_character(
-        db: CharactersRAGDB,
-        character_data: Dict[str, Any],
-        expected_version: Optional[int] = None
+    db: CharactersRAGDB,
+    character_data: Dict[str, Any],
+    expected_version: Optional[int] = None,
 ) -> Optional[int]:
     """
     Saves (adds or updates) a character card in the database.
@@ -2121,54 +3159,68 @@ def save_character(
     log_counter("save_character_attempt")
     start_time = time.time()
 
-    char_name = character_data.get('name')
+    char_name = character_data.get("name")
     if not char_name:
         logging.error("Character name is required to save.")
         return None
 
-    db_card_data_full = { # Template for all possible fields for add_character_card
-        'name': char_name,
-        'description': character_data.get('description'),
-        'personality': character_data.get('personality'),
-        'scenario': character_data.get('scenario'),
-        'system_prompt': character_data.get('system_prompt', character_data.get('system')),  # common alternative key
-        'post_history_instructions': character_data.get('post_history_instructions',
-                                                        character_data.get('post_history')),
-        'first_message': character_data.get('first_message', character_data.get('mes_example_greeting')),
-        'message_example': character_data.get('message_example', character_data.get('mes_example')),
-        'creator_notes': character_data.get('creator_notes'),
-        'alternate_greetings': character_data.get('alternate_greetings'),  # Should be list or JSON string
-        'tags': character_data.get('tags'),  # Should be list or JSON string
-        'creator': character_data.get('creator'),
-        'character_version': character_data.get('character_version'),
-        'extensions': character_data.get('extensions')  # Should be dict or JSON string
+    db_card_data_full = {  # Template for all possible fields for add_character_card
+        "name": char_name,
+        "description": character_data.get("description"),
+        "personality": character_data.get("personality"),
+        "scenario": character_data.get("scenario"),
+        "system_prompt": character_data.get(
+            "system_prompt", character_data.get("system")
+        ),  # common alternative key
+        "post_history_instructions": character_data.get(
+            "post_history_instructions", character_data.get("post_history")
+        ),
+        "first_message": character_data.get(
+            "first_message", character_data.get("mes_example_greeting")
+        ),
+        "message_example": character_data.get(
+            "message_example", character_data.get("mes_example")
+        ),
+        "creator_notes": character_data.get("creator_notes"),
+        "alternate_greetings": character_data.get(
+            "alternate_greetings"
+        ),  # Should be list or JSON string
+        "tags": character_data.get("tags"),  # Should be list or JSON string
+        "creator": character_data.get("creator"),
+        "character_version": character_data.get("character_version"),
+        "extensions": character_data.get("extensions"),  # Should be dict or JSON string
     }
 
     # Handle image: convert base64 to bytes if present
-    if 'image' in character_data and character_data['image']:
+    if "image" in character_data and character_data["image"]:
         try:
             # Assuming character_data['image'] is base64 string. Remove data URL prefix if present.
-            img_b64_data = character_data['image']
-            if ',' in img_b64_data:  # e.g. data:image/png;base64,xxxxx
-                img_b64_data = img_b64_data.split(',', 1)[1]
-            db_card_data_full['image'] = base64.b64decode(img_b64_data)
+            img_b64_data = character_data["image"]
+            if "," in img_b64_data:  # e.g. data:image/png;base64,xxxxx
+                img_b64_data = img_b64_data.split(",", 1)[1]
+            db_card_data_full["image"] = base64.b64decode(img_b64_data)
         except Exception as e_img:
             logging.error(f"Error decoding character image for {char_name}: {e_img}")
-            db_card_data_full['image'] = None
+            db_card_data_full["image"] = None
     try:
         # Check if character exists for an "upsert" like behavior
         existing_char = db.get_character_card_by_name(char_name)
 
         char_id = None
         if existing_char:
-            logging.info(f"Character '{char_name}' found (ID: {existing_char['id']}). Attempting update.")
-            current_db_version = existing_char['version']
+            logging.info(
+                f"Character '{char_name}' found (ID: {existing_char['id']}). Attempting update."
+            )
+            current_db_version = existing_char["version"]
             if expected_version is not None and expected_version != current_db_version:
                 logging.error(
-                    f"Version mismatch for character '{char_name}'. Expected {expected_version}, DB has {current_db_version}.")
+                    f"Version mismatch for character '{char_name}'. Expected {expected_version}, DB has {current_db_version}."
+                )
                 raise ConflictError(
                     f"Version mismatch for character '{char_name}'. Expected {expected_version}, DB has {current_db_version}",
-                    entity="character_cards", entity_id=existing_char['id'])
+                    entity="character_cards",
+                    entity_id=existing_char["id"],
+                )
 
             # Use current_db_version as expected_version for the update call
             # Merge: Ensure fields not in character_data but in existing_char are preserved if desired
@@ -2182,39 +3234,63 @@ def save_character(
             # so it acts as a partial update for existing characters.
             update_payload = {}
             for key, input_value in character_data.items():
-                if key == 'name': continue # Name is for lookup, not part of update payload itself
-                if key == 'image': # Handle image separately due to b64 decode
-                    update_payload['image'] = db_card_data_full['image'] # Use processed image
-                elif key in db_card_data_full: # Check if it's a known/mapped field
-                     # Use the value from character_data, allowing explicit nulls if desired by client
+                if key == "name":
+                    continue  # Name is for lookup, not part of update payload itself
+                if key == "image":  # Handle image separately due to b64 decode
+                    update_payload["image"] = db_card_data_full[
+                        "image"
+                    ]  # Use processed image
+                elif key in db_card_data_full:  # Check if it's a known/mapped field
+                    # Use the value from character_data, allowing explicit nulls if desired by client
                     update_payload[key] = input_value
                 # else: field not in db_card_data_full, so ignore
 
             # Map alternate keys if primary not in update_payload but alternate was
-            if 'system' in character_data and 'system_prompt' not in character_data:
-                update_payload['system_prompt'] = character_data.get('system')
-            if 'post_history' in character_data and 'post_history_instructions' not in character_data:
-                update_payload['post_history_instructions'] = character_data.get('post_history')
-            if 'mes_example_greeting' in character_data and 'first_message' not in character_data:
-                update_payload['first_message'] = character_data.get('mes_example_greeting')
-            if 'mes_example' in character_data and 'message_example' not in character_data:
-                update_payload['message_example'] = character_data.get('mes_example')
-
+            if "system" in character_data and "system_prompt" not in character_data:
+                update_payload["system_prompt"] = character_data.get("system")
+            if (
+                "post_history" in character_data
+                and "post_history_instructions" not in character_data
+            ):
+                update_payload["post_history_instructions"] = character_data.get(
+                    "post_history"
+                )
+            if (
+                "mes_example_greeting" in character_data
+                and "first_message" not in character_data
+            ):
+                update_payload["first_message"] = character_data.get(
+                    "mes_example_greeting"
+                )
+            if (
+                "mes_example" in character_data
+                and "message_example" not in character_data
+            ):
+                update_payload["message_example"] = character_data.get("mes_example")
 
             if not update_payload:
                 logging.info(
-                    f"No updatable fields provided for existing character '{char_name}'. Skipping update, but returning ID.")
-                char_id = existing_char['id']  # No actual update, but considered "saved"
-            elif db.update_character_card(existing_char['id'], update_payload, current_db_version):
-                char_id = existing_char['id']
-                logging.info(f"Character '{char_name}' (ID: {char_id}) updated successfully.")
+                    f"No updatable fields provided for existing character '{char_name}'. Skipping update, but returning ID."
+                )
+                char_id = existing_char[
+                    "id"
+                ]  # No actual update, but considered "saved"
+            elif db.update_character_card(
+                existing_char["id"], update_payload, current_db_version
+            ):
+                char_id = existing_char["id"]
+                logging.info(
+                    f"Character '{char_name}' (ID: {char_id}) updated successfully."
+                )
             # db.update_character_card should raise on failure rather than return False
         else:
             logging.info(f"Character '{char_name}' not found. Attempting to add new.")
             # Use db_card_data_full for adding, as it contains all potential fields
             char_id = db.add_character_card(db_card_data_full)
             if char_id:
-                logging.info(f"Character '{char_name}' added successfully with ID: {char_id}.")
+                logging.info(
+                    f"Character '{char_name}' added successfully with ID: {char_id}."
+                )
             else:  # add_character_card returned None (should raise on error)
                 logging.error(f"Failed to add new character '{char_name}'.")
 
@@ -2226,7 +3302,9 @@ def save_character(
         else:
             # This path means neither update nor add succeeded in setting char_id
             log_counter("save_character_error_unspecified")
-            logging.error(f"Save character operation for '{char_name}' did not result in a character ID.")
+            logging.error(
+                f"Save character operation for '{char_name}' did not result in a character ID."
+            )
             return None
 
     except ConflictError as e_conflict:
@@ -2236,11 +3314,15 @@ def save_character(
         return None
     except (InputError, CharactersRAGDBError) as e_db:
         log_counter("save_character_error_db", labels={"error": str(e_db)})
-        logging.error(f"Database error saving character '{char_name}': {e_db}", exc_info=True)
+        logging.error(
+            f"Database error saving character '{char_name}': {e_db}", exc_info=True
+        )
         return None
     except Exception as e_gen:
         log_counter("save_character_error_generic", labels={"error": str(e_gen)})
-        logging.error(f"Generic error saving character '{char_name}': {e_gen}", exc_info=True)
+        logging.error(
+            f"Generic error saving character '{char_name}': {e_gen}", exc_info=True
+        )
         return None
 
 
@@ -2264,21 +3346,30 @@ def load_characters(db: CharactersRAGDB) -> Dict[str, Dict[str, Any]]:
     start_time = time.time()
     characters_map: Dict[str, Dict[str, Any]] = {}
     try:
-        # list_character_cards returns List[Dict[str, Any]]
-        all_cards_list = db.list_character_cards(limit=10000)  # Assuming not too many cards for now
+        # list_character_cards returns List[Dict[str, Any]]. This function
+        # base64-encodes each card's `image` below, so it needs the BLOB --
+        # unlike every other list_character_cards caller (task-15474), which
+        # defaults to an image-free projection.
+        all_cards_list = db.list_character_cards(
+            limit=10000, include_image=True
+        )  # Assuming not too many cards for now
 
         for card_dict in all_cards_list:
-            char_name = card_dict.get('name')
+            char_name = card_dict.get("name")
             if char_name:
                 # Convert image BLOB back to base64 string for compatibility if needed by UI
-                if 'image' in card_dict and isinstance(card_dict['image'], bytes):
+                if "image" in card_dict and isinstance(card_dict["image"], bytes):
                     try:
                         # You might want to store the image format or assume one (e.g., png)
-                        card_dict['image_base64'] = base64.b64encode(card_dict['image']).decode('utf-8')
+                        card_dict["image_base64"] = base64.b64encode(
+                            card_dict["image"]
+                        ).decode("utf-8")
                         # del card_dict['image'] # Optionally remove the bytes version
                     except Exception as e_img_enc:
-                        logging.warning(f"Could not encode image for character {char_name}: {e_img_enc}")
-                        card_dict['image_base64'] = None
+                        logging.warning(
+                            f"Could not encode image for character {char_name}: {e_img_enc}"
+                        )
+                        card_dict["image_base64"] = None
 
                 # The old code had 'image_path'. This is not directly stored.
                 # If 'image_path' is needed, it implies images are also saved to disk by save_character,
@@ -2287,11 +3378,15 @@ def load_characters(db: CharactersRAGDB) -> Dict[str, Dict[str, Any]]:
 
                 characters_map[char_name] = card_dict
             else:
-                logging.warning(f"Character card found with no name (ID: {card_dict.get('id')}). Skipping.")
+                logging.warning(
+                    f"Character card found with no name (ID: {card_dict.get('id')}). Skipping."
+                )
 
         load_duration = time.time() - start_time
         log_histogram("load_characters_duration", load_duration)
-        log_counter("load_characters_success", labels={"character_count": len(characters_map)})
+        log_counter(
+            "load_characters_success", labels={"character_count": len(characters_map)}
+        )
         logging.info(f"Loaded {len(characters_map)} characters from DB.")
         return characters_map
 
@@ -2320,10 +3415,12 @@ def get_character_names(db: CharactersRAGDB) -> List[str]:
     start_time = time.time()
     names: List[str] = []
     try:
-        all_cards = db.list_character_cards(limit=10000)  # Fetch all, then extract names
+        all_cards = db.list_character_cards(
+            limit=10000
+        )  # Fetch all, then extract names
         for card in all_cards:
-            if card.get('name'):
-                names.append(card['name'])
+            if card.get("name"):
+                names.append(card["name"])
 
         names.sort()  # Optional: sort names alphabetically
 
@@ -2339,6 +3436,7 @@ def get_character_names(db: CharactersRAGDB) -> List[str]:
         log_counter("get_character_names_error_generic", labels={"error": str(e_gen)})
         logging.error(f"Generic error getting character names: {e_gen}", exc_info=True)
         return []
+
 
 #
 # End of Chat_Functions.py

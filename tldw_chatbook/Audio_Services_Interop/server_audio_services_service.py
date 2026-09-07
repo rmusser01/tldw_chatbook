@@ -2,26 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Literal, Mapping, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Literal, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    AudioTokenizerDecodeRequest,
-    AudioTokenizerEncodeRequest,
-    AudioTranscriptionRequest,
-    AudioTranslationRequest,
-    AudiobookJobRequest,
-    AudiobookParseRequest,
-    OpenAISpeechRequest,
-    SpeechChatRequest,
-    SubmitAudioJobRequest,
-    SubtitleExportRequest,
-    TLDWAPIClient,
-    TTSHistoryFavoriteUpdate,
-    VoiceEncodeRequest,
-    VoiceProfileCreateRequest,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        AudioTokenizerDecodeRequest,
+        AudioTokenizerEncodeRequest,
+        AudioTranscriptionRequest,
+        AudioTranslationRequest,
+        AudiobookJobRequest,
+        AudiobookParseRequest,
+        OpenAISpeechRequest,
+        SpeechChatRequest,
+        SubmitAudioJobRequest,
+        SubtitleExportRequest,
+        TLDWAPIClient,
+        TTSHistoryFavoriteUpdate,
+        VoiceEncodeRequest,
+        VoiceProfileCreateRequest,
+    )
 
 
 class ServerAudioServicesService:
@@ -71,13 +73,17 @@ class ServerAudioServicesService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server audio/speech operations.")
+        raise ValueError(
+            "TLDW API client is required for server audio/speech operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -86,10 +92,14 @@ class ServerAudioServicesService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server audio action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server audio action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -106,9 +116,13 @@ class ServerAudioServicesService:
         self._enforce("audio.health.observe.server")
         return self._dump(await self._require_client().get_tts_health())
 
-    async def get_stt_health(self, *, model: str | None = None, warm: bool = False) -> dict[str, Any]:
+    async def get_stt_health(
+        self, *, model: str | None = None, warm: bool = False
+    ) -> dict[str, Any]:
         self._enforce("audio.health.observe.server")
-        return self._dump(await self._require_client().get_stt_health(model=model, warm=warm))
+        return self._dump(
+            await self._require_client().get_stt_health(model=model, warm=warm)
+        )
 
     async def list_tts_providers(self) -> dict[str, Any]:
         self._enforce("audio.providers.list.server")
@@ -116,7 +130,9 @@ class ServerAudioServicesService:
 
     async def list_tts_voices(self, *, provider: str | None = None) -> dict[str, Any]:
         self._enforce("audio.voices.list.server")
-        return self._dump(await self._require_client().list_tts_voices(provider=provider))
+        return self._dump(
+            await self._require_client().list_tts_voices(provider=provider)
+        )
 
     async def get_audio_streaming_status(self) -> dict[str, Any]:
         self._enforce("audio.streaming.status.server")
@@ -130,23 +146,37 @@ class ServerAudioServicesService:
         self._enforce("audio.streaming.launch.server")
         return self._dump(await self._require_client().test_audio_streaming())
 
-    async def create_speech_chat(self, request_data: SpeechChatRequest) -> dict[str, Any]:
+    async def create_speech_chat(
+        self, request_data: SpeechChatRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.speech_chat.launch.server")
         return self._dump(await self._require_client().create_speech_chat(request_data))
 
-    async def create_audio_speech(self, request_data: OpenAISpeechRequest) -> dict[str, Any]:
+    async def create_audio_speech(
+        self, request_data: OpenAISpeechRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.speech.launch.server")
-        return self._dump(await self._require_client().create_audio_speech(request_data))
+        return self._dump(
+            await self._require_client().create_audio_speech(request_data)
+        )
 
-    async def create_audio_speech_job(self, request_data: OpenAISpeechRequest) -> dict[str, Any]:
+    async def create_audio_speech_job(
+        self, request_data: OpenAISpeechRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.speech.launch.server")
-        return self._dump(await self._require_client().create_audio_speech_job(request_data))
+        return self._dump(
+            await self._require_client().create_audio_speech_job(request_data)
+        )
 
     async def list_audio_speech_job_artifacts(self, job_id: int) -> dict[str, Any]:
         self._enforce("audio.speech_jobs.detail.server")
-        return self._dump(await self._require_client().list_audio_speech_job_artifacts(job_id))
+        return self._dump(
+            await self._require_client().list_audio_speech_job_artifacts(job_id)
+        )
 
-    async def submit_audio_job(self, request_data: SubmitAudioJobRequest) -> dict[str, Any]:
+    async def submit_audio_job(
+        self, request_data: SubmitAudioJobRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.jobs.create.server")
         return self._dump(await self._require_client().submit_audio_job(request_data))
 
@@ -161,7 +191,9 @@ class ServerAudioServicesService:
         after_id: int = 0,
     ) -> AsyncGenerator[dict[str, Any], None]:
         self._enforce("audio.jobs.observe.server")
-        async for event in self._require_client().stream_audio_job_progress(job_id, after_id=after_id):
+        async for event in self._require_client().stream_audio_job_progress(
+            job_id, after_id=after_id
+        ):
             yield dict(event or {})
 
     async def list_tts_history(self, **kwargs: Any) -> dict[str, Any]:
@@ -170,7 +202,9 @@ class ServerAudioServicesService:
 
     async def get_tts_history_entry(self, history_id: int) -> dict[str, Any]:
         self._enforce("audio.history.detail.server")
-        return self._dump(await self._require_client().get_tts_history_entry(history_id))
+        return self._dump(
+            await self._require_client().get_tts_history_entry(history_id)
+        )
 
     async def update_tts_history_favorite(
         self,
@@ -178,11 +212,17 @@ class ServerAudioServicesService:
         request_data: TTSHistoryFavoriteUpdate,
     ) -> dict[str, Any]:
         self._enforce("audio.history.update.server")
-        return self._dump(await self._require_client().update_tts_history_favorite(history_id, request_data))
+        return self._dump(
+            await self._require_client().update_tts_history_favorite(
+                history_id, request_data
+            )
+        )
 
     async def delete_tts_history_entry(self, history_id: int) -> dict[str, Any]:
         self._enforce("audio.history.delete.server")
-        return self._dump(await self._require_client().delete_tts_history_entry(history_id))
+        return self._dump(
+            await self._require_client().delete_tts_history_entry(history_id)
+        )
 
     async def create_audio_transcription(
         self,
@@ -190,7 +230,11 @@ class ServerAudioServicesService:
         request_data: AudioTranscriptionRequest | None = None,
     ) -> dict[str, Any]:
         self._enforce("audio.transcriptions.launch.server")
-        return self._dump(await self._require_client().create_audio_transcription(file_path, request_data))
+        return self._dump(
+            await self._require_client().create_audio_transcription(
+                file_path, request_data
+            )
+        )
 
     async def create_audio_translation(
         self,
@@ -198,11 +242,19 @@ class ServerAudioServicesService:
         request_data: AudioTranslationRequest | None = None,
     ) -> dict[str, Any]:
         self._enforce("audio.translations.launch.server")
-        return self._dump(await self._require_client().create_audio_translation(file_path, request_data))
+        return self._dump(
+            await self._require_client().create_audio_translation(
+                file_path, request_data
+            )
+        )
 
-    async def encode_audio_tokenizer(self, request_data: AudioTokenizerEncodeRequest) -> dict[str, Any]:
+    async def encode_audio_tokenizer(
+        self, request_data: AudioTokenizerEncodeRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.tokenizer.launch.server")
-        return self._dump(await self._require_client().encode_audio_tokenizer(request_data))
+        return self._dump(
+            await self._require_client().encode_audio_tokenizer(request_data)
+        )
 
     async def encode_audio_tokenizer_file(
         self,
@@ -222,9 +274,13 @@ class ServerAudioServicesService:
             )
         )
 
-    async def decode_audio_tokenizer(self, request_data: AudioTokenizerDecodeRequest) -> dict[str, Any]:
+    async def decode_audio_tokenizer(
+        self, request_data: AudioTokenizerDecodeRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.tokenizer.launch.server")
-        return self._dump(await self._require_client().decode_audio_tokenizer(request_data))
+        return self._dump(
+            await self._require_client().decode_audio_tokenizer(request_data)
+        )
 
     async def upload_custom_voice(
         self,
@@ -246,9 +302,13 @@ class ServerAudioServicesService:
             )
         )
 
-    async def encode_custom_voice_reference(self, request_data: VoiceEncodeRequest) -> dict[str, Any]:
+    async def encode_custom_voice_reference(
+        self, request_data: VoiceEncodeRequest
+    ) -> dict[str, Any]:
         self._enforce("audio.voices.launch.server")
-        return self._dump(await self._require_client().encode_custom_voice_reference(request_data))
+        return self._dump(
+            await self._require_client().encode_custom_voice_reference(request_data)
+        )
 
     async def list_custom_voices(self) -> dict[str, Any]:
         self._enforce("audio.voices.list.server")
@@ -262,17 +322,32 @@ class ServerAudioServicesService:
         self._enforce("audio.voices.delete.server")
         return self._dump(await self._require_client().delete_custom_voice(voice_id))
 
-    async def preview_custom_voice(self, voice_id: str, *, text: str = "Hello, this is a preview of your custom voice.") -> dict[str, Any]:
+    async def preview_custom_voice(
+        self,
+        voice_id: str,
+        *,
+        text: str = "Hello, this is a preview of your custom voice.",
+    ) -> dict[str, Any]:
         self._enforce("audio.voices.preview.server")
-        return self._dump(await self._require_client().preview_custom_voice(voice_id, text=text))
+        return self._dump(
+            await self._require_client().preview_custom_voice(voice_id, text=text)
+        )
 
-    async def parse_audiobook_source(self, request_data: AudiobookParseRequest) -> dict[str, Any]:
+    async def parse_audiobook_source(
+        self, request_data: AudiobookParseRequest
+    ) -> dict[str, Any]:
         self._enforce("audiobooks.parse.launch.server")
-        return self._dump(await self._require_client().parse_audiobook_source(request_data))
+        return self._dump(
+            await self._require_client().parse_audiobook_source(request_data)
+        )
 
-    async def create_audiobook_job(self, request_data: AudiobookJobRequest) -> dict[str, Any]:
+    async def create_audiobook_job(
+        self, request_data: AudiobookJobRequest
+    ) -> dict[str, Any]:
         self._enforce("audiobooks.jobs.create.server")
-        return self._dump(await self._require_client().create_audiobook_job(request_data))
+        return self._dump(
+            await self._require_client().create_audiobook_job(request_data)
+        )
 
     async def get_audiobook_job_status(self, job_id: int) -> dict[str, Any]:
         self._enforce("audiobooks.jobs.detail.server")
@@ -280,15 +355,25 @@ class ServerAudioServicesService:
 
     async def list_audiobook_job_artifacts(self, job_id: int) -> dict[str, Any]:
         self._enforce("audiobooks.artifacts.list.server")
-        return self._dump(await self._require_client().list_audiobook_job_artifacts(job_id))
+        return self._dump(
+            await self._require_client().list_audiobook_job_artifacts(job_id)
+        )
 
-    async def list_audiobook_projects(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def list_audiobook_projects(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         self._enforce("audiobooks.projects.list.server")
-        return self._dump(await self._require_client().list_audiobook_projects(limit=limit, offset=offset))
+        return self._dump(
+            await self._require_client().list_audiobook_projects(
+                limit=limit, offset=offset
+            )
+        )
 
     async def get_audiobook_project(self, project_ref: str) -> dict[str, Any]:
         self._enforce("audiobooks.projects.detail.server")
-        return self._dump(await self._require_client().get_audiobook_project(project_ref))
+        return self._dump(
+            await self._require_client().get_audiobook_project(project_ref)
+        )
 
     async def list_audiobook_project_chapters(
         self,
@@ -322,9 +407,13 @@ class ServerAudioServicesService:
             )
         )
 
-    async def create_audiobook_voice_profile(self, request_data: VoiceProfileCreateRequest) -> dict[str, Any]:
+    async def create_audiobook_voice_profile(
+        self, request_data: VoiceProfileCreateRequest
+    ) -> dict[str, Any]:
         self._enforce("audiobooks.voice_profiles.create.server")
-        return self._dump(await self._require_client().create_audiobook_voice_profile(request_data))
+        return self._dump(
+            await self._require_client().create_audiobook_voice_profile(request_data)
+        )
 
     async def list_audiobook_voice_profiles(self) -> dict[str, Any]:
         self._enforce("audiobooks.voice_profiles.list.server")
@@ -332,8 +421,14 @@ class ServerAudioServicesService:
 
     async def delete_audiobook_voice_profile(self, profile_id: str) -> dict[str, Any]:
         self._enforce("audiobooks.voice_profiles.delete.server")
-        return self._dump(await self._require_client().delete_audiobook_voice_profile(profile_id))
+        return self._dump(
+            await self._require_client().delete_audiobook_voice_profile(profile_id)
+        )
 
-    async def export_audiobook_subtitles(self, request_data: SubtitleExportRequest) -> dict[str, Any]:
+    async def export_audiobook_subtitles(
+        self, request_data: SubtitleExportRequest
+    ) -> dict[str, Any]:
         self._enforce("audiobooks.subtitles.export.server")
-        return self._dump(await self._require_client().export_audiobook_subtitles(request_data))
+        return self._dump(
+            await self._require_client().export_audiobook_subtitles(request_data)
+        )

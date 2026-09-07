@@ -5,11 +5,25 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationValidationError,
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
+)
+from tldw_chatbook.Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
+)
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
-from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
-from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.Sync_Interop.hashing import (
+    canonical_payload_hash,
+    canonical_thinking_blocks_json,
+)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 class SyncEnvelopeBuilder:
@@ -32,20 +46,93 @@ class SyncEnvelopeBuilder:
 
     # ------------------------------------------------------------------ M1 dotted-domain builders
 
-    def build_notes_note_upsert(self, *, note_id: str, title: str, content: str) -> SyncV2Envelope:
-        payload = {"title": title, "content": content}
-        return self._notes_note_envelope(note_id=note_id, operation="upsert", payload=payload, deleted=False)
+    @staticmethod
+    def build_personal_context_whole_object(
+        *,
+        client_envelope_id: str,
+        dataset_id: str,
+        device_id: str,
+        domain: str,
+        object_id: str,
+        parent_id: str | None,
+        operation: Literal["upsert", "tombstone"],
+        payload: Mapping[str, Any],
+        payload_hash: str,
+        payload_size_bytes: int,
+        integrity_key_id: str,
+        profile_id: str,
+        purge_generation: int | None,
+        base_version: str | int | None,
+        entity_version: str | int | None,
+        object_revision: int | None,
+        base_server_cursor: int | None = None,
+        base_object_revision: int | None = None,
+        base_object_hash: str | None = None,
+    ) -> SyncV2Envelope:
+        """Build one clear, integrity-tagged Personal Context whole object."""
 
-    def build_notes_note_tombstone(self, *, note_id: str, deleted_at: str | None = None) -> SyncV2Envelope:
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
+        return SyncV2Envelope(
+            client_envelope_id=client_envelope_id,
+            dataset_id=dataset_id,
+            domain=domain,
+            object_id=object_id,
+            parent_id=parent_id,
+            operation=operation,
+            adapter_version=1,
+            schema_version=1,
+            device_id=device_id,
+            base_version=base_version,
+            entity_version=entity_version,
+            object_revision=object_revision,
+            base_server_cursor=base_server_cursor,
+            base_object_revision=base_object_revision,
+            base_object_hash=base_object_hash,
+            deleted=operation == "tombstone",
+            routing_metadata={
+                "integrity_key_id": integrity_key_id,
+                "profile_id": profile_id,
+                "purge_generation": purge_generation,
+            },
+            payload=dict(payload),
+            payload_hash=payload_hash,
+            payload_size_bytes=payload_size_bytes,
+            encryption_policy="server_trusted_v1",
+            encryption_metadata={"policy": "server_trusted_v1"},
+        )
+
+    def build_notes_note_upsert(
+        self, *, note_id: str, title: str, content: str
+    ) -> SyncV2Envelope:
+        payload = {"title": title, "content": content}
+        return self._notes_note_envelope(
+            note_id=note_id, operation="upsert", payload=payload, deleted=False
+        )
+
+    def build_notes_note_tombstone(
+        self, *, note_id: str, deleted_at: str | None = None
+    ) -> SyncV2Envelope:
         payload = {
             "deleted_at": deleted_at or datetime.now(timezone.utc).isoformat(),
             "reason": "user_deleted",
         }
-        return self._notes_note_envelope(note_id=note_id, operation="tombstone", payload=payload, deleted=True)
+        return self._notes_note_envelope(
+            note_id=note_id, operation="tombstone", payload=payload, deleted=True
+        )
 
-    def _notes_note_envelope(self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool) -> SyncV2Envelope:
+    def _notes_note_envelope(
+        self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool
+    ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         payload_hash = canonical_payload_hash(payload)
-        base = self.notes_mirror.get(self.dataset_id, note_id) if self.notes_mirror is not None else None
+        base = (
+            self.notes_mirror.get(self.dataset_id, note_id)
+            if self.notes_mirror is not None
+            else None
+        )
         return SyncV2Envelope(
             client_envelope_id=f"{self.device_id}:notes.note:{note_id}:{payload_hash}",
             dataset_id=self.dataset_id,
@@ -153,6 +240,9 @@ class SyncEnvelopeBuilder:
         variant_index: int | None = None,
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
+        provider_continuation_json: str | None = None,
+        thinking_blocks_json: str | None = None,
+        assistant_generation_state: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
@@ -169,6 +259,9 @@ class SyncEnvelopeBuilder:
             variant_index: Optional currently selected variant index.
             variant_count: Optional number of available variants for the message.
             selected_variant_id: Optional selected variant identifier.
+            provider_continuation_json: Optional canonical private continuation.
+            thinking_blocks_json: Optional canonical displayable/proprietary evidence.
+            assistant_generation_state: Portable assistant generation lifecycle state.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after this mutation.
 
@@ -192,14 +285,79 @@ class SyncEnvelopeBuilder:
             routing_metadata["variant_count"] = variant_count
         if selected_variant_id is not None:
             routing_metadata["selected_variant_id"] = selected_variant_id
+        checkpoint = None
+        if provider_continuation_json is not None and provider_continuation_json != "":
+            if role != "assistant":
+                raise ContinuationValidationError(
+                    "Invalid provider continuation data."
+                ) from None
+            checkpoint = parse_provider_continuation_json(provider_continuation_json)
+        if assistant_generation_state is not None and role != "assistant":
+            raise ValueError("Invalid assistant generation state.")
+        if thinking_blocks_json is not None and role != "assistant":
+            raise ValueError("Invalid thinking data.")
+        try:
+            normalized_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=assistant_generation_state,
+                has_valid_active_continuation=(
+                    checkpoint is not None and checkpoint.state == "active"
+                ),
+            )
+        except ValueError:
+            raise ValueError("Invalid assistant generation state.") from None
+        if normalized_state is AssistantGenerationState.CONTINUATION_ACTIVE and (
+            checkpoint is None or checkpoint.state != "active"
+        ):
+            raise ValueError("Invalid assistant generation state.")
+        payload = {
+            "assistant_generation_state": normalized_state.value
+            if normalized_state is not None
+            else None,
+            "content": content,
+            "role": role,
+        }
+        if checkpoint is not None:
+            payload["provider_continuation_json"] = dump_provider_continuation_json(
+                checkpoint
+            )
+        if thinking_blocks_json is not None:
+            payload["thinking_blocks_json"] = canonical_thinking_blocks_json(
+                thinking_blocks_json
+            )
         return self._encrypted_envelope(
             domain="chat",
             entity_id=message_id,
             operation="upsert",
             stable_key=stable_key,
-            payload={"content": content, "role": role},
+            payload=payload,
             payload_clear={},
             routing_metadata=routing_metadata,
+            base_version=base_version,
+            entity_version=entity_version,
+        )
+
+    def build_chat_message_delete(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        base_version: str | int | None = None,
+        entity_version: str | int | None = None,
+    ) -> SyncV2Envelope:
+        """Build a clear Chat message tombstone without private row data."""
+        clear = {"deleted": True}
+        return self._clear_envelope(
+            domain="chat",
+            entity_id=message_id,
+            operation="delete",
+            stable_key=f"{conversation_id}:{message_id}",
+            payload_clear=clear,
+            routing_metadata={
+                "conversation_id": conversation_id,
+                "entity_kind": "message",
+            },
+            payload_hash=self._payload_hash(clear),
             base_version=base_version,
             entity_version=entity_version,
         )
@@ -276,6 +434,9 @@ class SyncEnvelopeBuilder:
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         encrypted = encrypt_sync_payload(payload, key=self.dataset_key)
         payload_hash = self._payload_hash(payload)
         return SyncV2Envelope(
@@ -310,6 +471,9 @@ class SyncEnvelopeBuilder:
         entity_version: str | int | None = None,
         encryption_policy: str = "client_private_v1",
     ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         return SyncV2Envelope(
             client_envelope_id=f"{self.device_id}:{domain}:{stable_key}:{payload_hash}",
             dataset_id=self.dataset_id,
@@ -329,5 +493,7 @@ class SyncEnvelopeBuilder:
 
     @staticmethod
     def _payload_hash(payload: Mapping[str, Any]) -> str:
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

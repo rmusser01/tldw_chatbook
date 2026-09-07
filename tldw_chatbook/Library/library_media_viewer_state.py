@@ -2,19 +2,58 @@
 
 from __future__ import annotations
 
+import io
+import itertools
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
+# local_file_ingestion.py maps BOTH .md/.markdown and .txt/.rst/.csv/.log to
+# the single "plaintext" media type, and Obsidian imports use
+# "obsidian_note" -- neither type alone proves the content is markdown, so
+# LIB-13's "Rendered by default" decision also requires a content sniff
+# (``looks_like_markdown_content``) before defaulting to the rendered view.
+# task-31277 (critique #4 P2, AC#5): video/audio transcripts join the list.
+# Ingestion writes sectioned transcripts with real `## ...` headings, and
+# gating the sniff on the type alone painted those hashes literally in the
+# Reader. The content sniff stays the second gate, so an ordinary transcript
+# still defaults to Raw.
+_MARKDOWN_MEDIA_TYPES = frozenset(
+    {"plaintext", "markdown", "obsidian_note", "video", "audio"}
+)
+_ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+_TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
+
+# task-2858 review fix: ``looks_like_markdown_content`` runs on the UI thread
+# inside ``build_library_media_viewer_state`` every time LibraryScreen opens
+# an item with ``include_content=True`` -- an unbounded ``splitlines()`` scan
+# over a large transcript/document costs a full line-list allocation plus a
+# full-content regex sweep just to pick a *default* view. These caps bound
+# that cost to a small, constant-size prefix of the content. Semantics: this
+# only changes the DEFAULT view -- a document whose first markdown marker
+# sits beyond the sniff window will now default to Raw instead of Rendered,
+# but the Raw/Rendered toggle remains available, so the content is never
+# hidden or altered, only the initial view choice is heuristic. Acceptable
+# by design.
+MAX_MARKDOWN_SNIFF_CHARS = 32_000
+MAX_MARKDOWN_SNIFF_LINES = 200
 # Match the media list's temporal field + label (library_media_state._UPDATED_KEYS)
 # so the same item reads the same "Updated: <age>" in the list and the viewer.
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
 
-_EMPTY_EDIT_FIELDS: dict[str, str] = {"title": "", "author": "", "url": "", "keywords": ""}
+_EMPTY_EDIT_FIELDS: dict[str, str] = {
+    "title": "",
+    "author": "",
+    "url": "",
+    "keywords": "",
+}
 
 
 @dataclass(frozen=True)
@@ -58,6 +97,21 @@ class LibraryMediaViewerState:
         read_later: Whether the item is currently saved for read-it-later,
             sourced from the detail's ``is_read_it_later`` flag (as set by
             ``LocalMediaReadingService._enrich_with_read_it_later_state``).
+        media_type: The raw type string (``type``/``media_type`` on the
+            detail), or "unknown" when absent -- the same value shown on
+            the "Type: ..." metadata line.
+        is_markdown: Whether the Content section should default to the
+            Rendered (Markdown) view rather than Raw -- true only when
+            ``media_type`` is one of the types local ingestion can
+            plausibly tag a markdown file with AND ``content`` actually
+            contains markdown syntax (see ``looks_like_markdown_content``).
+        can_rename_speakers: TASK-31745 -- whether this item is a finished
+            meeting recording whose speakers can still be renamed (its
+            meeting folder survives; see ``can_rename_meeting_speakers``).
+            The screen resolves it; the reader only renders it.
+        speaker_legend_rows: ``(cluster_id, display_label)`` for every
+            speaker in that meeting, in first-seen transcript order, or ()
+            for anything else.
     """
 
     media_id: str
@@ -70,6 +124,14 @@ class LibraryMediaViewerState:
     version: int | None
     edit_fields: dict[str, str]
     read_later: bool
+    media_type: str
+    is_markdown: bool
+    backend: str
+    canonical_id: str
+    original_source: str
+    stored_representation: str
+    can_rename_speakers: bool = False
+    speaker_legend_rows: tuple[tuple[str, str], ...] = ()
 
 
 def _text(value: Any) -> str:
@@ -111,6 +173,57 @@ def _version(detail: Mapping[str, Any]) -> int | None:
         return None
 
 
+def looks_like_markdown_content(content: str) -> bool:
+    """Return True when ``content`` contains at least one line of real markdown syntax.
+
+    Narrows the ambiguous ``"plaintext"``/``"obsidian_note"`` media types
+    (which cover genuinely-markdown files alongside plain .txt/.csv/.log)
+    down to the files LIB-13 is actually about: an ATX heading (``# ...``
+    through ``###### ...``), a fenced code block, or a GFM table separator
+    row (e.g. ``| --- | --- |``). A bare ``---`` thematic break does not
+    count on its own -- only a separator row that also has at least one
+    ``|`` reads as an actual table.
+
+    The scan is bounded to the first ``MAX_MARKDOWN_SNIFF_CHARS`` characters
+    and ``MAX_MARKDOWN_SNIFF_LINES`` lines of ``content`` (see that
+    constant's comment) -- this is a "pick a default view" heuristic, not
+    an exhaustive search, so a marker that only appears past the sniff
+    window is not found and the item defaults to Raw instead of Rendered.
+
+    Args:
+        content: The media item's stored content/transcript text.
+
+    Returns:
+        True when ``content`` looks like markdown within the bounded
+        sniff window, else False.
+    """
+    if not content:
+        return False
+    sniff = content[:MAX_MARKDOWN_SNIFF_CHARS]
+    lines = itertools.islice(io.StringIO(sniff, newline=None), MAX_MARKDOWN_SNIFF_LINES)
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _ATX_HEADING_RE.match(stripped):
+            return True
+        if stripped.startswith("```"):
+            return True
+        if _TABLE_SEPARATOR_ROW_RE.match(stripped):
+            return True
+    return False
+
+
+def _is_markdown_media(media_type: str, content: str) -> bool:
+    """Combine the media-type allowlist with the content sniff (see
+    ``looks_like_markdown_content``) into the single "default to Rendered"
+    decision.
+    """
+    if media_type.strip().lower() not in _MARKDOWN_MEDIA_TYPES:
+        return False
+    return looks_like_markdown_content(content)
+
+
 def _empty_state() -> LibraryMediaViewerState:
     return LibraryMediaViewerState(
         media_id="",
@@ -123,6 +236,12 @@ def _empty_state() -> LibraryMediaViewerState:
         version=None,
         edit_fields=dict(_EMPTY_EDIT_FIELDS),
         read_later=False,
+        media_type="",
+        is_markdown=False,
+        backend="local",
+        canonical_id="",
+        original_source="",
+        stored_representation="No stored content",
     )
 
 
@@ -158,6 +277,9 @@ def build_library_media_viewer_state(
     detail: Mapping[str, Any] | None,
     *,
     now: datetime | None = None,
+    arrival_note: str = "",
+    backend: str = "local",
+    canonical_id: str = "",
 ) -> LibraryMediaViewerState:
     """Build the Library media viewer canvas display state.
 
@@ -167,6 +289,12 @@ def build_library_media_viewer_state(
             media item is loaded yet. Tolerated to have missing/None fields.
         now: Reference time for the "Updated" relative-age label; defaults
             to the current UTC time.
+        arrival_note: One-shot context line rendered FIRST in the metadata
+            lines (task-2223: e.g. reaching this item via a dedup-matched
+            ingest row); empty renders nothing extra.
+        backend: Provenance backend displayed by Reader Info.
+        canonical_id: Stable backend-qualified id. When omitted, it is
+            derived from ``backend`` and the detail's media id.
 
     Returns:
         Immutable viewer state: title, ordered metadata lines, content,
@@ -185,10 +313,27 @@ def build_library_media_viewer_state(
     keywords_text = _keywords_text(detail)
     updated_raw = _first_present_text(detail, _UPDATED_KEYS)
     updated_age = (
-        format_console_relative_age(updated_raw, now=reference_now) if updated_raw else ""
+        format_console_relative_age(updated_raw, now=reference_now)
+        if updated_raw
+        else ""
     )
 
-    lines: list[str] = [f"Type: {media_type}"]
+    content = _text(detail.get("content"))
+    is_markdown = _is_markdown_media(media_type, content)
+
+    lines: list[str] = []
+    # (task-2223) One-shot arrival context, e.g. reaching this item via a
+    # dedup-matched ingest row -- rendered first so the "why am I here"
+    # is answered before the metadata.
+    if arrival_note:
+        lines.append(arrival_note)
+    # task-4023 AC#7: an item the viewer renders as Markdown must not
+    # introduce itself as "Type: plaintext" -- say what the user is
+    # looking at, while still naming the stored type honestly.
+    if is_markdown and media_type == "plaintext":
+        lines.append("Type: markdown (stored as plaintext)")
+    else:
+        lines.append(f"Type: {media_type}")
     if author:
         lines.append(f"Author: {author}")
     if url and not url.startswith("local://"):
@@ -202,8 +347,9 @@ def build_library_media_viewer_state(
     if updated_age:
         lines.append(f"Updated: {updated_age}")
 
-    content = _text(detail.get("content"))
-    analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(detail)
+    analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(
+        detail
+    )
     read_later = bool(detail.get("is_read_it_later"))
 
     return LibraryMediaViewerState(
@@ -222,6 +368,15 @@ def build_library_media_viewer_state(
             "keywords": keywords_text,
         },
         read_later=read_later,
+        media_type=media_type,
+        is_markdown=is_markdown,
+        backend=backend,
+        canonical_id=canonical_id
+        or (
+            f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""
+        ),
+        original_source=url,
+        stored_representation=("Complete stored text" if content else "No stored content"),
     )
 
 
@@ -311,3 +466,39 @@ def build_library_media_highlight_rows(
             )
         )
     return tuple(rows)
+
+
+def detail_analysis_text(detail: Mapping[str, Any]) -> str:
+    """Public read of the newest version's analysis text (see the private helper)."""
+    return _latest_version_analysis_text(detail)
+
+
+def analysis_find_unavailable_reason(
+    *, mode: str, analysis: str, generating: bool, editing: bool
+) -> str:
+    """Why Find cannot open on the Analysis tab right now, or "" when it can.
+
+    Qodo on #2378: Find opens the bar for the tab being read, and the
+    Analysis tab composes its bar only around analysis text. With no text
+    (or while generating / editing) there is nothing to mount, so the
+    gesture must be disabled with a reason instead of silently arming
+    ``find_open``. The Read tab always has a body to search.
+
+    Args:
+        mode: The Reader mode (``"read"``, ``"analysis"``, ...).
+        analysis: The current analysis text, or "".
+        generating: Whether an analysis is being generated.
+        editing: Whether the analysis edit form is open.
+
+    Returns:
+        The user-facing reason, or "" when Find is available.
+    """
+    if mode != "analysis":
+        return ""
+    if generating:
+        return "Analysis is still generating."
+    if editing:
+        return "Finish editing the analysis first."
+    if not analysis.strip():
+        return "No analysis to search yet."
+    return ""

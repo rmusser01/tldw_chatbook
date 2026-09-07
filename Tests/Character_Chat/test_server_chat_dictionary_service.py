@@ -5,7 +5,9 @@ from unittest.mock import Mock
 import pytest
 
 import tldw_chatbook.Character_Chat.server_chat_dictionary_service as chat_dictionary_module
-from tldw_chatbook.Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
+from tldw_chatbook.Character_Chat.server_chat_dictionary_service import (
+    ServerChatDictionaryService,
+)
 from tldw_chatbook.runtime_policy import PolicyDecision, PolicyDeniedError
 
 
@@ -50,7 +52,9 @@ class FakeChatDictionaryClient:
         return {}
 
     async def reorder_chat_dictionary_entries(self, dictionary_id, request_data):
-        self.calls.append(("reorder_chat_dictionary_entries", dictionary_id, request_data))
+        self.calls.append(
+            ("reorder_chat_dictionary_entries", dictionary_id, request_data)
+        )
         return {"dictionary_id": dictionary_id, "entry_ids": request_data["entry_ids"]}
 
     async def process_chat_dictionaries(self, request_data):
@@ -126,7 +130,9 @@ def test_server_chat_dictionary_service_module_does_not_reference_legacy_config_
 
 
 @pytest.mark.asyncio
-async def test_server_chat_dictionary_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
+async def test_server_chat_dictionary_service_from_config_builds_and_reuses_client_lazily(
+    monkeypatch,
+):
     sentinel_client = FakeChatDictionaryClient()
     build_client_calls: list[dict[str, Any] | None] = []
 
@@ -139,7 +145,9 @@ async def test_server_chat_dictionary_service_from_config_builds_and_reuses_clie
         build_client,
     )
 
-    service = ServerChatDictionaryService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerChatDictionaryService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerChatDictionaryService)
     assert service.client is None
@@ -205,7 +213,9 @@ async def test_server_chat_dictionary_service_denied_policy_does_not_build_provi
         )
     )
     provider = ExplodingProvider()
-    service = ServerChatDictionaryService.from_server_context_provider(provider, policy_enforcer=policy)
+    service = ServerChatDictionaryService.from_server_context_provider(
+        provider, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_dictionaries()
@@ -230,7 +240,9 @@ async def test_server_chat_dictionary_service_routes_core_actions_with_policy():
     assert detail["entries"] == []
     assert updated["name"] == "Lore v2"
     assert deleted is True
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "chat.dictionaries.list.server",
         "chat.dictionaries.create.server",
         "chat.dictionaries.detail.server",
@@ -262,7 +274,9 @@ async def test_server_chat_dictionary_service_routes_entries_processing_import_e
     await service.get_statistics(7)
 
     assert deleted is True
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "chat.dictionary.entries.create.server",
         "chat.dictionary.entries.list.server",
         "chat.dictionary.entries.update.server",

@@ -6,6 +6,7 @@ from partial writes due to crashes, power failures, or other interruptions.
 """
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Union, Optional
@@ -13,64 +14,114 @@ import shutil
 from loguru import logger
 
 
+def _resolve_target_mode(
+    file_path: Path, mode: int, preserve_existing_mode: bool
+) -> int:
+    """Resolve the permission mode to apply to a rewritten file.
+
+    Args:
+        file_path: Path to the file being (re)written.
+        mode: Caller-supplied fallback mode, used verbatim when
+            ``preserve_existing_mode`` is False or the file does not exist yet.
+        preserve_existing_mode: When True and ``file_path`` already exists,
+            reuse its current permission bits instead of ``mode`` -- this is
+            what stops a rewrite from silently widening a secrets file that a
+            user (or a previous write) had tightened, e.g. to 0o600.
+
+    Returns:
+        The permission mode to ``os.chmod`` the replacement file to.
+    """
+    if preserve_existing_mode:
+        try:
+            return stat.S_IMODE(file_path.stat().st_mode)
+        except FileNotFoundError:
+            pass
+    return mode
+
+
 def atomic_write_text(
     file_path: Union[str, Path],
     content: str,
-    encoding: str = 'utf-8',
-    mode: int = 0o644
+    encoding: str = "utf-8",
+    mode: int = 0o644,
+    preserve_existing_mode: bool = False,
+    privacy_safe_log: bool = False,
+    overwrite: bool = True,
 ) -> None:
     """
     Write text content to a file atomically.
-    
+
     This function writes content to a temporary file in the same directory as the
     target file, then atomically renames it to replace the target file. This ensures
     that the file is either fully written or not written at all.
-    
+
     Args:
         file_path: Path to the target file
         content: Text content to write
         encoding: Text encoding (default: utf-8)
-        mode: File permissions (default: 0o644)
-        
+        mode: File permissions applied when the target does not already exist,
+            or when ``preserve_existing_mode`` is False (default: 0o644)
+        preserve_existing_mode: When True and the target file already exists,
+            carry its current permission bits forward instead of applying
+            ``mode``. Use this for secrets-bearing files (e.g. the app config)
+            so a rewrite never widens permissions a user has tightened.
+            Defaults to False to keep existing callers' behavior unchanged.
+        privacy_safe_log: Emit only a stable category and exception class at
+            this disclosure boundary. Defaults to False for existing callers.
+        overwrite: Replace an existing destination when True. When False,
+            publish the completed temporary file with an atomic no-clobber
+            link and raise ``FileExistsError`` if another writer created the
+            destination first.
+
     Raises:
         OSError: If the write or rename operation fails
         IOError: If the temporary file cannot be created
     """
     file_path = Path(file_path)
     parent_dir = file_path.parent
-    
+
     # Ensure parent directory exists
     parent_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    target_mode = _resolve_target_mode(file_path, mode, preserve_existing_mode)
+
     # Create temporary file in the same directory (for atomic rename)
     fd = None
     temp_path = None
-    
+
     try:
         # Create temp file with secure permissions
         fd, temp_path = tempfile.mkstemp(
-            dir=parent_dir,
-            prefix=f".{file_path.name}.",
-            suffix=".tmp",
-            text=True
+            dir=parent_dir, prefix=f".{file_path.name}.", suffix=".tmp", text=True
         )
-        
+
         # Write content to temp file
-        with os.fdopen(fd, 'w', encoding=encoding) as f:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(content)
             # Ensure data is written to disk
             f.flush()
             os.fsync(f.fileno())
-        
+
         # Set file permissions
-        os.chmod(temp_path, mode)
-        
-        # Atomic rename (on POSIX) or replace (cross-platform)
-        # os.replace is atomic on POSIX and does best-effort on Windows
-        os.replace(temp_path, str(file_path))
-        
-        logger.debug(f"Atomically wrote {len(content)} chars to {file_path}")
-        
+        os.chmod(temp_path, target_mode)
+
+        if overwrite:
+            # Atomic rename (on POSIX) or replace (cross-platform).
+            os.replace(temp_path, str(file_path))
+        else:
+            # A same-directory hard link atomically publishes the fully
+            # fsynced inode only if the destination is still absent. Unlike
+            # an exists()+replace sequence, no competing file can be lost in
+            # the check/write gap.
+            os.link(temp_path, file_path)
+            os.unlink(temp_path)
+        temp_path = None
+
+        if privacy_safe_log:
+            logger.debug("atomic_write_succeeded")
+        else:
+            logger.debug(f"Atomically wrote {len(content)} chars to {file_path}")
+
     except Exception as e:
         # Clean up temp file if it exists
         if temp_path and os.path.exists(temp_path):
@@ -78,64 +129,62 @@ def atomic_write_text(
                 os.unlink(temp_path)
             except Exception:
                 pass
-        logger.error(f"Failed to atomically write to {file_path}: {e}")
+        if privacy_safe_log:
+            logger.error(f"atomic_write_failed: {type(e).__name__}")
+        else:
+            logger.error(f"Failed to atomically write to {file_path}: {e}")
         raise
 
 
 def atomic_write_bytes(
-    file_path: Union[str, Path],
-    content: bytes,
-    mode: int = 0o644
+    file_path: Union[str, Path], content: bytes, mode: int = 0o644
 ) -> None:
     """
     Write binary content to a file atomically.
-    
+
     This function writes content to a temporary file in the same directory as the
     target file, then atomically renames it to replace the target file.
-    
+
     Args:
         file_path: Path to the target file
         content: Binary content to write
         mode: File permissions (default: 0o644)
-        
+
     Raises:
         OSError: If the write or rename operation fails
         IOError: If the temporary file cannot be created
     """
     file_path = Path(file_path)
     parent_dir = file_path.parent
-    
+
     # Ensure parent directory exists
     parent_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create temporary file in the same directory (for atomic rename)
     fd = None
     temp_path = None
-    
+
     try:
         # Create temp file with secure permissions
         fd, temp_path = tempfile.mkstemp(
-            dir=parent_dir,
-            prefix=f".{file_path.name}.",
-            suffix=".tmp",
-            text=False
+            dir=parent_dir, prefix=f".{file_path.name}.", suffix=".tmp", text=False
         )
-        
+
         # Write content to temp file
-        with os.fdopen(fd, 'wb') as f:
+        with os.fdopen(fd, "wb") as f:
             f.write(content)
             # Ensure data is written to disk
             f.flush()
             os.fsync(f.fileno())
-        
+
         # Set file permissions
         os.chmod(temp_path, mode)
-        
+
         # Atomic rename (on POSIX) or replace (cross-platform)
         os.replace(temp_path, str(file_path))
-        
+
         logger.debug(f"Atomically wrote {len(content)} bytes to {file_path}")
-        
+
     except Exception as e:
         # Clean up temp file if it exists
         if temp_path and os.path.exists(temp_path):
@@ -150,49 +199,55 @@ def atomic_write_bytes(
 def atomic_write_json(
     file_path: Union[str, Path],
     data: dict,
-    encoding: str = 'utf-8',
+    encoding: str = "utf-8",
     mode: int = 0o644,
-    indent: Optional[int] = 2
+    indent: Optional[int] = 2,
+    privacy_safe_log: bool = False,
 ) -> None:
     """
     Write JSON data to a file atomically.
-    
+
     Args:
         file_path: Path to the target file
         data: Dictionary to serialize as JSON
         encoding: Text encoding (default: utf-8)
         mode: File permissions (default: 0o644)
         indent: JSON indentation level (default: 2)
-        
+        privacy_safe_log: Emit only stable outcome and exception-class categories.
+
     Raises:
         OSError: If the write or rename operation fails
         json.JSONDecodeError: If the data cannot be serialized to JSON
     """
     import json
-    
+
     # Serialize to JSON
     content = json.dumps(data, indent=indent, ensure_ascii=False)
-    
+
     # Write atomically
-    atomic_write_text(file_path, content, encoding=encoding, mode=mode)
+    atomic_write_text(
+        file_path,
+        content,
+        encoding=encoding,
+        mode=mode,
+        privacy_safe_log=privacy_safe_log,
+    )
 
 
 def atomic_copy(
-    src_path: Union[str, Path],
-    dst_path: Union[str, Path],
-    mode: Optional[int] = None
+    src_path: Union[str, Path], dst_path: Union[str, Path], mode: Optional[int] = None
 ) -> None:
     """
     Copy a file atomically.
-    
+
     This function copies the source file to a temporary file in the same directory
     as the destination, then atomically renames it to the destination path.
-    
+
     Args:
         src_path: Path to the source file
         dst_path: Path to the destination file
         mode: File permissions for destination (default: preserve source permissions)
-        
+
     Raises:
         OSError: If the copy or rename operation fails
         FileNotFoundError: If the source file doesn't exist
@@ -200,38 +255,36 @@ def atomic_copy(
     src_path = Path(src_path)
     dst_path = Path(dst_path)
     parent_dir = dst_path.parent
-    
+
     if not src_path.exists():
         raise FileNotFoundError(f"Source file not found: {src_path}")
-    
+
     # Ensure parent directory exists
     parent_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create temporary file in the same directory (for atomic rename)
     fd = None
     temp_path = None
-    
+
     try:
         # Create temp file
         fd, temp_path = tempfile.mkstemp(
-            dir=parent_dir,
-            prefix=f".{dst_path.name}.",
-            suffix=".tmp"
+            dir=parent_dir, prefix=f".{dst_path.name}.", suffix=".tmp"
         )
         os.close(fd)  # Close the file descriptor, we'll use shutil.copy2
-        
+
         # Copy file with metadata
         shutil.copy2(str(src_path), temp_path)
-        
+
         # Set permissions if specified
         if mode is not None:
             os.chmod(temp_path, mode)
-        
+
         # Atomic rename
         os.replace(temp_path, str(dst_path))
-        
+
         logger.debug(f"Atomically copied {src_path} to {dst_path}")
-        
+
     except Exception as e:
         # Clean up temp file if it exists
         if temp_path and os.path.exists(temp_path):

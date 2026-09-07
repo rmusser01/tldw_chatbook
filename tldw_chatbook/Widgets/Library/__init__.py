@@ -1,16 +1,68 @@
 """Library destination widgets."""
 
-from .library_collections_panel import LibraryCollectionsPanel
+from .library_collections_capture_reader import (
+    CollectionsCaptureReaderPresentation,
+    CollectionsReaderMode,
+    LibraryCollectionsItemsPane,
+    LibraryCollectionsScopeRows,
+    LibraryCollectionsWorkPane,
+)
 from .library_conversations_canvas import LibraryConversationsCanvas
-from .library_ingest_canvas import LibraryIngestCanvas
+from .library_conversation_reader import LibraryConversationReader
+from .library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderPaneGrip,
+    LibraryAdaptiveReaderShell,
+)
+from .library_export_canvas import LibraryExportCanvas
+from .library_entry_canvases import (
+    LibraryLandingAttentionAction,
+    LibraryLandingCanvas,
+    LibraryLandingCanvasState,
+    LibraryLandingContinueAction,
+    LibraryLandingRecentItem,
+    LibraryStudyHandoffCanvas,
+    LibraryStudyHandoffCanvasState,
+)
+from .library_ingest_canvas import (
+    LibraryIngestCanvas,
+    LibraryIngestPreflightSummary,
+    LibraryIngestQueuePanel,
+)
 from .library_media_canvas import LibraryMediaCanvas
+from .library_media_reader_shell import (
+    LibraryMediaPaneGrip,
+    LibraryMediaReaderShell,
+    MediaShellResized,
+    PaneToggleRequested,
+)
+from .library_media_trash_canvas import LibraryMediaTrashCanvas
 from .library_media_viewer import LibraryMediaViewer
+from .library_note_import_canvas import LibraryNoteImportCanvas
+from .library_note_work_pane import LibraryNoteWorkPane
+from .library_notes_add_from_files_canvas import LibraryNotesAddFromFilesCanvas
 from .library_notes_canvas import LibraryNotesCanvas
-from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_label_text
+from .library_notes_sync_roots_canvas import LibraryNotesSyncRootsCanvas
+from .library_prompts_canvas import (
+    PROMPT_DISCARD_TOOLTIP_BUSY,
+    PROMPT_DISCARD_TOOLTIP_CLEAN,
+    PROMPT_DISCARD_TOOLTIP_DIRTY,
+    LibraryPromptsListCanvas,
+)
+from .library_prompt_work_pane import LibraryPromptWorkPane
+from .library_rail import (
+    LIBRARY_RAIL_ROW_PREFIX,
+    LibraryNavigationRailHandle,
+    LibraryRail,
+    library_dim_label_text,
+)
 from .library_search_rag_panel import (
-    LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    library_rag_answer_children,
+    library_rag_coverage_note_children,
     library_rag_history_children,
+    library_rag_query_quiet_text,
     library_rag_query_shows_full_recovery,
     library_rag_query_status_children,
     library_rag_result_row_children,
@@ -18,21 +70,111 @@ from .library_search_rag_panel import (
     library_rag_scope_recovery_children,
     library_rag_scope_shows_recovery,
     library_rag_scope_toggle_children,
+    results_heading_text,
+    scope_toggle_label,
 )
+from .library_skills_canvas import (
+    LIBRARY_SKILLS_FILTER_ID,
+    LIBRARY_SKILLS_PAGE_NEXT_ID,
+    LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+    LIBRARY_SKILLS_RETRY_ID,
+    SKILL_DISCARD_TOOLTIP_CLEAN,
+    SKILL_DISCARD_TOOLTIP_DIRTY,
+    LibrarySkillsListCanvas,
+    MODEL_HINT_COPY as SKILL_MODEL_HINT_COPY,
+    next_skill_context,
+    skill_context_toggle_label,
+    skill_disable_model_label,
+    skill_editor_warning_lines,
+    skill_script_grant_line,
+    skill_supporting_files_text,
+    skill_trust_panel_remediation_copy,
+    skill_trust_remediation_copy,
+    skill_trust_review_enabled,
+    skill_trust_review_preview,
+    skill_trust_state_line,
+    skill_trust_unlock_enabled,
+    skill_trust_approve_tooltip,
+    skill_trust_review_tooltip,
+    skill_trust_unlock_tooltip,
+    skill_user_invocable_label,
+)
+from .library_skill_work_pane import LibrarySkillWorkPane
 
 __all__ = [
+    "LIBRARY_SKILLS_FILTER_ID",
+    "LIBRARY_SKILLS_PAGE_NEXT_ID",
+    "LIBRARY_SKILLS_PAGE_PREVIOUS_ID",
+    "LIBRARY_SKILLS_RETRY_ID",
     "LIBRARY_RAIL_ROW_PREFIX",
-    "LibraryCollectionsPanel",
+    "PROMPT_DISCARD_TOOLTIP_BUSY",
+    "PROMPT_DISCARD_TOOLTIP_CLEAN",
+    "PROMPT_DISCARD_TOOLTIP_DIRTY",
+    "SKILL_DISCARD_TOOLTIP_CLEAN",
+    "SKILL_DISCARD_TOOLTIP_DIRTY",
+    "LIBRARY_ADAPTIVE_READER_GRIP_CLASS",
+    "AdaptiveReaderShellResized",
+    "LibraryAdaptiveReaderPaneGrip",
+    "LibraryAdaptiveReaderShell",
+    "CollectionsCaptureReaderPresentation",
+    "CollectionsReaderMode",
+    "LibraryCollectionsItemsPane",
+    "LibraryCollectionsScopeRows",
+    "LibraryCollectionsWorkPane",
     "LibraryConversationsCanvas",
+    "LibraryConversationReader",
+    "LibraryExportCanvas",
+    "LibraryLandingAttentionAction",
+    "LibraryLandingCanvas",
+    "LibraryLandingCanvasState",
+    "LibraryLandingContinueAction",
+    "LibraryLandingRecentItem",
     "LibraryIngestCanvas",
+    "LibraryIngestPreflightSummary",
+    "LibraryIngestQueuePanel",
     "LibraryMediaCanvas",
+    "LibraryMediaPaneGrip",
+    "LibraryMediaReaderShell",
+    "MediaShellResized",
+    "LibraryMediaTrashCanvas",
     "LibraryMediaViewer",
+    "LibraryNoteImportCanvas",
+    "LibraryNoteWorkPane",
+    "LibraryNotesAddFromFilesCanvas",
     "LibraryNotesCanvas",
+    "LibraryNotesSyncRootsCanvas",
+    "LibraryNavigationRailHandle",
+    "PaneToggleRequested",
+    "LibraryPromptsListCanvas",
+    "LibraryPromptWorkPane",
     "LibraryRail",
-    "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
+    "LibraryStudyHandoffCanvas",
+    "LibraryStudyHandoffCanvasState",
+    "LibrarySkillsListCanvas",
+    "LibrarySkillWorkPane",
+    "SKILL_MODEL_HINT_COPY",
+    "next_skill_context",
+    "skill_context_toggle_label",
+    "skill_disable_model_label",
+    "skill_editor_warning_lines",
+    "skill_script_grant_line",
+    "skill_supporting_files_text",
+    "skill_trust_panel_remediation_copy",
+    "skill_trust_remediation_copy",
+    "skill_trust_review_enabled",
+    "skill_trust_review_preview",
+    "skill_trust_state_line",
+    "skill_trust_unlock_enabled",
+    "skill_trust_approve_tooltip",
+    "skill_trust_review_tooltip",
+    "skill_trust_unlock_tooltip",
+    "skill_user_invocable_label",
     "library_dim_label_text",
+    "library_rag_answer_children",
+    "library_rag_coverage_note_children",
     "library_rag_history_children",
+    "library_rag_query_quiet_text",
     "library_rag_query_shows_full_recovery",
     "library_rag_query_status_children",
     "library_rag_result_row_children",
@@ -40,4 +182,6 @@ __all__ = [
     "library_rag_scope_recovery_children",
     "library_rag_scope_shows_recovery",
     "library_rag_scope_toggle_children",
+    "results_heading_text",
+    "scope_toggle_label",
 ]

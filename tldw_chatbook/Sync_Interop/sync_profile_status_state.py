@@ -57,6 +57,9 @@ class SyncProfileStatusDisplay:
         dataset_label: Sanitized dataset label for the active profile.
         device_label: Sanitized device label for the active profile.
         read_only_notice: Stable copy explaining the banner does not start sync.
+        notes_organization_state: Sanitized Notes organization enrollment phase.
+        notes_organization_captured_count: Server-captured organization item count.
+        notes_organization_expected_count: Server-expected organization item count.
     """
 
     status: str
@@ -69,9 +72,14 @@ class SyncProfileStatusDisplay:
     dataset_label: str
     device_label: str
     read_only_notice: str = "This view only reads sync state; it does not start sync."
+    notes_organization_state: str = "not_configured"
+    notes_organization_captured_count: int = 0
+    notes_organization_expected_count: int = 0
 
     @classmethod
-    def from_summary(cls, summary: Mapping[str, Any] | None) -> "SyncProfileStatusDisplay":
+    def from_summary(
+        cls, summary: Mapping[str, Any] | None
+    ) -> "SyncProfileStatusDisplay":
         """Build display state from repository/service summary data.
 
         Args:
@@ -89,13 +97,18 @@ class SyncProfileStatusDisplay:
         profile = _mapping(record.get("profile"))
         outbox = _mapping(record.get("outbox"))
         conflicts = _mapping(record.get("conflicts"))
+        notes_organization = _mapping(record.get("notes_organization"))
         pending_count = _count(outbox.get("pending"))
         dispatched_count = _count(outbox.get("dispatched"))
         conflict_count = _count(conflicts.get("count"))
-        server_profile_id = _safe_text(profile.get("server_profile_id"), "the configured server")
+        server_profile_id = _safe_text(
+            profile.get("server_profile_id"), "the configured server"
+        )
         dataset_id = _safe_text(profile.get("dataset_id"), "")
         device_id = _safe_text(profile.get("device_id"), "")
-        last_error = _safe_text(profile.get("last_error"), "unavailable", max_length=240)
+        last_error = _safe_text(
+            profile.get("last_error"), "unavailable", max_length=240
+        )
 
         return cls(
             status=status,
@@ -111,8 +124,21 @@ class SyncProfileStatusDisplay:
             pending_count=pending_count,
             dispatched_count=dispatched_count,
             conflict_count=conflict_count,
-            dataset_label=f"Dataset {dataset_id}" if dataset_id else "Dataset not assigned",
-            device_label=f"Device {device_id}" if device_id else "Device not registered",
+            dataset_label=f"Dataset {dataset_id}"
+            if dataset_id
+            else "Dataset not assigned",
+            device_label=f"Device {device_id}"
+            if device_id
+            else "Device not registered",
+            notes_organization_state=_safe_text(
+                notes_organization.get("state"), "not_configured", max_length=40
+            ).lower(),
+            notes_organization_captured_count=_count(
+                notes_organization.get("captured_count")
+            ),
+            notes_organization_expected_count=_count(
+                notes_organization.get("expected_count")
+            ),
         )
 
 

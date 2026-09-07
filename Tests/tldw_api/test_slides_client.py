@@ -27,7 +27,13 @@ from tldw_chatbook.tldw_api import (
 
 
 def _slide() -> dict:
-    return {"order": 0, "layout": "title", "title": "Intro", "content": "Hello", "metadata": {}}
+    return {
+        "order": 0,
+        "layout": "title",
+        "title": "Intro",
+        "content": "Hello",
+        "metadata": {},
+    }
 
 
 def _presentation(**overrides) -> dict:
@@ -111,7 +117,12 @@ async def test_slides_routes_wire_crud_generation_render_and_export(monkeypatch)
             {"service": "slides", "status": "ok"},
             _presentation(),
             {"presentations": [_summary()], "total": 1, "limit": 10, "offset": 2},
-            {"presentations": [_summary(title="Search hit")], "total": 1, "limit": 5, "offset": 0},
+            {
+                "presentations": [_summary(title="Search hit")],
+                "total": 1,
+                "limit": 5,
+                "offset": 0,
+            },
             _presentation(),
             _presentation(title="Updated"),
             _presentation(title="Patched"),
@@ -197,7 +208,9 @@ async def test_slides_routes_wire_crud_generation_render_and_export(monkeypatch)
             slides=[Slide(order=0, layout="title", title="Intro", content="Hello")],
         )
     )
-    listed = await client.list_presentations(limit=10, offset=2, sort="created_at desc", include_deleted=True)
+    listed = await client.list_presentations(
+        limit=10, offset=2, sort="created_at desc", include_deleted=True
+    )
     searched = await client.search_presentations("deck", limit=5, include_deleted=True)
     loaded = await client.get_presentation("deck-1", include_deleted=True)
     updated = await client.update_presentation(
@@ -217,12 +230,18 @@ async def test_slides_routes_wire_crud_generation_render_and_export(monkeypatch)
     template = await client.get_slide_template("template-1")
     styles = await client.list_visual_styles(limit=20)
     style = await client.get_visual_style("style-1")
-    created_style = await client.create_visual_style(VisualStyleCreateRequest(name="Minimal"))
-    patched_style = await client.patch_visual_style("style-2", VisualStylePatchRequest(name="Updated style"))
+    created_style = await client.create_visual_style(
+        VisualStyleCreateRequest(name="Minimal")
+    )
+    patched_style = await client.patch_visual_style(
+        "style-2", VisualStylePatchRequest(name="Updated style")
+    )
     delete_style_response = await client.delete_visual_style("style-2")
     versions = await client.list_presentation_versions("deck-1", limit=10)
     version = await client.get_presentation_version("deck-1", 2)
-    restored_version = await client.restore_presentation_version("deck-1", 2, if_match='"3"')
+    restored_version = await client.restore_presentation_version(
+        "deck-1", 2, if_match='"3"'
+    )
     render = await client.submit_presentation_render_job(
         "deck-1",
         PresentationRenderRequest(format="mp4"),
@@ -230,11 +249,21 @@ async def test_slides_routes_wire_crud_generation_render_and_export(monkeypatch)
     )
     render_status = await client.get_presentation_render_job_status(12)
     artifacts = await client.list_presentation_render_artifacts("deck-1")
-    prompt_deck = await client.generate_presentation_from_prompt(GenerateFromPromptRequest(prompt="Make a deck"))
-    chat_deck = await client.generate_presentation_from_chat(GenerateFromChatRequest(conversation_id="conversation-1"))
-    notes_deck = await client.generate_presentation_from_notes(GenerateFromNotesRequest(note_ids=["note-1"]))
-    media_deck = await client.generate_presentation_from_media(GenerateFromMediaRequest(media_id=7))
-    rag_deck = await client.generate_presentation_from_rag(GenerateFromRagRequest(query="topic", top_k=3))
+    prompt_deck = await client.generate_presentation_from_prompt(
+        GenerateFromPromptRequest(prompt="Make a deck")
+    )
+    chat_deck = await client.generate_presentation_from_chat(
+        GenerateFromChatRequest(conversation_id="conversation-1")
+    )
+    notes_deck = await client.generate_presentation_from_notes(
+        GenerateFromNotesRequest(note_ids=["note-1"])
+    )
+    media_deck = await client.generate_presentation_from_media(
+        GenerateFromMediaRequest(media_id=7)
+    )
+    rag_deck = await client.generate_presentation_from_rag(
+        GenerateFromRagRequest(query="topic", top_k=3)
+    )
     export = await client.export_presentation(
         "deck-1",
         format="markdown",
@@ -243,12 +272,23 @@ async def test_slides_routes_wire_crud_generation_render_and_export(monkeypatch)
     )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/slides/health")
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/slides/presentations")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/slides/presentations",
+    )
     assert mocked.await_args_list[1].kwargs["json_data"] == {
         "title": "Deck",
         "description": "A deck",
         "theme": "black",
-        "slides": [{"order": 0, "layout": "title", "title": "Intro", "content": "Hello", "metadata": {}}],
+        "slides": [
+            {
+                "order": 0,
+                "layout": "title",
+                "title": "Intro",
+                "content": "Hello",
+                "metadata": {},
+            }
+        ],
     }
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/slides/presentations")
     assert mocked.await_args_list[2].kwargs["params"] == {
@@ -257,46 +297,109 @@ async def test_slides_routes_wire_crud_generation_render_and_export(monkeypatch)
         "sort": "created_at desc",
         "include_deleted": "true",
     }
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/slides/presentations/search")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/slides/presentations/search",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {
         "q": "deck",
         "limit": 5,
         "offset": 0,
         "include_deleted": "true",
     }
-    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/slides/presentations/deck-1")
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/slides/presentations/deck-1",
+    )
     assert mocked.await_args_list[4].kwargs["params"] == {"include_deleted": "true"}
-    assert mocked.await_args_list[5].args[:2] == ("PUT", "/api/v1/slides/presentations/deck-1")
+    assert mocked.await_args_list[5].args[:2] == (
+        "PUT",
+        "/api/v1/slides/presentations/deck-1",
+    )
     assert mocked.await_args_list[5].kwargs["headers"] == {"If-Match": '"3"'}
-    assert mocked.await_args_list[6].args[:2] == ("PATCH", "/api/v1/slides/presentations/deck-1")
-    assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/slides/presentations/deck-1/reorder")
+    assert mocked.await_args_list[6].args[:2] == (
+        "PATCH",
+        "/api/v1/slides/presentations/deck-1",
+    )
+    assert mocked.await_args_list[7].args[:2] == (
+        "POST",
+        "/api/v1/slides/presentations/deck-1/reorder",
+    )
     assert mocked.await_args_list[7].kwargs["json_data"] == {"order": [0]}
-    assert mocked.await_args_list[8].args[:2] == ("DELETE", "/api/v1/slides/presentations/deck-1")
-    assert mocked.await_args_list[9].args[:2] == ("POST", "/api/v1/slides/presentations/deck-1/restore")
+    assert mocked.await_args_list[8].args[:2] == (
+        "DELETE",
+        "/api/v1/slides/presentations/deck-1",
+    )
+    assert mocked.await_args_list[9].args[:2] == (
+        "POST",
+        "/api/v1/slides/presentations/deck-1/restore",
+    )
     assert mocked.await_args_list[10].args[:2] == ("GET", "/api/v1/slides/templates")
-    assert mocked.await_args_list[11].args[:2] == ("GET", "/api/v1/slides/templates/template-1")
+    assert mocked.await_args_list[11].args[:2] == (
+        "GET",
+        "/api/v1/slides/templates/template-1",
+    )
     assert mocked.await_args_list[12].args[:2] == ("GET", "/api/v1/slides/styles")
     assert mocked.await_args_list[12].kwargs["params"] == {"limit": 20, "offset": 0}
-    assert mocked.await_args_list[13].args[:2] == ("GET", "/api/v1/slides/styles/style-1")
+    assert mocked.await_args_list[13].args[:2] == (
+        "GET",
+        "/api/v1/slides/styles/style-1",
+    )
     assert mocked.await_args_list[14].args[:2] == ("POST", "/api/v1/slides/styles")
-    assert mocked.await_args_list[15].args[:2] == ("PATCH", "/api/v1/slides/styles/style-2")
-    assert mocked.await_args_list[16].args[:2] == ("DELETE", "/api/v1/slides/styles/style-2")
-    assert mocked.await_args_list[17].args[:2] == ("GET", "/api/v1/slides/presentations/deck-1/versions")
-    assert mocked.await_args_list[18].args[:2] == ("GET", "/api/v1/slides/presentations/deck-1/versions/2")
+    assert mocked.await_args_list[15].args[:2] == (
+        "PATCH",
+        "/api/v1/slides/styles/style-2",
+    )
+    assert mocked.await_args_list[16].args[:2] == (
+        "DELETE",
+        "/api/v1/slides/styles/style-2",
+    )
+    assert mocked.await_args_list[17].args[:2] == (
+        "GET",
+        "/api/v1/slides/presentations/deck-1/versions",
+    )
+    assert mocked.await_args_list[18].args[:2] == (
+        "GET",
+        "/api/v1/slides/presentations/deck-1/versions/2",
+    )
     assert mocked.await_args_list[19].args[:2] == (
         "POST",
         "/api/v1/slides/presentations/deck-1/versions/2/restore",
     )
-    assert mocked.await_args_list[20].args[:2] == ("POST", "/api/v1/slides/presentations/deck-1/render-jobs")
+    assert mocked.await_args_list[20].args[:2] == (
+        "POST",
+        "/api/v1/slides/presentations/deck-1/render-jobs",
+    )
     assert mocked.await_args_list[20].kwargs["headers"] == {"If-Match": '"3"'}
-    assert mocked.await_args_list[21].args[:2] == ("GET", "/api/v1/slides/render-jobs/12")
-    assert mocked.await_args_list[22].args[:2] == ("GET", "/api/v1/slides/presentations/deck-1/render-artifacts")
+    assert mocked.await_args_list[21].args[:2] == (
+        "GET",
+        "/api/v1/slides/render-jobs/12",
+    )
+    assert mocked.await_args_list[22].args[:2] == (
+        "GET",
+        "/api/v1/slides/presentations/deck-1/render-artifacts",
+    )
     assert mocked.await_args_list[23].args[:2] == ("POST", "/api/v1/slides/generate")
-    assert mocked.await_args_list[24].args[:2] == ("POST", "/api/v1/slides/generate/from-chat")
-    assert mocked.await_args_list[25].args[:2] == ("POST", "/api/v1/slides/generate/from-notes")
-    assert mocked.await_args_list[26].args[:2] == ("POST", "/api/v1/slides/generate/from-media")
-    assert mocked.await_args_list[27].args[:2] == ("POST", "/api/v1/slides/generate/from-rag")
-    assert binary.await_args.args[:2] == ("GET", "/api/v1/slides/presentations/deck-1/export")
+    assert mocked.await_args_list[24].args[:2] == (
+        "POST",
+        "/api/v1/slides/generate/from-chat",
+    )
+    assert mocked.await_args_list[25].args[:2] == (
+        "POST",
+        "/api/v1/slides/generate/from-notes",
+    )
+    assert mocked.await_args_list[26].args[:2] == (
+        "POST",
+        "/api/v1/slides/generate/from-media",
+    )
+    assert mocked.await_args_list[27].args[:2] == (
+        "POST",
+        "/api/v1/slides/generate/from-rag",
+    )
+    assert binary.await_args.args[:2] == (
+        "GET",
+        "/api/v1/slides/presentations/deck-1/export",
+    )
     assert binary.await_args.kwargs["params"] == {
         "format": "markdown",
         "pdf_landscape": "true",

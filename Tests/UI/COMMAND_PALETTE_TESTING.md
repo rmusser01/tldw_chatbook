@@ -97,14 +97,14 @@ python -m tldw_chatbook.app
 2. Type "settings" or "config"
 3. Should see settings options
 4. Try "Open Config File" -> Should show path
-5. Try "Open Settings Tab" -> Should switch to Tools & Settings
+5. Try "Open Settings Tab" -> Should switch to the Settings tab
 ```
 
 **Expected Results:**
 - Settings commands available
 - Config file path displayed
 - Tab switching to settings works
-- Temperature setting commands available
+- Database stats command opens the Statistics screen
 
 ### 5. Integration Testing
 

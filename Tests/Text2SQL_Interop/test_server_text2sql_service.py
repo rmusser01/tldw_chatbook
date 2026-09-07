@@ -51,9 +51,9 @@ async def test_server_text2sql_service_routes_query_with_policy_action():
             },
         )
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
-        "text2sql.query.launch.server"
-    ]
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == ["text2sql.query.launch.server"]
 
 
 @pytest.mark.asyncio

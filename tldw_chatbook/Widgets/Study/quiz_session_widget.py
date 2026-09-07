@@ -11,11 +11,17 @@ from textual.widgets import Button, Static
 QUIZ_START_ENABLED_TOOLTIP = "Start the selected quiz."
 QUIZ_START_SELECT_TOOLTIP = "Select a quiz before starting."
 QUIZ_START_NO_QUIZZES_TOOLTIP = "Create or import a quiz before starting a session."
-QUIZ_START_SCOPE_UNAVAILABLE_TOOLTIP = "Switch to an available study scope before starting a quiz."
-QUIZ_START_ATTEMPT_ACTIVE_TOOLTIP = "Finish the current quiz attempt before starting another."
+QUIZ_START_SCOPE_UNAVAILABLE_TOOLTIP = (
+    "Switch to an available study scope before starting a quiz."
+)
+QUIZ_START_ATTEMPT_ACTIVE_TOOLTIP = (
+    "Finish the current quiz attempt before starting another."
+)
 QUIZ_REVIEW_ENABLED_TOOLTIP = "Review the selected quiz in Chat."
 QUIZ_REVIEW_SELECT_TOOLTIP = "Select a quiz before reviewing it in Chat."
-QUIZ_REVIEW_HANDOFF_UNAVAILABLE_TOOLTIP = "Chat handoff is unavailable from this app state."
+QUIZ_REVIEW_HANDOFF_UNAVAILABLE_TOOLTIP = (
+    "Chat handoff is unavailable from this app state."
+)
 
 
 class QuizSessionWidget(Widget):
@@ -54,7 +60,9 @@ class QuizSessionWidget(Widget):
     def compose(self) -> ComposeResult:
         with Vertical(id="quiz-session"):
             yield Static("Quiz Session", classes="quiz-session-title")
-            yield Static("Global study", id="quiz-scope-summary", classes="quiz-session-meta")
+            yield Static(
+                "Global study", id="quiz-scope-summary", classes="quiz-session-meta"
+            )
             yield Static("Select a quiz to begin.", id="quiz-session-summary")
             yield Static("", id="quiz-session-status")
             with Horizontal(classes="quiz-session-actions"):
@@ -92,7 +100,9 @@ class QuizSessionWidget(Widget):
                 QUIZ_START_ENABLED_TOOLTIP if enabled else QUIZ_START_SELECT_TOOLTIP
             )
 
-    def set_review_in_chat_enabled(self, enabled: bool, tooltip: str | None = None) -> None:
+    def set_review_in_chat_enabled(
+        self, enabled: bool, tooltip: str | None = None
+    ) -> None:
         if self.is_mounted:
             button = self.query_one("#quiz-open-in-chat", Button)
             button.disabled = not enabled

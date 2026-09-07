@@ -27,7 +27,9 @@ _KIND_TO_RECORD_TYPE = {
 }
 
 
-def normalize_writing_record(source: str, kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_writing_record(
+    source: str, kind: str, record: Mapping[str, Any]
+) -> dict[str, Any]:
     """Return a source-labeled Chatbook record without hiding backend-native IDs."""
 
     payload = dict(record)
@@ -40,7 +42,9 @@ def normalize_writing_record(source: str, kind: str, record: Mapping[str, Any]) 
     if kind == "chapter":
         payload["manuscript_id"] = payload.get("manuscript_id", payload.get("part_id"))
     if kind == "scene":
-        payload["content_markdown"], payload["content_markdown_fidelity"] = extract_markdown_from_server_scene(payload)
+        payload["content_markdown"], payload["content_markdown_fidelity"] = (
+            extract_markdown_from_server_scene(payload)
+        )
     return payload
 
 
@@ -60,7 +64,9 @@ def _record_id_for_kind(kind: str, payload: Mapping[str, Any]) -> str:
     return str(payload.get("id"))
 
 
-def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_writing_structure(
+    source: str, payload: Mapping[str, Any]
+) -> dict[str, Any]:
     """Map server `parts` and local manuscripts into Chatbook's manuscript vocabulary."""
 
     def normalize_scene_summary(scene: Mapping[str, Any]) -> dict[str, Any]:
@@ -74,7 +80,9 @@ def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict
         outline_parent_id: str | None = None,
     ) -> dict[str, Any]:
         normalized = normalize_writing_record(source, "chapter", chapter)
-        normalized["scenes"] = [normalize_scene_summary(scene) for scene in chapter.get("scenes", [])]
+        normalized["scenes"] = [
+            normalize_scene_summary(scene) for scene in chapter.get("scenes", [])
+        ]
         if outline_bucket is not None:
             normalized["outline_bucket"] = outline_bucket
         if outline_parent_type is not None:
@@ -90,8 +98,7 @@ def normalize_writing_structure(source: str, payload: Mapping[str, Any]) -> dict
             for chapter in manuscript.get("chapters", [])
         ]
         normalized["scenes"] = [
-            normalize_scene_summary(scene)
-            for scene in manuscript.get("scenes", [])
+            normalize_scene_summary(scene) for scene in manuscript.get("scenes", [])
         ]
         return normalized
 

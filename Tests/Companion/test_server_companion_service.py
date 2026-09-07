@@ -31,7 +31,12 @@ class FakeCompanionClient:
 
     async def list_companion_activity(self, **kwargs):
         self.calls.append(("list_companion_activity", kwargs))
-        return {"items": [], "total": 0, "limit": kwargs.get("limit"), "offset": kwargs.get("offset")}
+        return {
+            "items": [],
+            "total": 0,
+            "limit": kwargs.get("limit"),
+            "offset": kwargs.get("offset"),
+        }
 
     async def get_companion_activity(self, event_id):
         self.calls.append(("get_companion_activity", event_id))
@@ -157,14 +162,20 @@ async def test_server_companion_service_re_resolves_provider_without_service_loc
     assert provider.build_calls == 2
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
-    assert provider.clients[0].calls == [("list_companion_activity", {"limit": 25, "offset": 0})]
-    assert provider.clients[1].calls == [("list_companion_activity", {"limit": 10, "offset": 0})]
+    assert provider.clients[0].calls == [
+        ("list_companion_activity", {"limit": 25, "offset": 0})
+    ]
+    assert provider.clients[1].calls == [
+        ("list_companion_activity", {"limit": 10, "offset": 0})
+    ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
 
 @pytest.mark.asyncio
-async def test_server_companion_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_companion_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakeCompanionClient())
     build_provider_calls = []
 
@@ -172,7 +183,11 @@ async def test_server_companion_service_from_config_returns_provider_backed_serv
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(companion_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        companion_module,
+        "build_runtime_api_client_provider_from_config",
+        build_provider,
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerCompanionService.from_config(config)
@@ -222,21 +237,24 @@ async def test_server_companion_service_delegates_and_normalizes_records():
     assert updated_goal["record_id"] == "server:companion_goal:goal-1"
     assert purged["record_id"] == "server:companion_lifecycle:knowledge"
     assert rebuilt["record_id"] == "server:companion_lifecycle:reflections"
-    assert all(item["backend"] == "server" for item in [
-        created_activity,
-        created_check_in,
-        activity,
-        activity_detail,
-        knowledge,
-        knowledge_detail,
-        reflection,
-        prompts,
-        goals,
-        created_goal,
-        updated_goal,
-        purged,
-        rebuilt,
-    ])
+    assert all(
+        item["backend"] == "server"
+        for item in [
+            created_activity,
+            created_check_in,
+            activity,
+            activity_detail,
+            knowledge,
+            knowledge_detail,
+            reflection,
+            prompts,
+            goals,
+            created_goal,
+            updated_goal,
+            purged,
+            rebuilt,
+        ]
+    )
 
 
 @pytest.mark.asyncio
@@ -259,7 +277,9 @@ async def test_server_companion_service_enforces_policy_actions():
     await service.purge_data({"scope": "knowledge"})
     await service.rebuild_data({"scope": "reflections"})
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "companion.activity.create.server",
         "companion.checkins.create.server",
         "companion.activity.list.server",

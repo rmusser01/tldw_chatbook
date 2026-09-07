@@ -14,7 +14,10 @@ class FakeServerClaimsService:
 
     async def create_claim_alert(self, request_data, **kwargs):
         self.calls.append(("create_claim_alert", request_data, kwargs))
-        return {"id": 41, "name": getattr(request_data, "name", request_data.get("name"))}
+        return {
+            "id": 41,
+            "name": getattr(request_data, "name", request_data.get("name")),
+        }
 
     async def search_claims(self, q, **kwargs):
         self.calls.append(("search_claims", q, kwargs))
@@ -22,7 +25,9 @@ class FakeServerClaimsService:
             "query": q,
             "total": 2,
             "results": [{"id": 1, "claim_text": "A claim"}],
-            "clusters": [{"cluster_id": 5, "top_claim": {"id": 2, "claim_text": "Cluster claim"}}],
+            "clusters": [
+                {"cluster_id": 5, "top_claim": {"id": 2, "claim_text": "Cluster claim"}}
+            ],
         }
 
     async def list_claim_clusters(self, **kwargs):
@@ -31,7 +36,10 @@ class FakeServerClaimsService:
 
     async def list_claims_analytics_exports(self, **kwargs):
         self.calls.append(("list_claims_analytics_exports", kwargs))
-        return {"exports": [{"export_id": "exp-1", "format": "json", "status": "ready"}], "total": 1}
+        return {
+            "exports": [{"export_id": "exp-1", "format": "json", "status": "ready"}],
+            "total": 1,
+        }
 
     async def verify_claims_fva(self, request_data, **kwargs):
         self.calls.append(("verify_claims_fva", request_data, kwargs))
@@ -61,7 +69,9 @@ async def test_claims_scope_service_routes_server_and_normalizes_records():
     policy = FakePolicyEnforcer()
     scope = ClaimsScopeService(server_service=server, policy_enforcer=policy)
 
-    notifications = await scope.list_claim_notifications(mode="server", kind="watchlist_cluster")
+    notifications = await scope.list_claim_notifications(
+        mode="server", kind="watchlist_cluster"
+    )
     alert = await scope.create_claim_alert(
         mode="server",
         request_data={"name": "Spike", "alert_type": "unsupported_ratio"},
@@ -84,7 +94,11 @@ async def test_claims_scope_service_routes_server_and_normalizes_records():
     assert fva["record_id"] == "server:claims_fva:verification"
     assert server.calls == [
         ("list_claim_notifications", {"kind": "watchlist_cluster"}),
-        ("create_claim_alert", {"name": "Spike", "alert_type": "unsupported_ratio"}, {}),
+        (
+            "create_claim_alert",
+            {"name": "Spike", "alert_type": "unsupported_ratio"},
+            {},
+        ),
         ("search_claims", "moon", {"group_by_cluster": True}),
         ("list_claim_clusters", {"keyword": "moon"}),
         ("list_claims_analytics_exports", {"limit": 10}),

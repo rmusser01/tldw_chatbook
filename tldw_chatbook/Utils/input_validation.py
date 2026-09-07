@@ -1,64 +1,680 @@
 """
 Input validation utilities for secure user input handling.
 """
-import re
+
 import ipaddress
+import math
+import re
 import time
-from typing import Union, Optional
-from packaging.version import InvalidVersion, Version
+import unicodedata
+from collections.abc import Mapping
+from itertools import islice
+from typing import Any, Literal, Optional, TypeVar, Union
+from urllib.parse import urlparse
+
+import regex
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+)
+from pydantic import (
+    ValidationError as PydanticValidationError,
+)
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
-
 PROVIDER_API_KEY_MAX_LENGTH = 4096
-PYPI_PACKAGE_NAME_PATTERN = re.compile(
-    r"^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9])$"
+CONSOLE_DRAFT_MAX_LENGTH = 100_000
+CONSOLE_FORK_TITLE_MAX_LENGTH = 60
+CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
+RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
+RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
+_VLLM_DRAFT_INPUT_LIMITS = {
+    "profile_name": 120,
+    "python_environment": 4096,
+    "hugging_face_model": 96,
+    "local_model_directory": 4096,
+    "bind_address": 255,
+    "existing_server_url": 2048,
+    "port": 5,
+    "tensor_parallel_size": 10,
+    "maximum_model_length": 10,
+    "gpu_memory_utilization": 32,
+}
+TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
+TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
+TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
+_EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+class VllmDraftInputEvent(BaseModel):
+    """Strict lexical boundary for one editable vLLM setup control."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    control_id: Literal[
+        "profile_name",
+        "python_environment",
+        "hugging_face_model",
+        "local_model_directory",
+        "bind_address",
+        "existing_server_url",
+        "port",
+        "tensor_parallel_size",
+        "maximum_model_length",
+        "gpu_memory_utilization",
+    ]
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def _validate_value(cls, value: str, info: ValidationInfo) -> str:
+        control_id = info.data.get("control_id")
+        limit = _VLLM_DRAFT_INPUT_LIMITS.get(control_id)
+        if limit is None or len(value) > limit:
+            raise ValueError("invalid vLLM setup value")
+        if any(unicodedata.category(character) == "Cc" for character in value):
+            raise ValueError("invalid vLLM setup value")
+        return value
+
+
+def validate_vllm_draft_input(control_id: object, value: object) -> str:
+    """Return one exact, bounded vLLM draft edit without semantic coercion.
+
+    Args:
+        control_id: Stable identifier for the editable setup control.
+        value: Candidate Textual input value.
+
+    Returns:
+        The exact validated string, including syntactically partial edits.
+
+    Raises:
+        ValueError: If the identifier, type, length, or characters are invalid.
+    """
+
+    try:
+        return VllmDraftInputEvent.model_validate(
+            {"control_id": control_id, "value": value}
+        ).value
+    except PydanticValidationError:
+        raise ValueError("vLLM setup value is invalid") from None
+
+
+class ToolArgumentsInput(BaseModel):
+    """Strict shared boundary for an externally supplied tool argument object."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    arguments: dict[str, Any]
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _validate_arguments(cls, value: object) -> dict[str, Any]:
+        if type(value) is not dict:
+            raise ValueError("tool arguments must be a JSON object")
+        _validate_strict_json_value(value, path="$", active_containers=set())
+        return value
+
+
+def validate_tool_arguments(value: object) -> dict[str, Any]:
+    """Validate one strict JSON-object tool payload through the shared model.
+
+    Args:
+        value: Candidate externally supplied tool arguments.
+
+    Returns:
+        The validated JSON object without scalar coercion.
+
+    Raises:
+        ValueError: If the payload is not a strict finite JSON object.
+    """
+    try:
+        return ToolArgumentsInput.model_validate({"arguments": value}).arguments
+    except PydanticValidationError as exc:
+        first = exc.errors(include_url=False)[0]
+        context_error = first.get("ctx", {}).get("error")
+        message = str(context_error or first.get("msg") or "invalid tool arguments")
+        if message.startswith("Value error, "):
+            message = message.removeprefix("Value error, ")
+        raise ValueError(message) from None
+
+
+class CanvasBridgeWireInput(BaseModel):
+    """Strict source-private shape for one untrusted Canvas bridge envelope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: str = Field(repr=False)
+    request_id: str = Field(repr=False)
+    kind: str = Field(repr=False)
+    value: Any = Field(repr=False)
+
+
+def validate_canvas_bridge_wire(value: object) -> CanvasBridgeWireInput:
+    """Validate the closed Canvas bridge envelope without semantic coercion.
+
+    Args:
+        value: Candidate browser-to-shell request mapping.
+
+    Returns:
+        A frozen envelope containing the exact four supplied field values.
+
+    Raises:
+        ValueError: If the value is not a mapping or its closed field shape and
+            scalar types are invalid.
+    """
+
+    if not isinstance(value, Mapping):
+        # TRY004: this public wire adapter intentionally exposes ValueError to
+        # callers (including the Canvas gateway) for every rejected payload.
+        raise ValueError("Canvas bridge request must be an object")  # noqa: TRY004
+    if len(value) > len(CanvasBridgeWireInput.model_fields):
+        raise ValueError("Canvas bridge request contains unknown fields") from None
+    try:
+        return CanvasBridgeWireInput.model_validate(dict(value))
+    except PydanticValidationError as exc:
+        error_types = {
+            error["type"]
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
+        }
+        if "extra_forbidden" in error_types:
+            reason = "Canvas bridge request contains unknown fields"
+        elif "missing" in error_types:
+            reason = "Canvas bridge request is missing fields"
+        else:
+            reason = "Canvas bridge request fields are invalid"
+        raise ValueError(reason) from None
+
+
+def _validate_strict_json_value(
+    value: object,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> None:
+    value_type = type(value)
+    if value is None or value_type in (str, bool, int):
+        return
+    if value_type is float:
+        if not math.isfinite(value):
+            raise ValueError(f"JSON number at {path} must be finite")
+        return
+    if value_type is list:
+        _validate_strict_json_container(
+            value,
+            path=path,
+            active_containers=active_containers,
+        )
+        try:
+            for index, item in enumerate(value):
+                _validate_strict_json_value(
+                    item,
+                    path=f"{path}[{index}]",
+                    active_containers=active_containers,
+                )
+        finally:
+            active_containers.remove(id(value))
+        return
+    if value_type is dict:
+        _validate_strict_json_container(
+            value,
+            path=path,
+            active_containers=active_containers,
+        )
+        try:
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ValueError(f"JSON object key at {path} must be a string")
+                _validate_strict_json_value(
+                    item,
+                    path=f"{path}.{key}",
+                    active_containers=active_containers,
+                )
+        finally:
+            active_containers.remove(id(value))
+        return
+    raise ValueError(f"value at {path} is not a JSON value")
+
+
+def _validate_strict_json_container(
+    value: object,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> None:
+    marker = id(value)
+    if marker in active_containers:
+        raise ValueError(f"JSON value at {path} contains a circular reference")
+    active_containers.add(marker)
+
+
+def derive_console_session_title(draft: str, *, max_length: int) -> str:
+    """Load the Console title helper lazily to keep validation imports acyclic."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        derive_console_session_title as derive_title,
+    )
+
+    return derive_title(draft, max_length=max_length)
+
+
+def validate_console_fork_title(value: object) -> str:
+    """Return one normalized, bounded Console fork title.
+
+    Args:
+        value: Raw value received from the Console naming dialog.
+
+    Returns:
+        A nonblank title normalized by the shared Console title helper.
+
+    Raises:
+        ValueError: If ``value`` is not text or normalizes to blank.
+    """
+
+    if type(value) is not str:
+        raise ValueError("Fork title must be text.")
+    normalized = derive_console_session_title(
+        value,
+        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
+    )
+    if not normalized:
+        raise ValueError("Fork title cannot be blank.")
+    return normalized
+
+
+class ConsoleForkTitleInput(BaseModel):
+    """Strict shared validation boundary for the Console fork naming dialog."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str:
+        return validate_console_fork_title(value)
+
+
+class ConsoleSwitcherQueryInput(BaseModel):
+    """Strict shared boundary for the local Ctrl+K search query."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    query: str = Field(max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH)
+
+
+def validate_console_switcher_query(value: object) -> str:
+    """Return one bounded Console switcher query without normalization.
+
+    Args:
+        value: Raw value supplied by the Textual search field.
+
+    Returns:
+        The exact validated query string.
+
+    Raises:
+        ValueError: If the value is not text or exceeds the query limit.
+    """
+    try:
+        return ConsoleSwitcherQueryInput.model_validate({"query": value}).query
+    except PydanticValidationError:
+        raise ValueError(
+            "Switcher search must be text containing at most "
+            f"{CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
+        ) from None
+
+
+class TerminalSessionNameInput(BaseModel):
+    """Strict shared boundary for a persistent-terminal display name."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    name: str
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _normalize_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("terminal session name must be text")
+        if len(value) > TERMINAL_SESSION_NAME_MAX_CODEPOINTS:
+            raise ValueError(
+                "terminal session name must contain at most "
+                f"{TERMINAL_SESSION_NAME_MAX_CODEPOINTS} code points"
+            )
+        normalized = unicodedata.normalize("NFC", value.strip())
+        if len(normalized) > TERMINAL_SESSION_NAME_MAX_CODEPOINTS:
+            raise ValueError(
+                "terminal session name must contain at most "
+                f"{TERMINAL_SESSION_NAME_MAX_CODEPOINTS} code points"
+            )
+        grapheme_count = sum(
+            1
+            for _match in islice(
+                _EXTENDED_GRAPHEME_PATTERN.finditer(normalized),
+                TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS + 1,
+            )
+        )
+        if not (
+            TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS
+            <= grapheme_count
+            <= TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS
+        ):
+            raise ValueError(
+                "terminal session name must contain "
+                f"{TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS} to "
+                f"{TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS} characters"
+            )
+        if any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+            for character in normalized
+        ):
+            raise ValueError("terminal session name must not contain controls")
+        if "[" in normalized or "]" in normalized:
+            raise ValueError("terminal session name must not contain markup")
+        return normalized
+
+
+TerminalPasteViolation = Literal["too_large", "prohibited_control"]
+
+
+class TerminalPasteInput(BaseModel):
+    """Strict shared boundary for one terminal paste offer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    text: str = Field(repr=False)
+    bracketed: bool
+
+    def classify(self) -> tuple[TerminalPasteViolation | None, bytes]:
+        """Classify paste content and return its replacement-encoded payload.
+
+        Returns:
+            A content-free violation category and payload bytes. The payload is
+            empty when a violation is present.
+        """
+        from ..Terminal.contracts import MAX_PASTE_BYTES
+
+        if len(self.text) > MAX_PASTE_BYTES:
+            return "too_large", b""
+        for character in self.text:
+            codepoint = ord(character)
+            if codepoint < 0x20 and character not in "\t\n\r":
+                return "prohibited_control", b""
+            if 0x7F <= codepoint <= 0x9F:
+                return "prohibited_control", b""
+        payload = self.text.encode("utf-8", "replace")
+        if len(payload) > MAX_PASTE_BYTES:
+            return "too_large", b""
+        return None, payload
+
+
+class TerminalKeyInput(BaseModel):
+    """Strict shared boundary for encoded terminal key bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalReplyInput(BaseModel):
+    """Strict shared boundary for code-owned terminal reply bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalOutputInput(BaseModel):
+    """Strict shared boundary for terminal backend output bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalResizeInput(BaseModel):
+    """Strict shared boundary for terminal resize dimensions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    columns: int
+    rows: int
+
+    @field_validator("columns")
+    @classmethod
+    def _validate_columns(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_COLUMNS, MIN_COLUMNS
+
+        if not MIN_COLUMNS <= value <= MAX_COLUMNS:
+            raise ValueError("terminal columns are outside contract")
+        return value
+
+    @field_validator("rows")
+    @classmethod
+    def _validate_rows(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_ROWS, MIN_ROWS
+
+        if not MIN_ROWS <= value <= MAX_ROWS:
+            raise ValueError("terminal rows are outside contract")
+        return value
+
+
+_TerminalBytesInput = TypeVar(
+    "_TerminalBytesInput",
+    TerminalKeyInput,
+    TerminalReplyInput,
+    TerminalOutputInput,
 )
+
+
+def _validate_terminal_bytes_input(
+    model_type: type[_TerminalBytesInput],
+    data: object,
+    *,
+    label: str,
+) -> _TerminalBytesInput:
+    """Return one strict bytes model with a content-free type error."""
+    try:
+        return model_type.model_validate({"data": data})
+    except PydanticValidationError:
+        raise TypeError(f"terminal {label} data must be bytes") from None
+
+
+def validate_terminal_key_input(data: object) -> TerminalKeyInput:
+    """Validate encoded terminal key bytes through the shared model.
+
+    Args:
+        data: Candidate encoded key bytes.
+
+    Returns:
+        Strict validated key model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalKeyInput, data, label="key")
+
+
+def validate_terminal_paste_input(
+    text: object, bracketed: object
+) -> TerminalPasteInput:
+    """Validate a terminal paste offer through the shared model.
+
+    Args:
+        text: Candidate paste text.
+        bracketed: Candidate bracketed-paste mode flag.
+
+    Returns:
+        Strict validated paste model.
+
+    Raises:
+        TypeError: If either value has the wrong type.
+    """
+    try:
+        return TerminalPasteInput.model_validate({"text": text, "bracketed": bracketed})
+    except PydanticValidationError:
+        raise TypeError("terminal paste values have invalid types") from None
+
+
+def validate_terminal_reply_input(data: object) -> TerminalReplyInput:
+    """Validate terminal reply bytes through the shared model.
+
+    Args:
+        data: Candidate terminal reply bytes.
+
+    Returns:
+        Strict validated reply model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalReplyInput, data, label="reply")
+
+
+def validate_terminal_output_input(data: object) -> TerminalOutputInput:
+    """Validate terminal backend output through the shared model.
+
+    Args:
+        data: Candidate backend output bytes.
+
+    Returns:
+        Strict validated output model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalOutputInput, data, label="output")
+
+
+def validate_terminal_resize_input(
+    columns: object, rows: object
+) -> TerminalResizeInput:
+    """Validate terminal dimensions through the shared model.
+
+    Args:
+        columns: Candidate terminal width.
+        rows: Candidate terminal height.
+
+    Returns:
+        Strict validated resize model.
+
+    Raises:
+        TypeError: If either dimension is not an integer.
+        ValueError: If either dimension is outside the terminal contract.
+    """
+    if type(columns) is not int or type(rows) is not int:
+        raise TypeError("terminal dimensions must be integers")
+    try:
+        return TerminalResizeInput.model_validate({"columns": columns, "rows": rows})
+    except PydanticValidationError:
+        raise ValueError("terminal dimensions are outside contract") from None
+
+
+class TerminalEnvironmentInput(BaseModel):
+    """Strict shared boundary for persistent-terminal environment sources."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    platform_name: Literal["posix", "nt"]
+    ambient: dict[str, str]
+    account: dict[str, str]
+    system: dict[str, str]
+
+
+class RawShellExecInput(BaseModel):
+    """Strict shared boundary for model-authored raw-shell arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    command: str = Field(min_length=1)
+    shell: Literal["auto", "bash", "powershell", "cmd"] = "auto"
+    initial_directory: str | None = None
+    timeout_seconds: float = Field(
+        default=RAW_CLI_TIMEOUT_MAX_SECONDS,
+        gt=0,
+        le=RAW_CLI_TIMEOUT_MAX_SECONDS,
+    )
+
+    @field_validator("command")
+    @classmethod
+    def _validate_command(cls, value: str) -> str:
+        return validate_raw_cli_command(value)
+
+    @field_validator("initial_directory", mode="before")
+    @classmethod
+    def _reject_explicit_null_directory(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("initial_directory must be a string when provided")
+        return value
+
+
+class SkillsListInput(BaseModel):
+    """Strict shared boundary for exact local Skills-list requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    limit: int = Field(gt=0)
+    offset: int = Field(ge=0)
+    query: str = ""
+    sort: Literal["name", "status"] = "name"
+
+    @field_validator("sort", mode="before")
+    @classmethod
+    def _normalize_sort(cls, value: object) -> object:
+        return value.strip().lower() if type(value) is str else value
 
 
 def validate_email(email: str) -> bool:
     """Validate email address format."""
     start_time = time.time()
     log_counter("input_validation_email_attempt")
-    
+
     if not email or len(email) > 254:
         log_counter("input_validation_email_invalid", labels={"reason": "length"})
         return False
-    
+
     # Basic email regex - not perfect but good enough for most cases
-    pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
     result = bool(pattern.match(email))
-    
+
     # Log result
     duration = time.time() - start_time
     log_histogram("input_validation_email_duration", duration)
     log_counter("input_validation_email_result", labels={"valid": str(result)})
-    
+
     return result
 
 
 def validate_username(username: str, min_length: int = 3, max_length: int = 50) -> bool:
     """Validate username format."""
     start_time = time.time()
-    log_counter("input_validation_username_attempt", labels={
-        "min_length": str(min_length),
-        "max_length": str(max_length)
-    })
-    
+    log_counter(
+        "input_validation_username_attempt",
+        labels={"min_length": str(min_length), "max_length": str(max_length)},
+    )
+
     if not username or len(username) < min_length or len(username) > max_length:
-        log_counter("input_validation_username_invalid", labels={
-            "reason": "empty" if not username else "length"
-        })
+        log_counter(
+            "input_validation_username_invalid",
+            labels={"reason": "empty" if not username else "length"},
+        )
         return False
-    
+
     # Allow alphanumeric, underscore, hyphen
-    pattern = re.compile(r'^[a-zA-Z0-9_-]+$')
+    pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
     result = bool(pattern.match(username))
-    
+
     # Log result
     duration = time.time() - start_time
     log_histogram("input_validation_username_duration", duration)
     log_counter("input_validation_username_result", labels={"valid": str(result)})
-    
+
     return result
 
 
@@ -66,196 +682,406 @@ def validate_ip_address(ip: str) -> bool:
     """Validate IP address (IPv4 or IPv6)."""
     start_time = time.time()
     log_counter("input_validation_ip_attempt")
-    
+
     try:
         ip_obj = ipaddress.ip_address(ip)
-        
+
         # Log success with IP version
         duration = time.time() - start_time
         log_histogram("input_validation_ip_duration", duration)
-        log_counter("input_validation_ip_result", labels={
-            "valid": "true",
-            "version": "ipv4" if isinstance(ip_obj, ipaddress.IPv4Address) else "ipv6"
-        })
-        
+        log_counter(
+            "input_validation_ip_result",
+            labels={
+                "valid": "true",
+                "version": "ipv4"
+                if isinstance(ip_obj, ipaddress.IPv4Address)
+                else "ipv6",
+            },
+        )
+
         return True
     except ValueError:
         log_counter("input_validation_ip_result", labels={"valid": "false"})
         return False
 
 
+def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
+    """Normalize an integer form value within inclusive bounds.
+
+    Args:
+        value: Integer or integer text, allowing signs and surrounding whitespace.
+        minimum: Inclusive lower bound.
+        maximum: Inclusive upper bound.
+
+    Returns:
+        The validated integer value.
+
+    Raises:
+        ValueError: If the value is not integer text or an integer, is a boolean,
+            or falls outside the bounds.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("Value must be an integer")  # noqa: TRY004 - form validation uses ValueError
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError("Value must be an integer") from None
+    if not minimum <= number <= maximum:
+        raise ValueError(f"Value must be between {minimum} and {maximum}")
+    return number
+
+
 def validate_port(port: Union[str, int]) -> bool:
     """Validate port number."""
     log_counter("input_validation_port_attempt")
-    
+
     try:
         port_num = int(port)
         result = 1 <= port_num <= 65535
-        
-        log_counter("input_validation_port_result", labels={
-            "valid": str(result),
-            "range": "privileged" if result and port_num < 1024 else "unprivileged" if result else "invalid"
-        })
-        
+
+        log_counter(
+            "input_validation_port_result",
+            labels={
+                "valid": str(result),
+                "range": "privileged"
+                if result and port_num < 1024
+                else "unprivileged"
+                if result
+                else "invalid",
+            },
+        )
+
         return result
     except (ValueError, TypeError):
-        log_counter("input_validation_port_result", labels={"valid": "false", "range": "invalid"})
+        log_counter(
+            "input_validation_port_result",
+            labels={"valid": "false", "range": "invalid"},
+        )
         return False
 
 
 def validate_url(url: str) -> bool:
-    """Basic URL validation."""
+    """Validate an http/https URL by scheme and host.
+
+    Uses ``urllib.parse`` (so long TLDs, IPv6 literals, IDN/Unicode hosts, IPs,
+    and localhost all validate) but rejects inputs that ``urlparse`` is too
+    lenient about: raw whitespace, backslashes (browsers normalise ``\\``→``/``,
+    a parser-discrepancy SSRF vector), embedded credentials (``user:pass@host``,
+    which would carry secrets into logged/forwarded URLs), and malformed hosts
+    (leading/consecutive dots) or ports. Only ``http``/``https`` schemes pass.
+
+    Args:
+        url: The candidate URL string.
+
+    Returns:
+        ``True`` if ``url`` is a well-formed http/https URL with a valid host
+        and no whitespace/backslashes/credentials/malformed host or port;
+        ``False`` otherwise (never raises).
+    """
     start_time = time.time()
     log_counter("input_validation_url_attempt")
-    
+
     if not url or len(url) > 2000:
-        log_counter("input_validation_url_invalid", labels={
-            "reason": "empty" if not url else "too_long"
-        })
+        log_counter(
+            "input_validation_url_invalid",
+            labels={"reason": "empty" if not url else "too_long"},
+        )
         return False
-    
-    # Basic URL pattern
-    pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    
-    result = bool(pattern.match(url))
-    
+
+    if any(c.isspace() for c in url) or "\\" in url:
+        # A valid URL has no raw whitespace (spaces are %-encoded) and no
+        # backslashes (which HTTP clients may normalise to "/", enabling
+        # parser-discrepancy SSRF/open-redirect bypasses).
+        result = False
+    else:
+        try:
+            parsed = urlparse(url)
+            _ = parsed.port  # raises ValueError on a malformed/out-of-range port
+            hostname = parsed.hostname
+            result = (
+                parsed.scheme in ("http", "https")
+                and bool(hostname)
+                and not hostname.startswith(".")  # reject ".example.com" / ".."
+                and ".." not in hostname  # reject "example..com"
+                and parsed.username is None  # reject embedded credentials
+                and parsed.password is None
+            )
+        except ValueError:
+            result = False
+
     # Log result
     duration = time.time() - start_time
     log_histogram("input_validation_url_duration", duration)
-    log_counter("input_validation_url_result", labels={
-        "valid": str(result),
-        "scheme": "https" if result and url.startswith('https://') else "http" if result else "invalid"
-    })
+    log_counter(
+        "input_validation_url_result",
+        labels={
+            "valid": str(result),
+            "scheme": "https"
+            if result and url.startswith("https://")
+            else "http"
+            if result
+            else "invalid",
+        },
+    )
     log_histogram("input_validation_url_length", len(url))
-    
+
     return result
 
 
-def validate_pypi_package_name(package_name: str) -> bool:
-    """Validate a PyPI project name.
+_GIT_ALLOWED_SCHEMES = frozenset({"https", "ssh"})
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+\Z")
+
+
+def validate_git_repo_url(url: str) -> None:
+    """Validate a git clone repo URL against a strict transport allowlist.
+
+    Only explicit ``https://`` and ``ssh://`` schemes are accepted. scp-style
+    shorthand (``user@host:path``) is rejected because its no-scheme,
+    colon-before-slash shape is ambiguous with git's ``ext::``/``fd::`` custom
+    transports and with leading-dash argument-injection payloads; use
+    ``ssh://git@host/path`` instead. Rejects custom transports (``ext``,
+    ``file``, ``fd``, ``git``, ...), whitespace/backslash/control characters,
+    a leading ``-`` (git-option injection), and anything without a scheme.
 
     Args:
-        package_name: Candidate project name.
+        url: The candidate repo URL.
 
-    Returns:
-        True when the value matches PyPI's permitted project-name characters
-        and boundary rules.
+    Raises:
+        ValidationError: If ``url`` is not an allowlisted, well-formed git URL.
     """
-    return bool(package_name and PYPI_PACKAGE_NAME_PATTERN.fullmatch(package_name))
-
-
-def validate_python_package_version(version: str) -> bool:
-    """Validate a Python package version using PEP 440 parsing.
-
-    Args:
-        version: Candidate package version.
-
-    Returns:
-        True when the value is non-empty and accepted by
-        ``packaging.version.Version``.
-    """
-    if not version:
-        return False
+    if not isinstance(url, str) or not url:
+        raise ValidationError("repo_url must be a non-empty string")
+    if url != url.strip() or any(c.isspace() for c in url):
+        raise ValidationError("repo_url must not contain whitespace")
+    if "\\" in url or any(ord(c) < 0x20 for c in url):
+        raise ValidationError(
+            "repo_url must not contain backslashes or control characters"
+        )
+    if not url.isprintable():
+        raise ValidationError(
+            "repo_url must not contain non-printable/zero-width characters"
+        )
+    if url.startswith("-"):
+        raise ValidationError("repo_url must not start with '-' (git-option injection)")
     try:
-        Version(version)
-    except InvalidVersion:
-        return False
-    return True
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise ValidationError(f"repo_url is not a parseable URL: {exc}")
+    if parsed.scheme.lower() not in _GIT_ALLOWED_SCHEMES:
+        raise ValidationError(
+            f"repo_url scheme {parsed.scheme!r} is not allowed; "
+            "only https:// and ssh:// git URLs are permitted"
+        )
+    if not parsed.hostname:
+        raise ValidationError("repo_url must include a host")
+    if (parsed.hostname or "").startswith("-") or (parsed.username or "").startswith(
+        "-"
+    ):
+        raise ValidationError(
+            "repo_url host/user must not start with '-' (ssh option injection)"
+        )
 
 
-def validate_github_actions_output_name(name: str) -> bool:
-    """Validate a GitHub Actions output name for file-command writes.
+def validate_git_ref(ref: str) -> None:
+    """Validate a git branch/ref name for use as a ``--branch`` value.
+
+    Rejects a leading ``-`` (git-option injection), whitespace/control chars,
+    ``..``, and any character outside ``[A-Za-z0-9._/-]``.
 
     Args:
-        name: Candidate output name.
+        ref: The candidate branch/ref name.
 
-    Returns:
-        True when the value cannot inject another output assignment or line.
+    Raises:
+        ValidationError: If ``ref`` is unsafe or not a well-formed ref name.
     """
-    return bool(name and not any(char in name for char in "=\r\n"))
+    if not isinstance(ref, str) or not ref:
+        raise ValidationError("ref must be a non-empty string")
+    if ref.startswith("-"):
+        raise ValidationError("ref must not start with '-' (git-option injection)")
+    if ".." in ref:
+        raise ValidationError("ref must not contain '..'")
+    if not _GIT_REF_RE.match(ref):
+        raise ValidationError(
+            "ref may only contain letters, digits, '.', '_', '/', '-'"
+        )
 
 
 def validate_filename(filename: str) -> bool:
     """Validate filename to prevent path traversal and dangerous characters."""
     log_counter("input_validation_filename_attempt")
-    
+
     if not filename or len(filename) > 255:
-        log_counter("input_validation_filename_invalid", labels={
-            "reason": "empty" if not filename else "too_long"
-        })
+        log_counter(
+            "input_validation_filename_invalid",
+            labels={"reason": "empty" if not filename else "too_long"},
+        )
         return False
-    
+
     # Reject dangerous characters and patterns
-    dangerous_chars = ['/', '\\', '..', '<', '>', ':', '"', '|', '?', '*']
+    dangerous_chars = ["/", "\\", "..", "<", ">", ":", '"', "|", "?", "*"]
     for char in dangerous_chars:
         if char in filename:
-            log_counter("input_validation_filename_invalid", labels={
-                "reason": "dangerous_char",
-                "char": char.replace('\\', 'backslash')
-            })
+            log_counter(
+                "input_validation_filename_invalid",
+                labels={
+                    "reason": "dangerous_char",
+                    "char": char.replace("\\", "backslash"),
+                },
+            )
             return False
-    
+
     # Reject reserved Windows filenames
     reserved_names = {
-        'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5',
-        'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4',
-        'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
     }
-    
-    name_without_ext = filename.split('.')[0].upper()
+
+    name_without_ext = filename.split(".")[0].upper()
     if name_without_ext in reserved_names:
-        log_counter("input_validation_filename_invalid", labels={
-            "reason": "reserved_name",
-            "name": name_without_ext
-        })
+        log_counter(
+            "input_validation_filename_invalid",
+            labels={"reason": "reserved_name", "name": name_without_ext},
+        )
         return False
-    
+
     log_counter("input_validation_filename_result", labels={"valid": "true"})
     return True
 
 
-def validate_text_input(text: str, max_length: int = 10000, allow_html: bool = False) -> bool:
+def validate_text_input(
+    text: str, max_length: int = 10000, allow_html: bool = False
+) -> bool:
     """Validate general text input."""
     start_time = time.time()
-    log_counter("input_validation_text_attempt", labels={
-        "max_length": str(max_length),
-        "allow_html": str(allow_html)
-    })
-    
+    log_counter(
+        "input_validation_text_attempt",
+        labels={"max_length": str(max_length), "allow_html": str(allow_html)},
+    )
+
     if text is None:
-        log_counter("input_validation_text_result", labels={"valid": "true", "type": "none"})
+        log_counter(
+            "input_validation_text_result", labels={"valid": "true", "type": "none"}
+        )
         return True  # Allow None/empty
-    
+
     if len(text) > max_length:
         log_counter("input_validation_text_invalid", labels={"reason": "too_long"})
         log_histogram("input_validation_text_oversized_length", len(text))
         return False
-    
+
     if not allow_html:
         # Check for potential HTML/script injection
-        dangerous_patterns = ['<script', '</script', 'javascript:', 'onclick=', 'onerror=']
+        dangerous_patterns = [
+            "<script",
+            "</script",
+            "javascript:",
+            "onclick=",
+            "onerror=",
+        ]
         text_lower = text.lower()
         for pattern in dangerous_patterns:
             if pattern in text_lower:
-                log_counter("input_validation_text_invalid", labels={
-                    "reason": "dangerous_pattern",
-                    "pattern": pattern
-                })
+                log_counter(
+                    "input_validation_text_invalid",
+                    labels={"reason": "dangerous_pattern", "pattern": pattern},
+                )
                 return False
-    
+
     # Log success
     duration = time.time() - start_time
     log_histogram("input_validation_text_duration", duration)
     log_histogram("input_validation_text_length", len(text))
-    log_counter("input_validation_text_result", labels={"valid": "true", "type": "text"})
-    
+    log_counter(
+        "input_validation_text_result", labels={"valid": "true", "type": "text"}
+    )
+
     return True
+
+
+def validate_navigation_context_text(
+    value: object,
+    *,
+    name: str,
+    max_length: int,
+) -> str:
+    """Validate one bounded, single-line navigation-context string.
+
+    Args:
+        value: External navigation value to validate.
+        name: Safe field label used in validation errors.
+        max_length: Maximum accepted number of characters.
+
+    Returns:
+        The exact validated string without coercion or whitespace changes.
+
+    Raises:
+        ValueError: If the value is blank, unsafe, padded, or out of bounds.
+    """
+
+    if (
+        type(value) is not str
+        or not value
+        or value != value.strip()
+        or not value.isprintable()
+        or not validate_text_input(
+            value,
+            max_length=max_length,
+            allow_html=False,
+        )
+    ):
+        raise ValueError(f"{name} is invalid")
+    return value
+
+
+def validate_navigation_provider_key(value: object) -> str:
+    """Normalize and validate one provider key from navigation context.
+
+    Args:
+        value: External provider label or key.
+
+    Returns:
+        The normalized provider configuration key.
+
+    Raises:
+        ValueError: If the provider cannot be represented by the key contract.
+    """
+
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    raw_provider = validate_navigation_context_text(
+        value,
+        name="provider",
+        max_length=128,
+    )
+    provider = provider_config_key(raw_provider)
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    if (
+        not provider
+        or not provider[0].isalnum()
+        or any(character not in allowed for character in provider)
+    ):
+        raise ValueError("provider is invalid")
+    return provider
 
 
 def provider_api_key_validation_error(
@@ -307,93 +1133,171 @@ def validate_provider_api_key(
     return provider_api_key_validation_error(api_key, max_length=max_length) is None
 
 
-def validate_number_range(value: Union[str, int, float], min_val: Optional[float] = None, 
-                         max_val: Optional[float] = None) -> bool:
+def validate_number_range(
+    value: Union[str, int, float],
+    min_val: Optional[float] = None,
+    max_val: Optional[float] = None,
+) -> bool:
     """Validate numeric value within range."""
-    log_counter("input_validation_number_range_attempt", labels={
-        "has_min": str(min_val is not None),
-        "has_max": str(max_val is not None)
-    })
-    
+    log_counter(
+        "input_validation_number_range_attempt",
+        labels={
+            "has_min": str(min_val is not None),
+            "has_max": str(max_val is not None),
+        },
+    )
+
     try:
         num_val = float(value)
-        
+
         if min_val is not None and num_val < min_val:
-            log_counter("input_validation_number_range_invalid", labels={"reason": "below_min"})
+            log_counter(
+                "input_validation_number_range_invalid", labels={"reason": "below_min"}
+            )
             return False
-        
+
         if max_val is not None and num_val > max_val:
-            log_counter("input_validation_number_range_invalid", labels={"reason": "above_max"})
+            log_counter(
+                "input_validation_number_range_invalid", labels={"reason": "above_max"}
+            )
             return False
-        
+
         log_counter("input_validation_number_range_result", labels={"valid": "true"})
         return True
     except (ValueError, TypeError):
-        log_counter("input_validation_number_range_invalid", labels={"reason": "not_numeric"})
+        log_counter(
+            "input_validation_number_range_invalid", labels={"reason": "not_numeric"}
+        )
         return False
 
 
 def sanitize_string(text: str, max_length: int = 1000) -> str:
     """Sanitize string input by removing dangerous characters."""
     log_counter("input_validation_sanitize_attempt")
-    
+
     if not text:
-        log_counter("input_validation_sanitize_result", labels={"action": "empty_input"})
+        log_counter(
+            "input_validation_sanitize_result", labels={"action": "empty_input"}
+        )
         return ""
-    
+
     original_length = len(text)
-    
+
     # Truncate if too long
     if len(text) > max_length:
         text = text[:max_length]
-        log_counter("input_validation_sanitize_truncated", labels={
-            "original_length": str(original_length),
-            "max_length": str(max_length)
-        })
-    
+        log_counter(
+            "input_validation_sanitize_truncated",
+            labels={
+                "original_length": str(original_length),
+                "max_length": str(max_length),
+            },
+        )
+
     # Remove null bytes and control characters (except common whitespace)
     removed_chars = 0
-    sanitized = ''
+    sanitized = ""
     for char in text:
-        if ord(char) >= 32 or char in '\t\n\r':
+        if ord(char) >= 32 or char in "\t\n\r":
             sanitized += char
         else:
             removed_chars += 1
-    
+
     log_histogram("input_validation_sanitize_removed_chars", removed_chars)
-    log_counter("input_validation_sanitize_result", labels={
-        "action": "sanitized",
-        "had_dangerous_chars": str(removed_chars > 0)
-    })
-    
+    log_counter(
+        "input_validation_sanitize_result",
+        labels={"action": "sanitized", "had_dangerous_chars": str(removed_chars > 0)},
+    )
+
     return sanitized
+
+
+def validate_console_draft(
+    draft: object, *, allow_empty: bool = False
+) -> tuple[str, str | None]:
+    """Validate and sanitize a Console message draft before use.
+
+    Args:
+        draft: Candidate draft value to normalize as text.
+        allow_empty: Whether a blank draft is valid.
+
+    Returns:
+        A pair containing the sanitized draft and an optional user-facing
+        validation error. The draft is empty when validation fails.
+    """
+    raw_draft = str(draft or "")
+    if not raw_draft.strip():
+        if allow_empty:
+            return "", None
+        return "", "Type a message before sending."
+    if not validate_text_input(
+        raw_draft,
+        max_length=CONSOLE_DRAFT_MAX_LENGTH,
+        allow_html=False,
+    ):
+        return "", "Message blocked: remove unsafe markup or shorten your message."
+    clean_draft = sanitize_string(raw_draft, max_length=CONSOLE_DRAFT_MAX_LENGTH)
+    if not clean_draft.strip():
+        if allow_empty:
+            return "", None
+        return "", "Type a message before sending."
+    return clean_draft, None
+
+
+def validate_raw_cli_command(
+    command: object,
+    *,
+    max_bytes: int = RAW_CLI_COMMAND_MAX_BYTES,
+) -> str:
+    """Validate an exact user-authored command without sanitizing it.
+
+    Raw CLI deliberately accepts shell syntax, so this boundary checks only
+    the invariants required before process execution and returns the original
+    text unchanged.
+    """
+    if type(command) is not str or not command.strip():
+        raise ValueError("raw CLI command must not be empty or whitespace")
+    if "\x00" in command:
+        raise ValueError("raw CLI command must not contain NUL")
+    try:
+        command_bytes = len(command.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError("raw CLI command must be valid UTF-8") from exc
+    if command_bytes > max_bytes:
+        limit_kib = max_bytes // 1024
+        raise ValueError(f"raw CLI command exceeds the {limit_kib} KiB UTF-8 limit")
+    return command
 
 
 def validate_json_size(json_str: str, max_size: int = 1024 * 1024) -> bool:
     """Validate JSON string size."""
     log_counter("input_validation_json_size_attempt")
-    
+
     if not json_str:
-        log_counter("input_validation_json_size_result", labels={"valid": "true", "empty": "true"})
+        log_counter(
+            "input_validation_json_size_result",
+            labels={"valid": "true", "empty": "true"},
+        )
         return True
-    
-    size_bytes = len(json_str.encode('utf-8'))
+
+    size_bytes = len(json_str.encode("utf-8"))
     result = size_bytes <= max_size
-    
+
     log_histogram("input_validation_json_size_bytes", size_bytes)
-    log_counter("input_validation_json_size_result", labels={
-        "valid": str(result),
-        "empty": "false"
-    })
-    
+    log_counter(
+        "input_validation_json_size_result",
+        labels={"valid": str(result), "empty": "false"},
+    )
+
     if not result:
         log_histogram("input_validation_json_oversized_bytes", size_bytes)
-    
+
     return result
 
 
 class ValidationError(Exception):
     """Custom exception for validation errors."""
+
     pass
 
 

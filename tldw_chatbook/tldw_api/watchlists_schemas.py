@@ -25,7 +25,11 @@ class SourceCreateRequest(BaseModel):
         if value is None:
             return []
         if isinstance(value, list):
-            return [item.strip() if isinstance(item, str) else item for item in value if item not in (None, "")]
+            return [
+                item.strip() if isinstance(item, str) else item
+                for item in value
+                if item not in (None, "")
+            ]
         return value
 
 
@@ -45,7 +49,11 @@ class SourceUpdateRequest(BaseModel):
         if value is None:
             return None
         if isinstance(value, list):
-            return [item.strip() if isinstance(item, str) else item for item in value if item not in (None, "")]
+            return [
+                item.strip() if isinstance(item, str) else item
+                for item in value
+                if item not in (None, "")
+            ]
         return value
 
 
@@ -657,7 +665,9 @@ class WatchlistTemplateComposerFlowCheckRequest(BaseModel):
 
     run_id: int
     mode: str = "suggest_only"
-    sections: list[WatchlistTemplateComposerFlowSection | dict[str, Any]] = Field(default_factory=list)
+    sections: list[WatchlistTemplateComposerFlowSection | dict[str, Any]] = Field(
+        default_factory=list
+    )
 
 
 class WatchlistTemplateComposerFlowIssue(BaseModel):

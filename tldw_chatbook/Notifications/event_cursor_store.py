@@ -122,7 +122,10 @@ class EventCursorStore:
             stream_name=event.stream_name,
             stream_instance_id=event.stream_instance_id,
         )
-        if not isinstance(expected_cursor, _NoExpectedCursor) and current.cursor != expected_cursor:
+        if (
+            not isinstance(expected_cursor, _NoExpectedCursor)
+            and current.cursor != expected_cursor
+        ):
             reset = EventCursor(
                 source_authority=current.source_authority,
                 server_profile_id=current.server_profile_id,
@@ -156,7 +159,9 @@ class EventCursorStore:
         self._cursors[advanced.storage_key()] = advanced
         return CursorAdvanceResult(status=CursorAdvanceStatus.ADVANCED, cursor=advanced)
 
-    def reset_cursor(self, cursor: EventCursor, *, reason: str = "stale_cursor") -> CursorAdvanceResult:
+    def reset_cursor(
+        self, cursor: EventCursor, *, reason: str = "stale_cursor"
+    ) -> CursorAdvanceResult:
         reset = EventCursor(
             source_authority=cursor.source_authority,
             server_profile_id=cursor.server_profile_id,

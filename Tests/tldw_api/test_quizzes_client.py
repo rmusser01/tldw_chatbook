@@ -248,7 +248,9 @@ async def test_quiz_routes_wire_and_return_typed_models(monkeypatch):
     )
     listed_quizzes = await client.list_quizzes(limit=10, offset=2)
     loaded_quiz = await client.get_quiz(7)
-    updated_quiz = await client.update_quiz(7, QuizUpdateRequest(name="Renal Review v2", expected_version=1))
+    updated_quiz = await client.update_quiz(
+        7, QuizUpdateRequest(name="Renal Review v2", expected_version=1)
+    )
     deleted_quiz = await client.delete_quiz(7, expected_version=2)
     created_question = await client.create_quiz_question(
         7,
@@ -260,7 +262,9 @@ async def test_quiz_routes_wire_and_return_typed_models(monkeypatch):
             points=2,
         ),
     )
-    listed_questions = await client.list_quiz_questions(7, include_answers=False, limit=10, offset=1)
+    listed_questions = await client.list_quiz_questions(
+        7, include_answers=False, limit=10, offset=1
+    )
     updated_question = await client.update_quiz_question(
         7,
         11,
@@ -282,7 +286,9 @@ async def test_quiz_routes_wire_and_return_typed_models(monkeypatch):
         ),
     )
     listed_attempts = await client.list_quiz_attempts(quiz_id=7, limit=10, offset=1)
-    loaded_attempt = await client.get_quiz_attempt(41, include_questions=True, include_answers=True)
+    loaded_attempt = await client.get_quiz_attempt(
+        41, include_questions=True, include_answers=True
+    )
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/quizzes")
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/quizzes")
@@ -290,7 +296,10 @@ async def test_quiz_routes_wire_and_return_typed_models(monkeypatch):
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/quizzes/7")
     assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/quizzes/7")
     assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/quizzes/7")
-    assert mocked.await_args_list[4].kwargs["params"] == {"expected_version": 2, "hard": False}
+    assert mocked.await_args_list[4].kwargs["params"] == {
+        "expected_version": 2,
+        "hard": False,
+    }
     assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/quizzes/7/questions")
     assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/quizzes/7/questions")
     assert mocked.await_args_list[6].kwargs["params"] == {
@@ -298,15 +307,31 @@ async def test_quiz_routes_wire_and_return_typed_models(monkeypatch):
         "limit": 10,
         "offset": 1,
     }
-    assert mocked.await_args_list[7].args[:2] == ("PATCH", "/api/v1/quizzes/7/questions/11")
-    assert mocked.await_args_list[8].args[:2] == ("DELETE", "/api/v1/quizzes/7/questions/11")
-    assert mocked.await_args_list[8].kwargs["params"] == {"expected_version": 2, "hard": False}
+    assert mocked.await_args_list[7].args[:2] == (
+        "PATCH",
+        "/api/v1/quizzes/7/questions/11",
+    )
+    assert mocked.await_args_list[8].args[:2] == (
+        "DELETE",
+        "/api/v1/quizzes/7/questions/11",
+    )
+    assert mocked.await_args_list[8].kwargs["params"] == {
+        "expected_version": 2,
+        "hard": False,
+    }
     assert mocked.await_args_list[9].args[:2] == ("POST", "/api/v1/quizzes/7/attempts")
     assert mocked.await_args_list[10].args[:2] == ("PUT", "/api/v1/quizzes/attempts/41")
     assert mocked.await_args_list[11].args[:2] == ("GET", "/api/v1/quizzes/attempts")
-    assert mocked.await_args_list[11].kwargs["params"] == {"quiz_id": 7, "limit": 10, "offset": 1}
+    assert mocked.await_args_list[11].kwargs["params"] == {
+        "quiz_id": 7,
+        "limit": 10,
+        "offset": 1,
+    }
     assert mocked.await_args_list[12].args[:2] == ("GET", "/api/v1/quizzes/attempts/41")
-    assert mocked.await_args_list[12].kwargs["params"] == {"include_questions": True, "include_answers": True}
+    assert mocked.await_args_list[12].kwargs["params"] == {
+        "include_questions": True,
+        "include_answers": True,
+    }
 
     assert isinstance(created_quiz, QuizResponse)
     assert isinstance(loaded_quiz, QuizResponse)

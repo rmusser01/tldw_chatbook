@@ -1,0 +1,2820 @@
+"""TASK-1973: the Review screen — changed-file tree, windowed diffs, history.
+
+Fixtures are REAL end to end: a real git root, turns produced by the real
+`ChangeTurnTracker`, rows in a real `AgentRunsDB`, and the real provider —
+the fixture-invented-shapes trap has bitten this repo four separate times.
+UI tests load the shipped stylesheet (bare harnesses measure fiction) and
+wait on conditions, not pause counts.
+"""
+from __future__ import annotations
+
+import threading
+import time
+from pathlib import Path
+
+import pytest
+from textual.app import App
+from textual.containers import Vertical
+from textual.widgets import Button, Input, Select, Static, Tree
+
+from Tests.UI.test_console_narrow_layout import _compositor_text
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.UI.Screens.change_review_screen import (
+    AgentRunsChangeReviewProvider,
+    ChangeReviewDiffPane,
+    ChangeReviewScreen,
+    _hunk_containing_line,
+    _window_labels,
+)
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+BUNDLE = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
+
+
+def _record_turn(db, tracker, root, run_id: str, mutate) -> None:
+    """One real tracked turn: baseline, mutate the tree, end, store rows."""
+    handle = tracker.begin_turn([root])
+    handle.await_baseline()
+    mutate()
+    for rec in tracker.end_turn(handle):
+        db.record_change_snapshot(
+            run_id=run_id,
+            root=rec.root,
+            baseline_sha=rec.baseline_sha,
+            end_sha=rec.end_sha,
+            files_changed=rec.files_changed,
+            adds=rec.adds,
+            dels=rec.dels,
+            tracking_error=rec.tracking_error,
+            untracked_oversize=rec.untracked_oversize,
+            nested_repos=rec.nested_repos,
+        )
+
+
+def _same_root_window_provider(tmp_path, kinds: tuple[str, ...]):
+    """Build real consecutive snapshot windows over one root and path."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "shared.txt").write_text("seed\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+    markers = ("ALPHA_ONLY_MARKER", "BRAVO_ONLY_MARKER")
+
+    for kind, marker in zip(kinds, markers):
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        (root / "shared.txt").write_text(f"{marker}\n")
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    rows = db.change_snapshots_for_run_review(run_id)
+    assert len(rows) == len(kinds), (
+        f"fixture must produce one row per window, got {rows}"
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    return provider, root, run_id, tuple(int(row["id"]) for row in rows)
+
+
+@pytest.fixture()
+def same_root_windows_fixture(tmp_path):
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    return _same_root_window_provider(
+        tmp_path,
+        (CHANGE_KIND_TURN, CHANGE_KIND_SUBAGENT_POST_TURN),
+    )
+
+
+def test_same_root_window_label_taxonomy_is_complete_and_stable(tmp_path):
+    root = str(tmp_path / "root")
+    rows = [
+        {"root": root, "kind": "turn"},
+        {"root": root, "kind": "turn_concurrent_subagent"},
+        {"root": root, "kind": "subagent_post_turn"},
+    ]
+
+    assert [_window_labels(rows)[id(row)] for row in rows] == [
+        "Turn",
+        "Turn with sub-agent overlap",
+        "Sub-agent after turn",
+    ]
+
+
+@pytest.fixture()
+def review_fixture(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "edit.txt").write_text("before\n")
+    (root / "gone.txt").write_text("delete me\n")
+    (root / "old_name.txt").write_text("stable rename content\n" * 5)
+    (root / "image.bin").write_bytes(b"\x00\x01\x02")
+    (root / "markup.txt").write_text("plain\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run1 = db.create_run(conversation_id=conv, agent_kind="primary")
+    run2 = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def turn_one():
+        (root / "first_turn.txt").write_text("turn one\n")
+
+    def turn_two():
+        (root / "new.txt").write_text("created\n")
+        (root / "edit.txt").write_text("after\n")
+        (root / "gone.txt").unlink()
+        (root / "old_name.txt").rename(root / "new_name.txt")
+        (root / "image.bin").write_bytes(b"\x00\x01\x02\x03")
+        (root / "markup.txt").write_text("[bold red]not markup[/] $var `tick`\n")
+
+    _record_turn(db, tracker, root, run1, turn_one)
+    _record_turn(db, tracker, root, run2, turn_two)
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    return provider, root, run1, run2
+
+
+class _Harness(App[None]):
+    CSS_PATH = str(BUNDLE)
+
+    def __init__(
+        self,
+        provider,
+        initial_run_id: str | None = None,
+        initial_path: str | None = None,
+        initial_snapshot_id: int | None = None,
+    ) -> None:
+        super().__init__()
+        self._provider = provider
+        self._initial_run_id = initial_run_id
+        self._initial_path = initial_path
+        self._initial_snapshot_id = initial_snapshot_id
+
+    def on_mount(self) -> None:
+        self.push_screen(
+            ChangeReviewScreen(
+                self._provider,
+                initial_run_id=self._initial_run_id,
+                initial_path=self._initial_path,
+                initial_snapshot_id=self._initial_snapshot_id,
+            )
+        )
+
+
+async def _wait_for(pilot, predicate, what: str, timeout: float = 8.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = predicate()
+        if result:
+            return result
+        await pilot.pause(0.05)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _tree_labels(tree: Tree) -> list[str]:
+    labels: list[str] = []
+
+    def walk(node):
+        labels.append(str(node.label))
+        for child in node.children:
+            walk(child)
+
+    walk(tree.root)
+    return labels
+
+
+def _cursor_style_line(screen: ChangeReviewScreen) -> int | None:
+    """The rendered line index currently carrying the cursor's background
+    style span (TASK-18060 Task 6) -- read off the diff Static's own
+    ``rich.text.Text`` spans, never off ``diff_pane_text()`` (which is
+    deliberately PLAIN text, unaffected by the cursor -- style only)."""
+    content = screen.query_one("#change-review-diff-content", Static)
+    from rich.text import Text as _Text
+
+    renderable = content.renderable
+    if not isinstance(renderable, _Text):
+        return None
+    plain = renderable.plain
+    for span in renderable.spans:
+        if "grey37" in str(span.style):
+            return plain.count("\n", 0, span.start)
+    return None
+
+
+@pytest.mark.asyncio
+async def test_groups_render_for_every_change_kind(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen.query_one(Tree)) or None,
+            "changed-file tree",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("new.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
+            "latest turn's files",
+        )
+        text = "\n".join(labels)
+        assert "Added" in text and "Modified" in text
+        assert "Deleted" in text and "Renamed" in text
+        assert "new.txt" in text and "edit.txt" in text
+        assert "gone.txt" in text
+        assert "old_name.txt" in text and "new_name.txt" in text
+        assert "image.bin" in text and "(binary)" in text
+        # Tree labels must be markup-safe: a bracketed filename survives.
+        assert "old_name.txt → new_name.txt" in text
+
+
+@pytest.mark.asyncio
+async def test_diff_pane_renders_markup_verbatim(review_fixture):
+    """A file containing Rich markup / brackets / backticks must display
+    exactly as written — the transcript's literal-backslash lesson."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree mounted")
+        screen.select_file("markup.txt")
+        rendered = await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if "not markup" in t else None
+            )(screen.diff_pane_text()),
+            "markup file diff",
+        )
+        assert "[bold red]not markup[/]" in rendered
+        assert "$var `tick`" in rendered
+
+
+@pytest.mark.asyncio
+async def test_truncation_row_reports_accurate_hidden_count(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db,
+        tracker,
+        root,
+        run,
+        lambda: (root / "big.txt").write_text(
+            "".join(f"line {n}\n" for n in range(500))
+        ),
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c", diff_display_max_lines=50
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree")
+        screen.select_file("big.txt")
+        text = await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if "truncated" in t else None
+            )(screen.diff_pane_text()),
+            "truncation row",
+        )
+        import re
+
+        m = re.search(r"truncated — (\d+) more lines", text)
+        assert m, f"no truncation disclosure in: {text[-200:]!r}"
+        shown = text.count("\n+")
+        assert int(m.group(1)) > 0
+        assert shown <= 50
+
+
+@pytest.mark.asyncio
+async def test_only_the_focused_files_diff_is_mounted(review_fixture):
+    """Widget census: a many-file turn must not mount every diff at once —
+    a 50k-line generated file would freeze the screen."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree")
+        bodies = list(screen.query(".change-review-diff-body"))
+        assert len(bodies) == 1, (
+            f"{len(bodies)} diff bodies mounted for a multi-file turn"
+        )
+
+
+@pytest.mark.asyncio
+async def test_opening_loads_each_turn_exactly_once(review_fixture):
+    """Review finding: value-set + direct call loaded every turn TWICE --
+    doubled git work on every open. Select.Changed is the one loader."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        loads: list[str] = []
+        original = screen._load_turn
+        screen._load_turn = lambda turn: (loads.append(turn.run_id), original(turn))[1]
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and _tree_labels(screen.query_one(Tree))) or None,
+            "initial load",
+        )
+        await pilot.pause()
+        assert loads.count(run2) <= 1, f"the latest turn loaded twice: {loads}"
+
+        screen.select_turn(run1)
+        await _wait_for(
+            pilot,
+            lambda: run1 in loads or None,
+            "turn 1 load",
+        )
+        await pilot.pause()
+        assert loads.count(run1) == 1, f"turn 1 loaded twice: {loads}"
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_cap_cannot_defeat_windowing(tmp_path):
+    """Review finding: a negative explicit cap slices from the END --
+    rendering almost the whole diff and inverting the guarantee."""
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db, tracker, root, run,
+        lambda: (root / "big.txt").write_text(
+            "".join(f"line {n}\n" for n in range(500))
+        ),
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c", diff_display_max_lines=-5
+    )
+    assert provider.diff_display_max_lines >= 50
+
+
+@pytest.mark.asyncio
+async def test_turn_selector_navigates_to_a_previous_turn(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen.query(Tree) or None, "tree")
+        screen.select_turn(run1)
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("first_turn.txt" in label for label in labels)
+                else None
+            )(_tree_labels(screen.query_one(Tree))),
+            "previous turn's files",
+        )
+        text = "\n".join(labels)
+        assert "first_turn.txt" in text
+        assert "new.txt" not in text, "turn 2's files leaked into turn 1's view"
+
+
+@pytest.mark.asyncio
+async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
+    """`u` -> confirm modal -> Revert: disk truth restored, view reloaded."""
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        ChangeRevertConfirmModal,
+    )
+
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        modal = await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        assert "edit.txt" in str(
+            modal.query_one("#change-revert-confirm").children[0].renderable
+        )
+        await pilot.click("#change-revert-yes")
+        await _wait_for(
+            pilot,
+            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            "disk restored to baseline",
+        )
+
+
+@pytest.mark.asyncio
+async def test_revert_preflight_and_apply_run_off_the_ui_thread(
+    review_fixture, monkeypatch
+):
+    """Full-file hashing and restoration cannot block Textual's owner thread."""
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        ChangeRevertConfirmModal,
+    )
+
+    provider, root, _run1, _run2 = review_fixture
+    ui_thread = threading.get_ident()
+    preflight_threads: list[int] = []
+    revert_threads: list[int] = []
+    original_preflight = provider.preflight_revert
+    original_revert = provider.revert
+
+    def record_preflight(row, paths):
+        preflight_threads.append(threading.get_ident())
+        return original_preflight(row, paths)
+
+    def record_revert(row, paths):
+        revert_threads.append(threading.get_ident())
+        return original_revert(row, paths)
+
+    monkeypatch.setattr(provider, "preflight_revert", record_preflight)
+    monkeypatch.setattr(provider, "revert", record_revert)
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        await pilot.click("#change-revert-yes")
+        await _wait_for(
+            pilot,
+            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            "disk restored to baseline",
+        )
+
+    assert preflight_threads and all(
+        thread_id != ui_thread for thread_id in preflight_threads
+    )
+    assert revert_threads and all(
+        thread_id != ui_thread for thread_id in revert_threads
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_names_files_edited_after_the_turn(review_fixture):
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        ChangeRevertConfirmModal,
+    )
+
+    provider, root, run1, run2 = review_fixture
+    (root / "edit.txt").write_text("USER EDIT after the turn\n")
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        modal = await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        warning = modal.query_one("#change-revert-edited-warning", Static)
+        text = str(warning.renderable)
+        assert "edit.txt" in text and "overwrites" in text, (
+            f"the guard's warning does not NAME the file: {text!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    provider.run_active = lambda: True
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (screen.query(Tree) and screen._leaves) or None,
+            "leaves loaded",
+        )
+        screen.select_file("edit.txt")
+        await pilot.press("u")
+        from tldw_chatbook.UI.Screens.change_review_screen import (
+            ChangeRevertConfirmModal,
+        )
+
+        await _wait_for(
+            pilot,
+            lambda: app.screen
+            if isinstance(app.screen, ChangeRevertConfirmModal)
+            else None,
+            "confirm modal",
+        )
+        await pilot.click("#change-revert-yes")
+        await pilot.pause()
+        await pilot.pause()
+        assert (root / "edit.txt").read_text() == "after\n", (
+            "the revert ran under an active run"
+        )
+
+
+@pytest.mark.asyncio
+async def test_oversize_disclosure_banner_renders(tmp_path, monkeypatch):
+    """TASK-1975 AC#2: the untracked-oversize count is disclosed in review."""
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_FILE_BYTES", "100")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "small.txt").write_text("hello\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "big.bin").write_bytes(b"x" * 500)
+        (root / "small.txt").write_text("edited\n")
+
+    _record_turn(db, tracker, root, run, mutate)
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen.query("#change-review-banner"), "banner"
+        )
+        banner = screen.query_one("#change-review-banner", Static)
+        text = str(banner.renderable)
+        assert "1 oversized" in text, text
+        assert banner.display is True
+
+
+@pytest.mark.asyncio
+async def test_pruned_snapshots_render_pruned_by_retention(review_fixture, tmp_path):
+    """TASK-1975 AC#7: a history row whose snapshots were pruned renders
+    'pruned by retention' instead of erroring."""
+    import shutil as _shutil
+
+    provider, root, run1, run2 = review_fixture
+    # Retention reset the shadow store; the DB rows remain.
+    _shutil.rmtree(tmp_path / "appdata")
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: "pruned by retention"
+            in str(screen.query_one("#change-review-banner", Static).renderable),
+            "pruned banner",
+        )
+
+
+@pytest.mark.asyncio
+async def test_nested_repo_banner_names_the_holes(tmp_path, monkeypatch):
+    """TASK-1976 AC#1: UNREGISTERED nested repos are named in the Review
+    banner. Under TASK-1977 children are auto-registered as sub-roots, so
+    the disclosure path is pinned with the sub-root bound at zero."""
+    import subprocess as _sp
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_MAX_SUB_ROOTS", "0")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "small.txt").write_text("hello\n")
+    child = root / "childrepo"
+    child.mkdir()
+    _sp.run(["git", "init", "--quiet", str(child)], check=True)
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "small.txt").write_text("edited\n")
+        (child / "inner.txt").write_text("invisible\n")
+
+    _record_turn(db, tracker, root, run, mutate)
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: "childrepo"
+            in str(screen.query_one("#change-review-banner", Static).renderable),
+            "nested banner",
+        )
+        text = str(screen.query_one("#change-review-banner", Static).renderable)
+        assert "1 nested repository" in text
+        labels = _tree_labels(screen.query_one("#change-review-tree", Tree))
+        assert not any("inner.txt" in label for label in labels), (
+            "the nested edit leaked into the tree"
+        )
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_tree_node_loads_that_files_diff(review_fixture):
+    """TASK-2032 (live-UAT defect): clicking a file row must load its diff.
+
+    Driven through Tree's own cursor-select action — the same NodeSelected
+    event a mouse click produces — so the mouse path is what's pinned.
+    """
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        assert len(screen._leaves) >= 2, "fixture must offer multiple files"
+
+        target_row, target_change = screen._leaves[-1]
+        first_row, first_change = screen._leaves[0]
+        assert target_change.path != first_change.path
+
+        # Walk the tree cursor to the target leaf and select it — the event
+        # path a mouse click takes (click -> cursor + NodeSelected).
+        chosen = None
+        for line in range(tree.last_line + 1):
+            tree.cursor_line = line
+            node = tree.cursor_node
+            if node is not None and target_change.path in str(node.label):
+                chosen = line
+                break
+        assert chosen is not None, "target leaf not found in the tree"
+        tree.action_select_cursor()
+        await pilot.pause()
+
+        def diff_text() -> str:
+            body = screen.query(".change-review-diff-body")
+            return str(body.first().renderable) if body else ""
+
+        await _wait_for(
+            pilot,
+            lambda: target_change.path in diff_text(),
+            f"diff to switch to {target_change.path} (still showing "
+            f"{first_change.path})",
+        )
+
+
+def _append_real_write_step(db, run_id: str, path: str) -> None:
+    """Record a write_file step through the PRODUCTION serialization:
+    a real AgentStep dataclass via dataclasses.asdict — the exact shape
+    `AgentService._persist` stores (TASK-1978 AC#4)."""
+    import dataclasses
+
+    from tldw_chatbook.Agents.agent_models import AgentStep
+
+    step = AgentStep(
+        index=0,
+        kind="tool",
+        tool_name="write_file",
+        args={"file_path": path, "content": "x"},
+        result="ok",
+        created_at="2026-08-03T00:00:00.000000Z",
+    )
+    db.append_steps(run_id, [dataclasses.asdict(step)])
+
+
+BADGE_COPY = "⚠ changed outside direct file tools"
+
+
+@pytest.mark.asyncio
+async def test_badge_marks_files_no_write_tool_touched(tmp_path):
+    """TASK-1978 AC#1/#2/#4: tool-written files carry no badge; everything
+    else in the turn does — with the exact spec copy, monochrome."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "tooled.txt").write_text("before\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "tooled.txt").write_text("after\n")
+        (root / "scripted.txt").write_text("a script wrote this\n")
+
+    _record_turn(db, tracker, root, run, mutate)
+    _append_real_write_step(db, run, str(root / "tooled.txt"))
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("scripted.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
+            "turn files",
+        )
+        scripted = next(label for label in labels if "scripted.txt" in label)
+        tooled = next(label for label in labels if "tooled.txt" in label)
+        assert BADGE_COPY in scripted, scripted
+        assert BADGE_COPY not in tooled, (
+            "a write_file-touched file must NOT be badged"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_with_no_recorded_steps_renders_no_badges(review_fixture):
+    """TASK-1978 AC#3: older data without steps must not badge everything."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("new.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
+            "turn files",
+        )
+        assert not any(BADGE_COPY in label for label in labels), (
+            "a stepless run badged its files"
+        )
+
+
+def test_badge_span_is_monochrome():
+    """TASK-1978 AC#2: the badge renders dim, never colored."""
+    from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
+    label = ChangeReviewScreen._leaf_label(
+        {"root": "/r"},
+        ChangedFile(path="a.txt", status="M", adds=1, dels=0),
+        multi_root=False,
+        badge=True,
+    )
+    assert BADGE_COPY in str(label)
+    badge_spans = [s for s in label.spans if s.style]
+    assert badge_spans and all(s.style == "dim" for s in badge_spans), (
+        f"badge must be monochrome dim: {label.spans}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
+    tmp_path,
+):
+    """Qodo #1262: no file tool can delete or rename, so D/R rows badge
+    even when the path itself appears in the run's write_file steps."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "doomed.txt").write_text("tool wrote me\n")
+    (root / "old.txt").write_text("stable rename content\n" * 5)
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    def mutate():
+        (root / "doomed.txt").unlink()
+        (root / "old.txt").rename(root / "new.txt")
+
+    _record_turn(db, tracker, root, run, mutate)
+    # The run DID write these paths earlier — membership alone would
+    # wrongly suppress the badge on their D/R rows.
+    _append_real_write_step(db, run, str(root / "doomed.txt"))
+    _append_real_write_step(db, run, str(root / "new.txt"))
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider)
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("doomed.txt" in label for label in labels)
+                else None
+            )(_tree_labels(tree)),
+            "turn files",
+        )
+        doomed = next(label for label in labels if "doomed.txt" in label)
+        renamed = next(label for label in labels if "new.txt" in label)
+        assert BADGE_COPY in doomed, f"deletion unbadged: {doomed}"
+        assert BADGE_COPY in renamed, f"rename unbadged: {renamed}"
+
+
+def test_turn_for_run_matches_the_full_scan(review_fixture):
+    """The run-scoped read returns exactly what the turns() scan built.
+
+    ``ConsoleTurnFileCard`` resolves its run through ``turn_for_run``
+    (Qodo, PR #1728: per-card ``turns()`` calls re-scanned the whole
+    conversation history); the two paths share ``_build_review_turn``,
+    and this pins that they can never drift on label, rows, or order.
+    """
+    provider, _root, run1, run2 = review_fixture
+    scanned = {t.run_id: t for t in provider.turns()}
+    for run_id in (run1, run2):
+        direct = provider.turn_for_run(run_id)
+        assert direct == scanned[run_id]
+    assert provider.turn_for_run("no-such-run") is None
+
+
+# -- Task 7 (console-turn-file-annotate): initial_run_id --------------------
+
+
+@pytest.mark.asyncio
+async def test_initial_run_id_opens_directly_on_that_turn(review_fixture):
+    """The card's `Review` button opens the screen already scoped to its
+    OWN run -- not the conversation's latest turn. `turns()` returns
+    newest-first (`run2` here), so opening with `initial_run_id=run1`
+    proves the constructor arg actually wins over the "latest" default.
+    """
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run1)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("first_turn.txt" in label for label in labels)
+                else None
+            )(_tree_labels(screen.query_one(Tree))),
+            "run1's files on initial open",
+        )
+        text = "\n".join(labels)
+        assert "first_turn.txt" in text
+        assert "new.txt" not in text, "opened on the latest turn, not run1"
+        select = screen.query_one("#change-review-turn-select", Select)
+        assert select.value == run1
+
+
+@pytest.mark.asyncio
+async def test_unknown_initial_run_id_falls_back_to_the_latest_turn(review_fixture):
+    """A stale/unknown run id (e.g. the run's history was later pruned)
+    must degrade to today's default -- opening on the latest turn -- not
+    an empty or broken screen."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id="no-such-run")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda labels: labels
+                if any("new.txt" in label for label in labels)
+                else None
+            )(_tree_labels(screen.query_one(Tree))),
+            "the latest turn's files as fallback",
+        )
+        text = "\n".join(labels)
+        assert "new.txt" in text
+        select = screen.query_one("#change-review-turn-select", Select)
+        assert select.value == run2
+
+
+# -- Task 3 (console-review-rail): initial_path / initial_snapshot_id -------
+
+
+@pytest.mark.asyncio
+async def test_initial_path_opens_focused_on_that_file(review_fixture):
+    """The rail's click-through opens the Review screen already focused on
+    the clicked file -- not the turn's default first leaf. Turn 2's tree
+    order is Added/Modified/Deleted/Renamed, so the default leaf is
+    ``new.txt`` (Added); picking ``edit.txt`` (Modified) proves
+    ``initial_path`` actually won."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "initial leaf focused",
+        )
+        text = await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt's diff",
+        )
+        assert "after" in text
+        _row, change = screen._leaves[screen._focused_leaf]
+        assert change.path == "edit.txt", (
+            f"expected edit.txt focused via initial_path, got {change.path!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_unknown_initial_path_falls_back_to_the_first_leaf(review_fixture):
+    """A stale/unknown path (e.g. the file was reverted between the rail's
+    cache and the click) must degrade to today's default -- the turn's
+    first leaf -- not an empty or stuck pane."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(
+        provider, initial_run_id=run2, initial_path="no-such-file.txt"
+    )
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "a leaf focused despite the unknown path",
+        )
+        assert screen._focused_leaf == 0
+        _row, change = screen._leaves[0]
+        assert change.path == "new.txt", (
+            f"expected the default first leaf (new.txt), got {change.path!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_root_windows_have_visible_source_labels_and_honest_counts(
+    same_root_windows_fixture,
+):
+    """Removing the window prefix makes two painted rows look identical."""
+    provider, _root, run_id, _window_ids = same_root_windows_fixture
+    turn = provider.turn_for_run(run_id)
+    assert turn is not None
+    assert "2 file changes +2 −2" in turn.label
+
+    app = _Harness(provider, initial_run_id=run_id)
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda values: values if len(values) == 2 else None)(
+                [
+                    label
+                    for label in _tree_labels(
+                        screen.query_one("#change-review-tree", Tree)
+                    )
+                    if "shared.txt" in label
+                ]
+            ),
+            "both same-root window labels",
+        )
+        assert any(label.startswith("Turn · shared.txt") for label in labels), labels
+        assert any(
+            label.startswith("Sub-agent after turn · shared.txt") for label in labels
+        ), labels
+        assert str(screen.query_one("#change-review-totals", Static).renderable) == (
+            "2 file changes  +2 −2"
+        )
+        painted = _compositor_text(app.export_screenshot(simplify=True))
+        assert "Turn · shared.txt" in painted
+        assert "Sub-agent after turn · shared.txt" in painted
+
+
+@pytest.mark.asyncio
+async def test_unknown_same_root_window_kinds_receive_numbered_labels(tmp_path):
+    """Future or malformed duplicate kinds must never collapse visually."""
+    provider, _root, run_id, _window_ids = _same_root_window_provider(
+        tmp_path, ("future_kind", "future_kind")
+    )
+    app = _Harness(provider, initial_run_id=run_id)
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda values: values if len(values) == 2 else None)(
+                [
+                    label
+                    for label in _tree_labels(
+                        screen.query_one("#change-review-tree", Tree)
+                    )
+                    if "shared.txt" in label
+                ]
+            ),
+            "both unknown-kind window labels",
+        )
+        assert any(
+            label.startswith("Change window 1 · shared.txt") for label in labels
+        ), labels
+        assert any(
+            label.startswith("Change window 2 · shared.txt") for label in labels
+        ), labels
+
+
+@pytest.mark.asyncio
+async def test_ordinary_multi_root_labels_remain_unchanged(tmp_path):
+    """Distinct roots keep the existing path/stats/root label ordering."""
+    root_a = tmp_path / "alpha"
+    root_b = tmp_path / "beta"
+    root_a.mkdir()
+    root_b.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+
+    handle = tracker.begin_turn([root_a, root_b])
+    handle.await_baseline()
+    (root_a / "alpha.txt").write_text("alpha\n")
+    (root_b / "beta.txt").write_text("beta\n")
+    for rec in tracker.end_turn(handle):
+        db.record_change_snapshot(
+            run_id=run_id,
+            root=rec.root,
+            baseline_sha=rec.baseline_sha,
+            end_sha=rec.end_sha,
+            files_changed=rec.files_changed,
+            adds=rec.adds,
+            dels=rec.dels,
+        )
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-1"
+    )
+    app = _Harness(provider, initial_run_id=run_id)
+    async with app.run_test(size=(120, 32)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (lambda values: values if len(values) == 2 else None)(
+                [
+                    label
+                    for label in _tree_labels(
+                        screen.query_one("#change-review-tree", Tree)
+                    )
+                    if ".txt" in label
+                ]
+            ),
+            "both multi-root labels",
+        )
+        assert "alpha.txt  +1 −0  · alpha" in labels
+        assert "beta.txt  +1 −0  · beta" in labels
+
+
+@pytest.mark.asyncio
+async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(
+    same_root_windows_fixture,
+):
+    """A snapshot id selects the matching same-path window's own diff."""
+    provider, _root, run_id, window_ids = same_root_windows_fixture
+    window1_id, window2_id = window_ids
+    assert window1_id != window2_id
+
+    async def _opened_diff(snapshot_id: int) -> str:
+        app = _Harness(
+            provider,
+            initial_run_id=run_id,
+            initial_path="shared.txt",
+            initial_snapshot_id=snapshot_id,
+        )
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _wait_for(
+                pilot,
+                lambda: (
+                    app.screen if isinstance(app.screen, ChangeReviewScreen) else None
+                ),
+                "review screen",
+            )
+            await _wait_for(pilot, lambda: screen._leaves or None, "leaves loaded")
+            assert len(screen._leaves) == 2
+            return await _wait_for(
+                pilot,
+                lambda: (
+                    lambda text: (
+                        text
+                        if (
+                            "ALPHA_ONLY_MARKER" in text
+                            or "BRAVO_ONLY_MARKER" in text
+                        )
+                        else None
+                    )
+                )(screen.diff_pane_text()),
+                "a window's diff rendered",
+            )
+
+    window1_diff = await _opened_diff(window1_id)
+    assert "ALPHA_ONLY_MARKER" in window1_diff
+    assert "BRAVO_ONLY_MARKER" not in window1_diff
+
+    window2_diff = await _opened_diff(window2_id)
+    assert "BRAVO_ONLY_MARKER" in window2_diff
+
+
+@pytest.mark.asyncio
+async def test_undo_all_refuses_same_root_windows_before_preflight(
+    same_root_windows_fixture, monkeypatch
+):
+    """Removing the guard starts an order-sensitive whole-turn revert."""
+    provider, root, run_id, _window_ids = same_root_windows_fixture
+    preflight_calls: list[tuple[int, tuple[str, ...]]] = []
+    original_preflight = provider.preflight_revert
+
+    def record_preflight(row, paths):
+        preflight_calls.append((int(row["id"]), tuple(paths)))
+        return original_preflight(row, paths)
+
+    monkeypatch.setattr(provider, "preflight_revert", record_preflight)
+    app = _Harness(provider, initial_run_id=run_id)
+    notices: list[tuple[str, str | None]] = []
+    app.notify = lambda message, **kwargs: notices.append(
+        (str(message), kwargs.get("severity"))
+    )
+
+    async with app.run_test(size=(120, 32)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves or None, "turn files")
+        screen.action_undo_all()
+        await pilot.pause(0.2)
+
+        assert app.screen is screen, "ambiguous Undo All opened a confirm modal"
+        assert preflight_calls == [], (
+            "same-root windows reached order-sensitive revert preflight"
+        )
+        assert (root / "shared.txt").read_text() == "BRAVO_ONLY_MARKER\n"
+        assert notices == [
+            (
+                "This turn has multiple change windows for the same workspace. "
+                "Revert files individually from one labeled window at a time.",
+                "warning",
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_turn_switch_after_initial_selection_reverts_to_first_file(
+    review_fixture,
+):
+    """The initials are constructor state consumed exactly ONCE: a later
+    turn switch (``select_turn``, the Select's own handler) must fall back
+    to the turn's first leaf like any ordinary switch -- not silently
+    re-apply the stale ``initial_path``."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "initial leaf focused",
+        )
+        _row, change = screen._leaves[screen._focused_leaf]
+        assert change.path == "edit.txt", "initial_path did not win on open"
+
+        # Switch away, then back -- the initials must not survive either hop.
+        screen.select_turn(run1)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run1
+            or None,
+            "switched to run1",
+        )
+        screen.select_turn(run2)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run2
+            or None,
+            "switched back to run2",
+        )
+        await pilot.pause()
+        assert screen._focused_leaf == 0, (
+            "a later turn switch must focus the first leaf, not stay pinned"
+        )
+        _row2, change2 = screen._leaves[0]
+        assert change2.path != "edit.txt"
+
+
+@pytest.mark.asyncio
+async def test_initials_survive_a_zero_leaf_initial_turn_regression(tmp_path):
+    """Reviewer catch on the Task 3 commit: a tracking-error initial turn
+    has ZERO leaves (the ``if error: ... continue`` short-circuit in
+    ``_load_turn`` never reaches ``changed_files`` for that row), so the
+    initials -- pre-fix -- were cleared only inside the ``if self._leaves:``
+    branch and survived untouched into the NEXT ``_load_turn`` call. A
+    later MANUAL turn switch to a turn that happens to contain a
+    same-named path then silently hijacked focus onto it instead of
+    leaf 0 -- exactly the "initials cleared after first use" contract
+    this task pinned, just reached through the empty-leaves door.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "edit.txt").write_text("before\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+
+    run1 = db.create_run(conversation_id=conv, agent_kind="primary")
+    # A real tracking-error row -- zero leaves for this turn.
+    db.record_change_snapshot(
+        run_id=run1,
+        root=str(root),
+        baseline_sha="",
+        end_sha="",
+        tracking_error="git failed",
+    )
+
+    run2 = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def _turn_two():
+        (root / "aaa_first.txt").write_text("new\n")
+        (root / "edit.txt").write_text("after\n")
+
+    _record_turn(db, tracker, root, run2, _turn_two)
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    # Opens on run1 (zero leaves) with a stale initial_path that DOES exist
+    # in run2 -- but is NOT run2's first leaf ("aaa_first.txt" sorts into
+    # the Added group, ahead of "edit.txt"'s Modified group).
+    app = _Harness(provider, initial_run_id=run1, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (
+                "tracking failed"
+                in str(screen.query_one("#change-review-banner", Static).renderable)
+            )
+            or None,
+            "run1's tracking-error banner (zero leaves)",
+        )
+        assert screen._leaves == [], "run1 must load with zero leaves"
+
+        # A later MANUAL switch to run2, which DOES contain "edit.txt".
+        screen.select_turn(run2)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run2
+            or None,
+            "switched to run2",
+        )
+        await _wait_for(
+            pilot,
+            lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "run2 leaves focused",
+        )
+        assert screen._focused_leaf == 0, (
+            "a stale initial_path from a zero-leaf initial turn hijacked "
+            "a later manual turn switch"
+        )
+        _row, change = screen._leaves[0]
+        assert change.path != "edit.txt", (
+            f"leaf 0 must be run2's OWN first leaf, got {change.path!r}"
+        )
+
+
+# -- Task 6 (console-review-rail): diff-pane line cursor + key reclaim ------
+
+
+async def _press_n(pilot, key: str, n: int) -> None:
+    for _ in range(n):
+        await pilot.press(key)
+
+
+def _big_diff_provider(tmp_path, *, line_count: int = 200, cap: int = 50):
+    """A provider whose single turn produces a diff longer than ``cap`` --
+    the same fixture shape as ``test_truncation_row_reports_accurate_
+    hidden_count`` -- so the cursor's clamp-before-the-tail and the pane's
+    native page-scrolling both have real room to exercise."""
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db,
+        tracker,
+        root,
+        run,
+        lambda: (root / "big.txt").write_text(
+            "".join(f"line {n}\n" for n in range(line_count))
+        ),
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c", diff_display_max_lines=cap
+    )
+    return provider, root
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_down_moves_the_styled_line_and_scrolls(tmp_path):
+    """Focusing the pane and pressing down moves the cursor's styled
+    background span onto the next rendered line, and scrolls the pane so
+    that line becomes visible. `diff_pane_text()`'s PLAIN content -- the
+    observability seam -- stays byte-identical throughout: the cursor is a
+    style-only difference, never a content change."""
+    provider, root = _big_diff_provider(tmp_path)
+    app = _Harness(provider)
+    async with app.run_test(size=(80, 20)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        original_text = await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "line 0" in t else None)(screen.diff_pane_text()),
+            "big.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        assert app.focused is pane
+        assert screen._cursor_line == 0
+        assert _cursor_style_line(screen) == 0
+        start_offset = pane.scroll_offset.y
+
+        await _press_n(pilot, "down", 30)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._cursor_line == 30
+        assert _cursor_style_line(screen) == 30
+        assert screen.diff_pane_text() == original_text, (
+            "cursor movement must not change the pane's plain diff text"
+        )
+        assert pane.scroll_offset.y > start_offset, (
+            "moving the cursor past the visible window must scroll it into view"
+        )
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_up_clamps_at_zero(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("edit.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        assert screen._cursor_line == 0
+        await pilot.press("up")
+        await pilot.pause()
+        assert screen._cursor_line == 0, "up at the top must clamp, not go negative"
+        assert _cursor_style_line(screen) == 0
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_down_clamps_before_the_truncation_tail(tmp_path):
+    """The cursor's range excludes the truncation tail line -- it must
+    settle on the last REAL rendered line (index cap-1), never the
+    "truncated -- N more lines" disclosure line appended after it."""
+    provider, root = _big_diff_provider(tmp_path, line_count=200, cap=50)
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "truncated" in t else None)(
+                screen.diff_pane_text()
+            ),
+            "truncated diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+
+        await _press_n(pilot, "down", 80)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._cursor_line == 49, (
+            f"expected clamp at the last real line (49), got {screen._cursor_line}"
+        )
+        assert _cursor_style_line(screen) == 49
+        assert "truncated" in screen.diff_pane_text(), (
+            "the truncation disclosure must survive cursor clamping"
+        )
+
+
+@pytest.mark.asyncio
+async def test_escape_in_pane_focuses_tree_then_second_escape_dismisses(
+    review_fixture,
+):
+    """Spec §3's deliberate shadow: Esc while the diff pane is focused
+    moves focus to the tree (the screen stays alive) -- Esc-Esc is
+    pane -> tree -> dismiss, never a single Esc dismissing from the pane.
+    """
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        assert app.focused is pane
+
+        await pilot.press("escape")
+        await pilot.pause()
+        tree = screen.query_one("#change-review-tree", Tree)
+        assert app.focused is tree, (
+            "escape while the pane is focused must move focus to the tree"
+        )
+        assert app.screen is screen, "the screen must stay alive on the first escape"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is not screen, (
+            "a second escape, with the tree focused, must dismiss the screen"
+        )
+
+
+@pytest.mark.asyncio
+async def test_c_key_opens_line_comment_input_reclaimed_from_the_pane(
+    review_fixture,
+):
+    """`c` is reclaimed by the pane (never leaks to the screen/transcript)
+    and, as of Task 7 (review-rail spec §3), opens the inline line-comment
+    `Input` -- moving focus onto it -- rather than doing nothing."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("edit.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        cursor_before = screen._cursor_line
+        text_before = screen.diff_pane_text()
+
+        await pilot.press("c")
+        await pilot.pause()
+
+        assert app.screen is screen, "'c' must not dismiss or navigate the screen"
+        assert screen._cursor_line == cursor_before, "'c' must not move the cursor"
+        assert screen.diff_pane_text() == text_before
+        note_input = screen.query_one(".change-review-comment-input", Input)
+        assert app.focused is note_input, (
+            "'c' must open and focus the inline comment input"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pagedown_still_scrolls_natively_in_pane(tmp_path):
+    """Page-up/down/home/end are deliberately NOT reclaimed -- they must
+    keep scrolling the pane the ordinary `ScrollableContainer` way, and
+    must never move the review line cursor."""
+    provider, root = _big_diff_provider(tmp_path, line_count=200, cap=50)
+    app = _Harness(provider)
+    async with app.run_test(size=(80, 20)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "truncated" in t else None)(
+                screen.diff_pane_text()
+            ),
+            "big diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        start_offset = pane.scroll_offset.y
+        cursor_before = screen._cursor_line
+
+        await pilot.press("pagedown")
+        await pilot.pause()
+
+        assert pane.scroll_offset.y > start_offset, (
+            "pagedown must still scroll the pane natively"
+        )
+        assert screen._cursor_line == cursor_before, (
+            "native page scrolling must not move the review cursor"
+        )
+
+
+@pytest.mark.asyncio
+async def test_jk_switch_files_and_reset_the_cursor(review_fixture):
+    """`j`/`k` file navigation is untouched by the pane's key reclaim, and
+    every switch resets the line cursor to the top of the new file."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        assert len(screen._leaves) >= 2, "fixture must offer multiple files"
+        screen.action_focus_diff()
+        await pilot.pause()
+        first_leaf = screen._focused_leaf
+
+        await _press_n(pilot, "down", 3)
+        await pilot.pause()
+        assert screen._cursor_line == 3
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert screen._focused_leaf != first_leaf, (
+            "'j' must still switch files while the diff pane is focused"
+        )
+        assert screen._cursor_line == 0, "switching files must reset the line cursor"
+
+        await pilot.press("k")
+        await pilot.pause()
+        assert screen._focused_leaf == first_leaf, "'k' must still switch back"
+        assert screen._cursor_line == 0
+
+
+@pytest.mark.asyncio
+async def test_binary_file_render_carries_no_cursor(review_fixture):
+    """The binary-file render (`change.binary`) is one of the existing
+    early-return paths in `_render_diff` -- it must keep rendering with NO
+    cursor styling, and must not crash on a stray cursor keypress."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("image.bin")
+        await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if "Binary file changed." in t else None
+            )(screen.diff_pane_text()),
+            "binary render",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        assert _cursor_style_line(screen) is None, (
+            "a binary render must carry no cursor styling"
+        )
+        await pilot.press("down")
+        await pilot.pause()
+        assert "Binary file changed." in screen.diff_pane_text(), (
+            "a cursor keypress against a binary render must not corrupt it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_scroll_target_survives_a_long_wrapped_line(tmp_path):
+    """Review catch (Task 6 follow-up): `_scroll_cursor_into_view`'s
+    ``Region(0, line, 1, 1)`` assumes the cursor's logical line index IS
+    its rendered row -- true only when the diff `Text` disables wrapping.
+    A very long line ahead of the cursor's target, left to WRAP under the
+    pane's default `overflow-x: hidden`, pushes the target's TRUE rendered
+    row down by several rows; the (buggy) scroll target still asked for
+    "row == index" and landed on the wrong row, leaving the cursor's
+    highlighted line outside the visible window."""
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+
+    def mutate():
+        lines = [f"line {n}\n" for n in range(20)]
+        # One very long line early in the file -- in an 80-column pane,
+        # left to wrap, this alone consumes several extra visual rows.
+        lines[2] = ("x" * 400) + "\n"
+        (root / "big.txt").write_text("".join(lines))
+
+    _record_turn(db, tracker, root, run, mutate)
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c"
+    )
+    app = _Harness(provider)
+    # Narrow enough for the long line to wrap into several rows; short
+    # enough (in height) that a multi-row drift pushes the cursor's true
+    # row outside a small viewport.
+    async with app.run_test(size=(80, 12)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        text = await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "line 19" in t else None)(
+                screen.diff_pane_text()
+            ),
+            "big.txt diff",
+        )
+        raw_lines = text.split("\n")
+        target_index = next(
+            i for i, line in enumerate(raw_lines) if line.endswith("line 15")
+        )
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", target_index)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._cursor_line == target_index
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        content = screen.query_one("#change-review-diff-content", Static)
+
+        # Ground truth: don't compare the scroll offset against the
+        # LOGICAL index (that's exactly what the buggy code itself did --
+        # comparing a naive index against a rendered-row-based offset would
+        # pass "by accident" whether or not wrapping actually drifted
+        # anything). Instead, find the TRUE rendered row that carries the
+        # cursor's own line content, straight from the Static's own render
+        # cache (`Widget.render_line`, unaffected by parent scrolling), and
+        # check THAT row is inside the pane's actual visible window.
+        true_row = next(
+            (
+                row
+                for row in range(content.size.height)
+                if "line 15" in content.render_line(row).text
+            ),
+            None,
+        )
+        assert true_row is not None, "the cursor's target line must render somewhere"
+
+        viewport_height = int(pane.size.height) or 1
+        visible_start = pane.scroll_offset.y
+        visible_end = visible_start + viewport_height
+        assert visible_start <= true_row < visible_end, (
+            f"cursor's TRUE rendered row {true_row} not in the visible window "
+            f"[{visible_start}, {visible_end}) -- scroll_offset={pane.scroll_offset}, "
+            "a long line upstream drifted the scroll target off the true row"
+        )
+        # With wrapping disabled this is also an equality, not just
+        # containment -- row == index is the whole point of the fix.
+        assert true_row == target_index, (
+            f"row/index drifted: true rendered row {true_row} != logical "
+            f"index {target_index} -- the diff Text is still wrapping"
+        )
+
+
+# -- Task 7 (console-review-rail): comment creation + notes strip -----------
+
+
+async def _open_comment_input(pilot, screen: ChangeReviewScreen) -> Input:
+    """Wait for the inline comment ``Input`` to appear and return it."""
+    return await _wait_for(
+        pilot,
+        lambda: (
+            screen.query_one(".change-review-comment-input", Input)
+            if screen.query(".change-review-comment-input")
+            else None
+        ),
+        "comment input opened",
+    )
+
+
+async def _wait_input_closed(pilot, screen: ChangeReviewScreen) -> None:
+    await _wait_for(
+        pilot,
+        lambda: True if not screen.query(".change-review-comment-input") else None,
+        "comment input closed",
+    )
+
+
+def _note_strip_texts(screen: ChangeReviewScreen) -> list[str]:
+    return [str(s.renderable) for s in screen.query(".change-review-note-text")]
+
+
+@pytest.mark.asyncio
+async def test_line_comment_save_persists_exact_anchor(review_fixture):
+    """`c` + Enter saves a `diff_line` note whose DB row carries the EXACT
+    anchor: kind, the 0-based index over the FULL diff, the line's
+    verbatim text, the containing hunk's index/header/excerpt, and the
+    focused leaf's own snapshot id."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        row, change = screen._leaves[screen._focused_leaf]
+        assert change.path == "edit.txt"
+        full_diff = provider.diff_text(row, change.path)
+        # `.splitlines()` -- matching `_render_diff`/`_save_comment_input`'s
+        # own line-indexing exactly (a bare `split("\n")` diverges from it
+        # on `\r`-bearing content and trailing-newline handling; fix-round
+        # review catch).
+        lines = full_diff.splitlines()
+        target_index = next(
+            i for i, line in enumerate(lines) if line.startswith("+after")
+        )
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", target_index)
+        await pilot.pause()
+        assert screen._cursor_line == target_index
+
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "this line needs work"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        notes = provider.notes_for_run(run2)
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["anchor_kind"] == "diff_line"
+        assert note["diff_line_index"] == target_index
+        assert note["diff_line_text"] == lines[target_index]
+        assert note["note"] == "this line needs work"
+        assert note["snapshot_id"] == row["id"]
+        assert note["hunk_header"].startswith("@@")
+        assert note["hunk_index"] == 0
+        assert note["hunk_excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_C_binding_saves_file_comment_with_sentinels(review_fixture):
+    """`C` saves a whole-file comment: `anchor_kind="file"` with the
+    `hunk_index=-1`/`hunk_header=""`/`hunk_excerpt=""` sentinels and no
+    diff-line fields."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "whole file needs a pass"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        notes = provider.notes_for_run(run2)
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["anchor_kind"] == "file"
+        assert note["hunk_index"] == -1
+        assert note["hunk_header"] == ""
+        assert note["hunk_excerpt"] == ""
+        assert note["diff_line_index"] is None
+        assert note["diff_line_text"] is None
+        assert note["note"] == "whole file needs a pass"
+        assert note["path"] == "edit.txt"
+
+
+@pytest.mark.asyncio
+async def test_notes_strip_lists_all_kinds_with_labels(review_fixture):
+    """The strip shows a pre-seeded hunk note (the card's own shape) plus
+    a new file comment and a new line comment, each labeled by kind."""
+    provider, root, run1, run2 = review_fixture
+    provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="pre-seeded hunk note",
+    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        await _wait_for(
+            pilot,
+            lambda: (
+                True
+                if any("pre-seeded hunk note" in t for t in _note_strip_texts(screen))
+                else None
+            ),
+            "hunk note in strip",
+        )
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "file-level note"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        line_index = screen._cursor_line
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "line-level note"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        texts = await _wait_for(
+            pilot,
+            lambda: (
+                (lambda ts: ts if len(ts) >= 3 else None)(_note_strip_texts(screen))
+            ),
+            "all three notes rendered",
+        )
+        joined = "\n".join(texts)
+        assert "hunk" in joined and "pre-seeded hunk note" in joined
+        assert "file" in joined and "file-level note" in joined
+        assert f"line {line_index}" in joined and "line-level note" in joined
+
+
+@pytest.mark.asyncio
+async def test_pending_note_delete_removes_row_and_db_entry(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="delete me",
+    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        delete_btn = await _wait_for(
+            pilot,
+            lambda: (
+                screen.query_one(".change-review-note-delete", Button)
+                if screen.query(".change-review-note-delete")
+                else None
+            ),
+            "delete button rendered",
+        )
+        assert len(provider.notes_for_run(run2)) == 1
+
+        delete_btn.focus()
+        await pilot.press("enter")
+        await _wait_for(
+            pilot,
+            lambda: True if not screen.query(".change-review-note-delete") else None,
+            "delete completes",
+        )
+        assert not screen.query(".change-review-note-text")
+        assert provider.notes_for_run(run2) == []
+
+
+@pytest.mark.asyncio
+async def test_delivered_note_renders_sent_without_delete(review_fixture, tmp_path):
+    provider, root, run1, run2 = review_fixture
+    note_id = provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="already delivered",
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db.mark_notes_delivered([note_id])
+
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (
+                True
+                if any("sent" in t for t in _note_strip_texts(screen))
+                else None
+            ),
+            "delivered note shows sent",
+        )
+        assert not screen.query(".change-review-note-delete"), (
+            "a delivered note must carry no delete button"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_on_note_delivered_behind_screens_back_notifies(
+    review_fixture, tmp_path
+):
+    """A note delivered elsewhere while this screen stays open still shows
+    its stale ✕ -- pressing it must notify, not silently no-op, and the
+    row must survive untouched (same live-view honesty rule as the turn
+    file card)."""
+    provider, root, run1, run2 = review_fixture
+    note_id = provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="will be delivered behind the screen's back",
+    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        delete_btn = await _wait_for(
+            pilot,
+            lambda: (
+                screen.query_one(".change-review-note-delete", Button)
+                if screen.query(".change-review-note-delete")
+                else None
+            ),
+            "delete button rendered",
+        )
+
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db.mark_notes_delivered([note_id])
+
+        notify_calls: list[tuple[tuple, dict]] = []
+        pilot.app.notify = lambda *a, **kw: notify_calls.append((a, kw))
+
+        delete_btn.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+
+        assert notify_calls, (
+            "pressing delete on an already-delivered note must notify"
+        )
+        message = notify_calls[0][0][0]
+        assert "already sent" in message.lower()
+        assert notify_calls[0][1].get("severity") == "warning"
+        assert screen.query(".change-review-note-delete"), (
+            "the stale row must survive untouched"
+        )
+        stored = provider.notes_for_run(run2)
+        assert len(stored) == 1
+        assert stored[0]["delivered_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_comment_input_without_saving_or_dismissing(
+    review_fixture,
+):
+    """Escape unmounts the comment input without persisting a row, without
+    dismissing the screen, and without moving focus to the tree -- focus
+    returns to the diff pane (spec §3's explicit contract)."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "abandoned draft"
+        note_input.focus()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not screen.query(".change-review-comment-input"), (
+            "escape must unmount the comment input"
+        )
+        assert provider.notes_for_run(run2) == [], (
+            "escape must not persist a row"
+        )
+        assert app.screen is screen, (
+            "escape-in-input must not dismiss the screen"
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        assert app.focused is not tree, (
+            "escape-in-input must not move focus to the tree"
+        )
+        assert app.focused is pane, (
+            "escape-in-input must return focus to the diff pane"
+        )
+
+
+@pytest.mark.asyncio
+async def test_provider_add_change_note_raising_does_not_crash(tmp_path):
+    """A provider whose `add_change_note` raises must not crash the app:
+    the comment input stays mounted (nothing lost) and a warning is
+    logged -- the screen's absolute "no exception escapes an `on_*`
+    handler" rule."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "edit.txt").write_text("before\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db, tracker, root, run_id, lambda: (root / "edit.txt").write_text("after\n")
+    )
+
+    class _RaisingProvider(AgentRunsChangeReviewProvider):
+        def add_change_note(self, **kwargs):
+            raise RuntimeError("simulated write failure")
+
+    provider = _RaisingProvider(db=db, service=service, conversation_id="c")
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "this will fail to save"
+        note_input.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+
+        assert app.is_running, "a raising add_change_note must not crash the app"
+        assert screen.is_mounted
+        surviving = screen.query(".change-review-comment-input")
+        assert surviving, "input must stay mounted after a save failure"
+        assert surviving.first().value == "this will fail to save"
+        assert db.notes_for_run(run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_binary_file_c_noops_C_still_works(review_fixture):
+    """`c` no-ops on a binary render (no cursor there); `C` still works."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("image.bin")
+        await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if "Binary file changed." in t else None
+            )(screen.diff_pane_text()),
+            "binary render",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+
+        await pilot.press("c")
+        await pilot.pause()
+        assert not screen.query(".change-review-comment-input"), (
+            "'c' must no-op on a binary render"
+        )
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "flag this binary asset"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        notes = provider.notes_for_run(run2)
+        assert len(notes) == 1
+        assert notes[0]["anchor_kind"] == "file"
+        assert notes[0]["path"] == "image.bin"
+
+
+# -- Task 7 fix round (review): pure `_hunk_containing_line` pins -----------
+
+
+def test_hunk_containing_line_multi_hunk_and_prelude_fallback():
+    """Pure pin for `_hunk_containing_line` (no prior art in this codebase
+    for reconstructing a hunk's absolute line offset) -- inspection-only
+    before this test, per the review round. A prelude line (before the
+    first `@@`) degrades to hunk 0; a line inside the SECOND hunk (its
+    header AND a body line) maps to `hunk_index == 1` with that hunk's own
+    header, never hunk 0's."""
+    from tldw_chatbook.Chat.console_display_state import split_unified_diff
+
+    diff_text = (
+        "diff --git a/f.py b/f.py\n"
+        "index aaa..bbb 100644\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " context1\n"
+        "-old1\n"
+        "+new1\n"
+        "@@ -10,2 +10,2 @@\n"
+        " context2\n"
+        "-old2\n"
+        "+new2\n"
+    )
+    lines = diff_text.splitlines()
+    hunks = split_unified_diff(diff_text)
+    assert len(hunks) == 2, "fixture must produce two real hunks"
+
+    # A prelude line (before ANY hunk header) degrades to hunk 0 rather
+    # than reporting "no hunk" -- the documented fallback.
+    prelude_index = lines.index("diff --git a/f.py b/f.py")
+    idx0, hunk0 = _hunk_containing_line(hunks, prelude_index)
+    assert idx0 == 0
+    assert hunk0 is hunks[0]
+
+    # The SECOND hunk's own header line.
+    second_header_index = lines.index("@@ -10,2 +10,2 @@")
+    idx_header, hunk_header = _hunk_containing_line(hunks, second_header_index)
+    assert idx_header == 1
+    assert hunk_header.header == "@@ -10,2 +10,2 @@"
+
+    # A BODY line inside the second hunk (not the header itself) -- must
+    # still map to hunk_index 1, not fall back to hunk 0.
+    body_index = lines.index("+new2")
+    idx_body, hunk_body = _hunk_containing_line(hunks, body_index)
+    assert idx_body == 1
+    assert hunk_body.header == "@@ -10,2 +10,2 @@"
+
+    # And the FIRST hunk's own body line maps back to hunk_index 0.
+    first_body_index = lines.index("+new1")
+    idx_first, hunk_first = _hunk_containing_line(hunks, first_body_index)
+    assert idx_first == 0
+    assert hunk_first.header == "@@ -1,2 +1,2 @@"
+
+
+# -- Task 7 fix round (review): inline "● comment" diff-line marker ---------
+
+
+@pytest.mark.asyncio
+async def test_line_comment_marker_appears_on_its_line_and_survives_cursor_moves(
+    review_fixture,
+):
+    """Spec §3 Note display: a saved `diff_line` note appends a dim
+    `● comment` marker to its OWN rendered diff line -- other lines stay
+    unchanged, and the marker survives further cursor movement (it is
+    screen state, not recomputed from a stale render)."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        row, change = screen._leaves[screen._focused_leaf]
+        full_diff = provider.diff_text(row, change.path)
+        lines = full_diff.splitlines()
+        target_index = next(
+            i for i, line in enumerate(lines) if line.startswith("+after")
+        )
+        other_index = next(i for i in range(len(lines)) if i != target_index)
+
+        marker = f"{resolve_glyph('●')} comment"
+        before_lines = screen.diff_pane_text().split("\n")
+        assert not before_lines[target_index].endswith(marker), (
+            "marker must not appear before any note is saved"
+        )
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", target_index)
+        await pilot.pause()
+
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "marker check"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        text_lines = await _wait_for(
+            pilot,
+            lambda: (
+                lambda ls: ls if ls[target_index].endswith(marker) else None
+            )(screen.diff_pane_text().split("\n")),
+            "marker rendered on the target line",
+        )
+        assert text_lines[target_index].endswith(marker), text_lines[target_index]
+        assert not text_lines[other_index].endswith(marker), (
+            "an unrelated line must not carry the marker"
+        )
+
+        # Moving the cursor elsewhere and back must not drop the marker --
+        # it is recomputed only on file focus/note mutation, never
+        # silently lost on an ordinary cursor-move re-render.
+        await pilot.press("down")
+        await pilot.press("up")
+        await pilot.pause()
+        text_lines_after_move = screen.diff_pane_text().split("\n")
+        assert text_lines_after_move[target_index].endswith(marker), (
+            "the marker must survive cursor movement"
+        )
+
+
+# -- Task 7 fix round (review): two-window `_note_matches_leaf` at the ------
+# -- screen level -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_notes_strip_scoped_to_its_own_window_not_the_sibling_window(
+    tmp_path,
+):
+    """A run's `change_snapshots` can hold TWO windows on the SAME
+    root+path (the turn's own window and its surviving sub-agents'
+    post-turn window) -- a note saved with window 1's `snapshot_id` must
+    render in window 1's strip ONLY, never window 2's, even though both
+    leaves share the same path (mirrors the turn file card's proven
+    two-window note test shape,
+    `test_two_windows_same_root_path_note_scoped_to_its_own_hunk_header`).
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "shared.txt").write_text("seed\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def _record_window(kind: str, mutate) -> None:
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        mutate()
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    _record_window(
+        CHANGE_KIND_TURN,
+        lambda: (root / "shared.txt").write_text("ALPHA_ONLY_MARKER\n"),
+    )
+    _record_window(
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        lambda: (root / "shared.txt").write_text("BRAVO_ONLY_MARKER\n"),
+    )
+
+    rows = db.change_snapshots_for_run_review(run_id)
+    assert len(rows) == 2, f"fixture must produce exactly two windows, got {rows}"
+    window1_id, window2_id = int(rows[0]["id"]), int(rows[1]["id"])
+    assert window1_id != window2_id
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    # A note saved against window 1's OWN snapshot id.
+    provider.add_change_note(
+        run_id=run_id,
+        root=str(root),
+        path="shared.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-seed\n+ALPHA_ONLY_MARKER",
+        note="belongs to window 1 only",
+        snapshot_id=window1_id,
+    )
+
+    async def _strip_texts_for(snapshot_id: int) -> list[str]:
+        app = _Harness(
+            provider,
+            initial_run_id=run_id,
+            initial_path="shared.txt",
+            initial_snapshot_id=snapshot_id,
+        )
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _wait_for(
+                pilot,
+                lambda: app.screen
+                if isinstance(app.screen, ChangeReviewScreen)
+                else None,
+                "review screen",
+            )
+            await _wait_for(
+                pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+                "leaf focused",
+            )
+            _row, change = screen._leaves[screen._focused_leaf]
+            assert change.path == "shared.txt"
+            # Let the strip settle (mount is synchronous, but give the
+            # event loop a beat like every other test in this file).
+            await pilot.pause()
+            return _note_strip_texts(screen)
+
+    window1_texts = await _strip_texts_for(window1_id)
+    assert any("belongs to window 1 only" in t for t in window1_texts), (
+        f"window 1's own note must render in window 1's strip: {window1_texts}"
+    )
+
+    window2_texts = await _strip_texts_for(window2_id)
+    assert not any("belongs to window 1 only" in t for t in window2_texts), (
+        f"window 1's note leaked into window 2's strip: {window2_texts}"
+    )
+
+
+# -- final-review fix wave (2026-08-20) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_open_comment_input_closes_on_turn_switch(review_fixture):
+    """Fix 1b (final review): a comment input opened on one turn must not
+    survive a turn switch via the Select -- left mounted, a later Enter on
+    it would save a note whose row/change was captured against a turn
+    this screen has already left (the run_id data-level half of this fix
+    is pinned separately, below)."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run1)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "orphaned by a turn switch"
+
+        screen.select_turn(run2)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run2
+            or None,
+            "switched to run2",
+        )
+        await pilot.pause()
+
+        assert not screen.query(".change-review-comment-input"), (
+            "an open comment input must not survive a turn switch"
+        )
+        assert note_input.leaf_row is None, "the pending capture must be cleared"
+        assert note_input.leaf_change is None
+        assert note_input.anchor_kind is None
+
+
+@pytest.mark.asyncio
+async def test_save_comment_input_uses_captured_rows_run_id_not_active_turn(
+    review_fixture,
+):
+    """Fix 1a (final review): `_save_comment_input` must read `run_id`
+    from the CAPTURED leaf's own row (set at input-OPEN time, alongside
+    `change`) -- never from `self._active_turn`, which is read at SAVE
+    time and can have moved on. Belt-and-braces against Fix 1b: even if a
+    save somehow still fires after the active turn changed, the note it
+    writes must stay self-consistent with the row it was captured
+    against, not a Frankenstein mix of stale row data + a fresh active
+    turn's run_id."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run1)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        row_a, change_a = screen._leaves[0]
+        assert row_a["run_id"] == run1
+
+        # Mount a comment input directly, captured against turn A's leaf --
+        # bypassing `_open_comment_input` so this test isolates the DATA
+        # guarantee (fix 1a) from the UI-level cleanup (fix 1b), which
+        # would otherwise remove this input the moment the turn switches.
+        note_input = Input(classes="change-review-comment-input")
+        note_input.anchor_kind = "file"
+        note_input.leaf_row = row_a
+        note_input.leaf_change = change_a
+        note_input.cursor_line = None
+        note_input.value = "captured before the active turn moved on"
+        container = screen.query_one("#change-review-right", Vertical)
+        strip = screen.query_one("#change-review-notes-strip", Vertical)
+        await container.mount(note_input, before=strip)
+
+        for turn in screen._turns:
+            if turn.run_id == run2:
+                screen._active_turn = turn
+                break
+        assert screen._active_turn.run_id == run2
+
+        await screen._save_comment_input(note_input)
+
+        notes_a = provider.notes_for_run(run1)
+        notes_b = provider.notes_for_run(run2)
+        assert len(notes_a) == 1, (
+            f"the note must land under the CAPTURED row's own run: {notes_a}"
+        )
+        assert notes_a[0]["note"] == "captured before the active turn moved on"
+        assert notes_a[0]["path"] == change_a.path
+        assert not notes_b, (
+            f"the note must not land under the now-active (but uncaptured) "
+            f"turn's run: {notes_b}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_diff_text_memoized_across_cursor_moves_and_refetched_on_reload(
+    tmp_path,
+):
+    """Fix 2 (final review): `_move_diff_cursor` must not re-run
+    `provider.diff_text` (a git subprocess pair) on every keypress -- the
+    focused leaf's diff is fetched once and reused for every subsequent
+    cursor move. A revert-reload of the SAME turn (`_report_outcomes` ->
+    `_load_turn`) must still refetch -- the memo must not survive it, even
+    though the row objects and path are byte-identical to what was cached
+    before it."""
+    provider, root = _big_diff_provider(tmp_path, line_count=200, cap=50)
+    calls: list[str] = []
+    original_diff_text = provider.diff_text
+
+    def _spy(row, path):
+        calls.append(path)
+        return original_diff_text(row, path)
+
+    provider.diff_text = _spy
+
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "line 0" in t else None)(screen.diff_pane_text()),
+            "big.txt diff",
+        )
+        assert calls.count("big.txt") == 1, f"initial focus must fetch once: {calls}"
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", 40)
+        await pilot.pause()
+
+        assert calls.count("big.txt") == 1, (
+            f"cursor movement re-fetched the diff via git -- 40 keypresses "
+            f"should still be exactly 1 fetch, got {calls}"
+        )
+
+        # A revert reload must refetch -- the memo must drop.
+        screen._report_outcomes([])
+        await pilot.pause()
+        await _wait_for(
+            pilot, lambda: calls.count("big.txt") >= 2 or None, "reload refetch"
+        )
+        assert calls.count("big.txt") == 2, (
+            f"a revert-reload of the same turn must refetch exactly once "
+            f"more, not serve the pre-reload memo: {calls}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_line_comment_flow_fetches_diff_text_once(review_fixture):
+    """Fix 2 (final review): opening a line comment (`c`, which probes
+    diff-line availability) and saving it (`_save_comment_input`'s
+    line-text lookup) must reuse the SAME memoized diff text the render
+    already fetched -- not each run `provider.diff_text` again (pre-fix:
+    three separate git subprocess reads for one line-comment flow:
+    render, open-probe, save)."""
+    provider, root, run1, run2 = review_fixture
+    calls: list[str] = []
+    original_diff_text = provider.diff_text
+
+    def _spy(row, path):
+        calls.append(path)
+        return original_diff_text(row, path)
+
+    provider.diff_text = _spy
+
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        assert calls.count("edit.txt") == 1, f"initial focus fetch: {calls}"
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "single fetch please"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        assert calls.count("edit.txt") == 1, (
+            f"opening+saving a line comment re-fetched the diff via git "
+            f"instead of reusing the render's memo: {calls}"
+        )
+        assert len(provider.notes_for_run(run2)) == 1
+
+
+@pytest.mark.asyncio
+async def test_shrunk_diff_save_notifies_instead_of_silent_noop(review_fixture):
+    """Fix 4(a) (final review): a diff-line comment whose cursor index no
+    longer falls inside the diff at SAVE time (the file changed under the
+    open input) must notify the user their comment was NOT saved --
+    mirroring the ChangeTrackingError branch right above it -- instead of
+    silently leaving the input mounted with no feedback at all."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        # Simulate the diff shrinking under the open input (the cursor
+        # index it was opened with is now past the end of the diff text).
+        note_input.cursor_line = 999999
+        note_input.value = "the file moved under me"
+
+        notify_calls: list[tuple[tuple, dict]] = []
+        pilot.app.notify = lambda *a, **kw: notify_calls.append((a, kw))
+
+        note_input.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert notify_calls, "a shrunk-diff save must notify, not silently no-op"
+        message = str(notify_calls[0][0][0])
+        assert "not saved" in message.lower() or "no longer" in message.lower(), message
+        assert notify_calls[0][1].get("severity") == "warning"
+        assert not provider.notes_for_run(run2), "no note should have been persisted"
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#6: the header must pluralize the way the Inspect rail does
+# ---------------------------------------------------------------------------
+
+
+def test_file_count_noun_is_singular_for_one_file():
+    """AC#6: a one-file turn read "1 files" in the header and the turn
+    selector while the rail's own row for the same fact read "1 file". The
+    repeated-root branch already pluralized correctly; the two now agree."""
+    from tldw_chatbook.UI.Screens.change_review_screen import _file_count_noun
+
+    assert _file_count_noun(1, repeated_root=False) == "file"
+    assert _file_count_noun(0, repeated_root=False) == "files"
+    assert _file_count_noun(2, repeated_root=False) == "files"
+    # Negative control: the repeated-root wording is untouched.
+    assert _file_count_noun(1, repeated_root=True) == "file change"
+    assert _file_count_noun(2, repeated_root=True) == "file changes"

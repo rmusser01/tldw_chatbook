@@ -6,7 +6,9 @@ from typing import Literal
 
 ActiveSource = Literal["local", "server"]
 ServerReachability = Literal["unknown", "reachable", "unreachable"]
-ServerAuthState = Literal["unknown", "authenticated", "auth_required", "session_invalid"]
+ServerAuthState = Literal[
+    "unknown", "authenticated", "auth_required", "session_invalid"
+]
 ServerContextFailureReason = Literal[
     "server_not_configured",
     "server_profile_missing",
@@ -16,8 +18,11 @@ ServerContextFailureReason = Literal[
     "server_credentials_unavailable",
     "stale_authorization",
     "profile_no_longer_authorized",
+    "server_identity_unavailable",
 ]
-ActionKind = Literal["browse", "detail", "create", "update", "delete", "launch", "observe"]
+ActionKind = Literal[
+    "browse", "detail", "create", "update", "delete", "launch", "observe"
+]
 RequiredSource = ActiveSource
 AuthorityOwner = Literal["local", "server", "shared"]
 OfflinePolicy = Literal["available", "unavailable", "explicit_fallback"]
@@ -32,6 +37,7 @@ SERVER_CONTEXT_FAILURE_REASON_CODES: frozenset[ServerContextFailureReason] = fro
         "server_credentials_unavailable",
         "stale_authorization",
         "profile_no_longer_authorized",
+        "server_identity_unavailable",
     }
 )
 
@@ -63,10 +69,14 @@ class RuntimeSourceState:
     server_auth_checked_at: datetime | None = None
     last_known_server_label: str | None = None
 
-    def normalized_for_policy(self, *, now: datetime, freshness_window: timedelta) -> "RuntimeSourceState":
+    def normalized_for_policy(
+        self, *, now: datetime, freshness_window: timedelta
+    ) -> "RuntimeSourceState":
         from .source_state import normalize_runtime_source_state
 
-        return normalize_runtime_source_state(self, now=now, freshness_window=freshness_window)
+        return normalize_runtime_source_state(
+            self, now=now, freshness_window=freshness_window
+        )
 
     def to_dict(self) -> dict:
         from .source_state import runtime_source_state_to_dict

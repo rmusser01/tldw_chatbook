@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.External_Connectors_Interop.connectors_scope_service import ConnectorsScopeService
+from tldw_chatbook.External_Connectors_Interop.connectors_scope_service import (
+    ConnectorsScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -14,7 +16,10 @@ class FakeConnectorsService:
 
     async def authorize_provider(self, provider, **kwargs):
         self.calls.append(("authorize_provider", provider, kwargs))
-        return {"auth_url": "https://accounts.example.test/oauth", "state": kwargs.get("state")}
+        return {
+            "auth_url": "https://accounts.example.test/oauth",
+            "state": kwargs.get("state"),
+        }
 
     async def list_accounts(self):
         self.calls.append(("list_accounts",))
@@ -76,7 +81,9 @@ async def test_connectors_scope_service_routes_server_operations_and_normalizes_
     assert providers[0]["record_id"] == "server:connector_provider:drive"
     assert authorize["backend"] == "server"
     assert accounts[0]["record_id"] == "server:connector_account:7"
-    assert browse["items"][0]["record_id"] == "server:connector_remote_source:drive:root"
+    assert (
+        browse["items"][0]["record_id"] == "server:connector_remote_source:drive:root"
+    )
     assert sources[0]["record_id"] == "server:connector_source:11"
     assert imported["record_id"] == "server:connector_job:import-1"
     assert sync_status["record_id"] == "server:connector_source_sync:11"
@@ -106,7 +113,9 @@ async def test_connectors_scope_service_routes_server_operations_and_normalizes_
 @pytest.mark.asyncio
 async def test_connectors_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeConnectorsService()
-    scope = ConnectorsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = ConnectorsScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="External connectors are server-only"):
         await scope.list_accounts(mode="local")

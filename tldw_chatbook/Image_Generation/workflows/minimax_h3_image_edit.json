@@ -1,0 +1,265 @@
+{
+  "114": {
+    "_meta": {
+      "title": "Load Image"
+    },
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "h3_edit_input.png"
+    }
+  },
+  "121": {
+    "_meta": {
+      "title": "Load VAE"
+    },
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    }
+  },
+  "124": {
+    "_meta": {
+      "title": "VAE Decode"
+    },
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "127",
+        0
+      ],
+      "vae": [
+        "121",
+        0
+      ]
+    }
+  },
+  "125": {
+    "_meta": {
+      "title": "KSamplerSelect"
+    },
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "126": {
+    "_meta": {
+      "title": "BasicScheduler"
+    },
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "denoise": 1,
+      "model": [
+        "129",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 20
+    }
+  },
+  "127": {
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "guider": [
+        "128",
+        0
+      ],
+      "latent_image": [
+        "133",
+        1
+      ],
+      "noise": [
+        "131",
+        0
+      ],
+      "sampler": [
+        "125",
+        0
+      ],
+      "sigmas": [
+        "126",
+        0
+      ]
+    }
+  },
+  "128": {
+    "_meta": {
+      "title": "Basic Guider"
+    },
+    "class_type": "BasicGuider",
+    "inputs": {
+      "conditioning": [
+        "133",
+        0
+      ],
+      "model": [
+        "129",
+        0
+      ]
+    }
+  },
+  "129": {
+    "_meta": {
+      "title": "Load Diffusion Model"
+    },
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "130": {
+    "_meta": {
+      "title": "Load CLIP"
+    },
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "device": "default",
+      "type": "minimax"
+    }
+  },
+  "131": {
+    "_meta": {
+      "title": "RandomNoise"
+    },
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 246661959578238
+    }
+  },
+  "133": {
+    "_meta": {
+      "title": "MiniMax H3 Image to Video"
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": [
+        "130",
+        0
+      ],
+      "first_frame": [
+        "114",
+        0
+      ],
+      "height": [
+        "140",
+        1
+      ],
+      "length": [
+        "139",
+        0
+      ],
+      "prompt": "Apply the requested image edit.",
+      "vae": [
+        "121",
+        0
+      ],
+      "width": [
+        "140",
+        0
+      ]
+    }
+  },
+  "139": {
+    "_meta": {
+      "title": "Frame Length"
+    },
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 1
+    }
+  },
+  "140": {
+    "_meta": {
+      "title": "Get Image Size"
+    },
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "141",
+        0
+      ]
+    }
+  },
+  "141": {
+    "_meta": {
+      "title": "Scale Image to Total Pixels"
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": [
+        "114",
+        0
+      ],
+      "megapixels": 1,
+      "resolution_steps": 32,
+      "upscale_method": "nearest-exact"
+    }
+  },
+  "144": {
+    "_meta": {
+      "title": "Get Image from Batch"
+    },
+    "class_type": "ImageFromBatch",
+    "inputs": {
+      "batch_index": 0,
+      "image": [
+        "124",
+        0
+      ],
+      "length": 1
+    }
+  },
+  "149": {
+    "_meta": {
+      "title": "Resize Image/Mask"
+    },
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "input": [
+        "144",
+        0
+      ],
+      "resize_type": "scale dimensions",
+      "resize_type.crop": "center",
+      "resize_type.height": [
+        "150",
+        1
+      ],
+      "resize_type.width": [
+        "150",
+        0
+      ],
+      "scale_method": "area"
+    }
+  },
+  "150": {
+    "_meta": {
+      "title": "Get Image Size"
+    },
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "114",
+        0
+      ]
+    }
+  },
+  "165": {
+    "_meta": {
+      "title": "Save Output Image"
+    },
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "h3_edit",
+      "images": [
+        "149",
+        0
+      ]
+    }
+  }
+}

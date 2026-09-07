@@ -22,7 +22,7 @@ Tests/
 ├── ChaChaNotesDB/          # Character/Chat/Notes database tests
 ├── DB/                     # General database tests
 ├── Event_Handlers/         # Event handling tests
-├── Integration/            # Cross-module integration tests
+├── integration/            # Cross-module integration tests
 ├── LLM_Management/         # LLM provider management tests
 ├── Media_DB/               # Media database tests
 ├── Notes/                  # Notes functionality tests
@@ -76,7 +76,7 @@ pytest --cov=tldw_chatbook --cov-report=html
 # Run tests with timeout (default: 300s)
 pytest --timeout=60
 
-# Run tests in parallel (requires pytest-xdist)
+# Run tests in parallel (requires pytest-xdist, included in the dev extras)
 pytest -n auto
 ```
 
@@ -95,13 +95,11 @@ pytest -m integration
 pytest -m ui
 
 # Run only tests that require optional dependencies
-pytest -m optional_deps
-
-# Run tests excluding optional dependencies
-pytest -m "not optional_deps"
+# (marker is `optional`; without --run-optional they are auto-skipped)
+pytest --run-optional -m optional
 
 # Combine markers
-pytest -m "unit and not optional_deps"
+pytest -m "unit and not optional"
 ```
 
 ### Running Tests by Module
@@ -167,18 +165,27 @@ class TestChatWindow:
         # Test implementation
 ```
 
-### Optional Dependency Tests (`@pytest.mark.optional_deps`)
-- Require optional packages (embeddings, RAG, etc.)
-- Automatically skipped if dependencies missing
-- Include ML model loading tests
+### Optional Dependency Tests (`@pytest.mark.optional`)
+- Require optional packages (embeddings, RAG, etc.) or live API keys
+- Guard themselves with `pytest.mark.skipif` on the relevant availability flag
+  (there is NO automatic skip: the old `optional_deps` marker documented here
+  was never used by any test, and the conftest gate keyed to it selected
+  nothing — 2026-07-30 audit)
 
 Example:
 ```python
-@pytest.mark.optional_deps
+from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
+
+@pytest.mark.optional
+@pytest.mark.skipif(not embeddings_rag_deps_installed(), reason="embeddings extras not installed")
 class TestRAGFunctionality:
     def test_embedding_generation(self):
         # Test implementation
 ```
+
+Note: do NOT gate on `DEPENDENCIES_AVAILABLE.get("embeddings_rag")` — that
+registry initializes to `False` and is only populated by the deep dependency
+checker, so tests gated on it skip even when the extras are installed.
 
 ## Writing Tests
 
@@ -350,16 +357,16 @@ response = get_mock_response("openai", streaming=False)
 
 The project uses GitHub Actions for continuous integration:
 
-1. **Simple Workflow** (`python-app.yml`):
-   - Basic single Python version testing
-   - Runs on main branch pushes/PRs
+1. **Test Workflow** (`test.yml`):
+   - Core job runs the full non-UI suite on Ubuntu and macOS (Python 3.12)
+   - Separate jobs for UI tests, workflow self-checks, and artifact-lease tests
+   - Nightly deep job (`nightly-deep`, scheduled) carries the OS/Python
+     breadth (Ubuntu 3.11/3.12/3.13, macOS 3.12, Windows 3.12) plus the
+     `--run-slow` tier and coverage
+   - Test result and coverage reporting
 
-2. **Comprehensive Workflow** (`test.yml`):
-   - Matrix testing (Python 3.11, 3.12, 3.13)
-   - Multi-platform (Ubuntu, macOS, Windows)
-   - Separate jobs for unit/integration/UI tests
-   - Test result reporting
-   - Coverage reporting
+2. **Guard Workflows** (`backlog-guard.yml`, `css-bundle-guard.yml`):
+   - Repo-hygiene and CSS bundle checks
 
 ### Running Tests Locally Like CI
 

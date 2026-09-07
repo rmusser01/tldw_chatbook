@@ -1,0 +1,39 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "85e23b4ee96d126bbcb7aa6765e445a5",
+        "chunk_index": 1,
+        "chunk_method": "ebook_chapters",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5,
+        "total_chunks": 2
+      },
+      "text": "Chapter 1\n\nFirst chapter text.\n\n#"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "b2f51a0d0d869297aaecb36d4ae6ac18",
+        "chunk_index": 2,
+        "chunk_method": "ebook_chapters",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 2
+      },
+      "text": "Chapter 2\n\nSecond chapter text."
+    }
+  ],
+  "outcome": "ok"
+}

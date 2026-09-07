@@ -1,0 +1,251 @@
+"""Worker-group hygiene for ChatScreen (TASK-228).
+
+Root cause being guarded against: Textual's ``run_worker(..., exclusive=True)``
+cancels every other worker in the same group, and calls without ``group=`` all
+share the default group. The Console send worker and the UI-sync re-kick both
+ran ungrouped-exclusive, so an overlapping sync silently cancelled in-flight
+streams (probe-confirmed on textual 8.2.7; live symptoms: vision sends stalling
+with no token/no row/no error, truncated assistant persists, and a permanently
+stuck [streaming] suffix).
+"""
+
+import ast
+import asyncio
+from pathlib import Path
+
+import pytest
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
+_UI_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "UI"
+CHAT_SCREEN_PATH = _UI_ROOT / "Screens" / "chat_screen.py"
+_CONSOLE_MODULES_DIR = _UI_ROOT / "Console_Modules"
+
+
+def _guarded_paths() -> list[Path]:
+    """Every file that may dispatch a Console worker.
+
+    The screen alone is no longer the answer, and assuming it was let this
+    guard erode silently. The decomposition moved Console clusters into
+    ``UI/Console_Modules/``, taking their ``run_worker`` sites with them: by
+    the wave-3 close only 2 of the 6 run-coroutine dispatch sites were still
+    in ``chat_screen.py``, and 7 exclusive-worker sites had left the scanned
+    scope entirely — while both tests below stayed green, because what
+    remained still satisfied them. A guard that shrinks with its subject
+    certifies an invariant nobody is checking.
+
+    Returns:
+        list[Path]: `chat_screen.py` plus every `Console_Modules` module.
+
+    Raises:
+        AssertionError: If either half is missing — a rename that emptied
+            this list would otherwise silently restore the blind spot.
+    """
+    assert CHAT_SCREEN_PATH.exists(), f"{CHAT_SCREEN_PATH} not found."
+    modules = sorted(
+        path
+        for path in _CONSOLE_MODULES_DIR.glob("*.py")
+        if path.name != "__init__.py"
+    )
+    assert modules, (
+        f"no modules found in {_CONSOLE_MODULES_DIR}; this guard's scope "
+        "collapsed back to the screen alone."
+    )
+    return [CHAT_SCREEN_PATH, *modules]
+
+
+def _rel(path: Path) -> str:
+    return str(path.relative_to(_UI_ROOT.parents[1]))
+
+
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+
+def _exclusive_worker_sites(tree: ast.AST):
+    """Yield (lineno, has_group) for every exclusive worker declaration.
+
+    Covers both spellings — ``run_worker(..., exclusive=True)`` calls and
+    ``@work(exclusive=True)`` decorators — and fails CLOSED: a non-literal
+    ``exclusive=`` value (variable, expression, positional) is treated as
+    exclusive, because a guard that skips what it can't prove is a guard
+    that certifies an invariant the file doesn't hold.
+    """
+    for node in ast.walk(tree):
+        calls: list[ast.Call] = []
+        if isinstance(node, ast.Call) and _call_name(node) == "run_worker":
+            calls.append(node)
+        elif isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            calls.extend(
+                dec
+                for dec in node.decorator_list
+                if isinstance(dec, ast.Call) and _call_name(dec) == "work"
+            )
+        for call in calls:
+            keywords = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+            has_kwargs_spread = any(kw.arg is None for kw in call.keywords)
+            exclusive = keywords.get("exclusive")
+            if exclusive is None and not has_kwargs_spread:
+                continue  # exclusive defaults to False
+            if isinstance(exclusive, ast.Constant):
+                if exclusive.value is not True:
+                    continue
+            # non-Constant exclusive= or a **kwargs spread: fail closed.
+            yield call.lineno, "group" in keywords
+
+
+def test_every_exclusive_worker_on_chat_screen_names_a_group():
+    """An exclusive worker without group= joins the default group and cancels
+    (or is cancelled by) every other ungrouped exclusive worker on the screen
+    — including the Console send worker mid-stream. Never ship one."""
+    ungrouped: list[str] = []
+    for path in _guarded_paths():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        ungrouped.extend(
+            f"{_rel(path)}:{lineno}"
+            for lineno, has_group in _exclusive_worker_sites(tree)
+            if not has_group
+        )
+    assert ungrouped == [], (
+        "exclusive worker (run_worker or @work) without an explicit group= at "
+        f"{ungrouped} — these share Textual's default worker group and "
+        "silently cancel each other (see TASK-228)."
+    )
+
+
+def _group_family(group_node: ast.AST | None) -> str | None:
+    """Resolve a ``group=`` value to a comparable "family" name.
+
+    A plain string literal (``ast.Constant``) resolves to itself. TASK-3 of
+    the parallel-agents spec (Sec3) rewrote the run-worker dispatch sites to
+    ``group=f"console-run-{session_id}"`` — an ``ast.JoinedStr`` whose first
+    segment is the literal prefix, followed by the interpolated session id.
+    Per-session dispatch sites are still all members of the SAME family, so a
+    ``JoinedStr`` whose first value is a ``Constant`` string starting with
+    ``"console-run-"`` resolves to the family name ``"console-run"`` — this
+    keeps the disjointness invariant below meaningful (every run-worker site
+    is in one family, and that family never collides with a sync group)
+    instead of the guard going blind (``None`` for every site) the moment the
+    literal became an f-string.
+    """
+    if isinstance(group_node, ast.Constant):
+        return group_node.value
+    if isinstance(group_node, ast.JoinedStr) and group_node.values:
+        first = group_node.values[0]
+        if (
+            isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+            and first.value.startswith("console-run-")
+        ):
+            return "console-run"
+    return None
+
+
+def test_console_run_and_sync_workers_use_disjoint_groups():
+    """Pin the separation this fix exists for: the sync kicks must never share
+    a group with the run workers. The names-a-group guard alone would pass if
+    someone put a sync kick into group="console-run" — and the collision this
+    branch fixed would silently return."""
+    RUN_COROUTINES = {
+        "_submit_console_native_draft",
+        "_retry_console_message",
+        "_regenerate_console_message",
+        "_continue_console_message",
+        "_edit_resend_console_message",
+        # Fix wave (rider 5, final review): `/rewind`'s "summarize up to"
+        # choice dispatches on the same `group=f"console-run-{session_id}"`
+        # family (`_apply_console_rewind_choice`) -- missing from this set
+        # let it go unguarded by the disjointness assertion below.
+        "_summarize_console_up_to",
+    }
+    SYNC_COROUTINE = "_sync_native_console_chat_ui"
+    run_groups: set[str] = set()
+    sync_groups: set[str] = set()
+    seen_run_targets: set[str] = set()
+    for path in _guarded_paths():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and _call_name(node) == "run_worker"):
+                continue
+            if not node.args:
+                continue
+            first = node.args[0]
+            target = _call_name(first) if isinstance(first, ast.Call) else ""
+            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+            group = keywords.get("group")
+            group_name = _group_family(group)
+            if target in RUN_COROUTINES:
+                run_groups.add(group_name)
+                seen_run_targets.add(target)
+            elif target == SYNC_COROUTINE:
+                sync_groups.add(group_name)
+    # Every named run coroutine must actually be FOUND somewhere in scope.
+    # Without this the set above degrades gracefully as sites move out of
+    # the scanned files -- which is exactly how this guard lost 4 of its 6
+    # dispatch sites while staying green.
+    assert seen_run_targets == RUN_COROUTINES, (
+        "run-coroutine dispatch sites not found in the guarded files: "
+        f"{sorted(RUN_COROUTINES - seen_run_targets)}. Either the dispatch "
+        "moved outside chat_screen.py + UI/Console_Modules/, or it was "
+        "renamed; widen _guarded_paths() rather than trimming this set."
+    )
+    assert run_groups == {"console-run"}, run_groups
+    assert sync_groups == {"console-sync"}, sync_groups
+    # Explicit disjointness, independent of the exact-set assertions above:
+    # the invariant this test exists to guard is that the run-worker family
+    # and the sync-worker group(s) never overlap.
+    assert run_groups.isdisjoint(sync_groups), (run_groups, sync_groups)
+
+
+class TestTextualExclusiveGroupSemantics:
+    """Pin the Textual semantics the fix relies on, on the installed version."""
+
+    @staticmethod
+    def _make_app(results: dict):
+        from textual.app import App
+
+        class Probe(ConsolidatedCSSApp):
+            async def long_run(self):
+                try:
+                    await asyncio.sleep(3)
+                    results["run"] = "completed"
+                except asyncio.CancelledError:
+                    results["run"] = "cancelled"
+                    raise
+
+            async def quick_sync(self):
+                results["sync"] = "ran"
+
+        return Probe()
+
+    @pytest.mark.asyncio
+    async def test_ungrouped_exclusive_workers_cancel_each_other(self):
+        """The footgun itself: default-group exclusive collision."""
+        results: dict = {}
+        app = self._make_app(results)
+        async with app.run_test():
+            app.run_worker(app.long_run(), exclusive=True)
+            await asyncio.sleep(0.2)
+            app.run_worker(app.quick_sync(), exclusive=True)
+            await asyncio.sleep(0.2)
+        assert results.get("run") == "cancelled"
+        assert results.get("sync") == "ran"
+
+    @pytest.mark.asyncio
+    async def test_distinct_groups_do_not_cancel_each_other(self):
+        """The fix premise: a console-sync kick must not touch console-run."""
+        results: dict = {}
+        app = self._make_app(results)
+        async with app.run_test():
+            run_worker = app.run_worker(
+                app.long_run(), exclusive=True, group="console-run"
+            )
+            await asyncio.sleep(0.2)
+            app.run_worker(app.quick_sync(), exclusive=True, group="console-sync")
+            await asyncio.sleep(0.2)
+            assert results.get("sync") == "ran"
+            assert results.get("run") is None  # still running, NOT cancelled
+            run_worker.cancel()

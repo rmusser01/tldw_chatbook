@@ -12,7 +12,11 @@ from tldw_chatbook.Utils.ui_responsiveness_artifacts import (
 )
 
 
-def test_responsiveness_artifact_writer_creates_required_files(tmp_path: Path):
+def test_responsiveness_artifact_writer_creates_required_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(artifacts.tempfile, "gettempdir", lambda: str(tmp_path))
     monitor = UIResponsivenessMonitor(enabled=True, stall_threshold_ms=250)
     monitor.record_timer_created("ui-heartbeat")
     monitor.record_worker_started("console-sync")
@@ -27,9 +31,9 @@ def test_responsiveness_artifact_writer_creates_required_files(tmp_path: Path):
 
     for filename in REQUIRED_RESPONSIVENESS_ARTIFACTS:
         assert (tmp_path / filename).exists(), filename
-    assert "route switches: 6" in (
-        tmp_path / "route_switch_soak_result.txt"
-    ).read_text(encoding="utf-8")
+    assert "route switches: 6" in (tmp_path / "route_switch_soak_result.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_responsiveness_artifact_writer_rejects_traversal_output(

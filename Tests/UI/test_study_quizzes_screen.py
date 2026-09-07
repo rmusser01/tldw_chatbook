@@ -1,18 +1,31 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
-from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeState, StudyScopeType
-from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_study_dashboard import DashboardStudyScopeService
+import tldw_chatbook.app as app_module
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.study_scope_models import (
+    StudyScopeContext,
+    StudyScopeType,
+)
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 
 class FakeQuizScopeService:
     def __init__(self):
         self.calls = []
-        self.quizzes = [{"record_id": "local:quiz:quiz-local-1", "backing_id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}]
+        self.quizzes = [
+            {
+                "record_id": "local:quiz:quiz-local-1",
+                "backing_id": "quiz-local-1",
+                "name": "Renal Review",
+                "total_questions": 1,
+            }
+        ]
         self.questions = [
             {
                 "record_id": "local:quiz_question:question-local-1",
@@ -39,8 +52,19 @@ class FakeQuizScopeService:
             }
         ]
 
-    async def list_quizzes(self, *, mode=None, scope_type=None, workspace_id=None, q=None, limit=100, offset=0):
-        self.calls.append(("list_quizzes", mode, scope_type, workspace_id, q, limit, offset))
+    async def list_quizzes(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        q=None,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_quizzes", mode, scope_type, workspace_id, q, limit, offset)
+        )
         return list(self.quizzes)
 
     async def create_quiz(
@@ -54,7 +78,18 @@ class FakeQuizScopeService:
         time_limit_seconds=None,
         passing_score=None,
     ):
-        self.calls.append(("create_quiz", mode, scope_type, workspace_id, name, description, time_limit_seconds, passing_score))
+        self.calls.append(
+            (
+                "create_quiz",
+                mode,
+                scope_type,
+                workspace_id,
+                name,
+                description,
+                time_limit_seconds,
+                passing_score,
+            )
+        )
         created = {
             "record_id": f"{mode}:quiz:new-quiz",
             "backing_id": "new-quiz",
@@ -65,9 +100,24 @@ class FakeQuizScopeService:
         self.quizzes.append(created)
         return created
 
-    async def list_questions(self, *, mode=None, quiz_id=None, q=None, include_answers=False, limit=100, offset=0):
-        self.calls.append(("list_questions", mode, quiz_id, q, include_answers, limit, offset))
-        return [question for question in self.questions if quiz_id is None or question["quiz_record_id"].endswith(str(quiz_id))]
+    async def list_questions(
+        self,
+        *,
+        mode=None,
+        quiz_id=None,
+        q=None,
+        include_answers=False,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_questions", mode, quiz_id, q, include_answers, limit, offset)
+        )
+        return [
+            question
+            for question in self.questions
+            if quiz_id is None or question["quiz_record_id"].endswith(str(quiz_id))
+        ]
 
     async def create_question(
         self,
@@ -86,7 +136,17 @@ class FakeQuizScopeService:
         tags=None,
         source_citations=None,
     ):
-        self.calls.append(("create_question", mode, quiz_id, question_type, question_text, correct_answer, points))
+        self.calls.append(
+            (
+                "create_question",
+                mode,
+                quiz_id,
+                question_type,
+                question_text,
+                correct_answer,
+                points,
+            )
+        )
         created = {
             "record_id": f"{mode}:quiz_question:new-question",
             "backing_id": "new-question",
@@ -101,19 +161,47 @@ class FakeQuizScopeService:
         self.questions.append(created)
         return created
 
-    async def delete_quiz(self, *, mode=None, quiz_id=None, expected_version=None, hard_delete=False):
+    async def delete_quiz(
+        self, *, mode=None, quiz_id=None, expected_version=None, hard_delete=False
+    ):
         self.calls.append(("delete_quiz", mode, quiz_id, expected_version, hard_delete))
-        self.quizzes = [quiz for quiz in self.quizzes if str(quiz.get("backing_id")) != str(quiz_id)]
-        self.questions = [question for question in self.questions if not str(question.get("quiz_record_id", "")).endswith(str(quiz_id))]
-        self.attempts = [attempt for attempt in self.attempts if not str(attempt.get("quiz_record_id", "")).endswith(str(quiz_id))]
+        self.quizzes = [
+            quiz for quiz in self.quizzes if str(quiz.get("backing_id")) != str(quiz_id)
+        ]
+        self.questions = [
+            question
+            for question in self.questions
+            if not str(question.get("quiz_record_id", "")).endswith(str(quiz_id))
+        ]
+        self.attempts = [
+            attempt
+            for attempt in self.attempts
+            if not str(attempt.get("quiz_record_id", "")).endswith(str(quiz_id))
+        ]
         return True
 
-    async def delete_question(self, *, mode=None, quiz_id=None, question_id=None, expected_version=None, hard_delete=False):
-        self.calls.append(("delete_question", mode, question_id, expected_version, hard_delete))
-        self.questions = [question for question in self.questions if str(question.get("backing_id")) != str(question_id)]
+    async def delete_question(
+        self,
+        *,
+        mode=None,
+        quiz_id=None,
+        question_id=None,
+        expected_version=None,
+        hard_delete=False,
+    ):
+        self.calls.append(
+            ("delete_question", mode, question_id, expected_version, hard_delete)
+        )
+        self.questions = [
+            question
+            for question in self.questions
+            if str(question.get("backing_id")) != str(question_id)
+        ]
         return True
 
-    async def start_attempt(self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None):
+    async def start_attempt(
+        self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None
+    ):
         self.calls.append(("start_attempt", mode, scope_type, workspace_id, quiz_id))
         return {
             "record_id": f"{mode}:quiz_attempt:attempt-1",
@@ -138,8 +226,18 @@ class FakeQuizScopeService:
             ],
         }
 
-    async def submit_attempt(self, *, mode=None, scope_type=None, workspace_id=None, attempt_id=None, answers=None):
-        self.calls.append(("submit_attempt", mode, scope_type, workspace_id, attempt_id, answers))
+    async def submit_attempt(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        attempt_id=None,
+        answers=None,
+    ):
+        self.calls.append(
+            ("submit_attempt", mode, scope_type, workspace_id, attempt_id, answers)
+        )
         return {
             "record_id": f"{mode}:quiz_attempt:{attempt_id}",
             "backing_id": attempt_id,
@@ -161,9 +259,25 @@ class FakeQuizScopeService:
             "questions": [],
         }
 
-    async def list_attempts(self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None, limit=100, offset=0):
-        self.calls.append(("list_attempts", mode, scope_type, workspace_id, quiz_id, limit, offset))
-        return [attempt for attempt in self.attempts if quiz_id is None or str(attempt.get("quiz_record_id", "")).endswith(str(quiz_id))]
+    async def list_attempts(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        quiz_id=None,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_attempts", mode, scope_type, workspace_id, quiz_id, limit, offset)
+        )
+        return [
+            attempt
+            for attempt in self.attempts
+            if quiz_id is None
+            or str(attempt.get("quiz_record_id", "")).endswith(str(quiz_id))
+        ]
 
     async def get_attempt(
         self,
@@ -175,7 +289,17 @@ class FakeQuizScopeService:
         include_questions=False,
         include_answers=False,
     ):
-        self.calls.append(("get_attempt", mode, scope_type, workspace_id, attempt_id, include_questions, include_answers))
+        self.calls.append(
+            (
+                "get_attempt",
+                mode,
+                scope_type,
+                workspace_id,
+                attempt_id,
+                include_questions,
+                include_answers,
+            )
+        )
         return {
             "record_id": f"{mode}:quiz_attempt:{attempt_id}",
             "backing_id": attempt_id,
@@ -204,7 +328,9 @@ class FakeQuizScopeService:
                     "points": 2,
                     "order_index": 0,
                 }
-            ] if include_questions else [],
+            ]
+            if include_questions
+            else [],
         }
 
 
@@ -263,8 +389,19 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
             }
         ]
 
-    async def list_quizzes(self, *, mode=None, scope_type=None, workspace_id=None, q=None, limit=100, offset=0):
-        self.calls.append(("list_quizzes", mode, scope_type, workspace_id, q, limit, offset))
+    async def list_quizzes(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        q=None,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_quizzes", mode, scope_type, workspace_id, q, limit, offset)
+        )
         if scope_type == "workspace":
             assert workspace_id == self.workspace_id
             return list(self.workspace_quizzes)
@@ -281,7 +418,18 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
         time_limit_seconds=None,
         passing_score=None,
     ):
-        self.calls.append(("create_quiz", mode, scope_type, workspace_id, name, description, time_limit_seconds, passing_score))
+        self.calls.append(
+            (
+                "create_quiz",
+                mode,
+                scope_type,
+                workspace_id,
+                name,
+                description,
+                time_limit_seconds,
+                passing_score,
+            )
+        )
         created = {
             "record_id": f"{mode}:quiz:new-{scope_type or 'global'}-quiz",
             "backing_id": f"new-{scope_type or 'global'}-quiz",
@@ -296,12 +444,34 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
             self.global_quizzes.append(created)
         return created
 
-    async def list_attempts(self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None, limit=100, offset=0):
-        self.calls.append(("list_attempts", mode, scope_type, workspace_id, quiz_id, limit, offset))
-        attempts = self.workspace_attempts if scope_type == "workspace" else self.global_attempts
-        return [attempt for attempt in attempts if quiz_id is None or str(attempt.get("quiz_record_id", "")).endswith(str(quiz_id))]
+    async def list_attempts(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        quiz_id=None,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_attempts", mode, scope_type, workspace_id, quiz_id, limit, offset)
+        )
+        attempts = (
+            self.workspace_attempts
+            if scope_type == "workspace"
+            else self.global_attempts
+        )
+        return [
+            attempt
+            for attempt in attempts
+            if quiz_id is None
+            or str(attempt.get("quiz_record_id", "")).endswith(str(quiz_id))
+        ]
 
-    async def start_attempt(self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None):
+    async def start_attempt(
+        self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None
+    ):
         self.calls.append(("start_attempt", mode, scope_type, workspace_id, quiz_id))
         return {
             "record_id": f"{mode}:quiz_attempt:attempt-workspace-start",
@@ -326,8 +496,18 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
             ],
         }
 
-    async def submit_attempt(self, *, mode=None, scope_type=None, workspace_id=None, attempt_id=None, answers=None):
-        self.calls.append(("submit_attempt", mode, scope_type, workspace_id, attempt_id, answers))
+    async def submit_attempt(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        attempt_id=None,
+        answers=None,
+    ):
+        self.calls.append(
+            ("submit_attempt", mode, scope_type, workspace_id, attempt_id, answers)
+        )
         return {
             "record_id": f"{mode}:quiz_attempt:{attempt_id}",
             "backing_id": attempt_id,
@@ -351,7 +531,17 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
         include_questions=False,
         include_answers=False,
     ):
-        self.calls.append(("get_attempt", mode, scope_type, workspace_id, attempt_id, include_questions, include_answers))
+        self.calls.append(
+            (
+                "get_attempt",
+                mode,
+                scope_type,
+                workspace_id,
+                attempt_id,
+                include_questions,
+                include_answers,
+            )
+        )
         return {
             "record_id": f"{mode}:quiz_attempt:{attempt_id}",
             "backing_id": attempt_id,
@@ -380,17 +570,47 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
                     "points": 2,
                     "order_index": 0,
                 }
-            ] if include_questions else [],
+            ]
+            if include_questions
+            else [],
         }
 
 
-class StudyTestApp(App):
-    def __init__(self, app_instance):
-        super().__init__()
-        self._screen = StudyScreen(app_instance=app_instance)
+@pytest.fixture(autouse=True)
+def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_get_cli_setting = app_module.get_cli_setting
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+
+
+def _build_full_study_app(app_instance):
+    """Build the full production app with deterministic Study collaborators."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "study"
+    app.study_scope_service = getattr(
+        app_instance,
+        "study_scope_service",
+        DashboardStudyScopeService(),
+    )
+    app.study_quiz_scope_service = app_instance.study_quiz_scope_service
+    app.notify = app_instance.notify
+    source = str(getattr(app_instance, "current_runtime_backend", "local"))
+    runtime_state = RuntimeSourceState(
+        active_source=source,
+        server_configured=source == "server",
+    )
+    app.runtime_policy.state = runtime_state
+    app._publish_runtime_policy_projection(runtime_state)
+    scope_context = getattr(app_instance, "scope_context", None)
+    if scope_context is not None:
+        app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
+    return app
 
 
 def _text(widget) -> str:
@@ -401,7 +621,9 @@ def _is_blank(value) -> bool:
     return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
 
 
-async def _wait_for_quiz_status(app: App, pilot, expected_substring: str, attempts: int = 20) -> None:
+async def _wait_for_quiz_status(
+    app: object, pilot, expected_substring: str, attempts: int = 20
+) -> None:
     """Wait for the quiz attempt status to contain the expected text."""
     needle = expected_substring.lower()
     for _ in range(attempts):
@@ -422,7 +644,7 @@ async def test_quizzes_view_loads_scope_backed_quizzes():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -443,7 +665,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -453,7 +675,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -465,7 +687,15 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
         status = app.screen.query_one("#quiz-attempt-status", Static)
         controller = app.screen.query_one(StudyWindow).quizzes_controller
 
-        assert ("list_quizzes", "server", "workspace", "ws-1", None, 100, 0) in scope.calls
+        assert (
+            "list_quizzes",
+            "server",
+            "workspace",
+            "ws-1",
+            None,
+            100,
+            0,
+        ) in scope.calls
         assert str(quiz_select.value) == "quiz-workspace-1"
         assert "Ready to manage selected quiz" in _text(status)
 
@@ -473,9 +703,27 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
         await controller.load_selected_attempt()
         await pilot.pause(0.1)
 
-        assert ("list_attempts", "server", "workspace", "ws-1", "quiz-workspace-1", 100, 0) in scope.calls
-        assert ("get_attempt", "server", "workspace", "ws-1", "attempt-workspace-1", True, True) in scope.calls
-        assert "Score: 2 / 2" in _text(app.screen.query_one("#quiz-attempt-status", Static))
+        assert (
+            "list_attempts",
+            "server",
+            "workspace",
+            "ws-1",
+            "quiz-workspace-1",
+            100,
+            0,
+        ) in scope.calls
+        assert (
+            "get_attempt",
+            "server",
+            "workspace",
+            "ws-1",
+            "attempt-workspace-1",
+            True,
+            True,
+        ) in scope.calls
+        assert "Score: 2 / 2" in _text(
+            app.screen.query_one("#quiz-attempt-status", Static)
+        )
 
 
 @pytest.mark.asyncio
@@ -484,7 +732,7 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -494,7 +742,7 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -503,13 +751,27 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
 
         controller = app.screen.query_one(StudyWindow).quizzes_controller
         app.screen.query_one("#new-quiz-name-input", Input).value = "Workspace Quiz"
-        app.screen.query_one("#new-quiz-description-input", Input).value = "Workspace scoped"
+        app.screen.query_one(
+            "#new-quiz-description-input", Input
+        ).value = "Workspace scoped"
 
         await controller.create_quiz()
         await pilot.pause(0.1)
 
-        assert ("create_quiz", "server", "workspace", "ws-1", "Workspace Quiz", "Workspace scoped", None, None) in scope.calls
-        assert str(app.screen.query_one("#quiz-select", Select).value) == "new-workspace-quiz"
+        assert (
+            "create_quiz",
+            "server",
+            "workspace",
+            "ws-1",
+            "Workspace Quiz",
+            "Workspace scoped",
+            None,
+            None,
+        ) in scope.calls
+        assert (
+            str(app.screen.query_one("#quiz-select", Select).value)
+            == "new-workspace-quiz"
+        )
 
 
 @pytest.mark.asyncio
@@ -518,7 +780,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -528,7 +790,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -539,11 +801,21 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
         question_list = app.screen.query_one("#quiz-question-list", ListView)
         create_quiz_button = app.screen.query_one("#create-quiz-button", Button)
         delete_quiz_button = app.screen.query_one("#delete-quiz-button", Button)
-        create_question_button = app.screen.query_one("#create-quiz-question-button", Button)
-        delete_question_button = app.screen.query_one("#delete-quiz-question-button", Button)
-        start_attempt_button = app.screen.query_one("#start-quiz-attempt-button", Button)
-        submit_answer_button = app.screen.query_one("#submit-quiz-answer-button", Button)
-        load_attempt_button = app.screen.query_one("#load-quiz-attempt-history-button", Button)
+        create_question_button = app.screen.query_one(
+            "#create-quiz-question-button", Button
+        )
+        delete_question_button = app.screen.query_one(
+            "#delete-quiz-question-button", Button
+        )
+        start_attempt_button = app.screen.query_one(
+            "#start-quiz-attempt-button", Button
+        )
+        submit_answer_button = app.screen.query_one(
+            "#submit-quiz-answer-button", Button
+        )
+        load_attempt_button = app.screen.query_one(
+            "#load-quiz-attempt-history-button", Button
+        )
 
         assert "server mode" in _text(status).lower()
         assert not any(call[0] == "list_quizzes" for call in scope.calls)
@@ -573,7 +845,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -583,7 +855,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -606,9 +878,14 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         answer_input.value = "Paris"
         controller.current_attempt_id = "attempt-workspace-1"
         controller.current_attempt_questions = [
-            {"backing_id": "question-workspace-1", "question_text": "Workspace question ____."}
+            {
+                "backing_id": "question-workspace-1",
+                "question_text": "Workspace question ____.",
+            }
         ]
-        controller.current_attempt_answers = [{"question_id": "question-workspace-1", "user_answer": "Paris"}]
+        controller.current_attempt_answers = [
+            {"question_id": "question-workspace-1", "user_answer": "Paris"}
+        ]
         controller.current_question_index = 0
         controller._set_attempt_status("Question 1 of 1.")
         controller._set_attempt_question("Workspace question ____.")
@@ -640,7 +917,7 @@ async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -655,14 +932,33 @@ async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
         quiz_select = app.screen.query_one("#quiz-select", Select)
         assert str(quiz_select.value) == "new-quiz"
 
-        app.screen.query_one("#quiz-question-text", TextArea).text = "The capital of France is ____."
+        app.screen.query_one(
+            "#quiz-question-text", TextArea
+        ).text = "The capital of France is ____."
         app.screen.query_one("#quiz-correct-answer-input", Input).value = "Paris"
         await controller.create_question()
 
         question_list = app.screen.query_one("#quiz-question-list", ListView)
 
-        assert ("create_quiz", "local", "global", None, "Geography Review", "Capitals", None, None) in scope.calls
-        assert ("create_question", "local", "new-quiz", "fill_blank", "The capital of France is ____.", "Paris", 1) in scope.calls
+        assert (
+            "create_quiz",
+            "local",
+            "global",
+            None,
+            "Geography Review",
+            "Capitals",
+            None,
+            None,
+        ) in scope.calls
+        assert (
+            "create_question",
+            "local",
+            "new-quiz",
+            "fill_blank",
+            "The capital of France is ____.",
+            "Paris",
+            1,
+        ) in scope.calls
         assert question_list.children
 
 
@@ -677,7 +973,7 @@ async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -724,7 +1020,7 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -739,11 +1035,21 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
 
         create_quiz_button = app.screen.query_one("#create-quiz-button", Button)
         delete_quiz_button = app.screen.query_one("#delete-quiz-button", Button)
-        create_question_button = app.screen.query_one("#create-quiz-question-button", Button)
-        delete_question_button = app.screen.query_one("#delete-quiz-question-button", Button)
-        start_attempt_button = app.screen.query_one("#start-quiz-attempt-button", Button)
-        submit_answer_button = app.screen.query_one("#submit-quiz-answer-button", Button)
-        load_attempt_button = app.screen.query_one("#load-quiz-attempt-history-button", Button)
+        create_question_button = app.screen.query_one(
+            "#create-quiz-question-button", Button
+        )
+        delete_question_button = app.screen.query_one(
+            "#delete-quiz-question-button", Button
+        )
+        start_attempt_button = app.screen.query_one(
+            "#start-quiz-attempt-button", Button
+        )
+        submit_answer_button = app.screen.query_one(
+            "#submit-quiz-answer-button", Button
+        )
+        load_attempt_button = app.screen.query_one(
+            "#load-quiz-attempt-history-button", Button
+        )
         history_select = app.screen.query_one("#quiz-attempt-history-select", Select)
         answer_input = app.screen.query_one("#quiz-answer-input", Input)
 
@@ -774,7 +1080,9 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
         await controller.start_attempt()
         await pilot.pause(0.1)
 
-        start_attempt_calls = [call for call in scope.calls if call[0] == "start_attempt"]
+        start_attempt_calls = [
+            call for call in scope.calls if call[0] == "start_attempt"
+        ]
         assert len(start_attempt_calls) == 1
         assert controller.current_attempt_id == first_attempt_id
         assert controller.current_attempt_questions == first_questions
@@ -791,7 +1099,7 @@ async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_s
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -805,7 +1113,9 @@ async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_s
         await pilot.pause(0.1)
 
         app.screen.query_one("#new-quiz-name-input", Input).value = "Blocked Quiz"
-        app.screen.query_one("#new-quiz-description-input", Input).value = "Should not create"
+        app.screen.query_one(
+            "#new-quiz-description-input", Input
+        ).value = "Should not create"
 
         await controller.create_quiz()
         await controller.delete_quiz()
@@ -829,7 +1139,7 @@ async def test_active_attempt_blocks_loading_attempt_history_directly():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -862,7 +1172,7 @@ async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -886,7 +1196,7 @@ async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -896,7 +1206,7 @@ async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -924,7 +1234,7 @@ async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -956,7 +1266,7 @@ async def test_quizzes_view_deletes_selected_question_and_refreshes_question_lis
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -970,8 +1280,16 @@ async def test_quizzes_view_deletes_selected_question_and_refreshes_question_lis
         await controller.delete_question()
         await pilot.pause(0.1)
 
-        assert ("delete_question", "local", "question-local-1", None, False) in scope.calls
-        assert "No questions in this quiz." in _text(question_list.children[0].query_one(Static))
+        assert (
+            "delete_question",
+            "local",
+            "question-local-1",
+            None,
+            False,
+        ) in scope.calls
+        assert "No questions in this quiz." in _text(
+            question_list.children[0].query_one(Static)
+        )
 
 
 @pytest.mark.asyncio
@@ -985,7 +1303,7 @@ async def test_quizzes_view_loads_attempt_history_into_summary_panel():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1002,6 +1320,14 @@ async def test_quizzes_view_loads_attempt_history_into_summary_panel():
         history_summary = app.screen.query_one("#quiz-attempt-history-summary", Static)
         status = app.screen.query_one("#quiz-attempt-status", Static)
 
-        assert ("get_attempt", "local", "global", None, "attempt-1", True, True) in scope.calls
+        assert (
+            "get_attempt",
+            "local",
+            "global",
+            None,
+            "attempt-1",
+            True,
+            True,
+        ) in scope.calls
         assert "Score: 2 / 2" in _text(status)
         assert "The capital of France is ____." in _text(history_summary)

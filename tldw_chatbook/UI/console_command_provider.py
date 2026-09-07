@@ -29,17 +29,79 @@ class ConsoleCommandProvider(Provider):
             Tuples of label, callback, and help text.
         """
         return (
-            ("Console: Switch session…", screen.action_open_console_session_switcher,
-             "Fuzzy-find and activate a conversation (Ctrl+K)"),
-            ("Console: Change model…", screen.action_open_console_model_popover,
-             "Quick provider/model/temperature switch (Alt+M)"),
-            ("Console: New chat tab", screen.action_new_console_tab,
-             "Open a new Console chat tab (Ctrl+T)"),
-            ("Console: Focus composer", screen.action_focus_console_composer_home,
-             "Return focus to the composer (Esc)"),
-            ("Console: Session settings…",
-             screen.action_open_console_session_settings,
-             "Open the full session settings modal"),
+            (
+                "Console: Switch session…",
+                screen.action_open_console_session_switcher,
+                "Fuzzy-find and activate a conversation (Ctrl+K)",
+            ),
+            (
+                "Console: Change model…",
+                screen.action_open_console_model_popover,
+                "Quick provider/model/temperature switch (Alt+M)",
+            ),
+            (
+                "Console: New chat tab",
+                screen.action_new_console_tab,
+                "Open a new Console chat tab (Ctrl+T)",
+            ),
+            (
+                "Console: New temporary chat",
+                screen.action_new_temporary_console_tab,
+                "Open a chat that is never saved locally",
+            ),
+            (
+                "Console: Focus composer",
+                screen.action_focus_console_composer_home,
+                "Return focus to the composer (Esc)",
+            ),
+            (
+                "Console: Open Terminal",
+                screen.action_open_console_terminal,
+                "Open the persistent user-only host Terminal",
+            ),
+            (
+                "Console: Switch workspace…",
+                screen.action_open_console_workspace_switcher,
+                "Change the active Console workspace (Alt+W)",
+            ),
+            (
+                # TASK-2154.20 (AC-03): Alt+V had no palette path, leaving
+                # default-macOS-terminal users (Option-as-Meta off) with no
+                # non-Alt route to clipboard-image paste at all.
+                "Console: Paste image from clipboard",
+                screen.action_paste_clipboard_image,
+                "Paste the clipboard image into the composer (Alt+V)",
+            ),
+            (
+                "Console: New workspace",
+                screen.action_new_console_workspace,
+                "Create a local workspace and switch Console to it",
+            ),
+            (
+                "Console: Session settings…",
+                screen.action_open_console_session_settings,
+                "Open the full session settings modal",
+            ),
+            (
+                "Console: Insert prompt…",
+                screen.action_open_console_prompt_insert,
+                "Browse saved prompts and insert one (/prompt)",
+            ),
+            (
+                "Console: Edit system prompt",
+                screen.action_open_console_system_prompt_editor,
+                "Edit this session's system prompt (/system)",
+            ),
+            (
+                "Console: Insert image style…",
+                screen.action_open_console_style_insert,
+                "Browse image styles and insert an @style token (/generate-image)",
+            ),
+            (
+                "Console: View chat context",
+                screen.action_view_chat_context,
+                "Show current and next-send context (Ctrl+Shift+P)",
+            ),
         )
 
     async def discover(self) -> Hits:

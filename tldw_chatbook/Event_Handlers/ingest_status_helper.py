@@ -3,29 +3,31 @@
 Provides compatibility layer for status updates during migration from TextArea to EnhancedStatusWidget.
 """
 
-from typing import Union, Optional
 from textual.widgets import TextArea
 from textual.css.query import QueryError
 from loguru import logger
 
 
-def update_status(app, widget_id: str, message: str, level: str = "info", append: bool = True) -> bool:
+def update_status(
+    app, widget_id: str, message: str, level: str = "info", append: bool = True
+) -> bool:
     """
     Update status in either TextArea or EnhancedStatusWidget.
-    
+
     Args:
         app: The app instance
         widget_id: The ID of the status widget (without # prefix)
         message: The status message
         level: Message level (info, success, warning, error, debug)
         append: Whether to append (True) or replace (False) the content
-    
+
     Returns:
         bool: True if update was successful
     """
     try:
         # Try to find EnhancedStatusWidget first (new approach)
         from ..Widgets.status_widget import EnhancedStatusWidget
+
         try:
             widget = app.query_one(f"#{widget_id}", EnhancedStatusWidget)
             # Use the appropriate method based on level
@@ -44,14 +46,14 @@ def update_status(app, widget_id: str, message: str, level: str = "info", append
             return True
         except QueryError:
             pass  # Not an EnhancedStatusWidget, try TextArea
-        
+
         # Fallback to TextArea (old approach)
         widget = app.query_one(f"#{widget_id}", TextArea)
         if append and widget.text:
             widget.text += "\n" + message
         else:
             widget.text = message
-        
+
         # Apply color based on level for TextArea
         if level == "error":
             widget.styles.color = "red"
@@ -59,13 +61,19 @@ def update_status(app, widget_id: str, message: str, level: str = "info", append
             widget.styles.color = "yellow"
         elif level == "success":
             widget.styles.color = "green"
-            
+
         return True
-        
+
     except QueryError as e:
         logger.error(f"Status widget {widget_id} not found: {e}")
         # Show notification as fallback
-        severity = "error" if level == "error" else "warning" if level == "warning" else "information"
+        severity = (
+            "error"
+            if level == "error"
+            else "warning"
+            if level == "warning"
+            else "information"
+        )
         app.notify(message, severity=severity)
         return False
 
@@ -73,29 +81,30 @@ def update_status(app, widget_id: str, message: str, level: str = "info", append
 def clear_status(app, widget_id: str) -> bool:
     """
     Clear status in either TextArea or EnhancedStatusWidget.
-    
+
     Args:
         app: The app instance
         widget_id: The ID of the status widget (without # prefix)
-    
+
     Returns:
         bool: True if clear was successful
     """
     try:
         # Try EnhancedStatusWidget first
         from ..Widgets.status_widget import EnhancedStatusWidget
+
         try:
             widget = app.query_one(f"#{widget_id}", EnhancedStatusWidget)
             widget.clear()
             return True
         except QueryError:
             pass
-        
+
         # Fallback to TextArea
         widget = app.query_one(f"#{widget_id}", TextArea)
         widget.clear()
         return True
-        
+
     except QueryError as e:
         logger.error(f"Status widget {widget_id} not found for clearing: {e}")
         return False

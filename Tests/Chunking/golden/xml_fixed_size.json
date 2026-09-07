@@ -1,0 +1,243 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "00f858e83561bb48450fe8daf5e6b217",
+        "chunk_index": 1,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.07142857142857142,
+        "total_chunks": 14
+      },
+      "text": "<root><item id='0'>text 0</item><item id='1'>text "
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "e9f6057b6c60365ffcacf67ea263c862",
+        "chunk_index": 2,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.14285714285714285,
+        "total_chunks": 14
+      },
+      "text": "='1'>text 1</item><item id='2'>text 2</item><item "
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "0b056988c57417e514c0e354e7dd4985",
+        "chunk_index": 3,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.21428571428571427,
+        "total_chunks": 14
+      },
+      "text": "tem><item id='3'>text 3</item><item id='4'>text 4<"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "a8f4690f1f153f7164f85b0753331fcb",
+        "chunk_index": 4,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.2857142857142857,
+        "total_chunks": 14
+      },
+      "text": "4'>text 4</item><item id='5'>text 5</item><item id"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "ab9aa75f4226c4a13491a46200f9a176",
+        "chunk_index": 5,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.35714285714285715,
+        "total_chunks": 14
+      },
+      "text": "m><item id='6'>text 6</item><item id='7'>text 7</i"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "8e376ccc3184810de7415f31bd58aa56",
+        "chunk_index": 6,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.42857142857142855,
+        "total_chunks": 14
+      },
+      "text": ">text 7</item><item id='8'>text 8</item><item id='"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "38062ff09cf8a7c24cb1b4d077ca50f2",
+        "chunk_index": 7,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5,
+        "total_chunks": 14
+      },
+      "text": "<item id='9'>text 9</item><item id='10'>text 10</i"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "8ee72cea2b2a52d67930aadbe9956940",
+        "chunk_index": 8,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5714285714285714,
+        "total_chunks": 14
+      },
+      "text": "text 10</item><item id='11'>text 11</item><item id"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "654fd31bd1552ff5d115827fcf0d6c72",
+        "chunk_index": 9,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.6428571428571429,
+        "total_chunks": 14
+      },
+      "text": "m><item id='12'>text 12</item><item id='13'>text 1"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "8be1093ad7f82a5409c70f3a189c5f7b",
+        "chunk_index": 10,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.7142857142857143,
+        "total_chunks": 14
+      },
+      "text": "13'>text 13</item><item id='14'>text 14</item><ite"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "f77a064b5dbfdf3601c1f63955987fe5",
+        "chunk_index": 11,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.7857142857142857,
+        "total_chunks": 14
+      },
+      "text": "/item><item id='15'>text 15</item><item id='16'>te"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "0a8883c2330ce13f75cb1d429a6cab79",
+        "chunk_index": 12,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.8571428571428571,
+        "total_chunks": 14
+      },
+      "text": "id='16'>text 16</item><item id='17'>text 17</item>"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "4f0e7220fd992af300211f0e04d2ce26",
+        "chunk_index": 13,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.9285714285714286,
+        "total_chunks": 14
+      },
+      "text": " 17</item><item id='18'>text 18</item><item id='19"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "df057f06cd28288763d385a5b69d0c6d",
+        "chunk_index": 14,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 14
+      },
+      "text": "tem id='19'>text 19</item></root>"
+    }
+  ],
+  "outcome": "ok"
+}

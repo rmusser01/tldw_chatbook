@@ -2,10 +2,17 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App
-
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
+from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_INGEST,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    MEDIA_BROWSE_SUBVIEW_READ_IT_LATER,
+    MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW,
+    TAB_LIBRARY,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -19,10 +26,14 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+)
 from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
 HOME_TEST_SIZE = (160, 40)
@@ -53,9 +64,12 @@ def _stub_home_rail_preferences_cli_fallback(monkeypatch):
     )
 
 
-class HomeHarness(App):
+class HomeHarness(ConsolidatedCSSApp):
     CSS_PATH = str(
-        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
     )
 
     def __init__(self, app_instance, seen_routes=None):
@@ -272,7 +286,10 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
         assert "Runtime: Local" in system_text
         assert "Server sync: Not configured (local mode)" in system_text
         assert "Local mode is active. Server sync is optional." in system_text
-        assert "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked" in system_text
+        assert (
+            "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked"
+            in system_text
+        )
         assert "Work: 2 active, 1 approvals" in system_text
 
 
@@ -393,7 +410,10 @@ async def test_home_recent_work_empty_state_sets_expectation():
         home = _active_home_screen(host)
 
         recent_text = str(home.query_one("#home-rail-empty-recent").renderable)
-        assert "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+        assert (
+            "Conversations, notes, media, runs, chatbooks, and imports will appear"
+            in recent_text
+        )
 
 
 @pytest.mark.asyncio
@@ -420,7 +440,8 @@ async def test_home_recent_work_available_state_points_to_resume_paths():
         home = _active_home_screen(host)
 
         recent_row = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "recent:digest"
         )
         assert "Nightly digest run" in str(recent_row.label)
@@ -532,7 +553,7 @@ async def test_home_screen_renders_unread_notification_snapshot_without_controls
 
 
 @pytest.mark.asyncio
-async def test_home_notification_primary_action_opens_notifications_inbox_context():
+async def test_home_notification_primary_action_opens_watchlists_notifications_context():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -548,7 +569,7 @@ async def test_home_notification_primary_action_opens_notifications_inbox_contex
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
-    assert app.pending_subscription_initial_tab == "notifications"
+    assert host.seen_contexts[-1] == {"section": "notifications"}
 
 
 @pytest.mark.asyncio
@@ -576,7 +597,7 @@ async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
+    assert host.seen_contexts[-1] == {"section": "runs"}
 
 
 @pytest.mark.asyncio
@@ -858,13 +879,17 @@ def test_app_detail_hook_delegates_to_adapter_and_navigates_handled_route():
     app.notify = Mock()
     app.post_message = Mock()
 
-    result = app.open_active_home_item_details(target_id="run-1", target_route="schedules")
+    result = app.open_active_home_item_details(
+        target_id="run-1", target_route="schedules"
+    )
 
     assert result.status is HomeControlResultStatus.HANDLED
     assert adapter.control_actions == [HomeControlAction.OPEN_DETAILS]
     assert adapter.control_target_ids == ["run-1"]
     assert adapter.control_target_routes == ["schedules"]
-    app.notify.assert_called_once_with("Opening workflow details.", severity="information")
+    app.notify.assert_called_once_with(
+        "Opening workflow details.", severity="information"
+    )
     app.post_message.assert_called_once()
     assert app.post_message.call_args.args[0].screen_name == "workflows"
 
@@ -892,10 +917,48 @@ def test_app_detail_hook_stages_watchlist_runs_context_for_handled_watchlist_det
     )
 
     assert result.status is HomeControlResultStatus.HANDLED
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
-    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:5"
     app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": "local:watchlist_run:5",
+    }
+    assert not hasattr(app, "pending_watchlists_section")
+    assert not hasattr(app, "pending_watchlists_run_id")
+
+
+def test_app_detail_hook_preserves_context_for_canonical_watchlists_route():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening server Watchlists run.",
+                target_id="server:watchlist_run:8",
+                target_route="watchlists_collections",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(
+        target_id="server:watchlist_run:8",
+        target_route="watchlists_collections",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "server",
+        "run_id": "server:watchlist_run:8",
+    }
 
 
 def test_app_console_hook_requires_adapter_launch_payload():
@@ -915,13 +978,17 @@ def test_app_console_hook_requires_adapter_launch_payload():
     app.notify = Mock()
     app.open_console_for_live_work = Mock()
 
-    result = app.open_active_home_item_in_console(target_id="run-1", target_route="chat")
+    result = app.open_active_home_item_in_console(
+        target_id="run-1", target_route="chat"
+    )
 
     assert result.status is HomeControlResultStatus.UNAVAILABLE
     assert adapter.control_actions == [HomeControlAction.OPEN_IN_CONSOLE]
     assert adapter.control_target_ids == ["run-1"]
     assert adapter.control_target_routes == ["chat"]
-    app.notify.assert_called_once_with("Open in Console is not connected.", severity="warning")
+    app.notify.assert_called_once_with(
+        "Open in Console is not connected.", severity="warning"
+    )
     app.open_console_for_live_work.assert_not_called()
 
 
@@ -946,11 +1013,15 @@ def test_app_console_hook_opens_console_with_adapter_launch_payload():
     app.notify = Mock()
     app.open_console_for_live_work = Mock()
 
-    result = app.open_active_home_item_in_console(target_id="run-1", target_route="chat")
+    result = app.open_active_home_item_in_console(
+        target_id="run-1", target_route="chat"
+    )
 
     assert result.status is HomeControlResultStatus.HANDLED
     assert adapter.control_target_ids == ["run-1"]
-    app.notify.assert_called_once_with("Opening Console for Daily digest.", severity="information")
+    app.notify.assert_called_once_with(
+        "Opening Console for Daily digest.", severity="information"
+    )
     app.open_console_for_live_work.assert_called_once_with(
         source="workflows",
         title="Daily digest",
@@ -1034,7 +1105,8 @@ async def test_home_flashcards_due_row_and_control_route_one_hop_to_study():
         home = _active_home_screen(host)
 
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
         )
         assert "Flashcards due: 12" in str(row_button.label)
@@ -1048,10 +1120,10 @@ async def test_home_flashcards_due_row_and_control_route_one_hop_to_study():
         await pilot.click("#home-review-flashcards")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
-    # open_home_flashcards_review() calls app.open_study_screen(initial_section=...),
-    # which is verified directly (app_instance is not the running harness App, so
-    # its own post_message() does not bubble into host.on_navigate_to_screen here).
-    assert app.pending_study_initial_section == "flashcards"
+    # The app instance is not the running harness App, so its navigation message
+    # does not bubble into host.on_navigate_to_screen. The one-hop action must
+    # still stage the memory-only Study section handoff for the real consumer.
+    assert app.pending_handoffs.has_pending(HandoffChannel.STUDY_INITIAL_SECTION)
 
 
 @pytest.mark.asyncio
@@ -1115,7 +1187,8 @@ async def test_home_canvas_primary_control_follows_selection_between_failed_item
         assert len(home.query("#home-review-flashcards")) == 0
 
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
         )
         await pilot.click(f"#{row_button.id}")
@@ -1146,7 +1219,13 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
     try:
         deck_id = db.create_deck("Biology")
         db.create_flashcard(
-            {"deck_id": deck_id, "front": "ATP", "back": "Energy", "tags": "", "type": "basic"}
+            {
+                "deck_id": deck_id,
+                "front": "ATP",
+                "back": "Energy",
+                "tags": "",
+                "type": "basic",
+            }
         )
         app.chachanotes_db = db
         host = HomeHarness(app)
@@ -1177,11 +1256,14 @@ async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker()
 @pytest.mark.asyncio
 async def test_pending_console_launch_does_not_create_home_live_work_controls():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "workflows",
-        "title": "Daily digest",
-        "payload": {},
-    }
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "workflows",
+            "title": "Daily digest",
+            "payload": {},
+        },
+    )
     host = HomeHarness(app)
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
@@ -1190,6 +1272,7 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
 
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+        assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
 # --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---
@@ -1224,7 +1307,8 @@ async def test_home_running_section_shows_parsing_library_ingest_job():
 
         running_body = home.query_one("#home-rail-section-body-running")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
         )
         assert row_button in running_body.children
@@ -1232,7 +1316,9 @@ async def test_home_running_section_shows_parsing_library_ingest_job():
         assert "Library" in str(row_button.label)
         assert not any(
             str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
-            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+            for btn in home.query_one("#home-rail-section-body-attention").query(
+                "Button"
+            )
         )
 
 
@@ -1264,7 +1350,8 @@ async def test_home_running_section_shows_writing_library_ingest_job():
 
         running_body = home.query_one("#home-rail-section-body-running")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-2"
         )
         assert row_button in running_body.children
@@ -1272,7 +1359,9 @@ async def test_home_running_section_shows_writing_library_ingest_job():
         assert "Library" in str(row_button.label)
         assert not any(
             str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-2"
-            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+            for btn in home.query_one("#home-rail-section-body-attention").query(
+                "Button"
+            )
         )
 
 
@@ -1302,7 +1391,8 @@ async def test_home_needs_attention_section_shows_failed_library_ingest_job():
 
         attention_body = home.query_one("#home-rail-section-body-attention")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-3"
         )
         assert row_button in attention_body.children
@@ -1353,7 +1443,8 @@ async def test_home_running_section_survives_markup_hostile_ingest_job_title():
 
         running_body = home.query_one("#home-rail-section-body-running")
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")).startswith("local:ingest:")
         )
         assert row_button in running_body.children
@@ -1377,7 +1468,7 @@ def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_inges
             HomeControlAction.OPEN_DETAILS: HomeControlResult(
                 action=HomeControlAction.OPEN_DETAILS,
                 status=HomeControlResultStatus.HANDLED,
-                message="Opening Library ingest job details.",
+                message="Opening Library import job details.",
                 target_id="local:ingest:ingest-job-1",
                 target_route="library",
             ),
@@ -1411,7 +1502,7 @@ def test_app_detail_hook_navigates_library_for_ingest_detail():
             HomeControlAction.OPEN_DETAILS: HomeControlResult(
                 action=HomeControlAction.OPEN_DETAILS,
                 status=HomeControlResultStatus.HANDLED,
-                message="Opening Library ingest job details.",
+                message="Opening Library import job details.",
                 target_id="local:ingest:ingest-job-1",
                 target_route="library",
             ),
@@ -1458,7 +1549,8 @@ async def test_home_open_details_button_click_navigates_library_for_failed_inges
 
         # Select the failed ingest row in Needs Attention via a real press.
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
         )
         await pilot.click(row_button)
@@ -1524,7 +1616,7 @@ def test_retry_active_home_item_unknown_ingest_id_warns_without_requeue():
 
     assert result.status is HomeControlResultStatus.UNAVAILABLE
     app.notify.assert_called_once_with(
-        "This ingest job can no longer be retried.",
+        "This import job can no longer be retried.",
         severity="warning",
     )
     assert len(app.library_ingest_jobs.jobs()) == jobs_before
@@ -1574,7 +1666,8 @@ async def test_home_retry_button_click_requeues_failed_ingest_job():
 
         # Select the failed ingest row in Needs Attention via a real press.
         row_button = next(
-            btn for btn in home.query("Button")
+            btn
+            for btn in home.query("Button")
             if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
         )
         await pilot.click(row_button)
@@ -1591,3 +1684,604 @@ async def test_home_retry_button_click_requeues_failed_ingest_job():
     # (L3b AB wave, B1) Retry supersedes the original failed job -- net job
     # count is unchanged (one hidden, one added).
     assert len(app.library_ingest_jobs.jobs()) == jobs_before
+
+
+@pytest.mark.asyncio
+async def test_home_retry_requeues_selected_failed_item_not_first():
+    """T152: with 2+ retryable failed items, Retry must requeue the
+    SELECTED failed item, not just the first failed item in the list.
+
+    ``build_home_controls`` already scopes ``home-retry.target_id`` to the
+    selected item (the ``selected_item_is_failed`` override), but
+    ``_activate_home_control`` was dispatching from the UNSCOPED
+    ``self._current_dashboard.controls`` (``summarize_home_dashboard(...)``
+    output, whose ``home-retry.target_id`` is always
+    ``_first_item_for_status`` -- the FIRST failed item) instead of the
+    selection-scoped ``triage.canvas.actions`` the user actually sees and
+    presses. Fixed by dispatching from the scoped canvas controls first.
+    """
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:1",
+                title="First failed run",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+            ),
+            HomeActiveWorkItem(
+                item_id="local:watchlist_run:2",
+                title="Second failed run",
+                source="W+C",
+                status="failed",
+                detail_route="subscriptions",
+            ),
+        ),
+    )
+    app.retry_active_home_item = Mock()
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # Select the SECOND failed item's rail row via a real press.
+        row_button = next(
+            btn
+            for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:watchlist_run:2"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        await pilot.click("#home-retry")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    app.retry_active_home_item.assert_called_once_with(
+        target_id="local:watchlist_run:2"
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_recent_only_item_selection_gets_open_details_control():
+    """T153: a selected item that lives ONLY in ``recent_work_items`` (a
+    finished import, a chatbook artifact) bumps no active/failed/running/
+    paused count, so the canvas's count-driven ``home-open-details`` block
+    was skipped entirely -- selecting it left the item with no control to
+    open it at all. Also covers AC#2: pressing the real button for a
+    recent-only item must not raise (``open_active_home_item_details``
+    already accepts recent/ingest ids per the F1b review).
+    """
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        recent_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:done-1",
+                title="report.pdf",
+                source="Library",
+                status="done",
+                detail_route="library",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        row_button = next(
+            btn
+            for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:done-1"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        assert home.query_one("#home-open-details"), (
+            "recent-only selected item has no home-open-details control"
+        )
+
+        # AC#2: pressing it must not raise even though the item only ever
+        # lived in recent_work_items (never active/failed/running/paused).
+        await pilot.click("#home-open-details")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+
+# --- T190: Home reflects real state (start conversation, counts, resume) ---
+
+
+@pytest.mark.asyncio
+async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_console():
+    """AC1+AC2: with the provider verifiably ready over real content and a
+    recent conversation, the idle canvas leads with a primary
+    "Resume last conversation" control that deep-links that conversation
+    into Console (spec §4), above a compact real-content counts line."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        conversation_count=5,
+        note_count=3,
+        media_count=0,
+        resume_kind="conversation",
+        resume_id="conv-9",
+        resume_title="Daily standup chat",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        canvas_lines = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Resume last conversation" in canvas_title
+        assert "Conversations: 5 · Notes: 3" in canvas_lines
+        assert "Media" not in canvas_lines
+
+        primary = home.query_one("#home-primary-action")
+        assert "Resume last conversation" in str(primary.label)
+        assert primary.has_class("console-action-primary")
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
+
+
+@pytest.mark.asyncio
+async def test_home_resume_latest_note_routes_to_library_notes_editor():
+    """AC3: the newest-note resume row one-clicks into the Library notes
+    editor via the existing note_id navigation-context deep link."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        note_count=2,
+        resume_kind="note",
+        resume_id="note-7",
+        resume_title="Research summary",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        resume_button = home.query_one("#home-resume-latest")
+        assert "Research summary" in str(resume_button.label)
+
+        await pilot.click("#home-resume-latest")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == TAB_LIBRARY
+    assert host.seen_contexts[-1] == {LIBRARY_NAV_CONTEXT_NOTE_ID: "note-7"}
+
+
+@pytest.mark.asyncio
+async def test_home_resume_latest_conversation_routes_to_console():
+    """AC3: the newest-conversation resume row one-clicks into Console."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        conversation_count=5,
+        resume_kind="conversation",
+        resume_id="conv-9",
+        resume_title="Daily standup chat",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        resume_button = home.query_one("#home-resume-latest")
+        assert "Daily standup chat" in str(resume_button.label)
+
+        await pilot.click("#home-resume-latest")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
+
+
+def test_open_content_item_routes_by_prefix():
+    """Content deep-links route by prefixed id: conversations carry the
+    Console nav-context id, notes the Library note id, media the Library
+    open-source pair."""
+    app = _build_test_app()
+    home = HomeScreen(app)
+
+    posted = []
+    home.post_message = lambda message: posted.append(message)
+
+    home._open_content_item("local:conversation:42")
+    home._open_content_item("local:note:7")
+    home._open_content_item("local:media:9")
+    home._open_content_item("local:ingest:3")  # unknown prefix: no-op
+
+    assert [message.screen_name for message in posted] == [
+        "chat",
+        "library",
+        "library",
+    ]
+    assert posted[0].screen_context == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "42"}
+    assert posted[1].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "7"}
+    assert posted[2].screen_context == {
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "9",
+    }
+
+
+@pytest.mark.asyncio
+async def test_home_ready_empty_profile_offers_start_conversation_beside_import_card():
+    """AC4: provider ready but no content -> the import suggestion card is
+    kept, with a primary Start-a-conversation control beside it."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        console_ready=True,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Import Library sources" in canvas_title
+        assert "Import Library sources" in str(
+            home.query_one("#home-primary-action").label
+        )
+
+        start_button = home.query_one("#home-start-conversation")
+        assert "Start a conversation" in str(start_button.label)
+        assert start_button.has_class("console-action-primary")
+
+        await pilot.click("#home-start-conversation")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_home_not_ready_empty_profile_keeps_import_card_only():
+    """AC4: no content AND provider not ready -> the import card exactly as
+    today, with none of the new elements (no zero-count clutter)."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+        console_ready=False,
+        conversation_count=0,
+        note_count=0,
+        media_count=0,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        canvas_lines = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Import Library sources" in canvas_title
+        assert "Conversations" not in canvas_lines
+        assert "Notes" not in canvas_lines
+        assert len(home.query("#home-start-conversation")) == 0
+        assert len(home.query("#home-resume-latest")) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_resume_control_survives_markup_hostile_title():
+    """Hard repo rule: user titles are escaped before Button labels. A
+    markup-hostile note title must neither crash Home's mount nor render as
+    Rich markup."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        resume_kind="note",
+        resume_id="note-1",
+        resume_title='a [b="c] note',
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        # Reaching this line is the core assertion: an unescaped hostile
+        # title would raise MarkupError during compose/mount.
+        home = _active_home_screen(host)
+
+        resume_button = home.query_one("#home-resume-latest")
+        assert 'a [b="c] note' in str(resume_button.label)
+
+
+@pytest.mark.asyncio
+async def test_home_content_snapshot_uses_library_rail_seams():
+    """AC2 seam contract: counts and the resume candidate come from the SAME
+    scope-service seams the Library rail uses -- count_notes, and the
+    conversation snapshot with scope_type='all' (workspace-scoped Console
+    chats must be counted). Exercises the real snapshot builder against
+    recording fakes mounted on the app seam attributes."""
+    app = _build_test_app()
+    recorded_conversation_kwargs = {}
+
+    class FakeNotesScopeService:
+        async def count_notes(self, *, scope, user_id):
+            assert scope == "local_note"
+            return 3
+
+        async def list_notes(self, *, scope, limit, user_id):
+            assert scope == "local_note"
+            return [
+                {
+                    "id": "note-1",
+                    "title": "Research summary",
+                    "last_modified": "2026-07-10T10:00:00Z",
+                }
+            ]
+
+    class FakeConversationScopeService:
+        async def list_conversations(self, **kwargs):
+            recorded_conversation_kwargs.update(kwargs)
+            return {
+                "items": [
+                    {
+                        "id": "conv-9",
+                        "title": "Daily standup chat",
+                        "last_modified": "2026-07-11T09:00:00Z",
+                    }
+                ],
+                "pagination": {"limit": 1, "offset": 0, "total": 5, "has_more": True},
+            }
+
+    class FakeMediaScopeService:
+        async def list_media_items(self, **kwargs):
+            return {
+                "items": [],
+                "pagination": {"page": 1, "results_per_page": 1, "total_items": 2},
+            }
+
+    app.notes_scope_service = FakeNotesScopeService()
+    app.chat_conversation_scope_service = FakeConversationScopeService()
+    app.media_reading_scope_service = FakeMediaScopeService()
+
+    screen = HomeScreen(app)
+    snapshot = await screen._build_home_content_snapshot()
+
+    assert recorded_conversation_kwargs["scope_type"] == "all"
+    assert recorded_conversation_kwargs["mode"] == "local"
+    assert snapshot.note_count == 3
+    assert snapshot.conversation_count == 5
+    assert snapshot.media_count == 2
+    # The conversation is newer than the note -> it wins the resume slot.
+    assert snapshot.resume_kind == "conversation"
+    assert snapshot.resume_id == "conv-9"
+    assert snapshot.resume_title == "Daily standup chat"
+    # Hermetic test config (no disk-load markers) -> readiness is honored
+    # verbatim and reports not-ready rather than reading the real config.
+    assert snapshot.console_ready is False
+
+
+# --- Task 3: open-task providers (eval runs / read-it-later) ---------------
+
+
+def test_local_eval_open_run_counts_never_queries_running():
+    """The provider must only ever query pending/failed -- 'running' rows are
+    orphaned forever by a crash and would permanently pin the suggestion."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    queried = []
+
+    class FakeEvalService:
+        def list_runs(self, *, status=None, limit=100, offset=0):
+            queried.append(status)
+            return [{"run_id": f"{status}-{i}"} for i in range(3)]
+
+    counts = TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=FakeEvalService())
+    )
+    assert counts == {"pending": 3, "failed": 3}
+    assert set(queried) == {"pending", "failed"}
+
+
+def test_local_eval_open_run_counts_degrade_quietly():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    class BrokenEvalService:
+        def list_runs(self, **kwargs):
+            raise RuntimeError("db unavailable")
+
+    assert TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=BrokenEvalService())
+    ) == {"pending": 0, "failed": 0}
+    assert TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=None)
+    ) == {"pending": 0, "failed": 0}
+
+
+def test_local_read_later_count_provider():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(
+        media_db=SimpleNamespace(count_read_it_later_media=lambda: 3)
+    )
+    assert TldwCli._local_read_later_count(fake) == 3
+    assert TldwCli._local_read_later_count(SimpleNamespace(media_db=None)) is None
+
+
+# --- Rebase reconciliation + review fixes ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_home_read_it_later_primary_lands_on_queue_subview():
+    """Qodo #1: the read-it-later primary action carries a Media nav context
+    selecting the saved-reading subview, not the generic list."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        read_later_count=2,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Read-it-later" in canvas_title
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "media"
+    assert host.seen_contexts[-1] == {
+        MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: MEDIA_BROWSE_SUBVIEW_READ_IT_LATER
+    }
+
+
+def test_media_screen_navigation_context_stashes_browse_subview():
+    """The Media nav-context contract stashes the subview pre-mount and
+    applies it after the restored state (explicit navigation wins)."""
+    from tldw_chatbook.Constants import MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW
+    from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+
+    app = _build_test_app()
+    screen = MediaScreen(app)
+    assert screen._pending_nav_browse_subview is None
+
+    screen.apply_navigation_context(
+        {MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: "read-it-later"}
+    )
+    assert screen._pending_nav_browse_subview == "read-it-later"
+
+    # Invalid payloads are ignored, not stashed.
+    screen._pending_nav_browse_subview = None
+    screen.apply_navigation_context({})
+    screen.apply_navigation_context({MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: ""})
+    screen.apply_navigation_context(None)
+    assert screen._pending_nav_browse_subview is None
+
+
+def test_open_tasks_provider_wiring_flows_to_dashboard_input():
+    """Qodo #12: the production app-to-adapter wiring (constructor lambdas
+    closing over the real provider methods) actually feeds the counts
+    through refresh + build -- not just each side in isolation."""
+    from types import SimpleNamespace
+
+    app = _build_test_app()
+    adapter = getattr(app, "home_active_work_adapter", None)
+    assert adapter is not None, "production adapter must be wired"
+
+    app.local_evaluation_service = SimpleNamespace(
+        list_runs=lambda *, status=None, limit=100, offset=0, **kw: [
+            {"run_id": f"{status}-{i}"} for i in range(2 if status == "pending" else 1)
+        ]
+    )
+    app.media_db = SimpleNamespace(count_read_it_later_media=lambda: 7)
+
+    adapter.refresh_open_tasks_snapshot()
+    state = adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert state.pending_eval_run_count == 2
+    assert state.failed_eval_run_count == 1
+    assert state.read_later_count == 7
+
+
+# ---------------------------------------------------------------------------
+# TASK-31805: the "Model:" badge derives from the send-path readiness check,
+# not the mere presence of a provider catalog. A fresh profile with a
+# populated ``providers_models`` map but NO API key overstated availability
+# ("Model: Ready") while an actual send failed with "API Key is required but
+# not found." Paired arms: no-credential reports Blocked; a resolvable
+# credential still reports Ready (no over-correction).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_home_model_badge_reports_blocked_without_credential(monkeypatch):
+    """No valid credential for the selected provider -> 'Model: Blocked'.
+
+    The old weak check ``model_ready = bool(providers_models)`` reported ready
+    off a non-empty catalog alone, regardless of whether a send could
+    authenticate. This drives the badge from the SAME readiness Console's send
+    path enforces (``get_provider_readiness`` via
+    ``build_console_settings_readiness``).
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    # Non-empty catalog: the old check said "ready" off this alone.
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = ""
+    # Pin the async content-snapshot's fresh-config read to this same no-key
+    # config so the badge stays deterministic once that worker lands.
+    monkeypatch.setattr(
+        home_screen_module, "load_settings", lambda *args, **kwargs: app.app_config
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-details-body").renderable)
+        assert "Model: Blocked" in status_text
+        assert "Model: Ready" not in status_text
+        # The honest signal also drives the next-best action guidance.
+        assert home._current_dashboard.next_action.action_id == "fix_model_setup"
+
+
+@pytest.mark.asyncio
+async def test_home_model_badge_reports_ready_with_credential(monkeypatch):
+    """Paired arm: a resolvable API key still reports 'Model: Ready'.
+
+    Guards the TASK-31805 honesty fix against over-correcting a genuinely
+    send-ready provider into a permanent 'Blocked'.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-home-ready-0123456789"
+    monkeypatch.setattr(
+        home_screen_module, "load_settings", lambda *args, **kwargs: app.app_config
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-details-body").renderable)
+        assert "Model: Ready" in status_text
+        assert "Model: Blocked" not in status_text
+        assert home._current_dashboard.next_action.action_id != "fix_model_setup"

@@ -17,6 +17,7 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "chat": "console",
     "console": "console",
     "library": "library",
+    "chunking_lab": "library",
     "artifacts": "artifacts",
     "personas": "personas",
     "watchlists_collections": "watchlists_collections",
@@ -24,15 +25,25 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "workflows": "workflows",
     "mcp": "mcp",
     "acp": "acp",
-    "skills": "skills",
+    "lab": "lab",
     "settings": "settings",
+    # Retired Customize screen: the alias resolves to Settings.
+    "customize": "settings",
     "ingest": "library",
     "coding": "console",
     "conversation": "library",
     "ccp": "personas",
     "conversations_characters_prompts": "personas",
     "characters": "personas",
-    "prompts": "personas",
+    # "roleplay" is the RP&CD destination's public-name route alias (task-435);
+    # it resolves to the personas destination, like the other aliases above.
+    "roleplay": "personas",
+    # The Personas "prompts" mode chip is retired (Task 7): the legacy
+    # "prompts" route re-points to Library, like "notes" below.
+    "prompts": "library",
+    # The standalone Skills tab is retired (Skills sub-project Task 5): the
+    # legacy "skills" route re-points to Library, like "notes"/"prompts".
+    "skills": "library",
     "media": "library",
     "notes": "library",
     "search": "library",
@@ -40,12 +51,15 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "tools_settings": "mcp",
     "llm": "settings",
     "llm_management": "settings",
-    "customize": "settings",
     "logs": "diagnostics_logs",
     "stats": "diagnostics_stats",
     "stts": "settings",
     "study": "library",
     "writing": "artifacts_writing",
+    # "research" is a real screen route again (task-16322, ADR-068); the
+    # Workbench migration owner stays "library" -- the workbench model keeps
+    # Library as research's destination owner even though the shell now
+    # resolves the route to ResearchScreen.
     "research": "library",
     "chatbooks": "artifacts",
     "subscriptions": "watchlists_collections",
@@ -79,7 +93,10 @@ def build_workbench_route_coverage() -> WorkbenchRouteCoverage:
     screen_aliases = registered_screen_aliases()
     shell_routes = registered_shell_route_ids()
     known_route_ids = (
-        set(constant_tabs) | set(screen_routes) | set(screen_aliases) | set(shell_routes)
+        set(constant_tabs)
+        | set(screen_routes)
+        | set(screen_aliases)
+        | set(shell_routes)
     )
     all_known_routes = tuple(sorted(known_route_ids))
     missing_owner_routes = tuple(

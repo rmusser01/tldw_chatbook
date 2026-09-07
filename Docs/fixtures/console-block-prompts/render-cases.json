@@ -1,0 +1,27 @@
+{
+  "artifact": {
+    "schema_version": 2,
+    "kind": "block_prompt",
+    "lanes": [
+      {
+        "id": "system",
+        "blocks": [
+          {"id": "system-free", "title": "Free", "syntax": "freeform", "content": "Keep  spaces\nexactly."},
+          {"id": "system-markdown", "title": "Rôle", "syntax": "markdown", "content": "Use café ☕."},
+          {"id": "system-empty", "title": "Empty", "syntax": "freeform", "content": ""}
+        ]
+      },
+      {
+        "id": "user",
+        "blocks": [
+          {"id": "user-xml", "title": "Context", "syntax": "xml", "xml_tag": "context", "content": "<source>α</source>"},
+          {"id": "user-free", "title": "Free", "syntax": "freeform", "content": "Answer directly."}
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "system": "Keep  spaces\nexactly.\n\n# Rôle\n\nUse café ☕.",
+    "user": "<context><source>α</source></context>\n\nAnswer directly."
+  }
+}

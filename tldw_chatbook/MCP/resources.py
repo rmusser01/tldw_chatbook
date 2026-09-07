@@ -4,214 +4,245 @@ MCP Resources implementation for tldw_chatbook
 This module provides resource access to tldw_chatbook's data through MCP.
 """
 
-from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
-import json
-import base64
-from pathlib import Path
+from typing import Dict, List, Any
 
 from loguru import logger
 
 # Import tldw_chatbook components
-from ..DB.ChaChaNotes_DB import ChaChaNotes_DB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..Notes.Notes_Library import get_note_by_id
-from ..Character_Chat.Character_Chat_Lib import get_character_by_id
+from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..DB.Client_Media_DB_v2 import (
+    MediaDatabase,
+    get_media_transcripts,
+    get_chunk_by_uuid,
+)
+
+# `get_note_by_id` (tldw_chatbook.Notes.Notes_Library) and
+# `get_character_by_id` (tldw_chatbook.Character_Chat.Character_Chat_Lib)
+# were never standalone functions in those modules -- `get_note_by_id` is
+# an instance method of `NotesInteropService`, and no free-function
+# `get_character_by_id` exists at all. `CharactersRAGDB` itself already
+# exposes the equivalent lookups directly (`get_note_by_id()`,
+# `get_character_card_by_id()`), used below instead of these broken
+# imports (QA round mcp-hub-phase3-2026-07, Defect 2).
 
 
 class MCPResources:
     """Container for MCP resource implementations."""
-    
-    def __init__(self, chachanotes_db: ChaChaNotes_DB, media_db: MediaDatabase):
+
+    def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):
         """Initialize resources with database connections."""
         self.chachanotes_db = chachanotes_db
         self.media_db = media_db
-    
+
     async def get_conversation_resource(self, conversation_id: str) -> Dict[str, Any]:
         """Get a conversation as a resource.
-        
+
         Args:
             conversation_id: ID of the conversation
-        
+
         Returns:
             Resource dict with content and metadata
         """
         try:
-            conv_id = int(conversation_id)
-            
-            # Get conversation details
-            conv = self.chachanotes_db.get_conversation_by_id(conv_id)
+            # `conversation_id` is a string UUID (see `get_conversation_by_id`'s
+            # docstring), not an int -- casting it broke every lookup. Likewise
+            # `get_conversation_messages` never existed on CharactersRAGDB; the
+            # real method is `get_messages_for_conversation`, which already
+            # excludes soft-deleted messages/conversations (QA follow-up review
+            # of commit 4fd1e908).
+            conv = self.chachanotes_db.get_conversation_by_id(conversation_id)
             if not conv:
                 return {
                     "uri": f"conversation://{conversation_id}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
-                    "content": "Conversation not found"
+                    "content": "Conversation not found",
                 }
-            
+
             # Get messages
-            messages = self.chachanotes_db.get_conversation_messages(conv_id)
-            
+            messages = self.chachanotes_db.get_messages_for_conversation(
+                conversation_id
+            )
+
             # Format as markdown
             content = f"# {conv['title']}\n\n"
             content += f"*Created: {conv['created_at']}*\n\n"
-            
-            if conv.get('character_id'):
-                char = get_character_by_id(self.chachanotes_db, conv['character_id'])
+
+            if conv.get("character_id"):
+                char = self.chachanotes_db.get_character_card_by_id(
+                    conv["character_id"]
+                )
                 if char:
                     content += f"**Character**: {char['name']}\n\n"
-            
+
             content += "---\n\n"
-            
+
             for msg in messages:
-                role = msg['role'].capitalize()
+                role = msg["role"].capitalize()
                 content += f"### {role}\n\n{msg['content']}\n\n"
-            
+
             return {
                 "uri": f"conversation://{conversation_id}",
-                "name": conv['title'],
+                "name": conv["title"],
                 "mimeType": "text/markdown",
                 "content": content,
                 "metadata": {
-                    "created": conv['created_at'],
-                    "updated": conv.get('updated_at'),
-                    "character_id": conv.get('character_id'),
-                    "message_count": len(messages)
-                }
+                    "created": conv["created_at"],
+                    # conversations has `last_modified`, not `updated_at`
+                    # -- `.get("updated_at")` always returned None.
+                    "updated": conv.get("last_modified"),
+                    "character_id": conv.get("character_id"),
+                    "message_count": len(messages),
+                },
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting conversation resource: {e}")
             return {
                 "uri": f"conversation://{conversation_id}",
                 "name": "Error",
                 "mimeType": "text/plain",
-                "content": f"Error loading conversation: {str(e)}"
+                "content": f"Error loading conversation: {str(e)}",
             }
-    
+
     async def get_note_resource(self, note_id: str) -> Dict[str, Any]:
         """Get a note as a resource.
-        
+
         Args:
             note_id: ID of the note
-        
+
         Returns:
             Resource dict with content and metadata
         """
         try:
-            note = get_note_by_id(self.chachanotes_db, int(note_id))
+            note = self.chachanotes_db.get_note_by_id(str(note_id))
             if not note:
                 return {
                     "uri": f"note://{note_id}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
-                    "content": "Note not found"
+                    "content": "Note not found",
                 }
-            
+
             # Format note content
             content = f"# {note['title']}\n\n"
-            
-            if note.get('tags'):
-                tags = ", ".join(note['tags'])
+
+            if note.get("tags"):
+                tags = ", ".join(note["tags"])
                 content += f"*Tags: {tags}*\n\n"
-            
+
             content += f"*Created: {note['created_at']}*\n"
-            if note.get('updated_at'):
-                content += f"*Updated: {note['updated_at']}*\n"
-            
+            # notes has `last_modified`, not `updated_at` -- the old
+            # `.get("updated_at")` always returned None/falsy, so the
+            # "Updated" line never rendered for any real note.
+            if note.get("last_modified"):
+                content += f"*Updated: {note['last_modified']}*\n"
+
             content += "\n---\n\n"
-            content += note['content']
-            
+            content += note["content"]
+
             return {
                 "uri": f"note://{note_id}",
-                "name": note['title'],
+                "name": note["title"],
                 "mimeType": "text/markdown",
                 "content": content,
                 "metadata": {
-                    "created": note['created_at'],
-                    "updated": note.get('updated_at'),
-                    "tags": note.get('tags', []),
-                    "template": note.get('template')
-                }
+                    "created": note["created_at"],
+                    "updated": note.get("last_modified"),
+                    # `tags`/`template`: the `notes` table has neither
+                    # column -- notes have no tagging or template concept
+                    # in this schema (keyword/tag *linking* is a separate,
+                    # unrelated API, `link_note_to_keyword`, this resource
+                    # never called). Left as always-empty defaults rather
+                    # than removed outright: whether to surface linked
+                    # keywords here instead is a product decision, not a
+                    # bug fix (see TASK-983's Implementation Notes).
+                    "tags": note.get("tags", []),
+                    "template": note.get("template"),
+                },
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting note resource: {e}")
             return {
                 "uri": f"note://{note_id}",
                 "name": "Error",
                 "mimeType": "text/plain",
-                "content": f"Error loading note: {str(e)}"
+                "content": f"Error loading note: {str(e)}",
             }
-    
+
     async def get_character_resource(self, character_id: str) -> Dict[str, Any]:
         """Get a character profile as a resource.
-        
+
         Args:
             character_id: ID of the character
-        
+
         Returns:
             Resource dict with content and metadata
         """
         try:
-            char = get_character_by_id(self.chachanotes_db, int(character_id))
+            char = self.chachanotes_db.get_character_card_by_id(int(character_id))
             if not char:
                 return {
                     "uri": f"character://{character_id}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
-                    "content": "Character not found"
+                    "content": "Character not found",
                 }
-            
+
             # Format character profile
             content = f"# {char['name']}\n\n"
-            
-            if char.get('description'):
+
+            if char.get("description"):
                 content += f"## Description\n\n{char['description']}\n\n"
-            
-            if char.get('personality'):
+
+            if char.get("personality"):
                 content += f"## Personality\n\n{char['personality']}\n\n"
-            
-            if char.get('scenario'):
+
+            if char.get("scenario"):
                 content += f"## Scenario\n\n{char['scenario']}\n\n"
-            
-            if char.get('greeting'):
-                content += f"## Greeting\n\n{char['greeting']}\n\n"
-            
-            if char.get('example_dialogue'):
-                content += f"## Example Dialogue\n\n{char['example_dialogue']}\n\n"
-            
+
+            # character_cards' real columns are `first_message` and
+            # `message_example` -- `char.get("greeting")` /
+            # `char.get("example_dialogue")` never matched anything.
+            if char.get("first_message"):
+                content += f"## Greeting\n\n{char['first_message']}\n\n"
+
+            if char.get("message_example"):
+                content += f"## Example Dialogue\n\n{char['message_example']}\n\n"
+
             # Add metadata
-            content += f"\n---\n\n"
+            content += "\n---\n\n"
             content += f"*Created: {char['created_at']}*\n"
-            
+
             return {
                 "uri": f"character://{character_id}",
-                "name": char['name'],
+                "name": char["name"],
                 "mimeType": "text/markdown",
                 "content": content,
                 "metadata": {
-                    "created": char['created_at'],
-                    "updated": char.get('updated_at'),
-                    "message_count": char.get('message_count', 0)
-                }
+                    "created": char["created_at"],
+                    # character_cards has `last_modified`, not `updated_at`.
+                    "updated": char.get("last_modified"),
+                    "message_count": char.get("message_count", 0),
+                },
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting character resource: {e}")
             return {
                 "uri": f"character://{character_id}",
                 "name": "Error",
                 "mimeType": "text/plain",
-                "content": f"Error loading character: {str(e)}"
+                "content": f"Error loading character: {str(e)}",
             }
-    
+
     async def get_media_resource(self, media_id: str) -> Dict[str, Any]:
         """Get media content as a resource.
-        
+
         Args:
             media_id: ID of the media
-        
+
         Returns:
             Resource dict with content and metadata
         """
@@ -223,155 +254,195 @@ class MCPResources:
                     "uri": f"media://{media_id}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
-                    "content": "Media not found"
+                    "content": "Media not found",
                 }
-            
-            # Get transcript/content
-            transcript = self.media_db.get_media_transcript(int(media_id))
-            
-            # Format content
+
+            # Get transcript/content. `get_media_transcript` (singular)
+            # never existed as an instance method on MediaDatabase; the real
+            # accessor is the module-level `get_media_transcripts` (plural),
+            # which returns every active transcript row ordered newest
+            # first -- take the most recent one, matching this call site's
+            # original single-value assumption.
+            transcripts = get_media_transcripts(self.media_db, int(media_id))
+            transcript = transcripts[0]["transcription"] if transcripts else None
+
+            # Format content. The Media table's own column is `type`, not
+            # `media_type` -- `media['media_type']` raised KeyError on
+            # every real row (the "media_type" name is this tool's own
+            # output-field naming, applied below, not the DB column).
+            # The Media table's own column is `ingestion_date` -- there is
+            # no `created_at` column at all -- `media['created_at']`
+            # raised KeyError on every real row.
             content = f"# {media['title']}\n\n"
-            content += f"*Type: {media['media_type']}*\n"
-            content += f"*Created: {media['created_at']}*\n\n"
-            
-            if media.get('url'):
+            content += f"*Type: {media['type']}*\n"
+            content += f"*Created: {media['ingestion_date']}*\n\n"
+
+            if media.get("url"):
                 content += f"**Source**: {media['url']}\n\n"
-            
+
             content += "---\n\n"
-            
+
             if transcript:
                 content += "## Transcript/Content\n\n"
                 content += transcript
             else:
                 content += "## Summary\n\n"
-                content += media.get('content', 'No content available')
-            
+                content += media.get("content", "No content available")
+
             return {
                 "uri": f"media://{media_id}",
-                "name": media['title'],
+                "name": media["title"],
                 "mimeType": "text/markdown",
                 "content": content,
                 "metadata": {
-                    "media_type": media['media_type'],
-                    "url": media.get('url'),
-                    "created": media['created_at'],
-                    "duration": media.get('duration'),
-                    "author": media.get('author')
-                }
+                    "media_type": media["type"],
+                    "url": media.get("url"),
+                    "created": media["ingestion_date"],
+                    "duration": media.get("duration"),
+                    "author": media.get("author"),
+                },
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting media resource: {e}")
             return {
                 "uri": f"media://{media_id}",
                 "name": "Error",
                 "mimeType": "text/plain",
-                "content": f"Error loading media: {str(e)}"
+                "content": f"Error loading media: {str(e)}",
             }
-    
-    async def get_rag_chunk_resource(self, chunk_id: str) -> Dict[str, Any]:
+
+    async def get_rag_chunk_resource(self, chunk_uuid: str) -> Dict[str, Any]:
         """Get a RAG chunk as a resource.
-        
+
         Args:
-            chunk_id: ID of the chunk
-        
+            chunk_uuid: UUID of the chunk (`UnvectorizedMediaChunks.uuid`).
+
+                This used to be an integer id (`int(chunk_id)`) passed to
+                `self.media_db.get_chunk_by_id(...)`, a method that has
+                never existed on `MediaDatabase` (TASK-985). The real
+                accessor for a single chunk's row, `get_chunk_by_uuid`
+                (added alongside this fix, a sibling of the pre-existing
+                `get_chunk_text`), keys on the chunk's UUID rather than an
+                int id -- matching how chunks are addressed everywhere else
+                in the app (vector-store lookups use this same UUID). There
+                is no `embedding_id` column on `UnvectorizedMediaChunks` at
+                all, so it is dropped from the metadata below rather than
+                guessed at.
+
         Returns:
-            Resource dict with content and metadata
+            Resource dict with content and metadata.
         """
         try:
             # Get chunk from media database
-            chunk = self.media_db.get_chunk_by_id(int(chunk_id))
+            chunk = get_chunk_by_uuid(self.media_db, chunk_uuid)
             if not chunk:
                 return {
-                    "uri": f"rag-chunk://{chunk_id}",
+                    "uri": f"rag-chunk://{chunk_uuid}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
-                    "content": "Chunk not found"
+                    "content": "Chunk not found",
                 }
-            
+
             # Get parent media info
-            media = self.media_db.get_media_by_id(chunk['media_id'])
-            
+            media = self.media_db.get_media_by_id(chunk["media_id"])
+
             # Format content
-            content = f"# RAG Chunk {chunk_id}\n\n"
+            content = f"# RAG Chunk {chunk_uuid}\n\n"
             if media:
                 content += f"**From**: {media['title']}\n"
-            content += f"**Position**: {chunk.get('start_char', 0)} - {chunk.get('end_char', 0)}\n\n"
+            content += f"**Position**: {chunk.get('start_char') or 0} - {chunk.get('end_char') or 0}\n\n"
             content += "---\n\n"
-            content += chunk['text']
-            
+            content += chunk["chunk_text"]
+
             return {
-                "uri": f"rag-chunk://{chunk_id}",
+                "uri": f"rag-chunk://{chunk_uuid}",
                 "name": f"Chunk from {media['title'] if media else 'Unknown'}",
                 "mimeType": "text/plain",
                 "content": content,
                 "metadata": {
-                    "media_id": chunk['media_id'],
-                    "start_char": chunk.get('start_char'),
-                    "end_char": chunk.get('end_char'),
-                    "embedding_id": chunk.get('embedding_id')
-                }
+                    "media_id": chunk["media_id"],
+                    "start_char": chunk.get("start_char"),
+                    "end_char": chunk.get("end_char"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "chunk_type": chunk.get("chunk_type"),
+                },
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting RAG chunk resource: {e}")
             return {
-                "uri": f"rag-chunk://{chunk_id}",
+                "uri": f"rag-chunk://{chunk_uuid}",
                 "name": "Error",
                 "mimeType": "text/plain",
-                "content": f"Error loading chunk: {str(e)}"
+                "content": f"Error loading chunk: {str(e)}",
             }
-    
+
     async def list_recent_conversations(self, limit: int = 10) -> List[Dict[str, Any]]:
         """List recent conversations as resources.
-        
+
         Args:
             limit: Maximum number of conversations
-        
+
         Returns:
             List of resource references
         """
         try:
-            conversations = self.chachanotes_db.get_recent_conversations(limit=limit)
-            
+            # `get_recent_conversations` never existed on CharactersRAGDB.
+            # `list_all_active_conversations` is the real, already-ordered
+            # equivalent ("more recently active or created conversations
+            # appear first", per its own docstring) -- same `limit` kwarg,
+            # same id/title/created_at fields used below.
+            conversations = self.chachanotes_db.list_all_active_conversations(
+                limit=limit
+            )
+
             resources = []
             for conv in conversations:
-                resources.append({
-                    "uri": f"conversation://{conv['id']}",
-                    "name": conv['title'],
-                    "mimeType": "text/markdown",
-                    "description": f"Conversation from {conv['created_at']}"
-                })
-            
+                resources.append(
+                    {
+                        "uri": f"conversation://{conv['id']}",
+                        "name": conv["title"],
+                        "mimeType": "text/markdown",
+                        "description": f"Conversation from {conv['created_at']}",
+                    }
+                )
+
             return resources
-            
+
         except Exception as e:
             logger.error(f"Error listing conversations: {e}")
             return []
-    
+
     async def list_recent_notes(self, limit: int = 10) -> List[Dict[str, Any]]:
         """List recent notes as resources.
-        
+
         Args:
             limit: Maximum number of notes
-        
+
         Returns:
             List of resource references
         """
         try:
-            notes = self.chachanotes_db.get_recent_notes(limit=limit)
-            
+            # `get_recent_notes` never existed on CharactersRAGDB.
+            # `list_notes` is the real, already-ordered equivalent (`last_modified
+            # DESC`, per its own index/query) -- same `limit` kwarg, same
+            # id/title/created_at fields used below.
+            notes = self.chachanotes_db.list_notes(limit=limit)
+
             resources = []
             for note in notes:
-                resources.append({
-                    "uri": f"note://{note['id']}",
-                    "name": note['title'],
-                    "mimeType": "text/markdown",
-                    "description": f"Note from {note['created_at']}"
-                })
-            
+                resources.append(
+                    {
+                        "uri": f"note://{note['id']}",
+                        "name": note["title"],
+                        "mimeType": "text/markdown",
+                        "description": f"Note from {note['created_at']}",
+                    }
+                )
+
             return resources
-            
+
         except Exception as e:
             logger.error(f"Error listing notes: {e}")
             return []

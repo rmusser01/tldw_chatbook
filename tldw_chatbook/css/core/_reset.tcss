@@ -4,7 +4,15 @@
  * Base resets and default styles
  * ======================================== */
 
-/* Visible non-obscuring keyboard focus fallback. */
+/* Visible non-obscuring keyboard focus fallback.
+ *
+ * "Non-obscuring" is the intent, not a guarantee: Textual paints an `outline`
+ * OVER the widget's outermost rendered lines rather than around them, so for
+ * any widget that draws meaningful content or click metadata on its own
+ * perimeter this rule DOES obscure. `DataTable` is the case that bites --
+ * see the TASK-1160 block in components/_lists.tcss, which opts every table
+ * out of this rule and replaces the cue with content-safe recolouring. Prefer
+ * that pattern over adding another screen-local `outline: none`. */
 *:focus {
     outline: solid $ds-focus-accent;
 }

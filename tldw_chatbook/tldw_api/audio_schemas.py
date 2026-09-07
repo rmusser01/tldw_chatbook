@@ -29,7 +29,9 @@ class OpenAISpeechRequest(BaseModel):
     target_sample_rate: int | None = Field(default=None, ge=1)
     return_download_link: bool = False
     lang_code: str | None = None
-    normalization_options: NormalizationOptions | None = Field(default_factory=NormalizationOptions)
+    normalization_options: NormalizationOptions | None = Field(
+        default_factory=NormalizationOptions
+    )
     voice_reference: str | None = None
     reference_duration_min: float | None = Field(default=None, ge=3.0, le=60.0)
     extra_params: dict[str, Any] | None = None
@@ -245,7 +247,9 @@ class AudioTranscriptionRequest(BaseModel):
     hotwords: str | None = None
     response_format: TranscriptResponseFormat = "json"
     temperature: float = Field(default=0.0, ge=0.0, le=1.0)
-    timestamp_granularities: list[Literal["word", "segment"]] = Field(default_factory=lambda: ["segment"])
+    timestamp_granularities: list[Literal["word", "segment"]] = Field(
+        default_factory=lambda: ["segment"]
+    )
 
 
 class AudioTranslationRequest(BaseModel):

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 from ._helpers import call_if_present, decrypt_envelope_payload
 
@@ -23,5 +24,11 @@ class SourceCacheSyncAdapter:
         del record_conflict
         stable_key = envelope.stable_key or envelope.entity_id
         payload = decrypt_envelope_payload(envelope, dataset_key=dataset_key)
-        call_if_present(local_store, "upsert_source_cache", stable_key, payload, dict(envelope.payload_clear))
+        call_if_present(
+            local_store,
+            "upsert_source_cache",
+            stable_key,
+            payload,
+            dict(envelope.payload_clear),
+        )
         return {"status": "applied"}

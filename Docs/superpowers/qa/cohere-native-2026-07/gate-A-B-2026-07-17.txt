@@ -1,0 +1,463 @@
+2026-07-17 14:37:30.220 | DEBUG    | tldw_chatbook.config:<module>:32 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-07-17 14:37:30.223 | INFO     | tldw_chatbook.config:load_openai_mappings:337 - Attempting to load OpenAI TTS mappings from resource: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/agent-runtime/tldw_chatbook/Config_Files/openai_tts_mappings.json
+2026-07-17 14:37:30.223 | DEBUG    | tldw_chatbook.config:load_openai_mappings:341 - OpenAI TTS mappings unavailable via importlib.resources: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/agent-runtime/tldw_chatbook/Config_Files/openai_tts_mappings.json'
+2026-07-17 14:37:30.223 | INFO     | tldw_chatbook.config:load_openai_mappings:347 - Attempting to load OpenAI TTS mappings from filesystem: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/agent-runtime/tldw_chatbook/Config_Files/openai_tts_mappings.json
+2026-07-17 14:37:30.223 | WARNING  | tldw_chatbook.config:load_openai_mappings:351 - OpenAI TTS mappings unavailable; using built-in defaults. Reason: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/agent-runtime/tldw_chatbook/Config_Files/openai_tts_mappings.json'
+2026-07-17 14:37:30.226 | INFO     | tldw_chatbook.config:load_cli_config_and_ensure_existence:2788 - Attempting to load CLI config from: /Users/macbook-dev/.config/tldw_cli/config.toml
+2026-07-17 14:37:30.230 | INFO     | tldw_chatbook.config:load_cli_config_and_ensure_existence:2794 - Successfully loaded and merged CLI config from /Users/macbook-dev/.config/tldw_cli/config.toml
+2026-07-17 14:37:30.230 | DEBUG    | tldw_chatbook.config:load_cli_config_and_ensure_existence:2808 - load_cli_config_and_ensure_existence returning config with top-level keys: ['general', 'console', 'appearance', 'acp', 'tldw_api', 'library', 'splash_screen', 'logging', 'database', 'media_cleanup', 'api_endpoints', 'providers', 'api_settings', 'chat_defaults', 'chat', 'character_defaults', 'analysis_defaults', 'llm_management', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag', 'rag_search', 'model_capabilities', 'SearchEngines', 'media_processing', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'web_server', 'filepicker', 'home']
+2026-07-17 14:37:30.230 | DEBUG    | tldw_chatbook.config:load_cli_config_and_ensure_existence:2810 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-07-17 14:37:30.230 | INFO     | tldw_chatbook.config:load_settings:655 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/agent-runtime/tldw_chatbook
+2026-07-17 14:37:30.230 | INFO     | tldw_chatbook.config:load_settings:656 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.claude/worktrees/agent-runtime/tldw_chatbook
+2026-07-17 14:37:30.230 | DEBUG    | tldw_chatbook.config:load_settings:678 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-07-17 14:37:30.230 | DEBUG    | tldw_chatbook.config:load_settings:798 - No macOS-specific STT providers found, using faster-whisper as default
+2026-07-17 14:37:30.231 | DEBUG    | tldw_chatbook.config:load_settings:1377 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.local/share/tldw_cli/default_user/chat_dicts
+2026-07-17 14:37:30.231 | DEBUG    | tldw_chatbook.config:load_settings:1385 - load_settings: Configuration cached for future use
+2026-07-17 14:37:30.231 | INFO     | tldw_chatbook.config:<module>:3845 - Default API Endpoint (from config.py global scope): openai
+2026-07-17 14:37:30.231 | DEBUG    | tldw_chatbook.config:<module>:3865 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-07-17 14:37:30.360 | INFO     | tldw_chatbook.DB.base_db:__init__:82 - AgentRunsDB initialized with path: /private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/cohere-gate-ebprqdgx/A-cohere-single.db [Client: gate]
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+2026-07-17 14:37:30.499 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:738 - Chat API Call - Routing to endpoint: cohere
+2026-07-17 14:37:30.499 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:767 - Debug - Chat API Call - API key provided.
+2026-07-17 14:37:30.499 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:780 - Calling handler chat_with_cohere with kwargs: {'api_key': 'key_hidden', 'input_data': <class 'list'>, 'streaming': <class 'bool'>, 'model': <class 'str'>, 'tools': <class 'list'>, 'max_tokens': <class 'int'>}
+2026-07-17 14:37:30.499 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1305 - Cohere Chat: Request process starting for model 'command-a-03-2025' (Streaming: True)
+2026-07-17 14:37:30.499 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1312 - Cohere: API key provided.
+2026-07-17 14:37:30.499 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1356 - Cohere: Using leading system message as v2 system entry: 'You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool...'
+2026-07-17 14:37:30.499 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1448 - Cohere Request Payload: {
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool would help, call exactly one tool per reply using the fenced protocol described below, then continue once you have the result. Use spawn_subagent to delegate a self-contained sub-task to an isolated helper. Keep replies concise."
+    },
+    {
+      "role": "user",
+      "content": "What is 234*77? Use the calculator tool, then answer with just the number."
+    }
+  ],
+  "stream": true,
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "spawn_subagent",
+        "description": "Delegate a self-contained task to an isolated sub-agent. It sees only the task text you pass, works on it, and returns a result.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string",
+              "description": "Complete, self-contained task description."
+            }
+          },
+          "required": [
+            "task"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "calculator",
+        "description": "Perform mathematical calculations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "expression": {
+              "type": "string",
+              "description": "Mathematical expression to evaluate (e.g., '2 + 2 * 3')"
+            }
+          },
+          "required": [
+            "expression"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_datetime",
+        "description": "Get the current date and time in a specific timezone",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "description": "Timezone name (e.g., 'UTC', 'America/New_York'). Defaults to UTC.",
+              "default": "UTC"
+            }
+          },
+          "required": []
+        }
+      }
+    }
+  ]
+}
+2026-07-17 14:37:30.499 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1449 - Cohere Request URL: https://api.cohere.com/v2/chat
+2026-07-17 14:37:30.933 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1473 - Cohere: Streaming response connection established.
+2026-07-17 14:37:30.933 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:790 - Debug - Chat API Call - Response: Streaming Generator
+2026-07-17 14:37:30.933 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'message-start' event.
+2026-07-17 14:37:31.993 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'tool-call-end' event.
+2026-07-17 14:37:31.993 | INFO     | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1582 - Cohere stream: 'message-end' event. Finish: TOOL_CALL (Mapped: tool_calls). Fragments: 0
+2026-07-17 14:37:31.993 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1610 - Cohere SSE stream_generator for command-a-03-2025 finished. Total text: ...
+2026-07-17 14:37:31.995 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:738 - Chat API Call - Routing to endpoint: cohere
+2026-07-17 14:37:31.995 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:767 - Debug - Chat API Call - API key provided.
+2026-07-17 14:37:31.995 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:780 - Calling handler chat_with_cohere with kwargs: {'api_key': 'key_hidden', 'input_data': <class 'list'>, 'streaming': <class 'bool'>, 'model': <class 'str'>, 'tools': <class 'list'>, 'max_tokens': <class 'int'>}
+2026-07-17 14:37:31.995 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1305 - Cohere Chat: Request process starting for model 'command-a-03-2025' (Streaming: True)
+2026-07-17 14:37:31.995 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1312 - Cohere: API key provided.
+2026-07-17 14:37:31.995 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1356 - Cohere: Using leading system message as v2 system entry: 'You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool...'
+2026-07-17 14:37:31.995 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1448 - Cohere Request Payload: {
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool would help, call exactly one tool per reply using the fenced protocol described below, then continue once you have the result. Use spawn_subagent to delegate a self-contained sub-task to an isolated helper. Keep replies concise."
+    },
+    {
+      "role": "user",
+      "content": "What is 234*77? Use the calculator tool, then answer with just the number."
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "calculator_kbzfwxjr4ec8",
+          "type": "function",
+          "function": {
+            "name": "calculator",
+            "arguments": "{\"expression\": \"234*77\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "calculator_kbzfwxjr4ec8",
+      "content": [
+        {
+          "type": "document",
+          "document": {
+            "data": "{\"expression\": \"234*77\", \"result\": 18018, \"result_type\": \"int\"}"
+          }
+        }
+      ]
+    }
+  ],
+  "stream": true,
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "spawn_subagent",
+        "description": "Delegate a self-contained task to an isolated sub-agent. It sees only the task text you pass, works on it, and returns a result.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string",
+              "description": "Complete, self-contained task description."
+            }
+          },
+          "required": [
+            "task"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "calculator",
+        "description": "Perform mathematical calculations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "expression": {
+              "type": "string",
+              "description": "Mathematical expression to evaluate (e.g., '2 + 2 * 3')"
+            }
+          },
+          "required": [
+            "expression"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_datetime",
+        "description": "Get the current date and time in a specific timezone",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "description": "Timezone name (e.g., 'UTC', 'America/New_York'). Defaults to UTC.",
+              "default": "UTC"
+            }
+          },
+          "required": []
+        }
+      }
+    }
+  ]
+}
+2026-07-17 14:37:31.995 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1449 - Cohere Request URL: https://api.cohere.com/v2/chat
+2026-07-17 14:37:32.166 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1473 - Cohere: Streaming response connection established.
+2026-07-17 14:37:32.166 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:790 - Debug - Chat API Call - Response: Streaming Generator
+2026-07-17 14:37:32.167 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'message-start' event.
+2026-07-17 14:37:32.390 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'content-start' event.
+2026-07-17 14:37:32.542 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1588 - Cohere stream event type: citation-start, data: {'type': 'citation-start', 'index': 0, 'delta': {'message': {'citations': {'start': 2, 'end': 7, 'text': '18018', 'sources': [{'type': 'tool', 'id': 'calculator_kbzfwxjr4ec8:0', 'tool_output': {'expression': '234*77', 'result': '18018', 'result_type': 'int'}}], 'type': 'TEXT_CONTENT'}}}}
+2026-07-17 14:37:32.542 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1588 - Cohere stream event type: citation-end, data: {'type': 'citation-end', 'index': 0}
+2026-07-17 14:37:32.571 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'content-end' event.
+2026-07-17 14:37:32.571 | INFO     | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1582 - Cohere stream: 'message-end' event. Finish: COMPLETE (Mapped: stop). Fragments: 7
+2026-07-17 14:37:32.571 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1610 - Cohere SSE stream_generator for command-a-03-2025 finished. Total text: **18018**...
+2026-07-17 14:37:32.585 | INFO     | tldw_chatbook.DB.base_db:__init__:82 - AgentRunsDB initialized with path: /private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/cohere-gate-ebprqdgx/B-cohere-multi.db [Client: gate]
+2026-07-17 14:37:32.585 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:738 - Chat API Call - Routing to endpoint: cohere
+2026-07-17 14:37:32.585 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:767 - Debug - Chat API Call - API key provided.
+2026-07-17 14:37:32.585 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:780 - Calling handler chat_with_cohere with kwargs: {'api_key': 'key_hidden', 'input_data': <class 'list'>, 'streaming': <class 'bool'>, 'model': <class 'str'>, 'tools': <class 'list'>, 'max_tokens': <class 'int'>}
+2026-07-17 14:37:32.585 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1305 - Cohere Chat: Request process starting for model 'command-a-03-2025' (Streaming: True)
+2026-07-17 14:37:32.585 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1312 - Cohere: API key provided.
+2026-07-17 14:37:32.585 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1356 - Cohere: Using leading system message as v2 system entry: 'You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool...'
+2026-07-17 14:37:32.586 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1448 - Cohere Request Payload: {
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool would help, call exactly one tool per reply using the fenced protocol described below, then continue once you have the result. Use spawn_subagent to delegate a self-contained sub-task to an isolated helper. Keep replies concise."
+    },
+    {
+      "role": "user",
+      "content": "Use your tools: get the current date AND calculate 91*7. Call both tools in parallel in a single reply."
+    }
+  ],
+  "stream": true,
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "spawn_subagent",
+        "description": "Delegate a self-contained task to an isolated sub-agent. It sees only the task text you pass, works on it, and returns a result.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string",
+              "description": "Complete, self-contained task description."
+            }
+          },
+          "required": [
+            "task"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "calculator",
+        "description": "Perform mathematical calculations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "expression": {
+              "type": "string",
+              "description": "Mathematical expression to evaluate (e.g., '2 + 2 * 3')"
+            }
+          },
+          "required": [
+            "expression"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_datetime",
+        "description": "Get the current date and time in a specific timezone",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "description": "Timezone name (e.g., 'UTC', 'America/New_York'). Defaults to UTC.",
+              "default": "UTC"
+            }
+          },
+          "required": []
+        }
+      }
+    }
+  ]
+}
+2026-07-17 14:37:32.586 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1449 - Cohere Request URL: https://api.cohere.com/v2/chat
+2026-07-17 14:37:32.808 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1473 - Cohere: Streaming response connection established.
+2026-07-17 14:37:32.808 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:790 - Debug - Chat API Call - Response: Streaming Generator
+2026-07-17 14:37:32.808 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'message-start' event.
+2026-07-17 14:37:33.540 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'tool-call-end' event.
+2026-07-17 14:37:33.682 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1586 - Cohere stream: 'tool-call-end' event.
+2026-07-17 14:37:33.682 | INFO     | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1582 - Cohere stream: 'message-end' event. Finish: TOOL_CALL (Mapped: tool_calls). Fragments: 0
+2026-07-17 14:37:33.682 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:stream_generator_cohere_sse:1610 - Cohere SSE stream_generator for command-a-03-2025 finished. Total text: ...
+2026-07-17 14:37:33.683 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:738 - Chat API Call - Routing to endpoint: cohere
+2026-07-17 14:37:33.683 | INFO     | tldw_chatbook.Chat.Chat_Functions:chat_api_call:767 - Debug - Chat API Call - API key provided.
+2026-07-17 14:37:33.683 | DEBUG    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:780 - Calling handler chat_with_cohere with kwargs: {'api_key': 'key_hidden', 'input_data': <class 'list'>, 'streaming': <class 'bool'>, 'model': <class 'str'>, 'tools': <class 'list'>, 'max_tokens': <class 'int'>}
+2026-07-17 14:37:33.683 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1305 - Cohere Chat: Request process starting for model 'command-a-03-2025' (Streaming: True)
+2026-07-17 14:37:33.683 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1312 - Cohere: API key provided.
+2026-07-17 14:37:33.683 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1356 - Cohere: Using leading system message as v2 system entry: 'You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool...'
+2026-07-17 14:37:33.683 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1448 - Cohere Request Payload: {
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a capable assistant with optional tools. Answer directly when no tool is needed. When a tool would help, call exactly one tool per reply using the fenced protocol described below, then continue once you have the result. Use spawn_subagent to delegate a self-contained sub-task to an isolated helper. Keep replies concise."
+    },
+    {
+      "role": "user",
+      "content": "Use your tools: get the current date AND calculate 91*7. Call both tools in parallel in a single reply."
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "get_current_datetime_8pyee1xgv422",
+          "type": "function",
+          "function": {
+            "name": "get_current_datetime",
+            "arguments": ""
+          }
+        },
+        {
+          "id": "calculator_61bsyf807q6s",
+          "type": "function",
+          "function": {
+            "name": "calculator",
+            "arguments": "{\"expression\": \"91*7\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "get_current_datetime_8pyee1xgv422",
+      "content": [
+        {
+          "type": "document",
+          "document": {
+            "data": "{\"datetime\": \"2026-07-17T21:37:33.683245+00:00\", \"timezone\": \"UTC\", \"date\": \"2026-07-17\", \"time\": \"21:37:33.683245\", \"weekday\": \"Friday\", \"unix_timestamp\": 1784324253}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "calculator_61bsyf807q6s",
+      "content": [
+        {
+          "type": "document",
+          "document": {
+            "data": "{\"expression\": \"91*7\", \"result\": 637, \"result_type\": \"int\"}"
+          }
+        }
+      ]
+    }
+  ],
+  "stream": true,
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "spawn_subagent",
+        "description": "Delegate a self-contained task to an isolated sub-agent. It sees only the task text you pass, works on it, and returns a result.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string",
+              "description": "Complete, self-contained task description."
+            }
+          },
+          "required": [
+            "task"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "calculator",
+        "description": "Perform mathematical calculations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "expression": {
+              "type": "string",
+              "description": "Mathematical expression to evaluate (e.g., '2 + 2 * 3')"
+            }
+          },
+          "required": [
+            "expression"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_datetime",
+        "description": "Get the current date and time in a specific timezone",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timezone": {
+              "type": "string",
+              "description": "Timezone name (e.g., 'UTC', 'America/New_York'). Defaults to UTC.",
+              "default": "UTC"
+            }
+          },
+          "required": []
+        }
+      }
+    }
+  ]
+}
+2026-07-17 14:37:33.683 | DEBUG    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1449 - Cohere Request URL: https://api.cohere.com/v2/chat
+2026-07-17 14:37:33.846 | ERROR    | tldw_chatbook.LLM_Calls.LLM_API_Calls:chat_with_cohere:1697 - Cohere API call HTTPError to https://api.cohere.com/v2/chat status 400. Details: {"id":"f930d607-ab2a-4eb5-ae87-f7413913b9cf","message":"invalid tool call provided in messages[2].tool_calls[0]: tool arguments must be a stringified JSON object"}
+2026-07-17 14:37:33.846 | ERROR    | tldw_chatbook.Chat.Chat_Functions:chat_api_call:834 - Handler for cohere directly raised: ChatBadRequestError - Bad request (Status 400). Detail: {"id":"f930d607-ab2a-4eb5-ae87-f7413913b9cf","message":"invalid tool call provided in messages[2].tool_calls[0]: tool arguments must be a stringified JSON object"}
+evidence db dir: /var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/cohere-gate-ebprqdgx | model: command-a-03-2025
+
+===== A-cohere-single (2.2s) =====
+status: done
+final answer: "**18018**"
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+  turn 1: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [model]  :: 
+  [tool_call] calculator :: 
+  [tool_result] calculator :: {"expression": "234*77", "result": 18018, "result_type": "int"}
+  [model]  :: **18018**
+A native + no fence: True | round-trip done: True | tool-result turn accepted: True
+
+===== B-cohere-multi (1.3s) =====
+status: error
+final answer: ""
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+  turn 1: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [error]  :: Provider error from cohere: bad request. Status: 400.
+B tool calls: 0 | model turns: 0 | status: error
+
+===== VERDICTS =====
+results: {'A': True, 'B': False}
+GATE: FAIL

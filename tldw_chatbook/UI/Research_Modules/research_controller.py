@@ -32,7 +32,9 @@ class ResearchController:
 
     async def create_run(self, source: str, payload: Mapping[str, Any]) -> Any:
         service = self._require_scope_service()
-        created = await self._maybe_await(service.create_run(mode=source, **dict(payload)))
+        created = await self._maybe_await(
+            service.create_run(mode=source, **dict(payload))
+        )
         return created
 
     async def get_run(self, source: str, run_id: str) -> Any:
@@ -59,7 +61,9 @@ class ResearchController:
 
     async def get_artifact(self, source: str, run_id: str, artifact_name: str) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(service.get_artifact(run_id, artifact_name, mode=source))
+        return await self._maybe_await(
+            service.get_artifact(run_id, artifact_name, mode=source)
+        )
 
     async def patch_and_approve_checkpoint(
         self,
@@ -82,5 +86,7 @@ class ResearchController:
 
     async def stream_run_events(self, source: str, run_id: str, *, after_id: int = 0):
         service = self._require_scope_service()
-        async for event in service.stream_run_events(run_id, mode=source, after_id=after_id):
+        async for event in service.stream_run_events(
+            run_id, mode=source, after_id=after_id
+        ):
             yield event

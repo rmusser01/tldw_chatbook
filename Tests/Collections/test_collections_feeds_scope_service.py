@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.Collections_Interop.collections_feeds_scope_service import CollectionsFeedsScopeService
+from tldw_chatbook.Collections_Interop.collections_feeds_scope_service import (
+    CollectionsFeedsScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -14,7 +16,12 @@ class FakeCollectionsFeedsService:
 
     async def list_feeds(self, **kwargs):
         self.calls.append(("list_feeds", kwargs))
-        return {"items": [{"id": 9, "name": "Example", "url": "https://example.com/feed.xml"}], "total": 1}
+        return {
+            "items": [
+                {"id": 9, "name": "Example", "url": "https://example.com/feed.xml"}
+            ],
+            "total": 1,
+        }
 
     async def get_feed(self, feed_id):
         self.calls.append(("get_feed", feed_id))
@@ -22,7 +29,11 @@ class FakeCollectionsFeedsService:
 
     async def update_feed(self, feed_id, **kwargs):
         self.calls.append(("update_feed", feed_id, kwargs))
-        return {"id": feed_id, "name": kwargs.get("name", "Example"), "url": "https://example.com/feed.xml"}
+        return {
+            "id": feed_id,
+            "name": kwargs.get("name", "Example"),
+            "url": "https://example.com/feed.xml",
+        }
 
     async def delete_feed(self, feed_id):
         self.calls.append(("delete_feed", feed_id))
@@ -142,7 +153,9 @@ async def test_collections_feeds_scope_service_routes_server_crud_and_normalizes
     scope = CollectionsFeedsScopeService(server_service=server, policy_enforcer=policy)
 
     listed = await scope.list_feeds(mode="server", q="example")
-    created = await scope.create_feed(mode="server", url="https://example.com/feed.xml", name="Example")
+    created = await scope.create_feed(
+        mode="server", url="https://example.com/feed.xml", name="Example"
+    )
     fetched = await scope.get_feed(9, mode="server")
     updated = await scope.update_feed(9, mode="server", name="Renamed")
     deleted = await scope.delete_feed(9, mode="server")
@@ -172,9 +185,13 @@ async def test_collections_feeds_scope_service_routes_server_crud_and_normalizes
 @pytest.mark.asyncio
 async def test_collections_feeds_scope_service_requires_local_backend_for_local_mode():
     server = FakeCollectionsFeedsService()
-    scope = CollectionsFeedsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = CollectionsFeedsScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
-    with pytest.raises(ValueError, match="Local collections feeds backend is unavailable"):
+    with pytest.raises(
+        ValueError, match="Local collections feeds backend is unavailable"
+    ):
         await scope.list_feeds(mode="local")
 
     assert server.calls == []
@@ -201,7 +218,9 @@ async def test_collections_feeds_scope_service_routes_local_crud_through_local_s
         settings={"source_type": "atom"},
     )
     fetched = await scope.get_feed("local:collections_feed:7", mode="local")
-    updated = await scope.update_feed("local:collections_feed:7", mode="local", name="Renamed")
+    updated = await scope.update_feed(
+        "local:collections_feed:7", mode="local", name="Renamed"
+    )
     deleted = await scope.delete_feed("local:collections_feed:7", mode="local")
 
     assert listed["items"][0]["record_id"] == "local:collections_feed:7"
@@ -245,7 +264,9 @@ async def test_collections_feeds_scope_service_routes_server_websub_and_normaliz
     policy = FakePolicyEnforcer()
     scope = CollectionsFeedsScopeService(server_service=server, policy_enforcer=policy)
 
-    subscribed = await scope.subscribe_feed_websub(12, mode="server", lease_seconds=3600)
+    subscribed = await scope.subscribe_feed_websub(
+        12, mode="server", lease_seconds=3600
+    )
     status = await scope.get_feed_websub_status(12, mode="server")
     unsubscribed = await scope.unsubscribe_feed_websub(12, mode="server")
 
@@ -274,7 +295,9 @@ async def test_collections_feeds_scope_service_blocks_denied_server_action_befor
     )
 
     with pytest.raises(PolicyDeniedError) as exc:
-        await scope.create_feed(mode="server", url="https://example.com/feed.xml", name="Example")
+        await scope.create_feed(
+            mode="server", url="https://example.com/feed.xml", name="Example"
+        )
 
     assert exc.value.reason_code == "server_auth_required"
     assert server.calls == []
@@ -283,7 +306,9 @@ async def test_collections_feeds_scope_service_blocks_denied_server_action_befor
 @pytest.mark.asyncio
 async def test_collections_feeds_scope_service_rejects_local_websub_as_server_only():
     local = FakeLocalCollectionsFeedsService()
-    scope = CollectionsFeedsScopeService(local_service=local, server_service=FakeCollectionsFeedsService())
+    scope = CollectionsFeedsScopeService(
+        local_service=local, server_service=FakeCollectionsFeedsService()
+    )
 
     with pytest.raises(ValueError, match="WebSub subscriptions require the server"):
         await scope.subscribe_feed_websub(7, mode="local")

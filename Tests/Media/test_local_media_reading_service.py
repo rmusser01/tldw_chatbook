@@ -3,20 +3,60 @@ from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 from pathlib import Path
+import sqlite3
+import threading
 import zipfile
 
 import pytest
+from loguru import logger
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Media" / "local_media_reading_service.py"
+_MODULE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "Media"
+    / "local_media_reading_service.py"
+)
 _SPEC = spec_from_file_location("local_media_reading_service_test_module", _MODULE_PATH)
 _MODULE = module_from_spec(_SPEC)
 assert _SPEC is not None and _SPEC.loader is not None
 _SPEC.loader.exec_module(_MODULE)
 LocalMediaReadingService = _MODULE.LocalMediaReadingService
+
+
+def _transcription_provenance() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": None,
+        "retry_of_attempt_id": None,
+        "retry_of_job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "produced_capabilities": {
+            "timestamps": "none",
+            "punctuation": True,
+            "capitalization": True,
+            "vad": False,
+            "diarization": False,
+        },
+        "warnings": [],
+        "failed_attempt": None,
+    }
 
 
 @pytest.fixture
@@ -51,7 +91,9 @@ class SpyReadItLaterDb:
         self.saved_filters = []
         self.search_calls = []
 
-    def list_read_it_later_media_ids(self, *, include_deleted=False, include_trash=False):
+    def list_read_it_later_media_ids(
+        self, *, include_deleted=False, include_trash=False
+    ):
         self.saved_filters.append(
             {
                 "include_deleted": include_deleted,
@@ -91,14 +133,182 @@ class SpyReadItLaterDb:
                 "include_deleted": include_deleted,
             }
         )
-        return ([{"id": media_id} for media_id in (media_ids_filter or [])], len(media_ids_filter or []))
+        return (
+            [{"id": media_id} for media_id in (media_ids_filter or [])],
+            len(media_ids_filter or []),
+        )
+
+
+class OverrideRecordingDb:
+    def __init__(self):
+        self.search_calls = []
+
+    def search_media_db(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return [], 0
+
+
+class LibrarySummaryRecordingDb:
+    def __init__(self):
+        self.search_calls = []
+        self.type_calls = 0
+
+    def search_media_db(self, **kwargs):
+        self.search_calls.append(kwargs)
+        return [
+            {
+                "id": 41,
+                "title": "Summary title",
+                "type": "article",
+                "last_modified": "2026-08-16T12:00:00Z",
+                # Projected by the real DB as SQLite's 1/0, passed straight
+                # through by this service (task-28008).
+                "has_analysis": 1,
+            }
+        ], 45
+
+    def get_distinct_media_types(self):
+        self.type_calls += 1
+        return [f"private-type-{index:02}" for index in range(61)]
+
+
+class LibraryTrashRecordingDb:
+    def __init__(self):
+        self.calls = []
+
+    def list_library_media_trash_page(
+        self, *, query="", media_type=None, limit=20, offset=0
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "media_type": media_type,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "",
+                    "type": "",
+                    "trash_date": "2026-08-30T12:00:00Z",
+                }
+            ],
+            "total": 45,
+            "limit": limit,
+            "offset": offset,
+            "types": ["pdf", "article"],
+        }
+
+
+def test_local_service_forwards_library_media_trash_page_without_repair():
+    db = LibraryTrashRecordingDb()
+
+    payload = LocalMediaReadingService(db).list_library_media_trash(
+        query="doc", media_type="pdf", limit=20, offset=40
+    )
+
+    assert db.calls == [
+        {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40}
+    ]
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "",
+                "type": "",
+                "trash_date": "2026-08-30T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "limit": 20,
+        "offset": 40,
+        "types": ["pdf", "article"],
+    }
+
+
+def test_local_service_library_media_summary_uses_exact_db_offset_and_projection():
+    db = LibrarySummaryRecordingDb()
+
+    payload = LocalMediaReadingService(db).search_media(
+        query="summary query",
+        limit=20,
+        offset=40,
+        library_summary=True,
+        media_types=["article"],
+    )
+
+    assert db.search_calls[0]["results_per_page"] == 20
+    assert db.search_calls[0]["offset"] == 40
+    assert db.search_calls[0]["library_summary"] is True
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "Summary title",
+                "type": "article",
+                "last_modified": "2026-08-16T12:00:00Z",
+                "has_analysis": 1,
+            }
+        ],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    [
+        (True, 0),
+        (0, 0),
+        (2**63, 0),
+        (20, True),
+        (20, -1),
+        (20, 2**63),
+    ],
+)
+def test_local_service_library_media_summary_rejects_invalid_coordinates(
+    limit, offset
+):
+    db = LibrarySummaryRecordingDb()
+
+    with pytest.raises(ValueError):
+        LocalMediaReadingService(db).search_media(
+            limit=limit,
+            offset=offset,
+            library_summary=True,
+        )
+
+    assert db.search_calls == []
+
+
+def test_local_service_lists_complete_media_types_without_logging_values(caplog):
+    db = LibrarySummaryRecordingDb()
+    caplog.set_level("DEBUG")
+    loguru_output = io.StringIO()
+    sink_id = logger.add(loguru_output, level="DEBUG")
+    try:
+        media_types = LocalMediaReadingService(db).list_library_media_types()
+    finally:
+        logger.remove(sink_id)
+
+    assert len(media_types) == 61
+    assert media_types[-1] == "private-type-60"
+    assert db.type_calls == 1
+    assert "private-type" not in loguru_output.getvalue()
+    assert "private-type" not in caplog.text
 
 
 def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     db = SpyReadItLaterDb()
     service = LocalMediaReadingService(db)
 
-    payload = service.search_media(read_it_later_only=True, media_ids_filter=["1", 2, "4"])
+    payload = service.search_media(
+        read_it_later_only=True, media_ids_filter=["1", 2, "4"]
+    )
 
     assert db.saved_filters == [{"include_deleted": False, "include_trash": False}]
     assert db.search_calls[0]["media_ids_filter"] == [2]
@@ -107,10 +317,36 @@ def test_local_service_search_media_uses_db_backed_saved_filter_spy():
     assert payload["items"][0]["saved_at"] == "2026-04-21T10:00:00Z"
 
 
+def test_local_service_forwards_distinct_fts_match_query():
+    db = OverrideRecordingDb()
+    service = LocalMediaReadingService(db)
+
+    service.search_media(
+        query="what caused the outage?",
+        fts_match_query='"what" "caused" "the" "outage?"',
+    )
+
+    assert db.search_calls[0]["search_query"] == "what caused the outage?"
+    assert db.search_calls[0]["fts_match_query"] == '"what" "caused" "the" "outage?"'
+
+
+def test_local_service_omits_absent_match_override_for_legacy_db_adapter():
+    db = SpyReadItLaterDb()
+
+    payload = LocalMediaReadingService(db).search_media(query="legacy query")
+
+    assert payload["items"] == []
+    assert db.search_calls[0]["search_query"] == "legacy query"
+
+
 def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factory):
     db = memory_db_factory()
-    kept_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
-    other_id, _, _ = db.add_media_with_keywords(title="Drop", content="B", media_type="article", keywords=[])
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
+    other_id, _, _ = db.add_media_with_keywords(
+        title="Drop", content="B", media_type="article", keywords=[]
+    )
     db.save_media_to_read_it_later(kept_id)
 
     service = LocalMediaReadingService(db)
@@ -120,9 +356,13 @@ def test_local_service_search_media_uses_db_backed_saved_filter(memory_db_factor
     assert all(item["id"] != other_id for item in payload["items"])
 
 
-def test_local_service_search_media_read_it_later_only_enriches_saved_state(memory_db_factory):
+def test_local_service_search_media_read_it_later_only_enriches_saved_state(
+    memory_db_factory,
+):
     db = memory_db_factory()
-    kept_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
     db.save_media_to_read_it_later(kept_id)
 
     service = LocalMediaReadingService(db)
@@ -133,9 +373,13 @@ def test_local_service_search_media_read_it_later_only_enriches_saved_state(memo
     assert payload["items"][0]["saved_at"] is not None
 
 
-def test_local_service_search_media_enriches_saved_state_on_normal_browse(memory_db_factory):
+def test_local_service_search_media_enriches_saved_state_on_normal_browse(
+    memory_db_factory,
+):
     db = memory_db_factory()
-    kept_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
     db.save_media_to_read_it_later(kept_id)
 
     service = LocalMediaReadingService(db)
@@ -148,7 +392,9 @@ def test_local_service_search_media_enriches_saved_state_on_normal_browse(memory
 
 def test_local_service_get_media_detail_enriches_saved_state(memory_db_factory):
     db = memory_db_factory()
-    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
     db.save_media_to_read_it_later(media_id)
 
     service = LocalMediaReadingService(db)
@@ -157,6 +403,28 @@ def test_local_service_get_media_detail_enriches_saved_state(memory_db_factory):
     assert detail["id"] == media_id
     assert detail["is_read_it_later"] is True
     assert detail["saved_at"] is not None
+
+
+def test_local_service_decodes_provenance_for_detail_and_search(memory_db_factory):
+    db = memory_db_factory()
+    document = _transcription_provenance()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Transcribed",
+        content="hello",
+        media_type="audio",
+        keywords=[],
+        transcription_model="parakeet-v2",
+        transcription_provenance=document,
+    )
+    service = LocalMediaReadingService(db)
+
+    detail = service.get_media_detail(media_id)
+    search_item = service.search_media(media_ids_filter=[media_id])["items"][0]
+
+    assert detail["transcription_provenance"] == document
+    assert search_item["transcription_provenance"] == document
+    assert "transcription_provenance_json" not in detail
+    assert "transcription_provenance_json" not in search_item
 
 
 def test_local_service_direct_media_management_round_trips(memory_db_factory):
@@ -177,21 +445,34 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     )
     service = LocalMediaReadingService(db)
 
-    listed = service.list_media_items(page=1, results_per_page=10, include_keywords=True)
+    listed = service.list_media_items(
+        page=1, results_per_page=10, include_keywords=True
+    )
     detail = service.get_media_item(media_id, include_content=False)
-    updated = service.update_media_item(media_id, title="Renamed", keywords=["reviewed"])
+    updated = service.update_media_item(
+        media_id, title="Renamed", keywords=["reviewed"]
+    )
     keyword_suggestions = service.list_media_keywords(query="view", limit=5)
-    metadata_matches = service.search_media_metadata(field="title", value="Renamed", per_page=5)
-    identifier_matches = service.get_media_by_identifier(url="https://example.com/report.md")
+    metadata_matches = service.search_media_metadata(
+        field="title", value="Renamed", per_page=5
+    )
+    identifier_matches = service.get_media_by_identifier(
+        url="https://example.com/report.md"
+    )
     deleted = service.delete_media_item(media_id)
     trash = service.list_media_trash(page=1, results_per_page=10, include_keywords=True)
     restored = service.restore_media_item(media_id, include_content=False)
     deleted_again = service.delete_media_item(media_id)
     permanent = service.permanently_delete_media_item(media_id)
-    after_permanent = service.get_media_by_identifier(url="https://example.com/report.md")
+    after_permanent = service.get_media_by_identifier(
+        url="https://example.com/report.md"
+    )
 
     assert listed["pagination"]["total_items"] == 2
-    assert any(item["id"] == media_id and item["keywords"] == ["draft", "research"] for item in listed["items"])
+    assert any(
+        item["id"] == media_id and item["keywords"] == ["draft", "research"]
+        for item in listed["items"]
+    )
     assert any(item["id"] == other_id for item in listed["items"])
     assert "content" not in detail
     assert detail["keywords"] == ["draft", "research"]
@@ -210,7 +491,143 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert after_permanent["items"] == []
 
 
-def test_local_service_list_media_items_carries_last_modified_for_list_card_age(memory_db_factory):
+def test_media_trash_permanent_delete_cascades_fts_without_sync_log(
+    memory_db_factory,
+):
+    """The one-item Trash seam preserves the existing irreversible DB contract."""
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Cascade target",
+        content="unique permanent deletion sentinel",
+        media_type="document",
+        keywords=["cascade-keyword"],
+        chunks=[
+            {"text": "first child chunk", "chunk_type": "text"},
+            {"text": "second child chunk", "chunk_type": "text"},
+        ],
+    )
+    db.save_media_to_read_it_later(media_id)
+    assert db.mark_as_trash(media_id) is True
+    connection = db.get_connection()
+    child_tables = (
+        "MediaKeywords",
+        "UnvectorizedMediaChunks",
+        "MediaReadItLaterState",
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        > 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 1
+    )
+    sync_count_before = connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[
+        0
+    ]
+
+    result = LocalMediaReadingService(db).permanently_delete_media_item(media_id)
+
+    assert result == {"ok": True, "media_id": media_id}
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
+        == sync_count_before
+    )
+
+
+def test_media_trash_permanent_delete_rechecks_trash_in_delete_transaction(
+    tmp_path, monkeypatch
+):
+    """A concurrent restore must win before the irreversible delete begins."""
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+
+    db_path = tmp_path / "trash-delete-race.sqlite"
+    deleting_db = Database(db_path=db_path, client_id="delete-race")
+    restoring_db = Database(db_path=db_path, client_id="restore-race")
+    entered_delete = threading.Event()
+    resume_delete = threading.Event()
+    outcome: dict[str, object] = {}
+    worker: threading.Thread | None = None
+    try:
+        media_id, _, _ = deleting_db.add_media_with_keywords(
+            title="Concurrent restore target",
+            content="private race content",
+            media_type="document",
+            keywords=[],
+        )
+        assert deleting_db.mark_as_trash(media_id)
+        original_delete = media_db_module.permanently_delete_item
+
+        def coordinated_delete(db_instance, target_id):
+            entered_delete.set()
+            assert resume_delete.wait(5)
+            return original_delete(db_instance, target_id)
+
+        monkeypatch.setattr(
+            media_db_module, "permanently_delete_item", coordinated_delete
+        )
+
+        def delete_in_worker() -> None:
+            try:
+                outcome["result"] = LocalMediaReadingService(
+                    deleting_db
+                ).permanently_delete_media_item(media_id)
+            except Exception as exc:  # surfaced in the test thread below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=delete_in_worker)
+        worker.start()
+        assert entered_delete.wait(5)
+
+        assert restoring_db.restore_from_trash(media_id)
+        restored = restoring_db.get_media_by_id(media_id)
+        assert restored is not None
+        assert restored["is_trash"] in {0, False}
+
+        resume_delete.set()
+        worker.join(5)
+
+        assert not worker.is_alive()
+        assert "result" not in outcome
+        assert isinstance(outcome.get("error"), ValueError)
+        still_active = restoring_db.get_media_by_id(media_id)
+        assert still_active is not None
+        assert still_active["is_trash"] in {0, False}
+    finally:
+        resume_delete.set()
+        if worker is not None:
+            worker.join(5)
+        restoring_db.close_connection()
+        deleting_db.close_connection()
+
+
+def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
+    memory_db_factory,
+):
     """Regression test for the Library browse-list "Updated: unknown" bug (UX wave M3).
 
     Root cause: ``get_paginated_files`` only selected ``id, title, type``
@@ -249,7 +666,44 @@ def test_local_service_list_media_items_carries_last_modified_for_list_card_age(
     assert row.secondary.startswith("document · ")
 
 
-def test_local_service_update_media_item_persists_library_edit_fields_without_version(memory_db_factory):
+def test_local_service_list_media_trash_carries_trash_date_for_trashed_age(
+    memory_db_factory,
+):
+    """task-4025: the Library media Trash view shows "trashed <age>" per row.
+
+    ``list_media_trash`` already ORDERs BY ``trash_date`` but did not SELECT
+    it, so the Trash view would have had no timestamp to render. Pins the
+    seam extension end-to-end into the pure state builder the screen uses.
+    """
+    from tldw_chatbook.Library.library_media_state import (
+        build_library_media_trash_state,
+    )
+
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Trashed Doc",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+    service.delete_media_item(media_id)
+
+    trash = service.list_media_trash(page=1, results_per_page=10)
+
+    item = next(entry for entry in trash["items"] if entry["id"] == media_id)
+    assert item["trash_date"]
+
+    state = build_library_media_trash_state(
+        trash["items"], total=trash["pagination"]["total_items"]
+    )
+    row = next(row for row in state.rows if row.media_id == str(media_id))
+    assert row.secondary.startswith("document · trashed ")
+
+
+def test_local_service_update_media_item_persists_library_edit_fields_without_version(
+    memory_db_factory,
+):
     """Regression test for the Library edit-save bug.
 
     ``LibraryScreen._save_library_media_edit`` sends exactly these four
@@ -318,7 +772,9 @@ def test_local_service_update_media_item_rejects_version_field(memory_db_factory
         service.update_media_item(media_id, title="Revised Title", version=1)
 
 
-def test_local_service_delete_media_item_removes_it_from_the_normal_list(memory_db_factory):
+def test_local_service_delete_media_item_removes_it_from_the_normal_list(
+    memory_db_factory,
+):
     """Regression test for the Library viewer's Delete action.
 
     ``LibraryScreen`` calls
@@ -354,7 +810,9 @@ def test_local_service_delete_media_item_removes_it_from_the_normal_list(memory_
     assert trashed_row["is_trash"] in {1, True}
 
 
-def test_local_service_downloads_local_media_files_and_stored_content(memory_db_factory, tmp_path):
+def test_local_service_downloads_local_media_files_and_stored_content(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     source_file = tmp_path / "source.md"
     source_file.write_text("# Stored file\n\nBody", encoding="utf-8")
@@ -388,7 +846,9 @@ def test_local_service_downloads_local_media_files_and_stored_content(memory_db_
     assert content_download["content_type"] == "text/plain; charset=utf-8"
 
 
-def test_local_service_add_media_persists_url_content_and_files(memory_db_factory, tmp_path):
+def test_local_service_add_media_persists_url_content_and_files(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     source_file = tmp_path / "source.md"
     source_file.write_text("# File body\n\nStored locally", encoding="utf-8")
@@ -410,19 +870,26 @@ def test_local_service_add_media_persists_url_content_and_files(memory_db_factor
     assert result["processed_count"] == 2
     assert result["failed_count"] == 0
     assert [item["source"] for item in result["items"]] == ["url", "file_path"]
-    url_detail = service.get_media_item(result["items"][0]["media_id"], include_content=True)
+    url_detail = service.get_media_item(
+        result["items"][0]["media_id"], include_content=True
+    )
     file_detail = service.get_media_detail(result["items"][1]["media_id"])
     assert url_detail["url"] == "https://example.com/report.md"
     assert url_detail["content"] == "URL supplied body"
     assert url_detail["keywords"] == ["ai", "research"]
     assert file_detail["url"] == source_file.as_uri()
     assert file_detail["content"] == "# File body\n\nStored locally"
-    assert service.check_media_file(result["items"][1]["media_id"])["source"] == "file_path"
+    assert (
+        service.check_media_file(result["items"][1]["media_id"])["source"]
+        == "file_path"
+    )
 
 
 def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_factory):
     db = memory_db_factory()
-    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
     service = LocalMediaReadingService(db)
 
     saved = service.save_to_read_it_later(media_id)
@@ -435,7 +902,9 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert db.get_media_read_it_later_state(media_id) is None
 
 
-def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_viewer(memory_db_factory):
+def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_viewer(
+    memory_db_factory,
+):
     """Regression test for the Library viewer's read-it-later button.
 
     The viewer decides its saved state and re-fetches via
@@ -446,7 +915,9 @@ def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_vi
     ``MediaReadItLaterState`` row is deleted), not merely False.
     """
     db = memory_db_factory()
-    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
     service = LocalMediaReadingService(db)
 
     before = service.get_media_detail(media_id)
@@ -459,7 +930,9 @@ def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_vi
 
     # get_media_item (the exact call the viewer's detail fetch uses) must
     # also reflect the saved state.
-    item_after_save = service.get_media_item(media_id, include_content=True, include_versions=True)
+    item_after_save = service.get_media_item(
+        media_id, include_content=True, include_versions=True
+    )
     assert item_after_save["is_read_it_later"] is True
 
     service.remove_from_read_it_later(media_id)
@@ -468,7 +941,9 @@ def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_vi
     assert "saved_at" not in after_remove
 
 
-def test_local_service_get_media_item_surfaces_latest_document_version_analysis(memory_db_factory):
+def test_local_service_get_media_item_surfaces_latest_document_version_analysis(
+    memory_db_factory,
+):
     """Regression test for the Library viewer's analysis section.
 
     ``analysis_content`` lives on ``DocumentVersions``, not the top-level
@@ -483,7 +958,9 @@ def test_local_service_get_media_item_surfaces_latest_document_version_analysis(
     )
     service = LocalMediaReadingService(db)
 
-    before = service.get_media_item(media_id, include_versions=True, include_version_content=True)
+    before = service.get_media_item(
+        media_id, include_versions=True, include_version_content=True
+    )
     assert before.get("analysis_content") is None
 
     first_save = service.save_analysis_version(
@@ -492,7 +969,10 @@ def test_local_service_get_media_item_surfaces_latest_document_version_analysis(
     assert first_save["media_id"] == media_id
 
     after_first_save = service.get_media_item(
-        media_id, include_content=True, include_versions=True, include_version_content=True
+        media_id,
+        include_content=True,
+        include_versions=True,
+        include_version_content=True,
     )
     versions = after_first_save["versions"]
     # add_media_with_keywords already created version 1 (analysis_content
@@ -504,13 +984,158 @@ def test_local_service_get_media_item_surfaces_latest_document_version_analysis(
 
     # Editing again creates a new version rather than mutating the old one,
     # and the newest version's analysis is what the viewer must show.
-    service.save_analysis_version(media_id, content="Body text", analysis_content="Revised analysis")
-    after_second_save = service.get_media_item(media_id, include_content=True, include_versions=True)
+    service.save_analysis_version(
+        media_id, content="Body text", analysis_content="Revised analysis"
+    )
+    after_second_save = service.get_media_item(
+        media_id, include_content=True, include_versions=True
+    )
     versions_after_revision = after_second_save["versions"]
     assert versions_after_revision[0]["analysis_content"] == "Revised analysis"
     assert len(versions_after_revision) == len(versions) + 1
     # Older version's analysis is preserved, not overwritten.
-    assert any(v["analysis_content"] == "First analysis" for v in versions_after_revision[1:])
+    assert any(
+        v["analysis_content"] == "First analysis" for v in versions_after_revision[1:]
+    )
+
+
+@pytest.fixture
+def file_db_factory(tmp_path):
+    """File-backed MediaDatabase plus a raw second connection to the same file.
+
+    A commit bug is invisible to the app's own connection (it reads its own
+    uncommitted writes), so every pin here checks persistence through a
+    separate ``sqlite3.connect``.
+    """
+    created = []
+
+    def _create(name="analysis-commit.sqlite", client_id="commit_client"):
+        db_path = tmp_path / name
+        db = Database(db_path=db_path, client_id=client_id)
+        created.append(db)
+        return db, db_path
+
+    yield _create
+
+    for db in created:
+        try:
+            db.close_connection()
+        except Exception:
+            pass
+
+
+def _versions_from_second_connection(db_path):
+    connection = sqlite3.connect(str(db_path))
+    try:
+        connection.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in connection.execute(
+                "SELECT uuid, version_number, analysis_content, deleted "
+                "FROM DocumentVersions ORDER BY version_number"
+            )
+        ]
+    finally:
+        connection.close()
+
+
+def test_local_service_save_analysis_version_commits_for_other_connections(
+    file_db_factory,
+):
+    """TASK-31942: a saved analysis must survive the process that wrote it.
+
+    ``create_document_version`` documents that it assumes an open
+    transaction and never commits; the service called it bare, so the row
+    sat on the app's thread-local connection and was lost on exit.
+    """
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    saved = service.save_analysis_version(
+        media_id, content="Body text", analysis_content="Committed analysis"
+    )
+    assert saved["media_id"] == media_id
+
+    assert db.get_connection().in_transaction is False
+    rows = _versions_from_second_connection(db_path)
+    assert [row["analysis_content"] for row in rows] == [None, "Committed analysis"]
+
+
+def test_local_service_overwrite_analysis_version_commits_for_other_connections(
+    file_db_factory,
+):
+    """TASK-31942: the overwrite path (same seam) must commit too."""
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    service.overwrite_analysis_version(
+        media_id, content="Body text", analysis_content="Overwritten analysis"
+    )
+
+    assert db.get_connection().in_transaction is False
+    rows = _versions_from_second_connection(db_path)
+    assert rows[-1]["analysis_content"] == "Overwritten analysis"
+
+
+def test_local_service_delete_analysis_version_commits_for_other_connections(
+    file_db_factory,
+):
+    """TASK-31942: the soft delete must be visible to a second connection."""
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+    saved = service.save_analysis_version(
+        media_id, content="Body text", analysis_content="Doomed analysis"
+    )
+
+    assert service.delete_analysis_version(saved["uuid"]) is True
+
+    assert db.get_connection().in_transaction is False
+    rows = _versions_from_second_connection(db_path)
+    deleted_row = next(row for row in rows if row["uuid"] == saved["uuid"])
+    assert deleted_row["deleted"] == 1
+
+
+def test_local_service_failed_analysis_save_rolls_back_and_raises(
+    file_db_factory, monkeypatch
+):
+    """TASK-31942 AC#3: a mid-write failure leaves no partial version row.
+
+    The Reader's ``_save_library_media_analysis`` only warns the user when
+    the call *raises*, so the failure must propagate rather than return a
+    half-written version.
+    """
+    db, db_path = file_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+    before = _versions_from_second_connection(db_path)
+
+    original_log_sync_event = type(db)._log_sync_event
+
+    def exploding_log_sync_event(self, conn, entity, *args, **kwargs):
+        if entity == "DocumentVersions":
+            raise RuntimeError("sync log write failed")
+        return original_log_sync_event(self, conn, entity, *args, **kwargs)
+
+    monkeypatch.setattr(type(db), "_log_sync_event", exploding_log_sync_event)
+
+    with pytest.raises(MediaDatabaseError, match="sync log write failed"):
+        service.save_analysis_version(
+            media_id, content="Body text", analysis_content="Never persisted"
+        )
+
+    assert db.get_connection().in_transaction is False
+    assert _versions_from_second_connection(db_path) == before
 
 
 def test_local_service_saves_direct_reading_item_with_content(memory_db_factory):
@@ -536,7 +1161,9 @@ def test_local_service_saves_direct_reading_item_with_content(memory_db_factory)
     assert db.get_media_read_it_later_state(stored["id"])["is_read_it_later"] is True
 
 
-def test_local_service_saves_direct_reading_item_with_injected_scraper(memory_db_factory):
+def test_local_service_saves_direct_reading_item_with_injected_scraper(
+    memory_db_factory,
+):
     db = memory_db_factory()
     calls = []
 
@@ -567,7 +1194,9 @@ def test_local_service_saves_direct_reading_item_with_injected_scraper(memory_db
     assert item["is_read_it_later"] is True
 
 
-def test_local_service_direct_reading_item_archived_status_clears_saved_state(memory_db_factory):
+def test_local_service_direct_reading_item_archived_status_clears_saved_state(
+    memory_db_factory,
+):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
 
@@ -609,7 +1238,9 @@ def test_local_service_persists_reading_highlights(memory_db_factory):
         note="review",
     )
     listed = service.list_highlights(media_id)
-    updated = service.update_highlight(created["id"], color="blue", note="done", state="stale")
+    updated = service.update_highlight(
+        created["id"], color="blue", note="done", state="stale"
+    )
     deleted = service.delete_highlight(created["id"])
 
     assert created["item_id"] == media_id
@@ -632,20 +1263,18 @@ def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_f
     The Library viewer (``LibraryScreen._add_library_media_highlight`` /
     ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
     calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
-    ``delete_highlight`` with ``mode="local"`` -- NOT the ``reading_``-prefixed
-    ``create_reading_highlight``/``list_reading_highlights``/
-    ``delete_reading_highlight`` methods, which ``MediaReadingScopeService``
-    only ever forwards to ``ServerMediaReadingService`` (see
-    ``Tests/Media/test_media_reading_scope_service.py``'s
-    ``test_scope_service_routes_reading_highlights_and_enforces_actions``,
-    which only exercises ``mode="server"``); calling those against a local
-    service raises ``AttributeError`` because ``LocalMediaReadingService``
-    only implements the non-prefixed names. This test drives the actual
-    working seam through ``MediaReadingScopeService`` against a real
-    ``LocalMediaReadingService`` backed by a real in-memory ``MediaDatabase``,
-    proving the UI's create/list/delete round-trip persists for real (a fake
-    scope service could hide a signature/field-name mismatch that this test
-    would catch).
+    ``delete_highlight`` with ``mode="local"`` -- the unprefixed scope
+    methods, distinct from the ``reading_``-prefixed scope methods the Media
+    hub uses (those historically dispatched leaf names only
+    ``ServerMediaReadingService`` had and AttributeError'd against a local
+    service; task-15768 fixed their dispatch to the unprefixed leaf contract,
+    covered by ``Tests/Media/test_media_reading_scope_service.py``'s
+    ``test_scope_service_reading_highlight_crud_reaches_real_local_service``).
+    This test drives the Library seam through ``MediaReadingScopeService``
+    against a real ``LocalMediaReadingService`` backed by a real in-memory
+    ``MediaDatabase``, proving the UI's create/list/delete round-trip
+    persists for real (a fake scope service could hide a signature/field-name
+    mismatch that this test would catch).
     """
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(
@@ -667,7 +1296,9 @@ def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_f
         )
     )
     listed = asyncio.run(scope.list_highlights(mode="local", item_id=media_id))
-    deleted = asyncio.run(scope.delete_highlight(mode="local", highlight_id=created["id"]))
+    deleted = asyncio.run(
+        scope.delete_highlight(mode="local", highlight_id=created["id"])
+    )
 
     assert created["item_id"] == media_id
     assert created["quote"] == "Reviewed"
@@ -699,12 +1330,20 @@ def test_local_service_persists_document_annotations(memory_db_factory):
         percentage=42.5,
     )
     listed = service.list_annotations(media_id)
-    updated = service.update_annotation(media_id, created["id"], text="updated", color="blue", note="done")
+    updated = service.update_annotation(
+        media_id, created["id"], text="updated", color="blue", note="done"
+    )
     deleted = service.delete_annotation(media_id, created["id"])
     after_delete = service.list_annotations(media_id)
     synced = service.sync_annotations(
         media_id,
-        annotations=[{"location": "page:13", "text": "offline note", "annotation_type": "page_note"}],
+        annotations=[
+            {
+                "location": "page:13",
+                "text": "offline note",
+                "annotation_type": "page_note",
+            }
+        ],
         client_ids=["client-1"],
     )
 
@@ -731,7 +1370,9 @@ def test_local_service_persists_document_annotations(memory_db_factory):
     assert synced["id_mapping"] == {"client-1": synced["annotations"][0]["id"]}
 
 
-def test_local_service_builds_media_navigation_from_markdown_headings(memory_db_factory):
+def test_local_service_builds_media_navigation_from_markdown_headings(
+    memory_db_factory,
+):
     db = memory_db_factory()
     content = (
         "# Opening\n"
@@ -760,7 +1401,11 @@ def test_local_service_builds_media_navigation_from_markdown_headings(memory_db_
     assert navigation["media_id"] == media_id
     assert navigation["available"] is True
     assert navigation["source_order_used"] == ["local_markdown_headings"]
-    assert [node["id"] for node in navigation["nodes"]] == ["heading-0", "heading-1", "heading-2"]
+    assert [node["id"] for node in navigation["nodes"]] == [
+        "heading-0",
+        "heading-1",
+        "heading-2",
+    ]
     assert navigation["nodes"][0] == {
         "id": "heading-0",
         "parent_id": None,
@@ -801,20 +1446,35 @@ def test_local_service_builds_generated_media_navigation_from_chunks(memory_db_f
         media_type="article",
         keywords=[],
         chunks=[
-            {"text": "Alpha text.", "start_char": 0, "end_char": 11, "chunk_type": "section"},
-            {"text": "Beta text.", "start_char": 13, "end_char": 23, "chunk_type": "section"},
+            {
+                "text": "Alpha text.",
+                "start_char": 0,
+                "end_char": 11,
+                "chunk_type": "section",
+            },
+            {
+                "text": "Beta text.",
+                "start_char": 13,
+                "end_char": 23,
+                "chunk_type": "section",
+            },
         ],
     )
     service = LocalMediaReadingService(db)
 
     without_fallback = service.get_media_navigation(media_id)
-    with_fallback = service.get_media_navigation(media_id, include_generated_fallback=True)
+    with_fallback = service.get_media_navigation(
+        media_id, include_generated_fallback=True
+    )
 
     assert without_fallback["available"] is False
     assert without_fallback["nodes"] == []
     assert with_fallback["available"] is True
     assert with_fallback["source_order_used"] == ["local_chunks"]
-    assert [node["title"] for node in with_fallback["nodes"]] == ["Alpha text.", "Beta text."]
+    assert [node["title"] for node in with_fallback["nodes"]] == [
+        "Alpha text.",
+        "Beta text.",
+    ]
     assert [node["id"] for node in with_fallback["nodes"]] == ["chunk-0", "chunk-1"]
 
 
@@ -841,7 +1501,9 @@ def test_local_service_persists_reading_digest_schedules(memory_db_factory):
         enabled=False,
         filters={"status": ["archived"]},
     )
-    outputs = service.list_reading_digest_outputs(schedule_id=created["id"], limit=5, offset=0)
+    outputs = service.list_reading_digest_outputs(
+        schedule_id=created["id"], limit=5, offset=0
+    )
     deleted = service.delete_reading_digest_schedule(created["id"])
     after_delete = service.list_reading_digest_schedules()
 
@@ -885,7 +1547,9 @@ def test_local_service_runs_due_reading_digest_schedules(memory_db_factory):
     )
 
     result = service.run_due_reading_digest_schedules(now="2026-04-25T08:00:00+00:00")
-    duplicate = service.run_due_reading_digest_schedules(now="2026-04-25T08:00:30+00:00")
+    duplicate = service.run_due_reading_digest_schedules(
+        now="2026-04-25T08:00:30+00:00"
+    )
     outputs = service.list_reading_digest_outputs(schedule_id=schedule["id"])
 
     assert result["executed_count"] == 1
@@ -906,15 +1570,26 @@ def test_local_service_persists_file_artifacts_and_reference_images(memory_db_fa
 
     created = service.create_file_artifact(
         file_type="reference_image",
-        payload={"mime_type": "image/png", "width": 640, "height": 480, "alt": "Figure"},
+        payload={
+            "mime_type": "image/png",
+            "width": 640,
+            "height": 480,
+            "alt": "Figure",
+        },
         title="Figure 1",
-        export={"format": "md", "content": "![Figure 1](local://figure-1.png)", "filename": "figure.md"},
+        export={
+            "format": "md",
+            "content": "![Figure 1](local://figure-1.png)",
+            "filename": "figure.md",
+        },
         options={"persist": True},
     )
     detail = service.get_file_artifact(created["artifact"]["file_id"])
     reference_images = service.list_reference_images()
     exported = service.export_file_artifact(created["artifact"]["file_id"], format="md")
-    deleted = service.delete_file_artifact(created["artifact"]["file_id"], hard=False, delete_file=False)
+    deleted = service.delete_file_artifact(
+        created["artifact"]["file_id"], hard=False, delete_file=False
+    )
     after_delete = service.list_reference_images()
     purged = service.purge_file_artifacts()
 
@@ -931,7 +1606,9 @@ def test_local_service_persists_file_artifacts_and_reference_images(memory_db_fa
     assert purged == {"removed": 1, "files_deleted": 0}
 
 
-def test_local_service_processes_text_like_files_without_persisting(memory_db_factory, tmp_path):
+def test_local_service_processes_text_like_files_without_persisting(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     notes = tmp_path / "notes.txt"
     doc = tmp_path / "doc.md"
@@ -941,14 +1618,21 @@ def test_local_service_processes_text_like_files_without_persisting(memory_db_fa
     code.write_text("print('hello')\n", encoding="utf-8")
     service = LocalMediaReadingService(db)
 
-    plaintext = service.process_plaintext(file_paths=[str(notes)], perform_chunking=True, chunk_size=6, chunk_overlap=0)
+    plaintext = service.process_plaintext(
+        file_paths=[str(notes)], perform_chunking=True, chunk_size=6, chunk_overlap=0
+    )
     document = service.process_document(file_paths=[str(doc)])
     code_result = service.process_code(file_paths=[str(code)], chunk_method="lines")
 
     assert plaintext["processed_count"] == 1
     assert plaintext["results"][0]["media_type"] == "plaintext"
     assert plaintext["results"][0]["content"] == "Plain text body"
-    assert [chunk["text"] for chunk in plaintext["results"][0]["chunks"]] == ["Plain ", "text b", "ody"]
+    # task 9 (chunking-engine-parity): _chunk_text now routes through the
+    # engine (words method), so chunks are whole-word slices of the original
+    # text instead of the legacy raw-char slices ("Plain ", "text b", "ody").
+    assert [chunk["text"] for chunk in plaintext["results"][0]["chunks"]] == [
+        "Plain text body",
+    ]
     assert document["results"][0]["title"] == "doc.md"
     assert document["results"][0]["media_type"] == "document"
     assert code_result["results"][0]["media_type"] == "code"
@@ -956,23 +1640,35 @@ def test_local_service_processes_text_like_files_without_persisting(memory_db_fa
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
-def test_local_service_processes_pdf_and_ebook_files_without_persisting(memory_db_factory, tmp_path):
+def test_local_service_processes_pdf_and_ebook_files_without_persisting(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     pdf_path = tmp_path / "paper.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\nPDF body text\n%%EOF")
     epub_path = tmp_path / "book.epub"
     with zipfile.ZipFile(epub_path, "w") as archive:
         archive.writestr("mimetype", "application/epub+zip")
-        archive.writestr("OPS/chapter.xhtml", "<html><body><h1>Chapter</h1><p>EPUB body text</p></body></html>")
+        archive.writestr(
+            "OPS/chapter.xhtml",
+            "<html><body><h1>Chapter</h1><p>EPUB body text</p></body></html>",
+        )
     service = LocalMediaReadingService(db)
 
-    pdf = service.process_pdf(file_paths=[str(pdf_path)], perform_chunking=True, chunk_size=8, chunk_overlap=0)
+    pdf = service.process_pdf(
+        file_paths=[str(pdf_path)], perform_chunking=True, chunk_size=8, chunk_overlap=0
+    )
     ebook = service.process_ebook(file_paths=[str(epub_path)], perform_chunking=False)
 
     assert pdf["processed_count"] == 1
     assert pdf["results"][0]["media_type"] == "pdf"
     assert "PDF body text" in pdf["results"][0]["content"]
-    assert [chunk["text"] for chunk in pdf["results"][0]["chunks"][:2]] == ["PDF body", " text\n"]
+    # task 9 (chunking-engine-parity): engine (words method) yields one
+    # whole-text chunk here instead of the legacy raw-char slices
+    # ("PDF body", " text\n").
+    assert [chunk["text"] for chunk in pdf["results"][0]["chunks"][:2]] == [
+        "PDF body text",
+    ]
     assert ebook["processed_count"] == 1
     assert ebook["results"][0]["media_type"] == "ebook"
     assert "Chapter" in ebook["results"][0]["content"]
@@ -980,7 +1676,9 @@ def test_local_service_processes_pdf_and_ebook_files_without_persisting(memory_d
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
-def test_local_service_processes_email_files_without_persisting(memory_db_factory, tmp_path):
+def test_local_service_processes_email_files_without_persisting(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     email_path = tmp_path / "message.eml"
     email_path.write_text(
@@ -1007,7 +1705,9 @@ def test_local_service_processes_email_files_without_persisting(memory_db_factor
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
-def test_local_service_processes_web_scraping_urls_without_persisting(memory_db_factory):
+def test_local_service_processes_web_scraping_urls_without_persisting(
+    memory_db_factory,
+):
     db = memory_db_factory()
     calls = []
 
@@ -1041,7 +1741,9 @@ def test_local_service_processes_web_scraping_urls_without_persisting(memory_db_
     assert service.list_media_items()["pagination"]["total_items"] == 0
 
 
-def test_local_service_processes_audio_and_video_without_persisting(memory_db_factory, tmp_path):
+def test_local_service_processes_audio_and_video_without_persisting(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     audio_path = tmp_path / "clip.mp3"
     video_path = tmp_path / "clip.mp4"
@@ -1127,7 +1829,9 @@ def test_local_service_processes_audio_and_video_without_persisting(memory_db_fa
 
 
 @pytest.mark.asyncio
-async def test_local_service_processes_mediawiki_dump_without_persisting(memory_db_factory, tmp_path):
+async def test_local_service_processes_mediawiki_dump_without_persisting(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     dump_path = tmp_path / "wiki.xml"
     dump_path.write_text(
@@ -1175,7 +1879,9 @@ async def test_local_service_processes_mediawiki_dump_without_persisting(memory_
 
 
 @pytest.mark.asyncio
-async def test_local_service_ingests_mediawiki_dump_as_persisted_pages(memory_db_factory, tmp_path):
+async def test_local_service_ingests_mediawiki_dump_as_persisted_pages(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     dump_path = tmp_path / "wiki.xml"
     dump_path.write_text(
@@ -1233,7 +1939,9 @@ async def test_local_service_ingests_mediawiki_dump_as_persisted_pages(memory_db
     assert listed["items"][0]["type"] == "mediawiki_page"
 
 
-def test_local_service_extracts_document_intelligence_from_local_content(memory_db_factory):
+def test_local_service_extracts_document_intelligence_from_local_content(
+    memory_db_factory,
+):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(
         title="Intelligence",
@@ -1254,7 +1962,9 @@ def test_local_service_extracts_document_intelligence_from_local_content(memory_
     outline = service.get_document_outline(media_id)
     figures = service.get_document_figures(media_id, min_size=80)
     references = service.get_document_references(media_id, search="Smith", limit=10)
-    insights = service.generate_document_insights(media_id, categories=["summary"], max_content_length=5000)
+    insights = service.generate_document_insights(
+        media_id, categories=["summary"], max_content_length=5000
+    )
 
     assert outline["media_id"] == media_id
     assert outline["has_outline"] is True
@@ -1280,12 +1990,18 @@ def test_local_service_extracts_document_intelligence_from_local_content(memory_
 
 def test_local_service_persists_saved_searches_and_note_links(memory_db_factory):
     db = memory_db_factory()
-    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
     service = LocalMediaReadingService(db)
 
-    created = service.create_saved_search(name=" Morning ", query={"q": "ai"}, sort="updated_desc")
+    created = service.create_saved_search(
+        name=" Morning ", query={"q": "ai"}, sort="updated_desc"
+    )
     listed = service.list_saved_searches(limit=25, offset=0)
-    updated = service.update_saved_search(created["id"], name="Updated", query={"q": "ml"})
+    updated = service.update_saved_search(
+        created["id"], name="Updated", query={"q": "ml"}
+    )
     linked = service.link_note(media_id, "note-1")
     links = service.list_note_links(media_id)
     unlinked = service.unlink_note(media_id, "note-1")
@@ -1335,7 +2051,9 @@ def test_local_service_exports_saved_reading_items(memory_db_factory):
     )
     zip_export = service.export_reading_items(format="zip", include_metadata=False)
 
-    rows = [json.loads(line) for line in exported["content"].decode("utf-8").splitlines()]
+    rows = [
+        json.loads(line) for line in exported["content"].decode("utf-8").splitlines()
+    ]
     assert exported["content_type"] == "application/x-ndjson"
     assert exported["filename"].endswith(".jsonl")
     assert rows[0]["id"] == saved_id
@@ -1349,7 +2067,9 @@ def test_local_service_exports_saved_reading_items(memory_db_factory):
     with zipfile.ZipFile(io.BytesIO(zip_export["content"]), "r") as archive:
         zipped_rows = [
             json.loads(line)
-            for line in archive.read("reading_export.jsonl").decode("utf-8").splitlines()
+            for line in archive.read("reading_export.jsonl")
+            .decode("utf-8")
+            .splitlines()
         ]
     assert zip_export["content_type"] == "application/zip"
     assert zip_export["filename"].endswith(".zip")
@@ -1368,7 +2088,9 @@ def test_local_service_creates_durable_reading_archive_snapshot(memory_db_factor
     )
     service = LocalMediaReadingService(db)
 
-    archive = service.create_reading_archive(media_id, format="md", source="text", title="Snapshot")
+    archive = service.create_reading_archive(
+        media_id, format="md", source="text", title="Snapshot"
+    )
 
     assert archive["output_id"] > 0
     assert archive["title"].startswith("Snapshot (archive ")
@@ -1376,10 +2098,14 @@ def test_local_service_creates_durable_reading_archive_snapshot(memory_db_factor
     assert archive["storage_path"].endswith(".md")
     assert archive["download_url"].startswith("local://reading-archives/")
 
-    row = db.get_connection().execute(
-        "SELECT * FROM local_reading_archives WHERE id = ?",
-        (archive["output_id"],),
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM local_reading_archives WHERE id = ?",
+            (archive["output_id"],),
+        )
+        .fetchone()
+    )
     assert row is not None
     assert row["item_id"] == media_id
     assert row["content"].startswith("# Snapshot\n")
@@ -1466,7 +2192,9 @@ def test_local_service_generates_extractive_reading_summary(memory_db_factory):
 
 
 @pytest.mark.asyncio
-async def test_local_service_generates_reading_tts_with_injected_generator(memory_db_factory):
+async def test_local_service_generates_reading_tts_with_injected_generator(
+    memory_db_factory,
+):
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(
         title="Listen",
@@ -1509,7 +2237,9 @@ def test_local_service_executes_csv_reading_import_jobs(memory_db_factory, tmp_p
     import_path = tmp_path / "pocket.csv"
     import_path.write_text("title,url\nSaved,https://example.com\n", encoding="utf-8")
 
-    submitted = service.import_reading_items(str(import_path), source="pocket", merge_tags=False)
+    submitted = service.import_reading_items(
+        str(import_path), source="pocket", merge_tags=False
+    )
     listed = service.list_reading_import_jobs(status="completed", limit=25, offset=0)
     detail = service.get_reading_import_job(submitted["job_id"])
 
@@ -1525,7 +2255,9 @@ def test_local_service_executes_csv_reading_import_jobs(memory_db_factory, tmp_p
     assert detail["result"]["imported"] == 1
 
 
-def test_local_service_executes_jsonl_reading_import_and_materializes_saved_items(memory_db_factory, tmp_path):
+def test_local_service_executes_jsonl_reading_import_and_materializes_saved_items(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
     import_path = tmp_path / "reading.jsonl"
@@ -1556,7 +2288,9 @@ def test_local_service_executes_jsonl_reading_import_and_materializes_saved_item
         encoding="utf-8",
     )
 
-    submitted = service.import_reading_items(str(import_path), source="jsonl", merge_tags=True)
+    submitted = service.import_reading_items(
+        str(import_path), source="jsonl", merge_tags=True
+    )
     detail = service.get_reading_import_job(submitted["job_id"])
     saved = service.search_media(read_it_later_only=True, limit=10)
 
@@ -1574,11 +2308,16 @@ def test_local_service_executes_jsonl_reading_import_and_materializes_saved_item
     first = db.get_media_by_url("https://example.com/a")
     assert first is not None
     assert first["content"] == "Alpha body"
-    assert db.fetch_keywords_for_media_batch([first["id"]])[first["id"]] == ["ai", "research"]
+    assert db.fetch_keywords_for_media_batch([first["id"]])[first["id"]] == [
+        "ai",
+        "research",
+    ]
     assert db.get_media_read_it_later_state(first["id"])["is_read_it_later"] is True
 
 
-def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factory, tmp_path):
+def test_local_service_persists_ingestion_sources_and_sync_jobs(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
     source_path = tmp_path / "source"
@@ -1592,7 +2331,9 @@ def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factor
     )
     listed = service.list_ingestion_sources()
     detail = service.get_ingestion_source(created["id"])
-    patched = service.patch_ingestion_source(created["id"], enabled=False, schedule_enabled=True)
+    patched = service.patch_ingestion_source(
+        created["id"], enabled=False, schedule_enabled=True
+    )
     items = service.list_ingestion_source_items(created["id"])
     synced = service.trigger_ingestion_source_sync(created["id"])
     job = service.get_ingest_job(synced["job_id"])
@@ -1617,7 +2358,9 @@ def test_local_service_persists_ingestion_sources_and_sync_jobs(memory_db_factor
         service.get_ingestion_source(created["id"])
 
 
-def test_local_service_syncs_local_directory_ingestion_source_items(memory_db_factory, tmp_path):
+def test_local_service_syncs_local_directory_ingestion_source_items(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
     source_path = tmp_path / "source"
@@ -1647,7 +2390,10 @@ def test_local_service_syncs_local_directory_ingestion_source_items(memory_db_fa
         "missing": 0,
         "errors": [],
     }
-    assert {item["normalized_relative_path"] for item in items} == {"alpha.md", "nested/beta.txt"}
+    assert {item["normalized_relative_path"] for item in items} == {
+        "alpha.md",
+        "nested/beta.txt",
+    }
     assert {item["sync_status"] for item in items} == {"pending"}
     assert all(item["content_hash"] for item in items)
     detail = service.get_ingestion_source(source["id"])
@@ -1656,7 +2402,9 @@ def test_local_service_syncs_local_directory_ingestion_source_items(memory_db_fa
     assert detail["last_sync_completed_at"] is not None
 
 
-def test_local_service_uploads_archive_snapshot_into_source_items(memory_db_factory, tmp_path):
+def test_local_service_uploads_archive_snapshot_into_source_items(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
     archive_path = tmp_path / "snapshot.zip"
@@ -1679,7 +2427,10 @@ def test_local_service_uploads_archive_snapshot_into_source_items(memory_db_fact
     assert job["status"] == "completed"
     assert job["result"]["source_type"] == "archive_snapshot"
     assert job["result"]["scanned"] == 2
-    assert {item["normalized_relative_path"] for item in items} == {"alpha.md", "nested/beta.txt"}
+    assert {item["normalized_relative_path"] for item in items} == {
+        "alpha.md",
+        "nested/beta.txt",
+    }
     assert {item["sync_status"] for item in items} == {"pending"}
     assert all(item["content_hash"] for item in items)
 
@@ -1708,7 +2459,10 @@ def test_local_service_syncs_git_repository_source_items(memory_db_factory, tmp_
     assert job["status"] == "completed"
     assert job["result"]["source_type"] == "git_repository"
     assert job["result"]["scanned"] == 2
-    assert {item["normalized_relative_path"] for item in items} == {"README.md", "docs/guide.txt"}
+    assert {item["normalized_relative_path"] for item in items} == {
+        "README.md",
+        "docs/guide.txt",
+    }
     assert all(".git" not in item["normalized_relative_path"] for item in items)
 
 
@@ -1753,8 +2507,11 @@ def test_local_service_reattaches_detached_ingestion_source_item(memory_db_facto
     assert reattached["binding"]["sync_status"] == "sync_managed"
 
 
-def test_local_service_submit_ingest_jobs_executes_url_article_and_file_jobs(memory_db_factory, tmp_path):
+def test_local_service_submit_ingest_jobs_executes_url_article_and_file_jobs(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
+
     def fake_scraper(url, *, custom_cookies=None):
         return {
             "url": url,
@@ -1782,7 +2539,9 @@ def test_local_service_submit_ingest_jobs_executes_url_article_and_file_jobs(mem
     assert service.get_ingest_job(submitted["jobs"][1]["id"])["status"] == "completed"
 
 
-def test_local_service_executes_url_article_ingest_jobs_with_injected_scraper(memory_db_factory):
+def test_local_service_executes_url_article_ingest_jobs_with_injected_scraper(
+    memory_db_factory,
+):
     db = memory_db_factory()
     calls = []
 
@@ -1809,17 +2568,23 @@ def test_local_service_executes_url_article_ingest_jobs_with_injected_scraper(me
     job = service.get_ingest_job(submitted["jobs"][0]["id"])
     media = db.get_media_by_url("https://example.com/article")
 
-    assert calls == [("https://example.com/article", [{"name": "session", "value": "abc"}])]
+    assert calls == [
+        ("https://example.com/article", [{"name": "session", "value": "abc"}])
+    ]
     assert submitted["jobs"][0]["status"] == "completed"
     assert job["result"]["source_kind"] == "url"
     assert job["result"]["imported"] == 1
     assert job["result"]["media_id"] == media["id"]
     assert media["title"] == "Saved URL"
     assert media["content"] == "URL article content"
-    assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["read later"]
+    assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == [
+        "read later"
+    ]
 
 
-def test_local_service_executes_url_file_download_ingest_jobs_with_injected_downloader(memory_db_factory, tmp_path):
+def test_local_service_executes_url_file_download_ingest_jobs_with_injected_downloader(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     calls = []
 
@@ -1850,7 +2615,9 @@ def test_local_service_executes_url_file_download_ingest_jobs_with_injected_down
 
 
 @pytest.mark.asyncio
-async def test_local_service_default_url_scraper_is_safe_from_async_scope(memory_db_factory, monkeypatch):
+async def test_local_service_default_url_scraper_is_safe_from_async_scope(
+    memory_db_factory, monkeypatch
+):
     from tldw_chatbook.Web_Scraping import Article_Extractor_Lib
 
     db = memory_db_factory()
@@ -1861,7 +2628,9 @@ async def test_local_service_default_url_scraper_is_safe_from_async_scope(memory
         except RuntimeError:
             pass
         else:
-            raise RuntimeError("scrape_article_sync was called inside the active event loop")
+            raise RuntimeError(
+                "scrape_article_sync was called inside the active event loop"
+            )
         return {
             "url": url,
             "title": "Async Safe URL",
@@ -1870,7 +2639,9 @@ async def test_local_service_default_url_scraper_is_safe_from_async_scope(memory
             "extraction_successful": True,
         }
 
-    monkeypatch.setattr(Article_Extractor_Lib, "scrape_article_sync", fake_scrape_article_sync)
+    monkeypatch.setattr(
+        Article_Extractor_Lib, "scrape_article_sync", fake_scrape_article_sync
+    )
     service = LocalMediaReadingService(db)
 
     submitted = service.submit_ingest_jobs(
@@ -1907,7 +2678,9 @@ def test_local_service_executes_local_file_ingest_jobs(memory_db_factory, tmp_pa
     assert db.fetch_keywords_for_media_batch([media["id"]])[media["id"]] == ["offline"]
 
 
-def test_local_service_dispatches_completed_ingest_job_notifications(memory_db_factory, tmp_path):
+def test_local_service_dispatches_completed_ingest_job_notifications(
+    memory_db_factory, tmp_path
+):
     db = memory_db_factory()
     dispatcher = RecordingNotificationDispatcher()
     app = object()
@@ -1996,3 +2769,364 @@ def test_local_service_dispatches_cancelled_ingest_job_notifications(memory_db_f
             },
         }
     ]
+
+
+
+# ---------------------------------------------------------------------------
+# Library query seams (task-1337 plan Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _set_media_timestamps(db, media_id, last_modified):
+    # Media sync triggers require version to increment by exactly 1 per UPDATE.
+    db.execute_query(
+        "UPDATE Media SET last_modified = ?, version = version + 1 WHERE id = ?",
+        (last_modified, media_id),
+    )
+
+
+def _seed_active_media(
+    db,
+    *,
+    title,
+    content=None,
+    keywords=None,
+    media_type="article",
+    author="author",
+    last_modified="2026-01-01 00:00:00",
+):
+    # add_media_with_keywords dedups on identical content, so default to a
+    # title-derived body to keep every seeded row distinct.
+    media_id, media_uuid, _ = db.add_media_with_keywords(
+        title=title,
+        media_type=media_type,
+        content=content if content is not None else f"body for {title}",
+        keywords=keywords or [],
+        author=author,
+    )
+    assert media_id is not None, f"seed for {title!r} collided with existing media"
+    _set_media_timestamps(db, media_id, last_modified)
+    return media_id, media_uuid
+
+
+def _walk_values(node):
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _walk_values(value)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            yield from _walk_values(value)
+    else:
+        yield node
+
+
+def test_library_media_page_lists_active_only_with_stable_order(memory_db_factory):
+    db = memory_db_factory()
+    first_id, _ = _seed_active_media(
+        db, title="First", last_modified="2026-01-01 00:00:00"
+    )
+    second_id, _ = _seed_active_media(
+        db, title="Second", last_modified="2026-01-03 00:00:00"
+    )
+    third_id, _ = _seed_active_media(
+        db, title="Third", last_modified="2026-01-02 00:00:00"
+    )
+    deleted_id, _ = _seed_active_media(
+        db, title="Deleted", last_modified="2026-01-04 00:00:00"
+    )
+    trashed_id, _ = _seed_active_media(
+        db, title="Trashed", last_modified="2026-01-05 00:00:00"
+    )
+    db.soft_delete_media(deleted_id)
+    db.mark_as_trash(trashed_id)
+
+    service = LocalMediaReadingService(db)
+    page_one = service.list_library_media(limit=2, offset=0)
+
+    assert page_one["total"] == 3
+    assert page_one["limit"] == 2
+    assert page_one["offset"] == 0
+    assert [item["id"] for item in page_one["items"]] == [second_id, third_id]
+
+    page_two = service.list_library_media(limit=2, offset=2)
+    assert page_two["total"] == 3
+    assert [item["id"] for item in page_two["items"]] == [first_id]
+
+    beyond = service.list_library_media(limit=10, offset=50)
+    assert beyond["total"] == 3
+    assert beyond["items"] == []
+
+
+def test_library_media_page_projection_is_safe_and_bounded(memory_db_factory):
+    db = memory_db_factory()
+    media_id, media_uuid = _seed_active_media(
+        db,
+        title="Projected",
+        content="secret body " * 100,
+        keywords=["alpha", "beta"],
+    )
+    db.execute_query(
+        "UPDATE Media SET vector_embedding = ?, version = version + 1 WHERE id = ?",
+        (b"\x00\x01\x02\x03" * 256, media_id),
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.list_library_media(limit=10, offset=0)
+    item = payload["items"][0]
+
+    assert item["uuid"] == media_uuid
+    assert item["title"] == "Projected"
+    assert len(item["preview"]) <= 241
+    assert item["keywords"] == ["alpha", "beta"]
+    assert item["keyword_total"] == 2
+    assert item["keywords_truncated"] is False
+    for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
+        assert forbidden not in item
+    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(payload))
+
+
+def test_library_media_page_keywords_capped_with_exact_total(memory_db_factory):
+    db = memory_db_factory()
+    keywords = [f"kw{index:02d}" for index in range(25)]
+    _seed_active_media(db, title="Keyword heavy", keywords=keywords)
+
+    service = LocalMediaReadingService(db)
+    item = service.list_library_media(limit=10, offset=0)["items"][0]
+
+    assert len(item["keywords"]) == 20
+    assert item["keyword_total"] == 25
+    assert item["keywords_truncated"] is True
+
+
+def test_library_media_search_exact_title_first_and_distinct_total(memory_db_factory):
+    db = memory_db_factory()
+    exact_id, _ = _seed_active_media(
+        db,
+        title="Quarterly",
+        content="nothing relevant here",
+        keywords=["quarterly", "quarterly-finance"],
+        last_modified="2026-01-01 00:00:00",
+    )
+    content_id, _ = _seed_active_media(
+        db,
+        title="Other",
+        content="a quarterly deep dive",
+        last_modified="2026-02-01 00:00:00",
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_library_media(query="quarterly", limit=10, offset=0)
+
+    # The exact-title item has two keyword hits but must be counted once.
+    assert payload["total"] == 2
+    assert [item["id"] for item in payload["items"]] == [exact_id, content_id]
+    exact_item, content_item = payload["items"]
+    assert "title" in exact_item["matched_fields"]
+    assert "keywords" in exact_item["matched_fields"]
+    assert "quarterly" in exact_item["matched_keywords"]
+    assert "quarterly-finance" in exact_item["matched_keywords"]
+    assert "content" in content_item["matched_fields"]
+
+
+def test_library_media_search_treats_wildcards_and_operators_literally(memory_db_factory):
+    db = memory_db_factory()
+    target_id, _ = _seed_active_media(db, title="100% ready_now", content="plain")
+    _seed_active_media(db, title="readyXnow decoy", content="plain decoy body")
+
+    service = LocalMediaReadingService(db)
+    percent = service.search_library_media(query="100%", limit=10, offset=0)
+    assert [item["id"] for item in percent["items"]] == [target_id]
+
+    underscore = service.search_library_media(query="ready_now", limit=10, offset=0)
+    assert [item["id"] for item in underscore["items"]] == [target_id]
+
+    # FTS operator syntax in the raw query must never raise or change semantics.
+    for hostile in ('"unclosed', "ready OR", "AND )(", "ready*", "NEAR/1"):
+        result = service.search_library_media(query=hostile, limit=10, offset=0)
+        assert isinstance(result["total"], int)
+        assert isinstance(result["items"], list)
+
+
+def test_library_media_search_matches_quotes_in_content(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _ = _seed_active_media(
+        db, title="Quotes", content="it's a test body"
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_library_media(query="it's", limit=10, offset=0)
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == media_id
+
+
+def test_library_media_detail_windows_text_and_hides_blobs(memory_db_factory):
+    db = memory_db_factory()
+    content = "abcdef" * 900  # 5400 chars
+    media_id, media_uuid = _seed_active_media(
+        db, title="Long read", content=content, media_type="document"
+    )
+    db.execute_query(
+        "UPDATE Media SET vector_embedding = ?, version = version + 1 WHERE id = ?",
+        (b"\xff" * 1024, media_id),
+    )
+
+    service = LocalMediaReadingService(db)
+    detail = service.get_library_media_text(media_uuid, start=1200, max_chars=2000)
+
+    assert detail is not None
+    assert detail["uuid"] == media_uuid
+    assert detail["title"] == "Long read"
+    assert detail["media_type"] == "document"
+    assert detail["total_chars"] == len(content)
+    assert detail["start"] == 1200
+    assert detail["returned_chars"] == 2000
+    assert detail["has_more"] is True
+    assert detail["text"] == content[1200:3200]
+    for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
+        assert forbidden not in detail
+    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(detail))
+
+    tail = service.get_library_media_text(media_uuid, start=5000, max_chars=2000)
+    assert tail["text"] == content[5000:]
+    assert tail["returned_chars"] == len(content) - 5000
+    assert tail["has_more"] is False
+
+
+def test_library_media_detail_returns_none_for_missing_uuid(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    assert service.get_library_media_text("no-such-uuid", start=0, max_chars=100) is None
+
+
+def test_library_media_detail_read_runs_inside_transaction(memory_db_factory):
+    db = memory_db_factory()
+    _, media_uuid = _seed_active_media(db, title="Transactional", content="body")
+    conn = db.get_connection()
+    conn.commit()
+    observed: list[bool] = []
+
+    def record_transaction_state(sql: str) -> None:
+        if "FROM Media" in sql and "AS total_chars" in sql:
+            observed.append(conn.in_transaction)
+
+    conn.set_trace_callback(record_transaction_state)
+    try:
+        assert db.get_library_media_text(media_uuid, start=0, max_chars=20) is not None
+    finally:
+        conn.set_trace_callback(None)
+
+    assert observed == [True]
+
+
+# ---------------------------------------------------------------------------
+# task-4022 (review round 2, I1b): the trash-restore fix
+# (Client_Media_DB_v2.add_media_with_keywords) made restoring a trashed
+# match opt-in (``restore_trashed=True``). ``_materialize_reading_import_row``
+# guards its OWN existing-check on the url leg only
+# (``db.get_media_by_url(url)``, which excludes trashed rows by default),
+# but its fallback ``add_media_with_keywords`` call can still match a
+# trashed row via the content-hash leg (a different url, identical bytes).
+# Since this caller never passes ``restore_trashed=True``, that match must
+# stay untouched -- not silently resurrected. Real file-backed
+# ``MediaDatabase`` (not ``memory_db_factory``'s ``:memory:`` instance),
+# per this programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_reading_import_content_hash_match_does_not_resurrect_trashed_row(tmp_path):
+    db_path = tmp_path / "reading_import.sqlite"
+    db = Database(db_path=str(db_path), client_id="reading_import_test")
+    service = LocalMediaReadingService(db)
+
+    content = "identical body text, different saved url"
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved A",
+        media_type="article",
+        content=content,
+        keywords=["kept"],
+        url="https://example.com/a",
+    )
+    assert db.mark_as_trash(media_id) is True
+
+    import_path = tmp_path / "reading.jsonl"
+    import_path.write_text(
+        json.dumps(
+            {
+                # A DIFFERENT url -- the url-leg existing-check
+                # (get_media_by_url) will find nothing, so this falls
+                # through to add_media_with_keywords, which then matches
+                # the trashed row via the content-hash fallback leg.
+                "title": "Saved A (re-saved)",
+                "url": "https://example.com/a-mirror",
+                "text": content,
+                "tags": ["new-tag"],
+                "status": "saved",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = service.import_reading_items(str(import_path), source="jsonl")
+    assert result["status"] == "completed"
+    assert result["result"]["skipped"] == 1, result["result"]
+    assert result["result"]["imported"] == 0
+    assert result["result"]["updated"] == 0
+
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 1, "content-hash match must not resurrect a trashed row"
+    assert row["url"] == "https://example.com/a"
+    # No second row was created for the mirror url either.
+    cursor = db.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1
+    db.close_connection()
+
+
+# ---------------------------------------------------------------------------
+# task-4026: ``save_reading_item`` is an explicit user action naming one
+# exact URL ("save this for me"), so re-saving something previously moved
+# to Trash is an explicit restore decision -- the ONE reading-service
+# caller that opts into ``restore_trashed=True`` (mirroring the Library
+# ingest writer, ``persist_parsed_media``). Without the opt-in the DB
+# layer now skips trashed matches even with ``overwrite=True`` (the
+# task-4026 contract), which would leave this action failing with
+# "did not produce a media record" and no remedy. Real file-backed
+# ``MediaDatabase`` per this programme's DB-layer testing requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_save_reading_item_restores_trashed_match(tmp_path):
+    db_path = tmp_path / "save_reading_item.sqlite"
+    db = Database(db_path=str(db_path), client_id="save_reading_item_test")
+    service = LocalMediaReadingService(db)
+
+    url = "https://example.com/saved-then-trashed"
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Saved once",
+        media_type="article",
+        content="the first saved body",
+        keywords=["kept"],
+        url=url,
+    )
+    assert db.mark_as_trash(media_id) is True
+
+    # Content supplied -> no scraping. The user is explicitly re-saving
+    # the same URL with fresh content.
+    detail = service.save_reading_item(
+        url=url,
+        title="Saved again",
+        content="the freshly saved body",
+        status="saved",
+    )
+
+    assert int(detail["id"]) == media_id, (
+        "re-saving a trashed URL must restore the SAME row, not fail or fork"
+    )
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 0, "explicit re-save must restore the trashed row"
+    assert row["trash_date"] is None
+    assert row["content"] == "the freshly saved body"
+    assert detail.get("is_read_it_later") is True
+    cursor = db.execute_query("SELECT COUNT(*) FROM Media")
+    assert cursor.fetchone()[0] == 1
+    db.close_connection()

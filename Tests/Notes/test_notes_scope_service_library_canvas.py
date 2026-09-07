@@ -13,13 +13,20 @@ that a hand-rolled fake could get wrong silently; these tests pin the real
 behavior down.
 """
 
+import asyncio
 from datetime import datetime
+import threading
 
 import pytest
 
+import tldw_chatbook.Notes.Notes_Library as notes_library_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.Notes.server_notes_workspace_service import (
+    ServerNotesWorkspaceService,
+)
 
 USER_ID = "library-canvas-user"
 
@@ -37,7 +44,9 @@ def notes_scope_service(tmp_path):
     """
     db_dir = tmp_path / "chachanotes"
     db_dir.mkdir()
-    global_db = CharactersRAGDB(str(db_dir / "unified.db"), client_id="library-canvas-app")
+    global_db = CharactersRAGDB(
+        str(db_dir / "unified.db"), client_id="library-canvas-app"
+    )
     interop = NotesInteropService(
         base_db_directory=db_dir,
         api_client_id="library-canvas-client",
@@ -58,7 +67,10 @@ async def test_create_then_update_round_trip_bumps_version(notes_scope_service):
     "truthy but not a dict -> bump by 1" branch depends on.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="Original", content="v1 body", user_id=USER_ID,
+        scope="local_note",
+        title="Original",
+        content="v1 body",
+        user_id=USER_ID,
     )
     assert isinstance(created, str) and created
 
@@ -92,7 +104,10 @@ async def test_update_with_stale_version_raises_conflict_and_does_not_mutate(
     treat it the same as a falsy result to reach its conflict UI.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="Original", content="body", user_id=USER_ID,
+        scope="local_note",
+        title="Original",
+        content="body",
+        user_id=USER_ID,
     )
     await notes_scope_service.save_note(
         scope="local_note",
@@ -171,7 +186,9 @@ async def test_save_with_keywords_returns_dict_with_bumped_version_and_persists(
 
 
 @pytest.mark.asyncio
-async def test_create_from_note_template_round_trips_title_and_content(notes_scope_service):
+async def test_create_from_note_template_round_trips_title_and_content(
+    notes_scope_service,
+):
     """The Library screen's in-canvas Create view (task 6) resolves a
     ``NOTE_TEMPLATES`` entry's ``{date}`` placeholders before ever calling
     this seam (see ``LibraryScreen._library_note_template_fields``), so the
@@ -215,11 +232,17 @@ async def test_delete_with_correct_version_removes_the_note(notes_scope_service)
     depends on this truthy/removed shape.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="To delete", content="body", user_id=USER_ID,
+        scope="local_note",
+        title="To delete",
+        content="body",
+        user_id=USER_ID,
     )
 
     deleted = await notes_scope_service.delete_note(
-        scope="local_note", note_id=created, version=1, user_id=USER_ID,
+        scope="local_note",
+        note_id=created,
+        version=1,
+        user_id=USER_ID,
     )
     assert deleted is True
 
@@ -230,6 +253,173 @@ async def test_delete_with_correct_version_removes_the_note(notes_scope_service)
 
     remaining = notes_scope_service.local_notes_service.list_notes(USER_ID, limit=100)
     assert all(note["id"] != created for note in remaining)
+
+
+@pytest.mark.asyncio
+async def test_repeated_delete_conflicts_instead_of_reporting_a_second_success(
+    notes_scope_service,
+):
+    """A deleted tombstone cannot masquerade as a newly completed delete.
+
+    The Library creates its Undo receipt and decrements its cached rail count
+    only after a truthy delete result. A concurrent/repeated delete therefore
+    must conflict instead of returning an idempotent success for the existing
+    tombstone.
+    """
+    created = await notes_scope_service.save_note(
+        scope="local_note",
+        title="Delete once",
+        content="body",
+        user_id=USER_ID,
+    )
+
+    assert await notes_scope_service.delete_note(
+        scope="local_note",
+        note_id=created,
+        version=1,
+        user_id=USER_ID,
+    )
+    with pytest.raises(ConflictError):
+        await notes_scope_service.delete_note(
+            scope="local_note",
+            note_id=created,
+            version=1,
+            user_id=USER_ID,
+        )
+
+    assert (
+        await notes_scope_service.count_notes(scope="local_note", user_id=USER_ID) == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_then_restore_round_trip_bumps_version_and_restores_count(
+    notes_scope_service,
+):
+    """Undo uses the same optimistic service boundary as delete.
+
+    Deleting v1 writes a v2 tombstone; restoring that exact tombstone returns
+    the active v3 row, makes it readable again, and restores the exact count.
+    A stale second restore must conflict instead of mutating the active row.
+    """
+    created = await notes_scope_service.save_note(
+        scope="local_note",
+        title="Recoverable",
+        content="body",
+        user_id=USER_ID,
+        keywords=["keep"],
+    )
+    note_id = str(created["id"])
+
+    assert await notes_scope_service.delete_note(
+        scope="local_note",
+        note_id=note_id,
+        version=1,
+        user_id=USER_ID,
+    )
+    assert (
+        await notes_scope_service.count_notes(scope="local_note", user_id=USER_ID) == 0
+    )
+
+    with pytest.raises(ConflictError):
+        await notes_scope_service.restore_note(
+            scope="local_note",
+            note_id=note_id,
+            version=1,
+            user_id=USER_ID,
+        )
+
+    restored = await notes_scope_service.restore_note(
+        scope="local_note",
+        note_id=note_id,
+        version=2,
+        user_id=USER_ID,
+    )
+
+    assert restored["id"] == note_id
+    assert restored["title"] == "Recoverable"
+    assert restored["content"] == "body"
+    assert restored["version"] == 3
+    assert [row["keyword"] for row in restored["keywords"]] == ["keep"]
+    assert (
+        await notes_scope_service.count_notes(scope="local_note", user_id=USER_ID) == 1
+    )
+    matches = notes_scope_service.local_notes_service.search_notes(
+        USER_ID, "Recoverable", limit=10
+    )
+    assert [row["id"] for row in matches] == [note_id]
+
+
+@pytest.mark.asyncio
+async def test_restore_paths_do_not_execute_trigger_schema_ddl(notes_scope_service):
+    """Restore never repairs the FTS trigger inside a user mutation."""
+    created = await notes_scope_service.save_note(
+        scope="local_note",
+        title="No restore DDL",
+        content="body",
+        user_id=USER_ID,
+    )
+    assert await notes_scope_service.delete_note(
+        scope="local_note",
+        note_id=created,
+        version=1,
+        user_id=USER_ID,
+    )
+    db = notes_scope_service.local_notes_service._get_db(USER_ID)
+    statements: list[str] = []
+    conn = db.get_connection()
+    conn.set_trace_callback(statements.append)
+    try:
+        with pytest.raises(ConflictError):
+            db.restore_note("missing-note", expected_version=1)
+        assert db.restore_note(created, expected_version=2) is True
+        assert db.restore_note(created, expected_version=2) is True
+    finally:
+        conn.set_trace_callback(None)
+
+    schema_ddl = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith(("DROP TRIGGER", "CREATE TRIGGER"))
+    ]
+    assert schema_ddl == []
+
+
+def test_db_initialization_repairs_legacy_notes_fts_update_trigger(tmp_path):
+    """A legacy trigger is repaired once during DB initialization."""
+    db_path = tmp_path / "legacy-notes-trigger.db"
+    original = CharactersRAGDB(str(db_path), client_id="legacy-writer")
+    with original.transaction() as conn:
+        conn.execute("DROP TRIGGER notes_au")
+        conn.execute(
+            """
+            CREATE TRIGGER notes_au
+            AFTER UPDATE ON notes BEGIN
+              INSERT INTO notes_fts(notes_fts,rowid,title,content)
+              VALUES('delete',old.rowid,old.title,old.content);
+              INSERT INTO notes_fts(rowid,title,content)
+              SELECT new.rowid,new.title,new.content
+              WHERE new.deleted = 0;
+            END;
+            """
+        )
+    original.close_connection()
+
+    repaired = CharactersRAGDB(str(db_path), client_id="repair-reader")
+    try:
+        trigger_row = (
+            repaired.get_connection()
+            .execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+                ("notes_au",),
+            )
+            .fetchone()
+        )
+        normalized_sql = " ".join(str(trigger_row["sql"]).lower().split())
+        assert "where old.deleted = 0" in normalized_sql
+        assert "where new.deleted = 0" in normalized_sql
+    finally:
+        repaired.close_connection()
 
 
 @pytest.mark.asyncio
@@ -245,7 +435,10 @@ async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
     letting it propagate.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="Original", content="body", user_id=USER_ID,
+        scope="local_note",
+        title="Original",
+        content="body",
+        user_id=USER_ID,
     )
     await notes_scope_service.save_note(
         scope="local_note",
@@ -284,18 +477,190 @@ async def test_count_notes_excludes_soft_deleted_notes(notes_scope_service):
     """
     note_ids = [
         await notes_scope_service.save_note(
-            scope="local_note", title=f"Note {index}", content=f"body {index}", user_id=USER_ID,
+            scope="local_note",
+            title=f"Note {index}",
+            content=f"body {index}",
+            user_id=USER_ID,
         )
         for index in range(3)
     ]
 
     deleted = await notes_scope_service.delete_note(
-        scope="local_note", note_id=note_ids[0], version=1, user_id=USER_ID,
+        scope="local_note",
+        note_id=note_ids[0],
+        version=1,
+        user_id=USER_ID,
     )
     assert deleted is True
 
     count = await notes_scope_service.count_notes(scope="local_note", user_id=USER_ID)
     assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_notes_user_content_evidence_tracks_only_accessible_active_local_notes(
+    notes_scope_service,
+):
+    assert (
+        await notes_scope_service.get_library_user_content_evidence(
+            scope="local_note", user_id=USER_ID
+        )
+        is LibraryContentEvidence.EMPTY
+    )
+    note_id = await notes_scope_service.save_note(
+        scope="local_note", title="Owned", content="PRIVATE_BODY", user_id=USER_ID
+    )
+    evidence = await notes_scope_service.get_library_user_content_evidence(
+        scope="local_note", user_id=USER_ID
+    )
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+
+    assert await notes_scope_service.delete_note(
+        scope="local_note", note_id=note_id, version=1, user_id=USER_ID
+    )
+    assert (
+        await notes_scope_service.get_library_user_content_evidence(
+            scope="local_note", user_id=USER_ID
+        )
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_notes_user_content_evidence_does_not_log_exact_local_count(
+    notes_scope_service, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        notes_library_module,
+        "log_counter",
+        lambda name, labels=None: calls.append((name, labels)),
+    )
+    for index in range(2):
+        await notes_scope_service.save_note(
+            scope="local_note",
+            title=f"Private {index}",
+            content="PRIVATE_BODY",
+            user_id=USER_ID,
+        )
+    calls.clear()
+
+    assert (
+        await notes_scope_service.get_library_user_content_evidence(
+            scope="local_note", user_id=USER_ID
+        )
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    success_labels = [
+        labels for name, labels in calls if name == "notes_library_count_notes_success"
+    ]
+    assert success_labels == [None]
+
+
+@pytest.mark.asyncio
+async def test_notes_user_content_evidence_runs_sync_leaf_off_loop_and_is_cancellable():
+    entered = threading.Event()
+    release = threading.Event()
+    thread_ids = []
+
+    class BlockingNotes:
+        def count_notes(self, _user_id):
+            thread_ids.append(threading.get_ident())
+            entered.set()
+            release.wait(2)
+            return 0
+
+    service = NotesScopeService(
+        local_notes_service=BlockingNotes(), server_service=None
+    )
+    loop_thread = threading.get_ident()
+    task = asyncio.create_task(
+        service.get_library_user_content_evidence(scope="local_note", user_id=USER_ID)
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0)
+        assert thread_ids == [thread_ids[0]]
+        assert thread_ids[0] != loop_thread
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(task, timeout=0.01)
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_notes_user_content_evidence_accepts_exact_server_total_only():
+    class RawNotesClient:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_server_notes(self, limit=100, offset=0, include_keywords=True):
+            self.calls.append(
+                {
+                    "limit": limit,
+                    "offset": offset,
+                    "include_keywords": include_keywords,
+                }
+            )
+            return self.payload
+
+    positive_client = RawNotesClient(
+        {"notes": [{"id": "private-note", "content": "PRIVATE_BODY"}], "count": 1}
+    )
+    positive = ServerNotesWorkspaceService(client=positive_client)
+    service = NotesScopeService(local_notes_service=None, server_service=positive)
+    result = await service.get_library_user_content_evidence(scope="server_note")
+    assert type(result) is LibraryContentEvidence
+    assert result is LibraryContentEvidence.HAS_USER_CONTENT
+    assert positive_client.calls == [
+        {"limit": 1, "offset": 0, "include_keywords": True}
+    ]
+
+    empty = ServerNotesWorkspaceService(
+        client=RawNotesClient({"notes": [], "count": 0})
+    )
+    service = NotesScopeService(local_notes_service=None, server_service=empty)
+    assert (
+        await service.get_library_user_content_evidence(scope="server_note")
+        is LibraryContentEvidence.EMPTY
+    )
+
+    ambiguous = ServerNotesWorkspaceService(
+        client=RawNotesClient(
+            {"notes": [{"id": "page-only", "content": "PRIVATE_BODY"}]}
+        )
+    )
+    service = NotesScopeService(local_notes_service=None, server_service=ambiguous)
+    assert (
+        await service.get_library_user_content_evidence(scope="server_note")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    class ServerNotes:
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def list_server_notes(self, **kwargs):
+            return self.payload
+
+    for excluded_row in (
+        {"id": "deleted", "deleted": True},
+        {"id": "hidden", "accessible": False},
+    ):
+        excluded = ServerNotes(
+            {"items": [excluded_row], "count": 1, "count_exact": True}
+        )
+        service = NotesScopeService(local_notes_service=None, server_service=excluded)
+        assert (
+            await service.get_library_user_content_evidence(scope="server_note")
+            is LibraryContentEvidence.EMPTY
+        )
+    assert (
+        await service.get_library_user_content_evidence(scope="workspace")
+        is LibraryContentEvidence.UNKNOWN
+    )
 
 
 @pytest.mark.asyncio
@@ -322,9 +687,7 @@ async def test_create_with_keywords_returns_dict_and_persists_keywords(
     stored = notes_scope_service.local_notes_service.get_keywords_for_note(
         USER_ID, created_id
     )
-    stored_texts = {
-        str(k.get("keyword") if isinstance(k, dict) else k) for k in stored
-    }
+    stored_texts = {str(k.get("keyword") if isinstance(k, dict) else k) for k in stored}
     assert {"meeting", "notes"} <= stored_texts
 
 
@@ -341,7 +704,9 @@ async def test_get_note_detail_enriched_with_keywords_round_trips_through_editor
     confirms the enriched detail round-trips through
     ``build_library_note_editor_state`` the way the screen renders it.
     """
-    from tldw_chatbook.Library.library_notes_state import build_library_note_editor_state
+    from tldw_chatbook.Library.library_notes_state import (
+        build_library_note_editor_state,
+    )
 
     created = await notes_scope_service.save_note(
         scope="local_note",

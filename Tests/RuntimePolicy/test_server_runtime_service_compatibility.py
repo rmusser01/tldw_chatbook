@@ -1,7 +1,9 @@
 import inspect
 
 import tldw_chatbook.Server_Runtime_Interop.server_runtime_service as runtime_module
-from tldw_chatbook.Server_Runtime_Interop.server_runtime_service import ServerRuntimeService
+from tldw_chatbook.Server_Runtime_Interop.server_runtime_service import (
+    ServerRuntimeService,
+)
 
 
 def test_server_runtime_service_module_does_not_reference_legacy_config_client_builders():

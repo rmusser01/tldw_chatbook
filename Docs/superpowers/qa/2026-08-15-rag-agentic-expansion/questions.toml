@@ -1,0 +1,142 @@
+# TASK-16174 Phase E — the answer-level oracle set.
+#
+# Eight questions over the RAG-eval fixture corpus
+# (`Tests/RAG_Eval/fixtures/corpus.toml`, 172 documents). Each names ONE
+# media or conversation document and carries a FACT ORACLE: a case-
+# insensitive regex that matches inside that document's BODY and nowhere
+# else in the corpus -- not in any title, not in any other document, and
+# not in the question text itself.
+#
+# WHY THE ORACLE MUST AVOID TITLES. The regime this arc was built for is
+# the LABEL-ONLY row: the Library's four-seam keyword path renders a media
+# hit as `Matched media · {type}` and a conversation hit as
+# `Matched conversation · N messages`
+# (`Library/library_local_rag_search_service.py`'s `_media_row`/
+# `_conversation_row`, both with `chunk_id: ""`). The agent sees the TITLE
+# and a label -- never the body. A fact that also appears in the title
+# would be answerable without expansion and would measure nothing.
+#
+# THE ROUTE. The run sets the eval runtime's
+# `config.search.default_search_mode = "plain"`, which routes the tool's
+# `mode="rag"` request through `_search_rag` -> `_search_keyword` (the
+# four-seam scope-aware path) -- the shipped route for a BM25/plain RAG
+# profile, and the one that produces label-only media/conversation rows.
+# Under `hybrid` the engine returns chunk text for every seam and there
+# are no label-only rows to expand, which would measure a different
+# question. This choice is pre-registered here, not chosen after seeing a
+# number.
+#
+# VERIFICATION (mechanical, re-runnable). Every row below was checked with
+# the loop in `oracle_run.py --verify-oracles`, which reports, per oracle:
+# the corpus documents whose CONTENT matches, the documents whose TITLE
+# matches, and whether the QUESTION text matches. The recorded result at
+# authoring time (2026-08-15) was:
+#
+#   OK  media-quillon-antenna          /rescue certification/                        content=['media-quillon-antenna']          title=[] in_question=False
+#   OK  media-pellucid-gauge           /lowest decade/                               content=['media-pellucid-gauge']           title=[] in_question=False
+#   OK  conv-ashgrove-pump             /shimming/                                    content=['conv-ashgrove-pump']             title=[] in_question=False
+#   OK  media-obsidian-lathe           /brinelling/                                  content=['media-obsidian-lathe']           title=[] in_question=False
+#   OK  conv-dunnock-row-cooling       /blown sand/                                  content=['conv-dunnock-row-cooling']       title=[] in_question=False
+#   OK  conv-gatehouse-power           /(?:ninety|90)\s*minutes/                     content=['conv-gatehouse-power']           title=[] in_question=False
+#   OK  media-filling-head-reliability /(?:nine hundred|900)\s+(?:running\s+)?hours/ content=['media-filling-head-reliability'] title=[] in_question=False
+#   OK  media-larkspur-turbine         /starved a bearing/                           content=['media-larkspur-turbine']         title=[] in_question=False
+#
+# Two oracles are alternations rather than literals, decided BEFORE the
+# run: the corpus spells both figures as words ("ninety minutes", "nine
+# hundred running hours") and a model that read the document may
+# legitimately write "90 minutes" / "900 hours". Scoring the numeral as a
+# miss would have measured transcription style, not fact inclusion. Both
+# alternations were re-verified corpus-unique above. Two other candidates
+# were TIGHTENED for the opposite reason: `/shim/` also matched
+# note-fennimore-changeover and conv-drayton-conveyor, and `/starv/` also
+# matched media-mixing-line-strip-report, so each was narrowed to the
+# exact phrase and re-verified.
+#
+# PROBE QUERIES. Each question also carries a `probe_query`: a short,
+# keyword-shaped search string used ONLY by `--dry-run`'s no-model
+# retrieval probe, to establish before any spend that the target document
+# is reachable on this route and that its row really is label-only. The
+# LIVE agent never sees it -- it composes its own queries, and every query
+# it issues is recorded in the run artifact so a retrieval difference
+# between the arms is visible rather than hidden. The probe queries exist
+# because the four-seam keyword path ANDs every token of the query
+# (`build_fts_match_query`), so a full natural-language question matches
+# nothing at all; the shared system prompt therefore tells BOTH arms,
+# identically, that Library search is keyword-based.
+#
+# DISCLOSED LIMITS (spec Phase E): N = 8, one corpus, one model,
+# temperature 0, one run per arm. Oracle-fact inclusion is not answer
+# quality -- an answer can include the fact and still be poor, and a
+# correct paraphrase that avoids the oracle string scores as a miss.
+
+[[question]]
+id = "q1-quillon-access"
+probe_query = "Quillon-6 antenna mast"
+slug = "media-quillon-antenna"
+source_type = "media"
+title = "Quillon-6 antenna mast survey"
+question = "What restriction applies to climbing access on the Quillon-6 antenna mast?"
+oracle = "rescue certification"
+
+[[question]]
+id = "q2-pellucid-lag"
+probe_query = "Pellucid-12 vacuum gauge"
+slug = "media-pellucid-gauge"
+source_type = "media"
+title = "Pellucid-12 vacuum gauge calibration record"
+question = "At which point did the Pellucid-12 vacuum gauge lag when it was calibrated against the reference standard?"
+oracle = "lowest decade"
+
+[[question]]
+id = "q3-ashgrove-seal"
+probe_query = "Ashgrove-2 coolant pump seal"
+slug = "conv-ashgrove-pump"
+source_type = "conversation"
+title = "Chat: the Ashgrove-2 coolant pump seal"
+question = "What kind of seal did maintenance fit to the Ashgrove-2 coolant pump, and what does that save on future seal changes?"
+oracle = "shimming"
+
+[[question]]
+id = "q4-obsidian-bearing"
+probe_query = "Obsidian-3 lathe spindle"
+slug = "media-obsidian-lathe"
+source_type = "media"
+title = "Obsidian-3 lathe spindle teardown"
+question = "What did the front bearing of the Obsidian-3 lathe spindle show when the spindle was pulled after chatter?"
+oracle = "brinelling"
+
+[[question]]
+id = "q5-dunnock-cooling"
+probe_query = "Dunnock Row cabinet"
+slug = "conv-dunnock-row-cooling"
+source_type = "conversation"
+title = "Chat: why the Dunnock Row cabinet is so quiet"
+question = "Why is the Dunnock Row cabinet cooled through its case rather than by drawing air in?"
+oracle = "blown sand"
+
+[[question]]
+id = "q6-gatehouse-ups"
+probe_query = "gate house UPS"
+slug = "conv-gatehouse-power"
+source_type = "conversation"
+title = "Chat: how long the gate house holds up"
+question = "How long does the gate house stay live on its UPS when the incomer drops?"
+oracle = "(?:ninety|90)\\s*minutes"
+
+[[question]]
+id = "q7-filling-head-mtbf"
+probe_query = "filling head reliability"
+slug = "media-filling-head-reliability"
+source_type = "media"
+title = "Filling head reliability study"
+question = "What mean time between failures is quoted for the filling head across the fleet of machines?"
+oracle = "(?:nine hundred|900)\\s+(?:running\\s+)?hours"
+
+[[question]]
+id = "q8-larkspur-lubrication"
+probe_query = "Larkspur-11 lubrication"
+slug = "media-larkspur-turbine"
+source_type = "media"
+title = "Larkspur-11 turbine commissioning walkthrough"
+question = "During the Larkspur-11 turbine commissioning, what was found wrong with one of the automatic lubrication delivery lines?"
+oracle = "starved a bearing"

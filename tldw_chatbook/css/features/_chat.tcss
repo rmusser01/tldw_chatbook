@@ -81,79 +81,6 @@
     color: $text;
 }
 
-/* --- Empty State --- */
-#chat-empty-state {
-    width: 100%;
-    height: 1fr;
-    padding: 4 2;
-    text-align: center;
-    color: $text-muted;
-    content-align: center middle;
-}
-
-#chat-empty-state.hidden {
-    display: none;
-}
-
-/* Explicit sidebar styling for the enhanced sidebar */
-#chat-enhanced-sidebar {
-    width: 25%;
-    min-width: 35;
-    max-width: 35%;
-    height: 100%;
-    dock: left;
-    border-right: none;
-}
-/* VerticalScroll for chat messages */
-#chat-log {
-    height: 1fr; /* Takes remaining space */
-    width: 100%;
-    overflow-y: auto;  /* Ensure proper scrolling */
-    overflow-x: hidden;  /* Hide horizontal overflow */
-    /* border: round $surface; Optional: Add border to scroll area */
-    padding: 0 1; /* Padding around messages */
-}
-
-/* Input area styling (shared by chat and character) */
-#chat-input-area, #conv-char-input-area { /* Updated from #character-input-area */
-    height: auto;    /* Allow height to adjust */
-    max-height: 12;  /* Limit growth */
-    width: 100%;
-    align: left top; /* Align children to top-left */
-    padding: 1; /* Consistent padding */
-    border-top: round $surface;
-}
-
-/* All buttons in chat input area should have equal flexible width */
-#chat-input-area Button {
-    width: 1fr;      /* Equal flexible width for all buttons */
-    height: 3;       /* Standard button height */
-}
-/* Input widget styling (shared) */
-
-/* ========================================
- * ChatWindowEnhanced specific styles
- * ======================================== */
-
-ChatWindowEnhanced {
-    layout: horizontal;
-    height: 100%;
-}
-
-/* Image attachment indicator */
-#image-attachment-indicator {
-    margin: 0 1;
-    padding: 0 1;
-    background: $surface;
-    color: $text-muted;
-    height: 3;
-    display: none;
-}
-
-#image-attachment-indicator.visible {
-    display: block;
-}
-
 /* Send button states */
 .send-button {
     width: 2fr;
@@ -171,24 +98,10 @@ ChatWindowEnhanced {
     margin-left: 1;
 }
 
-/* Microphone button */
-.mic-button {
-    width: auto;
-    margin-left: 1;
-}
-
 /* Voice input widget styles */
 .voice-input-widget {
     padding: 1;
     background: $surface;
-    border: solid $primary;
-}
-
-/* Attachment preview styles */
-.attachment-preview {
-    padding: 1;
-    margin: 1;
-    background: $surface-lighten-1;
     border: solid $primary;
 }
 
@@ -225,14 +138,6 @@ ChatWindowEnhanced {
     margin: 1;
     border: solid $error;
 }
-.chat-input { /* Targets TextArea */
-    width: 6fr;        /* Take 6x the space compared to other flex items */
-    height: auto;      /* Allow height to adjust */
-    max-height: 100%;  /* Don't overflow parent */
-    margin-right: 1;   /* Space before button */
-    border: round $surface;
-}
-
 /* Send button styling (shared) */
 .send-button { /* Targets Button */
     width: 1fr;      /* Equal flexible width */
@@ -260,50 +165,10 @@ ChatWindowEnhanced {
     margin-top: 0;
 }
 
-/* Action buttons in chat input area (attach, respond-for-me) */
-#chat-input-area .action-button {
-    width: 1fr;      /* Equal flexible width */
-    height: 3;       /* Standard button height */
-    border: none;
-    background: $surface-darken-1;
-    color: $text;
-}
-
-/* Save Chat Button in chat-right-sidebar in Chat Tab */
-.save-chat-button { /* Class used in character_sidebar.py */
-    margin-top: 2;   /* Add 1 cell/unit of space above the button */
-    /*width: 100%;      Optional: make it full width like other sidebar buttons */
-}
-
 /* Clone Chat Button in chat-right-sidebar */
 .clone-chat-button {
     margin-top: 1;   /* Add space above the button */
     width: 100%;     /* Full width like other sidebar buttons */
-}
-
-/* chat-right-sidebar Specific Styles */
-#chat-right-sidebar #chat-conversation-title-input { /* Title input */
-    /* width: 100%; (from .sidebar-input) */
-    /* margin-bottom: 1; (from .sidebar-input) */
-}
-
-#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
-    height: 4;  /* Or 3 to 5, adjust as preferred */
-    /* width: 100%; (from .sidebar-textarea) */
-    /* border: round $surface; (from .sidebar-textarea) */
-    /* margin-bottom: 1; (from .sidebar-textarea) */
-}
-
-/* Styling for the new "Save Details" button */
-#chat-right-sidebar .save-details-button {
-    margin-top: 1; /* Space above this button */
-    /* width: 100%;    Make it full width */
-}
-
-/* Ensure the Save Current Chat button also has clear styling if needed */
-#chat-right-sidebar .save-chat-button {
-    margin-top: 1; /* Ensure it has some space if it's after keywords */
-    /* width: 100%; */
 }
 
 /* Chat Sidebar - Prompts Section */
@@ -358,50 +223,11 @@ ChatWindowEnhanced {
     border: round $primary;
 }
 
-/* Quick settings section */
-.quick-settings-section {
-    padding: 1;
-    border: round $surface;
-    margin-bottom: 1;
-}
 
-.rag-settings-panel-advanced {
-    padding: 1;
-    border: round $accent;
-    background: $boost;
-    margin-bottom: 1;
-}
-
-/* RAG panel header with icon */
-.rag-panel-header {
-    text-style: bold;
-    color: $accent;
-    margin-bottom: 1;
-    text-align: center;
-}
-
-/* RAG toggle row */
-.rag-toggle-row {
-    layout: horizontal;
-    height: 3;
-    align: left middle;
-    margin-bottom: 1;
-}
-
-/* RAG main toggle */
-.rag-main-toggle {
-    margin-right: 2;
-}
 
 /* RAG preset select */
 .rag-preset-select {
     width: 50%;
-}
-
-/* RAG scope container */
-.rag-scope-container {
-    padding-left: 2;
-    margin-bottom: 1;
 }
 
 /* Section headers */
@@ -539,14 +365,6 @@ ChatWindowEnhanced {
     background: $panel !important;
 }
 
-/* RAG panel header with icon */
-.rag-panel-header {
-    text-style: bold;
-    color: $accent;
-    margin-bottom: 1;
-    text-align: center;
-}
-
 /* RAG enable toggle */
 .rag-enable-toggle {
     margin-bottom: 1;
@@ -610,16 +428,6 @@ ChatWindowEnhanced {
     background: $primary-lighten-1;
 }
 
-/* Secondary action buttons (Clone, Cancel) */
-.btn-secondary {
-    background: $surface;
-    color: $text;
-    border: solid $surface-lighten-1;
-}
-
-.btn-secondary:hover {
-    background: $surface-lighten-1;
-}
 
 /* Ghost buttons (text-only, minimal) */
 .btn-ghost {
@@ -634,3 +442,55 @@ ChatWindowEnhanced {
 }
 
 /* --- End Visual Polish ---*/
+
+/* Durable Watchlists operation receipts: compact enough for the Console's
+   narrow transcript column, but visibly distinct from assistant prose. */
+#console-watchlists-operation-cards {
+    height: auto;
+    min-height: 0;
+    width: 1fr;
+}
+
+WatchlistsOperationCard {
+    height: auto;
+    min-height: 7;
+    width: 1fr;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: round $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+.watchlists-operation-status {
+    height: 1;
+    color: $ds-status-running;
+    text-style: bold;
+}
+
+.watchlists-operation-title {
+    height: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.watchlists-operation-id {
+    height: 1;
+    color: $ds-text-muted;
+}
+
+.watchlists-operation-error {
+    height: auto;
+    max-height: 2;
+    color: $ds-status-error-readable;
+}
+
+.watchlists-operation-actions {
+    height: auto;
+    min-height: 1;
+    width: 1fr;
+    margin: 1 0 0 0;
+}
+
+.watchlists-operation-actions Button {
+    margin: 0 1 0 0;
+}

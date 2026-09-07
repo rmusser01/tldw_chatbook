@@ -1,48 +1,53 @@
 #!/usr/bin/env bash
-# Build script for tldw_chatbook PyPI distribution
+# Build a fresh tldw_chatbook PyPI distribution.
 
 set -euo pipefail
 
 PYTHON="${PYTHON:-python}"
+DIST_DIR="${DIST_DIR:-dist}"
 
-echo "🚀 Building tldw_chatbook distribution..."
-
-# Navigate to project root
 cd "$(dirname "$0")/.."
 
-# Clean Python artifacts
-echo "🧹 Cleaning Python artifacts..."
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find . -name "*.pyc" -o -name "*.pyo" -exec rm -f {} + 2>/dev/null || true
-find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
+REPO_ROOT="$(pwd -P)"
 
-# Clean previous builds
-echo "🧹 Cleaning previous builds..."
-rm -rf dist/ build/ *.egg-info
+DIST_DIR_REAL=$("$PYTHON" - "$DIST_DIR" "$REPO_ROOT" <<'PY'
+from pathlib import Path
+import sys
 
-# Build source distribution and wheel
-echo "🔨 Building source and wheel distributions..."
-"$PYTHON" -m build
+from Packaging.common.dist_path import resolve_dist_dir
 
-# Check the distributions
-echo "✅ Checking distributions with twine..."
-"$PYTHON" -m twine check dist/*
+try:
+    print(resolve_dist_dir(sys.argv[1], Path(sys.argv[2])))
+except ValueError as exc:
+    raise SystemExit(f"Refusing unsafe DIST_DIR: {exc}")
+PY
+) || {
+    echo "Use python -m build directly for external artifact directories." >&2
+    exit 1
+}
 
-# Verify manifest
-echo "📋 Verifying distribution contents..."
-"$PYTHON" Packaging/check_manifest.py
+echo "Building tldw_chatbook distribution into ${DIST_DIR_REAL}..."
 
-echo ""
-echo "✨ Build complete!"
-echo ""
-echo "📦 Distribution files created in ./dist/"
-ls -la dist/
-echo ""
-echo "📤 To upload to TestPyPI (for testing):"
-echo "  $PYTHON -m twine upload --repository testpypi dist/*"
-echo ""
-echo "📤 To upload to PyPI (production):"
-echo "  $PYTHON -m twine upload dist/*"
-echo ""
-echo "🧪 To test installation from wheel:"
-echo "  pip install dist/tldw_chatbook-*.whl"
+"$PYTHON" -c "import build, setuptools, twine, wheel" || {
+    echo "Install release tools with: $PYTHON -m pip install 'setuptools>=77.0' build twine wheel" >&2
+    exit 1
+}
+
+rm -rf "$DIST_DIR_REAL" build ./*.egg-info
+mkdir -p "$DIST_DIR_REAL"
+
+echo "Building source and wheel distributions..."
+"$PYTHON" -m build --sdist --wheel --no-isolation --outdir "$DIST_DIR_REAL"
+
+echo "Checking package metadata..."
+"$PYTHON" -m twine check "$DIST_DIR_REAL"/*
+
+echo "Verifying distribution contents..."
+"$PYTHON" Packaging/check_manifest.py "$DIST_DIR_REAL"
+
+echo
+echo "Build complete. Distribution files:"
+ls -la "$DIST_DIR_REAL"
+echo
+echo "Installed-wheel regression:"
+echo "  $PYTHON -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider"

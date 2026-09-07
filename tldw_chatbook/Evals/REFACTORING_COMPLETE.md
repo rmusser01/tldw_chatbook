@@ -50,9 +50,8 @@ tldw_chatbook/Evals/
 ├── eval_orchestrator.py        # Main orchestrator (fixed)
 ├── eval_errors.py              # Unified error handling
 ├── base_runner.py              # Abstract base classes
-├── eval_runner.py              # Core runner implementation
+├── eval_runner.py              # Core runner implementation + MetricsCalculator
 ├── specialized_runners/        # Runner variations
-├── metrics_calculator.py       # Metrics computation
 ├── dataset_loader.py           # Dataset handling
 ├── exporters.py               # Unified export system
 ├── config_loader.py           # Configuration management
@@ -68,6 +67,12 @@ tldw_chatbook/Evals/
 └── config/
     └── eval_config.yaml       # Externalized configuration
 ```
+
+> **2026 update (TASK-863):** the standalone `metrics_calculator.py` shown
+> above was a duplicate of the `MetricsCalculator` class already living in
+> `eval_runner.py` and was never imported by any Python code in the tree.
+> It has since been deleted; its few unique methods were merged into
+> `eval_runner.py`'s `MetricsCalculator`, which is now the single source.
 
 ### Configuration Externalization
 

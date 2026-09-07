@@ -1,0 +1,248 @@
+"""Pure normalization/validation for world-book (Lore) import files.
+
+Maps the supported input shapes — tldw's own export, the character-book array
+form, and SillyTavern 'World Info' object-form — to tldw's ``world_book_entries``
+field names, and validates the whole file up front so the import screen can
+reject a bad file before any DB write (``WorldBookManager.import_world_book`` is
+not atomic). Pure and DB-free; raises ``ValueError`` with a user-facing message.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from loguru import logger
+
+from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern
+
+_VALID_POSITIONS = {"before_char", "after_char", "at_start", "at_end"}
+_INT_POSITION_MAP = {0: "before_char", 1: "after_char"}
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    """Best-effort int coercion; ``default`` on None/non-numeric."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed/hand-edited import files.
+
+    Plain ``bool(value)`` is wrong here: ``bool("false")`` is ``True`` and
+    ``bool(None)`` is ``False``, so a string boolean or an explicit null would
+    silently change an entry's matching behavior. ``None`` returns ``default``;
+    recognized string booleans map by value; unknown strings return ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
+
+
+def _as_str_list(value: Any) -> List[str]:
+    """Coerce a keys-like field to a list of non-blank strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        # Drop None (and blank) items BEFORE stringifying — otherwise a null in a
+        # keys array becomes the literal "None" (a phantom keyword), and a list of
+        # only nulls would slip past the empty-keys validation as ["None"].
+        return [str(v) for v in value if v is not None and str(v).strip()]
+    return []
+
+
+def _normalize_position(pos: Any) -> str:
+    """Map a position (tldw string or SillyTavern int) to a tldw position."""
+    if isinstance(pos, str) and pos in _VALID_POSITIONS:
+        return pos
+    if isinstance(pos, bool):
+        return "before_char"
+    if isinstance(pos, int):
+        return _INT_POSITION_MAP.get(pos, "before_char")
+    return "before_char"
+
+
+def _normalize_entry(entry: Any, index: int) -> Dict[str, Any]:
+    """Map one entry to tldw fields; raise ValueError (1-based index) if invalid."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"Entry {index + 1} is not an object.")
+    raw_keys = entry.get("keys")
+    if raw_keys is None:
+        raw_keys = entry.get("key")
+    keys = _as_str_list(raw_keys)
+    if not keys:
+        raise ValueError(f"Entry {index + 1} has no keys.")
+    # Explicit null content must be treated as empty (→ ValueError), not
+    # stringified to the literal "None" (the same null-stringify trap as keys).
+    raw_content = entry.get("content")
+    content = str(raw_content) if raw_content is not None else ""
+    if not content.strip():
+        raise ValueError(f"Entry {index + 1} has no content.")
+    raw_secondary = entry.get("secondary_keys")
+    if raw_secondary is None:
+        raw_secondary = entry.get("keysecondary")
+    raw_case = entry.get("case_sensitive")
+    if raw_case is None:
+        raw_case = entry.get("caseSensitive")
+    # enabled: an explicit value wins (null → default enabled); otherwise fall
+    # back to the (inverted) SillyTavern ``disable`` flag.
+    raw_enabled = entry.get("enabled")
+    if raw_enabled is not None:
+        enabled = _coerce_bool(raw_enabled, True)
+    else:
+        enabled = not _coerce_bool(entry.get("disable"), False)
+    extensions = entry.get("extensions")
+    regex_on = _coerce_bool(entry.get("regex"), False)
+    if regex_on:
+        for pat in list(keys) + _as_str_list(raw_secondary):
+            try:
+                validate_regex_pattern(pat)
+            except ValueError as exc:
+                raise ValueError(f"Entry {index + 1}: {exc}") from exc
+    return {
+        "keys": keys,
+        "secondary_keys": _as_str_list(raw_secondary),
+        "content": content,
+        "insertion_order": _coerce_int(
+            entry.get("insertion_order", entry.get("order", index)), index
+        ),
+        "position": _normalize_position(entry.get("position")),
+        "selective": _coerce_bool(entry.get("selective"), False),
+        "case_sensitive": _coerce_bool(raw_case, False),
+        "enabled": enabled,
+        "priority": _coerce_int(entry.get("priority", 0), 0),
+        "extensions": extensions if isinstance(extensions, dict) else {},
+        "regex": regex_on,
+    }
+
+
+def normalize_world_book_import(data: Any) -> Dict[str, Any]:
+    """Normalize + validate an imported world-book payload.
+
+    Args:
+        data: The parsed JSON from an import file.
+
+    Returns:
+        A dict with tldw metadata keys preserved and ``entries`` mapped to
+        tldw's field names as a list, ready for ``import_world_book``.
+
+    Raises:
+        ValueError: If the payload is not a dict, ``entries`` is neither a list
+            nor an object, or any entry is not a dict / has no keys / no content.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("World book file must be a JSON object.")
+    raw_entries = data.get("entries")
+    if raw_entries is None:
+        entries_list: List[Any] = []
+    elif isinstance(raw_entries, dict):
+        entries_list = list(raw_entries.values())
+    elif isinstance(raw_entries, list):
+        entries_list = raw_entries
+    else:
+        raise ValueError("'entries' must be a list or an object.")
+    normalized = [_normalize_entry(entry, i) for i, entry in enumerate(entries_list)]
+    return {**data, "entries": normalized}
+
+
+def character_book_to_world_book_block(
+    book: Any, fallback_name: str
+) -> tuple["dict | None", int, int]:
+    """Convert a V2 card ``character_book`` into one embedded
+    ``character_world_books`` snapshot block (task-429).
+
+    Salvage-and-count: entries that ``_normalize_entry`` rejects (not a dict,
+    no keys, no content, or an invalid regex pattern) are skipped and counted,
+    so one bad entry never sinks the book. Never raises.
+
+    Args:
+        book: The card's ``character_book`` value. Untrusted import data, so
+            any shape is tolerated; a non-dict yields ``(None, 0, 0)``.
+        fallback_name: Name for the produced block when the book carries no
+            usable name of its own.
+
+    Returns:
+        ``(block_or_None, imported_count, skipped_count)``. ``None`` only when
+        ``book`` is not a dict.
+    """
+    if not isinstance(book, dict):
+        return None, 0, 0
+    raw_name = book.get("name")
+    name = (
+        raw_name.strip()
+        if isinstance(raw_name, str) and raw_name.strip()
+        else fallback_name
+    )
+    raw_entries = book.get("entries")
+    if isinstance(raw_entries, dict):
+        entries_list = list(raw_entries.values())
+    elif isinstance(raw_entries, list):
+        entries_list = raw_entries
+    else:
+        entries_list = []
+    normalized: List[Dict[str, Any]] = []
+    skipped = 0
+    for i, entry in enumerate(entries_list):
+        try:
+            normalized.append(_normalize_entry(entry, i))
+        except ValueError:
+            skipped += 1
+            logger.warning(
+                "character_book entry skipped on import (entry_index={}).",
+                i,
+            )
+    block = {
+        "name": name,
+        "description": str(book.get("description") or ""),
+        "scan_depth": _coerce_int(book.get("scan_depth"), 3),
+        "token_budget": _coerce_int(book.get("token_budget"), 500),
+        "recursive_scanning": _coerce_bool(book.get("recursive_scanning"), False),
+        "enabled": _coerce_bool(book.get("enabled"), True),
+        "entries": normalized,
+    }
+    return block, len(normalized), skipped
+
+
+def format_imported_lorebook_note(books: object) -> str:
+    """Return the toast suffix naming the lorebook an import just attached.
+
+    Args:
+        books: The character's ``extensions["character_world_books"]`` value,
+            straight from an imported record and therefore untrusted -- any
+            shape is tolerated and yields "".
+
+    Returns:
+        A leading-space suffix like ``" Lorebook 'X' attached (2 entries)."``,
+        or ``""`` when there is no usable book to name.
+
+    The LAST block is named, not the first: ``parse_v2_card`` appends the
+    converted book to whatever list the card already carried, so reading the
+    first block announced a pre-existing book instead of the imported one.
+    """
+    if not isinstance(books, list) or not books:
+        return ""
+    block = books[-1]
+    if not isinstance(block, dict):
+        return ""
+    name = str(block.get("name") or "lorebook")
+    entries = block.get("entries")
+    count = len(entries) if isinstance(entries, list) else 0
+    return f" Lorebook '{name}' attached ({count} entries)."

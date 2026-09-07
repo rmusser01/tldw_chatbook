@@ -1,18 +1,58 @@
-from unittest.mock import Mock
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from tldw_chatbook.Subscriptions import WatchlistScopeService
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
+from tldw_chatbook.Subscriptions import local_watchlists_service
+from tldw_chatbook.Subscriptions.watchlist_item_page import (
+    WatchlistItemCursor,
+    WatchlistItemPage,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
+def _durable_claim_state(
+    db: SubscriptionsDB, run_id: int, source_id: int
+) -> tuple[dict, tuple]:
+    run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    counters = tuple(
+        db.conn.execute(
+            "SELECT error_count, consecutive_failures, last_error, is_paused, "
+            "last_checked, last_successful_check FROM subscriptions WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+    )
+    return run, counters
+
+
 class FakeLocalWatchlists:
+    CREATE_FORM_SOURCE_TYPES = ("rss", "atom", "url")
+
     def __init__(self):
         self.calls = []
 
     async def list_sources(self, **kwargs):
         self.calls.append(("list_sources", kwargs))
         return [{"id": "local:subscription:1", "backend": "local"}]
+
+    async def list_items(self, **kwargs):
+        self.calls.append(("list_items", kwargs))
+        return []
+
+    async def list_reader_items_page(self, **kwargs):
+        self.calls.append(("list_reader_items_page", kwargs))
+        return self.reader_page
+
+    async def count_reader_item_arrivals(self, **kwargs):
+        self.calls.append(("count_reader_item_arrivals", kwargs))
+        return 4
 
     async def get_source(self, source_id):
         self.calls.append(("get_source", source_id))
@@ -24,7 +64,11 @@ class FakeLocalWatchlists:
 
     async def update_source(self, source_id, payload):
         self.calls.append(("update_source", source_id, payload))
-        return {"id": f"local:subscription:{source_id}", "backend": "local", **dict(payload)}
+        return {
+            "id": f"local:subscription:{source_id}",
+            "backend": "local",
+            **dict(payload),
+        }
 
     async def delete_source(self, source_id):
         self.calls.append(("delete_source", source_id))
@@ -44,7 +88,11 @@ class FakeLocalWatchlists:
 
     async def get_run_detail(self, run_id, **kwargs):
         self.calls.append(("get_run_detail", run_id, kwargs))
-        return {"id": f"local:watchlist_run:{run_id}", "backend": "local", "log_text": "local"}
+        return {
+            "id": f"local:watchlist_run:{run_id}",
+            "backend": "local",
+            "log_text": "local",
+        }
 
     async def list_alert_rules(self, **kwargs):
         self.calls.append(("list_alert_rules", kwargs))
@@ -60,7 +108,11 @@ class FakeLocalWatchlists:
 
     async def update_alert_rule(self, rule_id, **kwargs):
         self.calls.append(("update_alert_rule", rule_id, kwargs))
-        return {"id": f"local:watchlist_alert_rule:{rule_id}", "backend": "local", **kwargs}
+        return {
+            "id": f"local:watchlist_alert_rule:{rule_id}",
+            "backend": "local",
+            **kwargs,
+        }
 
     async def delete_alert_rule(self, rule_id):
         self.calls.append(("delete_alert_rule", rule_id))
@@ -79,6 +131,8 @@ class FakeExecutableLocalWatchlists(FakeLocalWatchlists):
 
 
 class FakeServerWatchlists:
+    CREATE_FORM_SOURCE_TYPES = ("rss", "site", "forum")
+
     def __init__(self):
         self.calls = []
 
@@ -96,7 +150,11 @@ class FakeServerWatchlists:
 
     async def update_source(self, source_id, **kwargs):
         self.calls.append(("update_source", source_id, kwargs))
-        return {"id": f"server:watchlist_source:{source_id}", "backend": "server", **kwargs}
+        return {
+            "id": f"server:watchlist_source:{source_id}",
+            "backend": "server",
+            **kwargs,
+        }
 
     async def delete_source(self, source_id):
         self.calls.append(("delete_source", source_id))
@@ -104,7 +162,11 @@ class FakeServerWatchlists:
 
     async def launch_run(self, **kwargs):
         self.calls.append(("launch_run", kwargs))
-        return {"id": "server:watchlist_run:101", "backend": "server", "status": "running"}
+        return {
+            "id": "server:watchlist_run:101",
+            "backend": "server",
+            "status": "running",
+        }
 
     async def list_runs(self, **kwargs):
         self.calls.append(("list_runs", kwargs))
@@ -116,7 +178,11 @@ class FakeServerWatchlists:
 
     async def get_run_detail(self, run_id, **kwargs):
         self.calls.append(("get_run_detail", run_id, kwargs))
-        return {"id": f"server:watchlist_run:{run_id}", "backend": "server", "log_text": "server"}
+        return {
+            "id": f"server:watchlist_run:{run_id}",
+            "backend": "server",
+            "log_text": "server",
+        }
 
     async def list_alert_rules(self, **kwargs):
         self.calls.append(("list_alert_rules", kwargs))
@@ -132,11 +198,36 @@ class FakeServerWatchlists:
 
     async def update_alert_rule(self, rule_id, **kwargs):
         self.calls.append(("update_alert_rule", rule_id, kwargs))
-        return {"id": f"server:watchlist_alert_rule:{rule_id}", "backend": "server", **kwargs}
+        return {
+            "id": f"server:watchlist_alert_rule:{rule_id}",
+            "backend": "server",
+            **kwargs,
+        }
 
     async def delete_alert_rule(self, rule_id):
         self.calls.append(("delete_alert_rule", rule_id))
         return {"deleted": True, "id": f"server:watchlist_alert_rule:{rule_id}"}
+
+
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected"),
+    [
+        (None, FakeLocalWatchlists.CREATE_FORM_SOURCE_TYPES),
+        ("local", FakeLocalWatchlists.CREATE_FORM_SOURCE_TYPES),
+        ("server", FakeServerWatchlists.CREATE_FORM_SOURCE_TYPES),
+    ],
+)
+def test_scope_service_returns_active_create_form_source_types(
+    runtime_backend, expected
+):
+    scope = WatchlistScopeService(
+        local_service=FakeLocalWatchlists(),
+        server_service=FakeServerWatchlists(),
+    )
+
+    assert (
+        scope.create_form_source_types(runtime_backend=runtime_backend) == expected
+    )
 
 
 @pytest.mark.asyncio
@@ -150,14 +241,20 @@ async def test_scope_service_routes_local_and_server_actions_with_watchlists_act
         policy_enforcer=policy,
     )
 
-    local_rows = await scope.list_watch_items(runtime_backend="local", limit=25, offset=5)
+    local_rows = await scope.list_watch_items(
+        runtime_backend="local", limit=25, offset=5
+    )
     server_rows = await scope.list_watch_items(runtime_backend="server", q="ai")
-    detail = await scope.get_watch_item_detail("server:watchlist_source:17", runtime_backend="server")
+    detail = await scope.get_watch_item_detail(
+        "server:watchlist_source:17", runtime_backend="server"
+    )
 
     assert local_rows[0]["backend"] == "local"
     assert server_rows[0]["backend"] == "server"
     assert detail["id"] == "server:watchlist_source:17"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "watchlists.list.local",
         "watchlists.list.server",
         "watchlists.detail.server",
@@ -166,6 +263,106 @@ async def test_scope_service_routes_local_and_server_actions_with_watchlists_act
     assert server.calls == [
         ("list_sources", {"limit": 100, "offset": 0, "q": "ai"}),
         ("get_source", "17"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reader_items_page_with_items_list_policy():
+    cursor = WatchlistItemCursor("2026-08-25 12:00:00", 21)
+    page = WatchlistItemPage(
+        items=(),
+        has_more=False,
+        snapshot_max_item_id=42,
+        snapshot_count=0,
+        next_cursor=None,
+    )
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    local.reader_page = page
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    result = await scope.list_reader_items_page(
+        runtime_backend="local",
+        source_id="7",
+        status=None,
+        limit=25,
+        run_id="8",
+        watchlist_id="9",
+        unassigned_only=True,
+        statuses=["new", "reviewed"],
+        is_flagged=True,
+        search="reader",
+        since="2026-08-25 00:00:00",
+        snapshot_max_item_id=42,
+        after=cursor,
+    )
+
+    assert result is page
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.local"
+    )
+    assert local.calls == [
+        (
+            "list_reader_items_page",
+            {
+                "source_id": "7",
+                "status": None,
+                "limit": 25,
+                "run_id": "8",
+                "watchlist_id": "9",
+                "unassigned_only": True,
+                "statuses": ["new", "reviewed"],
+                "is_flagged": True,
+                "search": "reader",
+                "since": "2026-08-25 00:00:00",
+                "snapshot_max_item_id": 42,
+                "after": cursor,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reader_item_arrivals_with_items_list_policy():
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    result = await scope.count_reader_item_arrivals(
+        runtime_backend="local",
+        snapshot_max_item_id=42,
+        source_id="7",
+        statuses=["new", "reviewed"],
+    )
+
+    assert result == 4
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.local"
+    )
+    assert local.calls == [
+        (
+            "count_reader_item_arrivals",
+            {
+                "snapshot_max_item_id": 42,
+                "source_id": "7",
+                "status": None,
+                "run_id": None,
+                "watchlist_id": None,
+                "unassigned_only": False,
+                "statuses": ["new", "reviewed"],
+                "is_flagged": None,
+                "search": None,
+                "since": None,
+            },
+        )
     ]
 
 
@@ -181,19 +378,27 @@ async def test_scope_service_routes_create_update_delete_to_active_backend():
 
     created = await scope.create_watch_item(
         runtime_backend="server",
-        payload={"name": "Docs", "url": "https://example.com/docs", "source_type": "site"},
+        payload={
+            "name": "Docs",
+            "url": "https://example.com/docs",
+            "source_type": "site",
+        },
     )
     updated = await scope.update_watch_item(
         "server:watchlist_source:18",
         runtime_backend="server",
         payload={"name": "Docs Updated"},
     )
-    deleted = await scope.delete_watch_item("server:watchlist_source:18", runtime_backend="server")
+    deleted = await scope.delete_watch_item(
+        "server:watchlist_source:18", runtime_backend="server"
+    )
 
     assert created["name"] == "Docs"
     assert updated["name"] == "Docs Updated"
     assert deleted["success"] is True
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "watchlists.create.server",
         "watchlists.update.server",
         "watchlists.delete.server",
@@ -255,7 +460,9 @@ async def test_scope_service_blocks_deferred_group_editing_before_dispatch():
             payload={"groups": [{"id": 3}]},
         )
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "watchlists.create.local",
         "watchlists.update.server",
         "watchlists.create.local",
@@ -333,13 +540,143 @@ async def test_scope_service_executes_local_runs_when_local_backend_supports_exe
         ("launch_run", {"job_id": None, "source_id": 1}),
         ("execute_run", "1"),
     ]
-    assert [item["operation_id"] for item in local_report] == ["watchlists.groups.local"]
+    assert [item["operation_id"] for item in local_report] == [
+        "watchlists.groups.local"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_observes_losing_claim_without_executing_it():
+    local = Mock()
+    local.launch_run = AsyncMock(
+        return_value={
+            "run_id": 7,
+            "status": "running",
+            "_claim_acquired": False,
+        }
+    )
+    local.wait_for_terminal_run = AsyncMock(
+        return_value={"run_id": 7, "status": "completed"}
+    )
+    local.execute_run = AsyncMock()
+    scope = WatchlistScopeService(local_service=local, server_service=None)
+
+    receipt = await scope.launch_run(runtime_backend="local", source_id=42)
+
+    assert receipt == {"run_id": 7, "status": "completed"}
+    local.wait_for_terminal_run.assert_awaited_once_with("7")
+    local.execute_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scope_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_path):
+    path = tmp_path / "scope-timeout.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    observer_db = SubscriptionsDB(path, "observer")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    observer = LocalWatchlistsService(
+        db_factory=lambda: observer_db, run_executor=executor
+    )
+    scope = WatchlistScopeService(local_service=observer, server_service=None)
+    clock = 0.0
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        nonlocal clock
+        sleeps.append(delay)
+        clock = round(clock + delay, 9)
+
+    monkeypatch.setattr(
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 0.03
+    )
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock),
+    )
+    monkeypatch.setattr(
+        local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for watchlist run"):
+        await scope.launch_run(runtime_backend="local", source_id=source_id)
+
+    assert sleeps == pytest.approx([0.01, 0.02])
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    observer_db.close()
+
+
+@pytest.mark.asyncio
+async def test_scope_loser_cancellation_preserves_stranded_winner(tmp_path):
+    path = tmp_path / "scope-cancel.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    observer_db = SubscriptionsDB(path, "observer")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    observer = LocalWatchlistsService(
+        db_factory=lambda: observer_db, run_executor=executor
+    )
+    entered_wait = asyncio.Event()
+    queries = 0
+    original_get_run = observer.get_run
+
+    async def get_run(run_id):
+        nonlocal queries
+        queries += 1
+        receipt = await original_get_run(run_id)
+        if queries == 2:
+            entered_wait.set()
+        return receipt
+
+    observer.get_run = get_run
+    scope = WatchlistScopeService(local_service=observer, server_service=None)
+    waiting = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source_id)
+    )
+    await asyncio.wait_for(entered_wait.wait(), timeout=1)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert queries == 2
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    observer_db.close()
 
 
 @pytest.mark.asyncio
 async def test_scope_service_fails_closed_for_invalid_backend_before_dispatch():
     local = FakeLocalWatchlists()
-    scope = WatchlistScopeService(local_service=local, server_service=FakeServerWatchlists())
+    scope = WatchlistScopeService(
+        local_service=local, server_service=FakeServerWatchlists()
+    )
 
     with pytest.raises(ValueError, match="Invalid watchlists backend"):
         await scope.list_watch_items(runtime_backend="mixed")
@@ -385,15 +722,21 @@ async def test_scope_service_routes_run_actions_with_watchlists_run_action_ids()
     )
 
     launched = await scope.launch_run(runtime_backend="server", job_id=7)
-    listed = await scope.list_runs(runtime_backend="server", job_id=7, limit=25, offset=25)
+    listed = await scope.list_runs(
+        runtime_backend="server", job_id=7, limit=25, offset=25
+    )
     fetched = await scope.get_run("server:watchlist_run:101", runtime_backend="server")
-    observed = await scope.observe_run("server:watchlist_run:101", runtime_backend="server", include_tallies=True)
+    observed = await scope.observe_run(
+        "server:watchlist_run:101", runtime_backend="server", include_tallies=True
+    )
 
     assert launched["status"] == "running"
     assert listed[0]["backend"] == "server"
     assert fetched["id"] == "server:watchlist_run:101"
     assert observed["log_text"] == "server"
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "watchlists.runs.launch.server",
         "watchlists.runs.list.server",
         "watchlists.runs.detail.server",
@@ -418,7 +761,9 @@ async def test_scope_service_routes_alert_rule_crud_with_watchlists_alert_rule_a
     )
 
     listed = await scope.list_alert_rules(runtime_backend="server", job_id=7)
-    fetched = await scope.get_alert_rule("server:watchlist_alert_rule:11", runtime_backend="server")
+    fetched = await scope.get_alert_rule(
+        "server:watchlist_alert_rule:11", runtime_backend="server"
+    )
     created = await scope.create_alert_rule(
         runtime_backend="server",
         payload={
@@ -433,14 +778,18 @@ async def test_scope_service_routes_alert_rule_crud_with_watchlists_alert_rule_a
         runtime_backend="server",
         payload={"enabled": False},
     )
-    deleted = await scope.delete_alert_rule("server:watchlist_alert_rule:12", runtime_backend="server")
+    deleted = await scope.delete_alert_rule(
+        "server:watchlist_alert_rule:12", runtime_backend="server"
+    )
 
     assert listed[0]["backend"] == "server"
     assert fetched["id"] == "server:watchlist_alert_rule:11"
     assert created["name"] == "Too many"
     assert updated["enabled"] is False
     assert deleted["deleted"] is True
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "watchlists.alert_rules.list.server",
         "watchlists.alert_rules.detail.server",
         "watchlists.alert_rules.create.server",
@@ -462,3 +811,125 @@ async def test_scope_service_routes_alert_rule_crud_with_watchlists_alert_rule_a
         ("update_alert_rule", "12", {"enabled": False}),
         ("delete_alert_rule", "12"),
     ]
+
+
+# --- Batch-4 review round 2, N1: one notification per cancelled check -----
+#
+# `WatchlistScopeService.launch_run`'s two-layer defense-in-depth
+# (`LocalWatchlistsService.execute_run` catches `asyncio.CancelledError` and
+# records the run's terminal state, `launch_run` catches it too as a
+# fallback for whatever might escape that inner handler) is real
+# `LocalWatchlistsService`, not `FakeLocalWatchlists` above: the bug lives in
+# the INTERACTION between the two real `except asyncio.CancelledError`
+# branches, and a fake single-method mock cannot reproduce a second write
+# happening at all.
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_check_produces_exactly_one_notification_not_two(tmp_path):
+    """N1 (Important, introduced by the C1 fix). Before the fix, a
+    cancelled check with a status-agnostic alert rule present (here,
+    "no_items", which fires whenever `items_ingested == 0` regardless of
+    whether the run succeeded or failed) produced TWO identical
+    `client_notifications` rows: one written by `execute_run`'s own
+    `except asyncio.CancelledError` handler, a second written by
+    `launch_run`'s outer one re-recording the SAME cancellation after the
+    re-raise propagated up to it. The run row itself was never doubled
+    (`record_run_result`'s UPDATE is idempotent by id) -- only the
+    notification INSERT, which has no deduplicating check despite
+    `dedupe_key` existing in the payload.
+
+    The executor is gated on two events rather than the single-event/poll
+    pattern used elsewhere in this suite: `entered` is set the instant the
+    executor is actually invoked (i.e. AFTER `_mark_run_started` has
+    already run, inside `execute_run`'s own `try` block) so the test can
+    `task.cancel()` at exactly that suspension point deterministically,
+    with no timing race and no reliance on a fixed sleep matching real
+    fetch latency.
+    """
+    import asyncio
+
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Notifications import (
+        ClientNotificationsDB,
+        NotificationDispatchService,
+    )
+    from tldw_chatbook.Subscriptions import LocalWatchlistsService
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    notification_store = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notification_store)
+    local_service = LocalWatchlistsService(
+        db_factory=lambda: db, notification_dispatcher=dispatcher
+    )
+    scope = WatchlistScopeService(local_service=local_service, server_service=None)
+
+    source = await local_service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    # Status-agnostic: fires on `items_ingested == 0` whatever the run's
+    # final status is -- exactly the rule shape the review named.
+    await local_service.create_alert_rule(
+        name="No items",
+        condition_type="no_items",
+        job_id=source["source_id"],
+    )
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _gated_executor(subscription):
+        entered.set()
+        await release.wait()
+        return {"items": []}
+
+    local_service.run_executor = _gated_executor
+
+    task = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    notifications = notification_store.list_notifications(limit=10)
+    assert len(notifications) == 1, (
+        f"a single cancelled check must produce exactly one notification, "
+        f"got {len(notifications)}: {notifications!r}"
+    )
+    # The "no_items" rule's own message, naming the condition it matched --
+    # confirms the ONE row that does exist is the real alert, not an empty
+    # placeholder.
+    assert "0 items" in notifications[0]["message"]
+    runs = await local_service.list_runs(source_id=source["source_id"])
+    assert runs[0]["status"] == "failed", (
+        "the run itself must still reach a terminal state (this is C1's "
+        "own guarantee, re-checked here as the test's precondition)"
+    )
+
+
+async def test_scope_service_forwards_is_flagged_to_local_list_items():
+    """task-3072: the Starred feed's scope reaches the local backend.
+
+    The scope service names its `list_items` filters explicitly (the
+    TASK-2513 threading), so a new one is only real once it is forwarded --
+    this pins the passthrough the screen's `{"is_flagged": True}` scope
+    mapping relies on.
+    """
+    local = FakeLocalWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=Mock(),
+    )
+
+    await scope.list_items(runtime_backend="local", is_flagged=True)
+
+    list_calls = [call for call in local.calls if call[0] == "list_items"]
+    assert len(list_calls) == 1
+    assert list_calls[0][1]["is_flagged"] is True

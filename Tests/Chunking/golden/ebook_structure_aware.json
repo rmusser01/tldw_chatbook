@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "41f937bf783eb246d65118a618eb9972",
+        "chunk_index": 1,
+        "chunk_method": "structure_aware",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "# Chapter 1\n\nFirst chapter text.\n\n# Chapter 2\n\nSecond chapter text."
+    }
+  ],
+  "outcome": "ok"
+}

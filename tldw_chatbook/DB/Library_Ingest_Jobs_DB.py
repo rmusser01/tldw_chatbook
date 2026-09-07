@@ -1,0 +1,482 @@
+"""SQLite persistence for the Library ingest job registry.
+
+Single-user, UI-thread-only: keeps ONE persistent WAL connection reused across
+all reads/writes (safe because every registry mutation runs on the UI thread),
+rather than opening/closing per operation.
+
+Held-connection rule (task-22224) -- this module is the store TEMPLATE other
+held-connection stores copy, so the rule lives here: a held connection MUST set
+``isolation_level = None`` (true autocommit). Without it, Python's legacy
+isolation mode auto-BEGINs a DEFERRED transaction on the first bare DML
+statement; that leaked transaction then makes the explicit ``BEGIN`` in
+``transaction()`` raise "cannot start a transaction within a transaction"
+(or, in stores with a borrow-style manager, silently degrades it), and bare
+DML is silently rolled back when the connection closes. Under autocommit,
+single statements are their own durable transaction, and multi-statement
+atomicity comes ONLY from the explicit BEGIN/COMMIT in ``transaction()`` --
+so every multi-statement write must go through it; ``conn.commit()`` outside
+an explicit BEGIN is a no-op, never a substitute.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator, Union
+
+from loguru import logger
+
+from tldw_chatbook.Research_Workspace.source_operations import (
+    validate_source_operation_id,
+)
+from tldw_chatbook.STT.persistence import dump_failed_transcription_attempt
+
+from .base_db import BaseDB
+from .private_sqlite import connect_private_sqlite
+
+
+class LibraryIngestJobLinkConflictError(RuntimeError):
+    """Raised when an upsert would mutate persisted Research lineage."""
+
+
+class LibraryIngestJobsDB(BaseDB):
+    _CURRENT_SCHEMA_VERSION = 7
+    _STT_LINEAGE_COLUMNS = (
+        ("retry_of_job_id", "TEXT DEFAULT NULL"),
+        ("stt_failure_provenance_json", "TEXT DEFAULT NULL"),
+        ("retry_source_failure_provenance_json", "TEXT DEFAULT NULL"),
+    )
+
+    def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
+        self._conn: sqlite3.Connection | None = None
+        super().__init__(db_path, client_id)  # calls _initialize_schema()
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Open a write transaction that rolls back on failure.
+
+        The explicit BEGIN below is the ONLY transaction owner on this
+        store's autocommit connection (task-22224, module docstring): every
+        multi-statement write must run inside this manager, because outside
+        it each statement commits individually.
+        """
+        conn = self._get_connection()
+        conn.execute("BEGIN")
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._conn = connect_private_sqlite(
+                "db.library_ingest_jobs",
+                self.db_path_str,
+                check_same_thread=False,
+            )
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            # NORMAL is safe under WAL and avoids an fsync per commit -- writes
+            # are per-mutation on the UI thread (a bulk drop = many small
+            # commits), so FULL's per-commit fsync would add avoidable latency.
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            # task-22224: a HELD connection needs true autocommit -- see the
+            # module docstring for the rule and its failure modes. Explicit
+            # BEGIN/COMMIT in ``transaction()`` is the only transaction owner.
+            self._conn.isolation_level = None
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                logger.opt(exception=True).debug("LibraryIngestJobsDB: close failed")
+            finally:
+                self._conn = None
+
+    def _migrate_v1_to_v2(self) -> None:
+        """Add JSON columns for ingest options, progress, error detail, and content hash.
+
+        Inline migration following the repo's existing convention (e.g.
+        ``Client_Media_DB_v2.py``) rather than a separate ``migrations/``
+        script, since this DB class owns its own schema versioning.
+        """
+        columns = [
+            ("ingest_options", "TEXT DEFAULT '{}'"),
+            ("error_detail", "TEXT DEFAULT NULL"),
+            ("progress", "TEXT DEFAULT NULL"),
+            ("content_hash", "TEXT DEFAULT NULL"),
+        ]
+        with self.transaction() as conn:
+            for name, dtype in columns:
+                try:
+                    conn.execute(f"ALTER TABLE ingest_jobs ADD COLUMN {name} {dtype}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e).lower():
+                        raise
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Add remote-job columns and admit the ``cancelled`` state.
+
+        A server-side ingest has no local ``media_id`` and does have a remote
+        job id and batch id, so the queue could not represent one at all
+        (task-684.2). The ``state`` CHECK also has to admit ``cancelled``,
+        which the server reports and SQLite cannot add to a constraint in
+        place -- hence the table rebuild rather than a bare ``ADD COLUMN``.
+
+        The rebuild copies by explicit column list (not ``SELECT *``) so a
+        column added by some future migration cannot silently shift into the
+        wrong position.
+        """
+        with self.transaction() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE ingest_jobs_v3 (
+                    seq INTEGER PRIMARY KEY,
+                    job_id TEXT UNIQUE NOT NULL,
+                    source_path TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    author TEXT NOT NULL DEFAULT '',
+                    keywords TEXT NOT NULL DEFAULT '[]',
+                    perform_analysis INTEGER NOT NULL DEFAULT 0,
+                    chunk_enabled INTEGER NOT NULL DEFAULT 0,
+                    chunk_size INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    detected_type TEXT NOT NULL DEFAULT '',
+                    error TEXT NOT NULL DEFAULT '',
+                    finished_at_wall TEXT NOT NULL DEFAULT '',
+                    media_id INTEGER,
+                    superseded INTEGER NOT NULL DEFAULT 0,
+                    dismissed INTEGER NOT NULL DEFAULT 0,
+                    permanent INTEGER NOT NULL DEFAULT 0,
+                    ingest_options TEXT DEFAULT '{}',
+                    error_detail TEXT DEFAULT NULL,
+                    progress TEXT DEFAULT NULL,
+                    content_hash TEXT DEFAULT NULL,
+                    origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
+                    remote_job_id TEXT DEFAULT NULL,
+                    batch_id TEXT DEFAULT NULL
+                );
+
+                INSERT INTO ingest_jobs_v3
+                  (seq, job_id, source_path, title, author, keywords,
+                   perform_analysis, chunk_enabled, chunk_size, state,
+                   retry_count, detected_type, error, finished_at_wall,
+                   media_id, superseded, dismissed, permanent, ingest_options,
+                   error_detail, progress, content_hash)
+                SELECT
+                   seq, job_id, source_path, title, author, keywords,
+                   perform_analysis, chunk_enabled, chunk_size, state,
+                   retry_count, detected_type, error, finished_at_wall,
+                   media_id, superseded, dismissed, permanent, ingest_options,
+                   error_detail, progress, content_hash
+                FROM ingest_jobs;
+
+                DROP TABLE ingest_jobs;
+                ALTER TABLE ingest_jobs_v3 RENAME TO ingest_jobs;
+                """
+            )
+            # task-22224: ``executescript`` ends the manager's explicit
+            # transaction and commits as it goes (it did so under legacy
+            # isolation too -- verified empirically on 3.12/SQLite 3.49), so
+            # everything after it runs in autocommit. The version stamp must
+            # therefore be ONE statement: a DELETE+INSERT pair here could be
+            # split by a crash, leaving ``schema_version`` empty. The table
+            # always holds exactly one row (created by ``_initialize_schema``).
+            conn.execute("UPDATE schema_version SET version = 3")
+
+    def _initialize_schema(self) -> None:
+        conn = self._get_connection()
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY NOT NULL);
+            INSERT OR IGNORE INTO schema_version (version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
+
+            CREATE TABLE IF NOT EXISTS ingest_jobs (
+                seq INTEGER PRIMARY KEY,
+                job_id TEXT UNIQUE NOT NULL,
+                source_path TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL DEFAULT '',
+                keywords TEXT NOT NULL DEFAULT '[]',
+                perform_analysis INTEGER NOT NULL DEFAULT 0,
+                chunk_enabled INTEGER NOT NULL DEFAULT 0,
+                chunk_size INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                detected_type TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '',
+                finished_at_wall TEXT NOT NULL DEFAULT '',
+                media_id INTEGER,
+                superseded INTEGER NOT NULL DEFAULT 0,
+                dismissed INTEGER NOT NULL DEFAULT 0,
+                permanent INTEGER NOT NULL DEFAULT 0,
+                ingest_options TEXT DEFAULT '{}',
+                error_detail TEXT DEFAULT NULL,
+                progress TEXT DEFAULT NULL,
+                content_hash TEXT DEFAULT NULL,
+                origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
+                remote_job_id TEXT DEFAULT NULL,
+                batch_id TEXT DEFAULT NULL,
+                remote_media_id TEXT DEFAULT NULL,
+                retry_of_job_id TEXT DEFAULT NULL,
+                stt_failure_provenance_json TEXT DEFAULT NULL,
+                retry_source_failure_provenance_json TEXT DEFAULT NULL,
+                research_source_operation_id TEXT DEFAULT NULL,
+                dispatch_held INTEGER NOT NULL DEFAULT 0
+                    CHECK (dispatch_held IN (0, 1))
+            );
+            """
+        )
+        # No ``conn.commit()``: the connection is autocommit (task-22224) and
+        # ``executescript`` commits as it goes; a trailing commit() would be a
+        # no-op that invites copying the wrong idiom out of this template.
+
+        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        current_version = row["version"] if row else 0
+        if current_version < 2:
+            self._migrate_v1_to_v2()
+            current_version = 2
+        if current_version < 3:
+            self._migrate_v2_to_v3()
+            current_version = 3
+        if current_version < 4:
+            self._migrate_v3_to_v4()
+            current_version = 4
+        if current_version < 5:
+            self._migrate_v4_to_v5()
+            current_version = 5
+        if current_version < 6:
+            self._migrate_v5_to_v6()
+            current_version = 6
+        if current_version < 7:
+            self._migrate_v6_to_v7()
+
+    def _migrate_v3_to_v4(self) -> None:
+        """Record the id of the media row the SERVER created.
+
+        A finished server job's ``result`` carries a ``media_id``, but it
+        addresses a row in the server's library, not this machine's, so it
+        cannot go in ``media_id`` -- that column means a local row, and pointing
+        "Open in Library" at a server id would open a wrong or absent one
+        (task-700). A separate column keeps both meanings intact.
+
+        A plain ``ALTER TABLE`` here, unlike the v2->v3 rebuild: nothing changes
+        an existing CHECK constraint, so SQLite can add the column in place.
+        """
+        with self.transaction() as conn:
+            try:
+                conn.execute(
+                    "ALTER TABLE ingest_jobs ADD COLUMN remote_media_id TEXT DEFAULT NULL"
+                )
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (4)")
+
+    def _migrate_v4_to_v5(self) -> None:
+        """Add nullable STT failure and retry-lineage fields."""
+
+        with self.transaction() as conn:
+            for name, dtype in self._STT_LINEAGE_COLUMNS:
+                conn.execute(f"ALTER TABLE ingest_jobs ADD COLUMN {name} {dtype}")
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (5)")
+
+    def _migrate_v5_to_v6(self) -> None:
+        """Add the nullable opaque Research source-operation link."""
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                ALTER TABLE ingest_jobs
+                ADD COLUMN research_source_operation_id TEXT DEFAULT NULL
+                """
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (6)")
+
+    def _migrate_v6_to_v7(self) -> None:
+        """Add a durable, validated Research dispatch-eligibility hold."""
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                ALTER TABLE ingest_jobs
+                ADD COLUMN dispatch_held INTEGER NOT NULL DEFAULT 0
+                    CHECK (dispatch_held IN (0, 1))
+                """
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (7)")
+
+    @staticmethod
+    def _seq_of(job_id: str) -> int:
+        # "ingest-job-{n}" -> n
+        return int(job_id.rsplit("-", 1)[-1])
+
+    def _upsert_job(self, conn: sqlite3.Connection, job) -> None:
+        """Upsert one job through an existing transaction."""
+
+        operation_id = job.research_source_operation_id
+        if operation_id is not None:
+            operation_id = validate_source_operation_id(operation_id)
+        if type(job.dispatch_held) is not bool:
+            raise TypeError("dispatch_held must be bool")
+        existing = conn.execute(
+            "SELECT research_source_operation_id, dispatch_held "
+            "FROM ingest_jobs WHERE job_id = ?",
+            (job.job_id,),
+        ).fetchone()
+        if existing is not None and existing[0] != operation_id:
+            raise LibraryIngestJobLinkConflictError(
+                "research_source_operation_id is immutable once a job is persisted"
+            )
+        if existing is not None and not bool(existing[1]) and job.dispatch_held:
+            raise LibraryIngestJobLinkConflictError(
+                "dispatch_held cannot be restored after durable release"
+            )
+
+        conn.execute(
+            """
+            INSERT INTO ingest_jobs
+              (seq, job_id, source_path, title, author, keywords, perform_analysis,
+               chunk_enabled, chunk_size, state, retry_count, detected_type, error,
+               finished_at_wall, media_id, superseded, dismissed, permanent,
+               ingest_options, error_detail, progress, content_hash,
+               origin, remote_job_id, batch_id, remote_media_id,
+               retry_of_job_id, stt_failure_provenance_json,
+               retry_source_failure_provenance_json, research_source_operation_id,
+               dispatch_held)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(job_id) DO UPDATE SET
+              source_path=excluded.source_path, title=excluded.title, author=excluded.author,
+              keywords=excluded.keywords, perform_analysis=excluded.perform_analysis,
+              chunk_enabled=excluded.chunk_enabled, chunk_size=excluded.chunk_size,
+              state=excluded.state, retry_count=excluded.retry_count,
+              detected_type=excluded.detected_type, error=excluded.error,
+              finished_at_wall=excluded.finished_at_wall, media_id=excluded.media_id,
+              superseded=excluded.superseded, dismissed=excluded.dismissed, permanent=excluded.permanent,
+              ingest_options=excluded.ingest_options, error_detail=excluded.error_detail,
+              progress=excluded.progress, content_hash=excluded.content_hash,
+              origin=excluded.origin, remote_job_id=excluded.remote_job_id,
+              batch_id=excluded.batch_id, remote_media_id=excluded.remote_media_id,
+              retry_of_job_id=COALESCE(ingest_jobs.retry_of_job_id, excluded.retry_of_job_id),
+              stt_failure_provenance_json=excluded.stt_failure_provenance_json,
+              retry_source_failure_provenance_json=COALESCE(
+                ingest_jobs.retry_source_failure_provenance_json,
+                excluded.retry_source_failure_provenance_json
+              ),
+              research_source_operation_id=excluded.research_source_operation_id,
+              dispatch_held=excluded.dispatch_held
+            """,
+            (
+                self._seq_of(job.job_id),
+                job.job_id,
+                job.source_path,
+                job.title,
+                job.author,
+                json.dumps(list(job.keywords)),
+                int(job.perform_analysis),
+                int(job.chunk_enabled),
+                job.chunk_size,
+                job.state.value,
+                job.retry_count,
+                job.detected_type,
+                job.error,
+                job.finished_at_wall,
+                job.media_id,
+                int(job.superseded),
+                int(job.dismissed),
+                int(job.permanent),
+                json.dumps(job.ingest_options or {}),
+                json.dumps(job.error_detail) if job.error_detail is not None else None,
+                json.dumps(job.progress) if job.progress is not None else None,
+                job.content_hash,
+                job.origin,
+                job.remote_job_id,
+                job.batch_id,
+                job.remote_media_id,
+                job.retry_of_job_id,
+                (
+                    dump_failed_transcription_attempt(job.stt_failure_provenance)
+                    if job.stt_failure_provenance is not None
+                    else None
+                ),
+                (
+                    dump_failed_transcription_attempt(
+                        job.retry_source_failure_provenance
+                    )
+                    if job.retry_source_failure_provenance is not None
+                    else None
+                ),
+                operation_id,
+                int(job.dispatch_held),
+            ),
+        )
+
+    def upsert_job(self, job) -> None:
+        """Persist one ingest job in a standardized write transaction."""
+
+        with self.transaction() as conn:
+            self._upsert_job(conn, job)
+
+    def upsert_retry(self, source, retry) -> None:
+        """Persist a superseded source and its retry atomically.
+
+        Args:
+            source: The failed source job with ``superseded`` set.
+            retry: The new queued retry linked to ``source``.
+
+        Raises:
+            Exception: If either upsert fails. The transaction rolls both
+                writes back before propagating the failure.
+        """
+
+        with self.transaction() as conn:
+            self._upsert_job(conn, source)
+            self._upsert_job(conn, retry)
+
+    def delete_job(self, job_id: str) -> None:
+        # Single-statement write: durable at execute() under autocommit
+        # (task-22224); no commit() needed -- it would be a no-op here.
+        conn = self._get_connection()
+        conn.execute("DELETE FROM ingest_jobs WHERE job_id = ?", (job_id,))
+
+    def all_jobs(self) -> list[dict]:
+        conn = self._get_connection()
+        rows = conn.execute("SELECT * FROM ingest_jobs ORDER BY seq ASC").fetchall()
+        return [dict(r) for r in rows]
+
+    def list_dispatch_held(self, *, limit: int = 50) -> list[dict]:
+        """Return one bounded oldest-first page of held queued Research jobs."""
+
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        rows = (
+            self._get_connection()
+            .execute(
+                """
+            SELECT *
+            FROM ingest_jobs
+            WHERE dispatch_held = 1
+                AND state = 'queued'
+                AND research_source_operation_id IS NOT NULL
+            ORDER BY seq ASC
+            LIMIT ?
+            """,
+                (limit,),
+            )
+            .fetchall()
+        )
+        return [dict(row) for row in rows]

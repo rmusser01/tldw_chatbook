@@ -13,7 +13,7 @@ from path_filters import Filters
 
 class EnhancedFilePickerExample(App):
     """Example app demonstrating enhanced file picker features."""
-    
+
     CSS = """
     Container {
         align: center middle;
@@ -31,7 +31,7 @@ class EnhancedFilePickerExample(App):
         margin: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         yield Header()
         with Container():
@@ -48,7 +48,7 @@ class EnhancedFilePickerExample(App):
                 yield Button("Save File", id="save")
                 yield Label("No file selected", id="result")
         yield Footer()
-    
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "open":
@@ -58,10 +58,10 @@ class EnhancedFilePickerExample(App):
                     filters=Filters(
                         ("Python Files", "*.py"),
                         ("Text Files", "*.txt"),
-                        ("All Files", "*.*")
-                    )
+                        ("All Files", "*.*"),
+                    ),
                 ),
-                self.handle_file_selected
+                self.handle_file_selected,
             )
         elif event.button.id == "save":
             self.push_screen(
@@ -70,13 +70,13 @@ class EnhancedFilePickerExample(App):
                     filters=Filters(
                         ("Python Files", "*.py"),
                         ("Text Files", "*.txt"),
-                        ("All Files", "*.*")
+                        ("All Files", "*.*"),
                     ),
-                    default_filename="example.txt"
+                    default_filename="example.txt",
                 ),
-                self.handle_file_selected
+                self.handle_file_selected,
             )
-    
+
     def handle_file_selected(self, path: Path | None) -> None:
         """Handle file selection."""
         result = self.query_one("#result", Label)

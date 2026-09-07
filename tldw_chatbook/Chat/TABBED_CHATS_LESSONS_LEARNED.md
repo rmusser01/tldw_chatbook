@@ -1,5 +1,7 @@
 # Tabbed Chats Implementation - Lessons Learned
 
+> (Describes surfaces retired in task-577, 2026-07; kept as historical record.)
+
 ## Overview
 This document captures the lessons learned from the attempted implementation of tabbed chats in the tldw_chatbook application. The feature was rolled back due to application hanging issues during startup.
 

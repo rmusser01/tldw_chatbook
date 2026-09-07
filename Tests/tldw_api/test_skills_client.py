@@ -57,8 +57,17 @@ async def test_skills_client_routes_crud_import_execute_and_context(monkeypatch)
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"skills": [_skill_summary()], "count": 1, "total": 1, "limit": 25, "offset": 5},
-            {"available_skills": [_skill_summary()], "context_text": "- summarize-notes: Summarize notes"},
+            {
+                "skills": [_skill_summary()],
+                "count": 1,
+                "total": 1,
+                "limit": 25,
+                "offset": 5,
+            },
+            {
+                "available_skills": [_skill_summary()],
+                "context_text": "- summarize-notes: Summarize notes",
+            },
             _skill_payload(),
             _skill_payload(version=1),
             _skill_payload(content="# Updated"),
@@ -95,7 +104,9 @@ async def test_skills_client_routes_crud_import_execute_and_context(monkeypatch)
     )
     deleted = await client.delete_skill("summarize-notes", expected_version=3)
     imported = await client.import_skill(
-        SkillImportRequest(name="rewrite-draft", content="# Skill\nRewrite draft", overwrite=True)
+        SkillImportRequest(
+            name="rewrite-draft", content="# Skill\nRewrite draft", overwrite=True
+        )
     )
     imported_file = await client.import_skill_file(
         b"# Skill\nFile import",
@@ -103,26 +114,41 @@ async def test_skills_client_routes_crud_import_execute_and_context(monkeypatch)
         content_type="text/markdown",
         overwrite=True,
     )
-    executed = await client.execute_skill("summarize-notes", SkillExecuteRequest(args="note-1"))
+    executed = await client.execute_skill(
+        "summarize-notes", SkillExecuteRequest(args="note-1")
+    )
     seeded = await client.seed_builtin_skills(overwrite=True)
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/skills/")
-    assert mocked.await_args_list[0].kwargs["params"] == {"include_hidden": True, "limit": 25, "offset": 5}
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "include_hidden": True,
+        "limit": 25,
+        "offset": 5,
+    }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/skills/context")
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/skills/summarize-notes")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/skills/summarize-notes",
+    )
     assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/skills/")
     assert mocked.await_args_list[3].kwargs["json_data"] == {
         "name": "summarize-notes",
         "content": "# Skill\nSummarize {{args}}",
         "supporting_files": {"reference.md": "Use concise bullets."},
     }
-    assert mocked.await_args_list[4].args[:2] == ("PUT", "/api/v1/skills/summarize-notes")
+    assert mocked.await_args_list[4].args[:2] == (
+        "PUT",
+        "/api/v1/skills/summarize-notes",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {
         "content": "# Updated",
         "supporting_files": {"reference.md": None},
     }
     assert mocked.await_args_list[4].kwargs["headers"] == {"If-Match": "2"}
-    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/skills/summarize-notes")
+    assert mocked.await_args_list[5].args[:2] == (
+        "DELETE",
+        "/api/v1/skills/summarize-notes",
+    )
     assert mocked.await_args_list[5].kwargs["headers"] == {"If-Match": "3"}
     assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/skills/import")
     assert mocked.await_args_list[6].kwargs["json_data"] == {
@@ -135,7 +161,10 @@ async def test_skills_client_routes_crud_import_execute_and_context(monkeypatch)
     assert mocked.await_args_list[7].kwargs["files"] == [
         ("file", ("file-skill.md", b"# Skill\nFile import", "text/markdown"))
     ]
-    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/skills/summarize-notes/execute")
+    assert mocked.await_args_list[8].args[:2] == (
+        "POST",
+        "/api/v1/skills/summarize-notes/execute",
+    )
     assert mocked.await_args_list[8].kwargs["json_data"] == {"args": "note-1"}
     assert mocked.await_args_list[9].args[:2] == ("POST", "/api/v1/skills/seed")
     assert mocked.await_args_list[9].kwargs["params"] == {"overwrite": True}
@@ -167,7 +196,10 @@ async def test_skills_client_exports_zip_with_binary_helper(monkeypatch):
 
     exported = await client.export_skill("summarize-notes")
 
-    assert mocked.await_args.args[:2] == ("GET", "/api/v1/skills/summarize-notes/export")
+    assert mocked.await_args.args[:2] == (
+        "GET",
+        "/api/v1/skills/summarize-notes/export",
+    )
     assert exported.content == b"zip-bytes"
     assert exported.content_type == "application/zip"
     assert exported.filename == "summarize-notes.zip"

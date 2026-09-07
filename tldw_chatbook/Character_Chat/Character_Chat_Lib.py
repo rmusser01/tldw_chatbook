@@ -4,15 +4,19 @@
 # Imports
 import base64
 import binascii
+import copy
 import io
 import json
 import os
 import re
 import time  # For default titles, etc.
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union, Set
 
 import yaml
+
 #
 # Third-Party Libraries
 from PIL import Image  # For image processing
@@ -24,54 +28,203 @@ from loguru import logger
 logger = logger.bind(module="Character_Chat_Lib")
 #
 # Local Imports
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError, ConflictError, InputError
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    ConflictError,
+    InputError,
+)
+from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
+    dump_provider_continuation_json,
+    read_provider_continuation_json,
+)
+from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
+    assistant_state_allows_provider_history,
+    normalize_assistant_generation_state,
+    render_exported_assistant_content,
+)
+from tldw_chatbook.Chat.thinking_blocks import (  # noqa: E402
+    preflight_thinking_history_policy,
+    thinking_exchange_to_json,
+)
+from tldw_chatbook.model_capabilities import (  # noqa: E402
+    moonshot_model_returns_reasoning_content,
+)
+from tldw_chatbook.Utils.path_validation import (  # noqa: E402
+    validate_path,
+    validate_path_simple,
+)
+from tldw_chatbook.Character_Chat.world_book_import import (  # noqa: E402
+    character_book_to_world_book_block,
+)
+from tldw_chatbook.TTS.profile_portability import (  # noqa: E402
+    CHARACTER_CARD_TTS_EXTENSION_KEY,
+    PortableProfileWarningCode,
+    PortableTTSProfile,
+    decode_portable_profile,
+    portable_profile_payload,
+)
+
 #
 ###############################################
 #
 # Constants
 DEFAULT_CHARACTER_ID = 1
+_EXPORTED_HISTORY_FORMAT = "tldw_chat_history"
+_EXPORTED_HISTORY_FORMAT_VERSION = 1
+_MAX_EXPORTED_HISTORY_FILE_BYTES = 16 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_MESSAGES = 10_000
+_MAX_EXPORTED_HISTORY_CONTENT_CHARS = 1_000_000
+_MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_ID_CHARS = 256
+_MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS = 1024 * 1024
+_MAX_EXPORTED_HISTORY_PRIVATE_BYTES = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_THINKING_BYTES = 8 * 1024 * 1024
+_MAX_EXPORTED_HISTORY_JSON_DEPTH = 32
+
+
+def _json_depth_is_bounded(value: object, limit: int) -> bool:
+    """Return whether decoded JSON stays within the import nesting limit."""
+    stack = [(value, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > limit:
+            return False
+        if isinstance(current, dict):
+            stack.extend(
+                (item, depth + 1) for key, item in current.items() if key != "_private"
+            )
+        elif isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+    return True
+
+
+def _read_bounded_chat_history(source: Any) -> str:
+    """Read at most one ordinary-history resource ceiling plus one byte."""
+    raw = source.read(_MAX_EXPORTED_HISTORY_FILE_BYTES + 1)
+    if isinstance(raw, bytes):
+        if len(raw) > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+            raise ValueError("Chat history exceeds safety limits.")
+        return raw.decode("utf-8")
+    text = str(raw)
+    if len(text.encode("utf-8")) > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+        raise ValueError("Chat history exceeds safety limits.")
+    return text
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterCardImportOutcome:
+    """Structured result of one persisted local character-card import."""
+
+    character_id: int
+    created: bool
+    portable_profile: PortableTTSProfile | None = None
+    warning_code: PortableProfileWarningCode | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterCardTTSInspection:
+    """Read-only bounded TTS attachment result for one parsed card."""
+
+    portable_profile: PortableTTSProfile | None = None
+    warning_code: PortableProfileWarningCode | None = None
+
+# Image metadata keys that carry embedded character-card JSON:
+# 'chara' holds V1/V2 cards, 'ccv3' holds V3 cards (PNG tEXt/zTXt/iTXt chunks).
+_CARD_IMAGE_METADATA_KEYS = ("chara", "ccv3")
+_CARD_SOURCE_TYPES = frozenset({".json", ".png", ".webp", ".md", ".markdown"})
+
+
+def _bounded_card_source_type(source: object) -> str:
+    """Classify a source without exposing attacker-controlled path content."""
+
+    suffix = Path(str(source)).suffix.lower()
+    return suffix if suffix in _CARD_SOURCE_TYPES else "other"
+
+# Upper bound on image dimensions for the full decode used to reveal trailing
+# (post-IDAT) PNG metadata chunks. Character card images are typically well
+# under 1 MP; this guards untrusted-import paths against CPU/memory spikes
+# from oversized images.
+_MAX_CARD_DECODE_PIXELS = 50_000_000
 #
+
+# String boolean vocabularies for loosely-typed card/lorebook fields
+# (mirrors world_info_processor._coerce_bool; bool("false") is True in
+# Python, so plain bool() coercion must never be used on raw card data).
+_TRUE_STRINGS = {"true", "1", "yes", "on"}
+_FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed card fields.
+
+    None -> ``default``; actual bools pass through; ints/floats map by
+    ``!= 0``; recognized string booleans (true/false/1/0/yes/no/on/off,
+    case-insensitive) map by value; anything else -> ``default``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
+
 
 # --- New Functions
 def create_conversation(
-        db: CharactersRAGDB,
-        title: Optional[str] = None,
-        character_id: Optional[int] = None,
-        initial_messages: Optional[List[Dict[str, Any]]] = None,
-        # e.g., [{'sender': 'User', 'content': 'Hi'}, {'sender': 'AI', 'content': 'Hello'}]
-        system_keywords: Optional[List[str]] = None,
-        user_name_for_placeholders: Optional[str] = "User"  # For processing initial messages if any
+    db: CharactersRAGDB,
+    title: Optional[str] = None,
+    character_id: Optional[int] = None,
+    initial_messages: Optional[List[Dict[str, Any]]] = None,
+    # e.g., [{'sender': 'User', 'content': 'Hi'}, {'sender': 'AI', 'content': 'Hello'}]
+    system_keywords: Optional[List[str]] = None,
+    user_name_for_placeholders: Optional[
+        str
+    ] = "User",  # For processing initial messages if any
 ) -> Optional[str]:
     """
     Creates a new conversation record, optionally with initial messages and keywords.
     Uses default character ID if character_id is None.
     """
     logger.debug(
-        f"Creating new conversation. Title: {title}, Char ID: {character_id}, Initial Msgs: {bool(initial_messages)}, Keywords: {system_keywords}")
-    target_character_id = character_id if character_id is not None else DEFAULT_CHARACTER_ID
+        f"Creating new conversation. Title: {title}, Char ID: {character_id}, Initial Msgs: {bool(initial_messages)}, Keywords: {system_keywords}"
+    )
+    target_character_id = (
+        character_id if character_id is not None else DEFAULT_CHARACTER_ID
+    )
 
     char_details = db.get_character_card_by_id(target_character_id)
     if not char_details:
-        logger.error(f"Character ID {target_character_id} not found. Cannot create conversation.")
+        logger.error(
+            f"Character ID {target_character_id} not found. Cannot create conversation."
+        )
         # Note: Schema change should ensure ID 1 exists. If it's another ID, this is a valid error.
         return None
 
-    char_name_for_title = char_details.get('name', f"Character {target_character_id}")
+    char_name_for_title = char_details.get("name", f"Character {target_character_id}")
 
     final_title = title
     if not final_title:
         # Try to make title from first user message if saving ephemeral
-        if initial_messages and initial_messages[0].get('sender', '').lower() == 'user':
-            first_user_content = initial_messages[0].get('content', '')
-            final_title = f"Chat: {first_user_content[:30]}..." if first_user_content else f"Chat with {char_name_for_title}"
+        if initial_messages and initial_messages[0].get("sender", "").lower() == "user":
+            first_user_content = initial_messages[0].get("content", "")
+            final_title = (
+                f"Chat: {first_user_content[:30]}..."
+                if first_user_content
+                else f"Chat with {char_name_for_title}"
+            )
         else:
             final_title = f"Chat with {char_name_for_title} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-    conv_payload = {
-        'character_id': target_character_id,
-        'title': final_title
-    }
+    conv_payload = {"character_id": target_character_id, "title": final_title}
 
     try:
         with db.transaction():  # Ensure atomicity
@@ -81,14 +234,17 @@ def create_conversation(
                 return None
 
             logger.info(
-                f"Created new conversation ID: {new_conv_id} with title '{final_title}' for char ID {target_character_id}")
+                f"Created new conversation ID: {new_conv_id} with title '{final_title}' for char ID {target_character_id}"
+            )
 
             if initial_messages:
-                logger.debug(f"Adding {len(initial_messages)} initial messages to new conversation {new_conv_id}")
+                logger.debug(
+                    f"Adding {len(initial_messages)} initial messages to new conversation {new_conv_id}"
+                )
                 for msg_data in initial_messages:
                     # 'sender' in initial_messages should be "User" or the character's actual name.
                     # If from UI, ChatMessage.role is 'User' or 'AI'. Map 'AI' to character's name.
-                    sender_for_db = msg_data.get('sender', 'Unknown')
+                    sender_for_db = msg_data.get("sender", "Unknown")
                     if sender_for_db == "AI":  # Convention from ChatMessage.role
                         sender_for_db = char_name_for_title
 
@@ -97,17 +253,19 @@ def create_conversation(
                     # Usually, user/AI typed content wouldn't have {{user}} or {{char}} that needs replacing *at save time*.
                     # If it's purely typed content, replacement is not strictly needed here.
                     # For safety, let's include it, assuming it does no harm.
-                    content_to_save = msg_data.get('content', '')
+                    content_to_save = msg_data.get("content", "")
                     # processed_content = replace_placeholders(content_to_save, char_name_for_title, user_name_for_placeholders)
 
-                    db.add_message({
-                        'conversation_id': new_conv_id,
-                        'sender': sender_for_db,
-                        'content': content_to_save,  # Store processed content
-                        'image_data': msg_data.get('image_data'),
-                        'image_mime_type': msg_data.get('image_mime_type'),
-                        # timestamp can be faked or omitted for add_message to use default
-                    })
+                    db.add_message(
+                        {
+                            "conversation_id": new_conv_id,
+                            "sender": sender_for_db,
+                            "content": content_to_save,  # Store processed content
+                            "image_data": msg_data.get("image_data"),
+                            "image_mime_type": msg_data.get("image_mime_type"),
+                            # timestamp can be faked or omitted for add_message to use default
+                        }
+                    )
 
             if system_keywords:
                 for kw_text in system_keywords:
@@ -115,14 +273,18 @@ def create_conversation(
                     if kw_id:
                         db.link_conversation_to_keyword(new_conv_id, kw_id)
                     else:
-                        logger.warning(f"Could not get/create keyword_id for '{kw_text}'")
+                        logger.warning(
+                            f"Could not get/create keyword_id for '{kw_text}'"
+                        )
         return new_conv_id
     except Exception as e:
         logger.opt(exception=True).error(f"Error in create_conversation: {e}")
         return None
 
 
-def get_conversation_details_and_messages(db: CharactersRAGDB, conversation_id: str) -> Optional[Dict[str, Any]]:
+def get_conversation_details_and_messages(
+    db: CharactersRAGDB, conversation_id: str
+) -> Optional[Dict[str, Any]]:
     logger.debug(f"Getting details and messages for conversation_id: {conversation_id}")
     conv_metadata = db.get_conversation_by_id(conversation_id)
     if not conv_metadata:
@@ -130,41 +292,46 @@ def get_conversation_details_and_messages(db: CharactersRAGDB, conversation_id: 
         return None
 
     character_name = "AI"  # Default
-    if conv_metadata.get('character_id') is not None:
-        char_card = db.get_character_card_by_id(conv_metadata['character_id'])
-        if char_card and char_card.get('name'):
-            character_name = char_card['name']
+    if conv_metadata.get("character_id") is not None:
+        char_card = db.get_character_card_by_id(conv_metadata["character_id"])
+        if char_card and char_card.get("name"):
+            character_name = char_card["name"]
         else:
             character_name = f"Character {conv_metadata['character_id']}"
-            if conv_metadata['character_id'] == DEFAULT_CHARACTER_ID:
+            if conv_metadata["character_id"] == DEFAULT_CHARACTER_ID:
                 default_char_name_from_db = "Default Assistant"  # Should match schema
-                if char_card and char_card.get('name'): default_char_name_from_db = char_card.get('name')
+                if char_card and char_card.get("name"):
+                    default_char_name_from_db = char_card.get("name")
                 character_name = default_char_name_from_db
 
     # Fetch messages (already ordered ASC by timestamp usually from DB)
     # The schema's get_messages_for_conversation already sorts by timestamp ASC
-    messages = db.get_messages_for_conversation(conversation_id, limit=10000)  # High limit for full history
+    messages = db.get_messages_for_conversation(
+        conversation_id, limit=10000
+    )  # High limit for full history
 
     # Keywords
     keywords_list = db.get_keywords_for_conversation(conversation_id)
-    keywords_str = ", ".join([kw['keyword'] for kw in keywords_list if not kw['keyword'].startswith("__")])
-    conv_metadata['keywords_display'] = keywords_str  # Add for UI convenience
+    keywords_str = ", ".join(
+        [kw["keyword"] for kw in keywords_list if not kw["keyword"].startswith("__")]
+    )
+    conv_metadata["keywords_display"] = keywords_str  # Add for UI convenience
 
     return {
-        'metadata': conv_metadata,
-        'messages': messages,  # These are raw DB messages
-        'character_name': character_name
+        "metadata": conv_metadata,
+        "messages": messages,  # These are raw DB messages
+        "character_name": character_name,
     }
 
 
 def add_message_to_conversation(
-        db: CharactersRAGDB,
-        conversation_id: str,
-        sender: str,  # Actual sender name ("User" or character's name)
-        content: str,
-        image_data: Optional[bytes] = None,
-        image_mime_type: Optional[str] = None,
-        # parent_message_id: Optional[str] = None # Not used by main chat flow yet
+    db: CharactersRAGDB,
+    conversation_id: str,
+    sender: str,  # Actual sender name ("User" or character's name)
+    content: str,
+    image_data: Optional[bytes] = None,
+    image_mime_type: Optional[str] = None,
+    # parent_message_id: Optional[str] = None # Not used by main chat flow yet
 ) -> Optional[str]:
     logger.debug(f"Adding message from '{sender}' to conv_id '{conversation_id}'")
     if not conversation_id:
@@ -172,17 +339,19 @@ def add_message_to_conversation(
         return None
 
     msg_payload = {
-        'conversation_id': conversation_id,
-        'sender': sender,
-        'content': content,
-        'image_data': image_data,
-        'image_mime_type': image_mime_type,
+        "conversation_id": conversation_id,
+        "sender": sender,
+        "content": content,
+        "image_data": image_data,
+        "image_mime_type": image_mime_type,
         # 'parent_message_id': parent_message_id # if needed later
     }
     try:
         message_id = db.add_message(msg_payload)
         if message_id:
-            logger.info(f"Added message ID {message_id} to conversation {conversation_id}.")
+            logger.info(
+                f"Added message ID {message_id} to conversation {conversation_id}."
+            )
         return message_id
     except Exception as e:
         logger.opt(exception=True).error(f"Error in add_message_to_conversation: {e}")
@@ -190,14 +359,16 @@ def add_message_to_conversation(
 
 
 def update_conversation_metadata_and_keywords(  # Renamed for clarity
-        db: CharactersRAGDB,
-        conversation_id: str,
-        expected_version: int,
-        user_id_for_keyword_ops: str,  # For db.add_keyword which takes user_id
-        title: Optional[str] = None,
-        keywords_str: Optional[str] = None  # Comma-separated string of keywords
+    db: CharactersRAGDB,
+    conversation_id: str,
+    expected_version: int,
+    user_id_for_keyword_ops: str,  # For db.add_keyword which takes user_id
+    title: Optional[str] = None,
+    keywords_str: Optional[str] = None,  # Comma-separated string of keywords
 ) -> bool:
-    logger.debug(f"Updating metadata/keywords for conv_id: {conversation_id}. Title: {title}, Keywords: {keywords_str}")
+    logger.debug(
+        f"Updating metadata/keywords for conv_id: {conversation_id}. Title: {title}, Keywords: {keywords_str}"
+    )
     if title is None and keywords_str is None:
         logger.info("No title or keywords provided for update.")
         return False  # Or True if just touching version is desired, but current DB update needs fields
@@ -211,31 +382,47 @@ def update_conversation_metadata_and_keywords(  # Renamed for clarity
         if not conv_details_for_title:
             logger.error(f"Conversation {conversation_id} not found for title update.")
             return False
-        if conv_details_for_title.get('version') != current_expected_version:
+        if conv_details_for_title.get("version") != current_expected_version:
             logger.error(
-                f"Version mismatch for title update. DB: {conv_details_for_title.get('version')}, Expected: {current_expected_version}")
+                f"Version mismatch for title update. DB: {conv_details_for_title.get('version')}, Expected: {current_expected_version}"
+            )
             raise ConflictError("Version mismatch before title update.")
 
-        if title != conv_details_for_title.get('title'):
-            title_update_payload = {'title': title}
-            if db.update_conversation(conversation_id, title_update_payload, current_expected_version):
-                logger.info(f"Conversation {conversation_id} title updated to '{title}'.")
+        if title != conv_details_for_title.get("title"):
+            title_update_payload = {"title": title}
+            if db.update_conversation(
+                conversation_id, title_update_payload, current_expected_version
+            ):
+                logger.info(
+                    f"Conversation {conversation_id} title updated to '{title}'."
+                )
                 current_expected_version += 1  # Version was bumped
                 updated_successfully = True
             else:
-                logger.error(f"Failed to update title for conversation {conversation_id}.")
+                logger.error(
+                    f"Failed to update title for conversation {conversation_id}."
+                )
                 # If title update fails due to conflict, keywords should not proceed with old version.
                 # The caller should handle ConflictError from db.update_conversation.
-                return False  # Or raise, db.update_conversation would raise ConflictError
+                return (
+                    False  # Or raise, db.update_conversation would raise ConflictError
+                )
 
     if keywords_str is not None:
         # Get current keywords from DB
         db_keywords_data = db.get_keywords_for_conversation(conversation_id)
-        db_keywords_set = {kw['keyword'].lower() for kw in db_keywords_data if not kw['keyword'].startswith("__")}
+        db_keywords_set = {
+            kw["keyword"].lower()
+            for kw in db_keywords_data
+            if not kw["keyword"].startswith("__")
+        }
 
         # Parse UI keywords string
-        ui_keywords_set = {kw.strip().lower() for kw in keywords_str.split(',') if
-                           kw.strip() and not kw.strip().startswith("__")}
+        ui_keywords_set = {
+            kw.strip().lower()
+            for kw in keywords_str.split(",")
+            if kw.strip() and not kw.strip().startswith("__")
+        }
 
         keywords_to_add = ui_keywords_set - db_keywords_set
         keywords_to_remove = db_keywords_set - ui_keywords_set
@@ -253,86 +440,107 @@ def update_conversation_metadata_and_keywords(  # Renamed for clarity
                 if isinstance(kw_id_result, int):  # Check if it's an ID
                     db.link_conversation_to_keyword(conversation_id, kw_id_result)
                     keywords_actually_changed = True
-                    logger.debug(f"Linked keyword '{kw_text}' (ID: {kw_id_result}) to conv {conversation_id}")
+                    logger.debug(
+                        f"Linked keyword '{kw_text}' (ID: {kw_id_result}) to conv {conversation_id}"
+                    )
                 else:  # It was None or an error string
-                    logger.error(f"Failed to add/get keyword '{kw_text}'. Received: {kw_id_result}")
+                    logger.error(
+                        f"Failed to add/get keyword '{kw_text}'. Received: {kw_id_result}"
+                    )
 
         if keywords_to_remove:
             for kw_text_to_remove in keywords_to_remove:
                 # Find the ID of the keyword to remove the link
                 found_kw_id_to_remove = None
                 for kw_data in db_keywords_data:
-                    if kw_data['keyword'].lower() == kw_text_to_remove:
-                        found_kw_id_to_remove = kw_data['id']
+                    if kw_data["keyword"].lower() == kw_text_to_remove:
+                        found_kw_id_to_remove = kw_data["id"]
                         break
                 if found_kw_id_to_remove:
-                    db.unlink_conversation_from_keyword(conversation_id, found_kw_id_to_remove)
+                    db.unlink_conversation_from_keyword(
+                        conversation_id, found_kw_id_to_remove
+                    )
                     keywords_actually_changed = True
                     logger.debug(
-                        f"Unlinked keyword '{kw_text_to_remove}' (ID: {found_kw_id_to_remove}) from conv {conversation_id}")
+                        f"Unlinked keyword '{kw_text_to_remove}' (ID: {found_kw_id_to_remove}) from conv {conversation_id}"
+                    )
 
         if keywords_actually_changed:
             updated_successfully = True
             # If only keywords changed and title did not, the conversation record itself (version) might not have been bumped
             # We might need to "touch" the conversation record if keywords changed to update its last_modified and version
             # This requires an update_conversation call even if only keywords changed.
-            if not title_update_payload and keywords_actually_changed:  # if title wasn't updated but keywords were
+            if (
+                not title_update_payload and keywords_actually_changed
+            ):  # if title wasn't updated but keywords were
                 # Touch the conversation to bump its version and last_modified
-                if db.update_conversation(conversation_id, {}, current_expected_version):
+                if db.update_conversation(
+                    conversation_id, {}, current_expected_version
+                ):
                     logger.info(
-                        f"Touched conversation {conversation_id} to update version/timestamp after keyword change.")
+                        f"Touched conversation {conversation_id} to update version/timestamp after keyword change."
+                    )
                 else:
                     logger.warning(
-                        f"Failed to touch conversation {conversation_id} after keyword change (version conflict or other issue).")
+                        f"Failed to touch conversation {conversation_id} after keyword change (version conflict or other issue)."
+                    )
 
     return updated_successfully
 
 
-def search_conversations_lib( # Renamed to avoid conflict with app's method
+def search_conversations_lib(  # Renamed to avoid conflict with app's method
     db: CharactersRAGDB,
     search_term: str,
-    character_id: Optional[int] = None, # Specific character to filter by
+    character_id: Optional[int] = None,  # Specific character to filter by
     # include_non_character_chats: bool = True, # Replaced by character_id=None or character_id=DEFAULT_CHARACTER_ID
     # only_regular_chats: bool = False, # If true, character_id should be DEFAULT_CHARACTER_ID
-    limit: int = 100
+    limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    logger.debug(f"Lib searching conversations. Term: '{search_term}', Char ID: {character_id}, Limit: {limit}")
+    logger.debug(
+        f"Lib searching conversations. Term: '{search_term}', Char ID: {character_id}, Limit: {limit}"
+    )
     # ChaChaNotes_DB.search_conversations_by_title handles character_id=None as "no filter by character"
     # If character_id is DEFAULT_CHARACTER_ID, it will filter for those.
     return db.search_conversations_by_title(
-        title_query=search_term,
-        character_id=character_id,
-        limit=limit
+        title_query=search_term, character_id=character_id, limit=limit
     )
 
 
-def get_character_name_for_conversation(db: CharactersRAGDB, conversation_id: str) -> str:
+def get_character_name_for_conversation(
+    db: CharactersRAGDB, conversation_id: str
+) -> str:
     """Retrieves the name of the character associated with a conversation."""
     conv_details = db.get_conversation_by_id(conversation_id)
     if not conv_details:
-        logger.warning(f"Conversation {conversation_id} not found for getting character name.")
+        logger.warning(
+            f"Conversation {conversation_id} not found for getting character name."
+        )
         return "AI"  # Default if conversation is gone
 
-    char_id = conv_details.get('character_id')
+    char_id = conv_details.get("character_id")
     if char_id is None:  # Should not happen if default char is always used.
         logger.warning(f"Conversation {conversation_id} has no character_id.")
         return "AI"
 
     char_data = db.get_character_card_by_id(char_id)
-    if char_data and char_data.get('name'):
-        return char_data['name']
+    if char_data and char_data.get("name"):
+        return char_data["name"]
 
     # Fallback if character data is missing for a valid ID (data integrity issue)
-    logger.warning(f"Character data not found for ID {char_id} (linked to conv {conversation_id}).")
+    logger.warning(
+        f"Character data not found for ID {char_id} (linked to conv {conversation_id})."
+    )
     if char_id == DEFAULT_CHARACTER_ID:
         return "Default Assistant"  # Consistent fallback name
     return f"Character {char_id}"
 
 
-
 # Placeholder functions:
 
-def replace_placeholders(text: Optional[str], char_name: Optional[str], user_name: Optional[str]) -> str:
+
+def replace_placeholders(
+    text: Optional[str], char_name: Optional[str], user_name: Optional[str]
+) -> str:
     """Replaces predefined placeholders in a text string.
 
     The function substitutes placeholders like '{{char}}', '{{user}}',
@@ -340,10 +548,15 @@ def replace_placeholders(text: Optional[str], char_name: Optional[str], user_nam
     and user names. If names are not provided, default values ("Character", "User")
     are used. Returns an empty string if the input text is None or empty.
 
+    '{{character}}' and '{{persona}}' (task-442) are character-side aliases
+    for '{{char}}': they resolve to the AI character's name and never to the
+    user's name.
+
     Args:
         text (Optional[str]): The input string, possibly containing placeholders.
         char_name (Optional[str]): The name of the character to substitute for
-            '{{char}}' and '<CHAR>'. Defaults to "Character" if None.
+            '{{char}}', '{{character}}', '{{persona}}', and '<CHAR>'. Defaults
+            to "Character" if None.
         user_name (Optional[str]): The name of the user to substitute for
             '{{user}}', '{{random_user}}', and '<USER>'. Defaults to "User" if None.
 
@@ -359,11 +572,13 @@ def replace_placeholders(text: Optional[str], char_name: Optional[str], user_nam
     user_name_actual = user_name if user_name is not None else "User"
 
     replacements = {
-        '{{char}}': char_name_actual,
-        '{{user}}': user_name_actual,
-        '{{random_user}}': user_name_actual,  # As per original logic
-        '<USER>': user_name_actual,  # Common alternative
-        '<CHAR>': char_name_actual,  # Common alternative
+        "{{char}}": char_name_actual,
+        "{{user}}": user_name_actual,
+        "{{random_user}}": user_name_actual,  # As per original logic
+        "<USER>": user_name_actual,  # Common alternative
+        "<CHAR>": char_name_actual,  # Common alternative
+        "{{character}}": char_name_actual,   # task-442 alias: the AI character's name
+        "{{persona}}": char_name_actual,     # task-442 alias: the AI character's name (NEVER the user)
     }
 
     processed_text = text
@@ -372,8 +587,101 @@ def replace_placeholders(text: Optional[str], char_name: Optional[str], user_nam
     return processed_text
 
 
-def replace_user_placeholder(history: List[Tuple[Optional[str], Optional[str]]], user_name: Optional[str]) -> List[
-    Tuple[Optional[str], Optional[str]]]:
+def compose_character_card_template(
+    *,
+    name: str,
+    system_prompt: str = "",
+    personality: str = "",
+    description: str = "",
+    scenario: str = "",
+    message_example: str = "",
+    post_history_instructions: str = "",
+) -> str:
+    """Join a character card's prompt-bearing fields without resolving macros.
+
+    task-1744: this is the ONE card->prompt joiner. It is shared by the
+    character-probe eval engine
+    (``Evals.character_probe.prompt.compose_system_prompt``) and Console's
+    own session seeding
+    (``UI.Screens.chat_screen._character_session_prompt_seed``) so the two
+    can never drift apart again -- the eval exists to predict what Console
+    sends a model, and that prediction is only meaningful if both build the
+    exact same text from the same card.
+
+    Every prompt-bearing field participates. ``system_prompt`` and
+    ``post_history_instructions`` are included verbatim (a card author
+    writes each as a complete instruction on its own), while
+    ``personality``, ``description``, ``scenario``, and ``message_example``
+    are prefixed with a label so a model can tell persona description from
+    an in-character instruction. Fields are joined with a blank line
+    between them, in that fixed order, and macros (``{{char}}``/``{{user}}``
+    and their aliases -- see :func:`replace_placeholders`) remain byte-exact
+    for trusted template provenance.
+
+    Args:
+        name: The character's already-resolved display name (the caller
+            supplies the "Character" fallback for a nameless card, matching
+            :func:`replace_placeholders`'s own default -- this function
+            does not re-derive it).
+        system_prompt: The card's own system prompt/instructions.
+        personality: The card's personality field.
+        description: The card's description (the primary V2 persona field).
+        scenario: The card's scenario field.
+        message_example: The card's example dialogue.
+        post_history_instructions: The card's post-history instructions.
+    Returns:
+        str: The raw joined card text, or ``""`` if every field
+        is empty or whitespace-only. What an empty result MEANS is left to
+        the caller: the character-probe engine treats it as "no card text
+        at all" and may still emit steering alone, while Console substitutes
+        its own "Stay in character." fallback prompt.
+    """
+    # Each presence check is on the STRIPPED value -- a whitespace-only
+    # field (spaces, tabs, a bare newline) must count as absent, the same
+    # as an empty one, or a labelled field leaves a dangling "Label:" with
+    # nothing after it and a whitespace-only card can never compose to ""
+    # (defeating Console's "Stay in character." fallback, which tests for
+    # exactly that). The RAW value is still what gets embedded in the
+    # f-string below -- only the presence test is stripped -- so a genuine
+    # value's own interior whitespace stays byte-exact.
+    parts = [
+        system_prompt if system_prompt.strip() else "",
+        f"Personality: {personality}" if personality.strip() else "",
+        f"Description: {description}" if description.strip() else "",
+        f"Scenario: {scenario}" if scenario.strip() else "",
+        f"Example dialogue:\n{message_example}" if message_example.strip() else "",
+        post_history_instructions if post_history_instructions.strip() else "",
+    ]
+    return "\n\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def compose_character_card_text(
+    *,
+    name: str,
+    system_prompt: str = "",
+    personality: str = "",
+    description: str = "",
+    scenario: str = "",
+    message_example: str = "",
+    post_history_instructions: str = "",
+    user_name: str = "User",
+) -> str:
+    """Join and resolve a character card's prompt-bearing fields."""
+    template = compose_character_card_template(
+        name=name,
+        system_prompt=system_prompt,
+        personality=personality,
+        description=description,
+        scenario=scenario,
+        message_example=message_example,
+        post_history_instructions=post_history_instructions,
+    )
+    return replace_placeholders(template, name, user_name)
+
+
+def replace_user_placeholder(
+    history: List[Tuple[Optional[str], Optional[str]]], user_name: Optional[str]
+) -> List[Tuple[Optional[str], Optional[str]]]:
     """Replaces '{{user}}' placeholders in chat history with the actual user name.
 
     This function processes chat history provided in a list of tuples,
@@ -389,7 +697,9 @@ def replace_user_placeholder(history: List[Tuple[Optional[str], Optional[str]]],
         List[Tuple[Optional[str], Optional[str]]]: The updated chat history with
         '{{user}}' placeholders replaced in both user and bot messages.
     """
-    user_name_actual = user_name if user_name else "User"  # Default name if none provided
+    user_name_actual = (
+        user_name if user_name else "User"
+    )  # Default name if none provided
 
     updated_history = []
     for user_msg, bot_msg in history:
@@ -412,7 +722,10 @@ def replace_user_placeholder(history: List[Tuple[Optional[str], Optional[str]]],
 #
 # Functions for character interaction (DB focused):
 
-def get_character_list_for_ui(db: CharactersRAGDB, limit: int = 1000) -> List[Dict[str, Any]]:
+
+def get_character_list_for_ui(
+    db: CharactersRAGDB, limit: int = 1000
+) -> List[Dict[str, Any]]:
     """Fetches a simplified list of characters suitable for UI display.
 
     Retrieves character IDs and names from the database, sorts them by name
@@ -432,14 +745,99 @@ def get_character_list_for_ui(db: CharactersRAGDB, limit: int = 1000) -> List[Di
         # Assuming CharactersRAGDB.list_character_cards returns more fields,
         # we select only what's needed.
         all_chars = db.list_character_cards(limit=limit)  # Use parameter
-        ui_list = [{"id": char.get("id"), "name": char.get("name")} for char in all_chars if
-                   char.get("id") and char.get("name")]
+        ui_list = [
+            {"id": char.get("id"), "name": char.get("name")}
+            for char in all_chars
+            if char.get("id") and char.get("name")
+        ]
         return sorted(ui_list, key=lambda x: x["name"].lower() if x["name"] else "")
     except CharactersRAGDBError as e:
         logger.error(f"Database error fetching character list for UI: {e}")
         return []
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error fetching character list for UI: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error fetching character list for UI: {e}"
+        )
+        return []
+
+
+#: Description budget per library row. The row renders a single truncated
+#: line, so a page never needs more than this and must not haul whole
+#: character sheets (which run to thousands of characters) into the list.
+CHARACTER_PAGE_DESCRIPTION_MAX_CHARS = 200
+
+
+def get_character_page_for_ui(
+    db: CharactersRAGDB,
+    *,
+    limit: int,
+    offset: int,
+    order_by: str = "name_asc",
+    search_term: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Return one UI-shaped page of character summaries.
+
+    The description is included (bounded to
+    ``CHARACTER_PAGE_DESCRIPTION_MAX_CHARS``) because the library row shows a
+    description snippet to make characters recognizable; projecting only the
+    dates left every row identified by an identical last-modified stamp.
+
+    Args:
+        db: Characters database to read from.
+        limit: Maximum number of rows to return.
+        offset: Zero-based offset of the page within the filtered set.
+        order_by: Sort key accepted by ``list_character_cards_page``.
+        search_term: Optional full-text filter.
+        tag: Optional tag filter.
+
+    Returns:
+        A list of ``{id, name, description, last_modified, created_at, tags}``
+        dicts, skipping any record without an id. An empty list on read
+        failure -- the library degrades to its empty state rather than raising
+        into the render path.
+    """
+    try:
+        rows = db.list_character_cards_page(
+            limit=limit, offset=offset, order_by=order_by,
+            search_term=search_term, tag=tag,
+        )
+    except Exception as exc:
+        logger.opt(exception=True).error(f"Character page fetch failed: {exc}")
+        return []
+    return [
+        {
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "description": str(c.get("description") or "")[
+                :CHARACTER_PAGE_DESCRIPTION_MAX_CHARS
+            ],
+            "last_modified": c.get("last_modified"),
+            "created_at": c.get("created_at"),
+            "tags": c.get("tags") if isinstance(c.get("tags"), list) else [],
+        }
+        for c in rows
+        if c.get("id") is not None
+    ]
+
+
+def count_character_page(
+    db: CharactersRAGDB, *, search_term: Optional[str] = None, tag: Optional[str] = None
+) -> int:
+    """Count of characters matching the same search+tag filter as `get_character_page_for_ui`."""
+    try:
+        return db.count_character_cards(search_term=search_term, tag=tag)
+    except Exception as exc:
+        logger.opt(exception=True).error(f"Character count failed: {exc}")
+        return 0
+
+
+def list_character_tags(db: CharactersRAGDB) -> List[str]:
+    """Distinct tag values across non-deleted characters, for UI tag-filter pickers."""
+    try:
+        return db.list_distinct_character_tags()
+    except Exception as exc:
+        logger.opt(exception=True).error(f"Character tag list failed: {exc}")
         return []
 
 
@@ -450,16 +848,20 @@ def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
 
         return get_chachanotes_db_lazy()
     except Exception as exc:
-        logger.opt(exception=True).error(f"Unable to resolve default character database: {exc}")
+        logger.opt(exception=True).error(
+            f"Unable to resolve default character database: {exc}"
+        )
         return None
 
 
-def fetch_character_names(db: Optional[CharactersRAGDB] = None, limit: int = 1000) -> List[Dict[str, Any]]:
+def fetch_character_names(
+    db: Optional[CharactersRAGDB] = None, limit: int = 1000
+) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP handlers.
 
-    The default ``limit`` must stay in sync with
-    ``PersonasScreen.LIBRARY_FTS_THRESHOLD`` (UI/Screens/personas_screen.py),
-    which switches library search to FTS when the loaded list may be truncated.
+    The default ``limit`` caps the loaded character list; callers that need
+    the full library (e.g. paged/search-backed listings) should pass an
+    explicit ``limit``.
     """
     target_db = db or _get_default_chachanotes_db()
     if target_db is None:
@@ -467,14 +869,18 @@ def fetch_character_names(db: Optional[CharactersRAGDB] = None, limit: int = 100
     return get_character_list_for_ui(target_db, limit=limit)
 
 
-def fetch_all_dictionaries(db: Optional[CharactersRAGDB] = None, limit: int = 1000) -> List[Dict[str, Any]]:
+def fetch_all_dictionaries(
+    db: Optional[CharactersRAGDB] = None, limit: int = 1000
+) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP dictionary handlers."""
     target_db = db or _get_default_chachanotes_db()
     if target_db is None:
         return []
 
     try:
-        from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import list_chat_dictionaries
+        from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import (
+            list_chat_dictionaries,
+        )
 
         return list_chat_dictionaries(target_db, limit=limit)
     except Exception as exc:
@@ -505,28 +911,34 @@ def extract_character_id_from_ui_choice(choice: str) -> int:
         raise ValueError("No choice provided for character ID extraction.")
 
     # Regex to find (ID: <numbers>) at the end of the string
-    match = re.search(r'\(ID:\s*(\d+)\s*\)$', choice)
+    match = re.search(r"\(ID:\s*(\d+)\s*\)$", choice)
     if match:
         character_id_str = match.group(1)
     else:
         # If no match, assume the whole string might be an ID
         character_id_str = choice.strip()
         if not character_id_str.isdigit():
-            raise ValueError(f"Invalid choice format: '{choice}'. Expected 'Name (ID: 123)' or just a numeric ID.")
+            raise ValueError(
+                f"Invalid choice format: '{choice}'. Expected 'Name (ID: 123)' or just a numeric ID."
+            )
 
     try:
         character_id = int(character_id_str)
         logger.debug(f"Extracted character ID: {character_id}")
         return character_id
     except ValueError:
-        raise ValueError(f"Could not parse character ID from: '{character_id_str}' (derived from '{choice}')")
+        raise ValueError(
+            f"Could not parse character ID from: '{character_id_str}' (derived from '{choice}')"
+        )
 
 
 def load_character_and_image(
-        db: CharactersRAGDB,
-        character_id: int,
-        user_name: Optional[str]
-) -> Tuple[Optional[Dict[str, Any]], List[Tuple[Optional[str], Optional[str]]], Optional[Image.Image]]:
+    db: CharactersRAGDB, character_id: int, user_name: Optional[str]
+) -> Tuple[
+    Optional[Dict[str, Any]],
+    List[Tuple[Optional[str], Optional[str]]],
+    Optional[Image.Image],
+]:
     """Loads character data, initial message, and image from the database.
 
     Retrieves a character's details by ID, processes its text fields (like
@@ -553,66 +965,103 @@ def load_character_and_image(
               IMPORTANT: Callers must call .close() on this Image object when done
               to prevent memory leaks.
     """
-    logger.debug(f"Loading character and image for ID: {character_id}, User: {user_name}")
+    logger.debug(
+        f"Loading character and image for ID: {character_id}, User: {user_name}"
+    )
     try:
         char_data = db.get_character_card_by_id(character_id)
         if not char_data:
             logger.warning(f"No character data found for ID: {character_id}")
             return None, [], None
 
-        char_name_from_card = char_data.get('name', 'Character')  # Fallback name
+        char_name_from_card = char_data.get("name", "Character")  # Fallback name
 
         # Replace placeholders in character data fields
         # These are fields from the DB schema
         fields_to_process = [
-            'description', 'personality', 'scenario', 'system_prompt',
-            'post_history_instructions', 'first_message', 'message_example',
-            'creator_notes'  # 'alternate_greetings' and 'tags' are lists
+            "description",
+            "personality",
+            "scenario",
+            "system_prompt",
+            "post_history_instructions",
+            "first_message",
+            "message_example",
+            "creator_notes",  # 'alternate_greetings' and 'tags' are lists
         ]
         for field in fields_to_process:
-            if field in char_data and char_data[field] and isinstance(char_data[field], str):
-                char_data[field] = replace_placeholders(char_data[field], char_name_from_card, user_name)
+            if (
+                field in char_data
+                and char_data[field]
+                and isinstance(char_data[field], str)
+            ):
+                char_data[field] = replace_placeholders(
+                    char_data[field], char_name_from_card, user_name
+                )
 
-        if 'alternate_greetings' in char_data and char_data['alternate_greetings'] is not None and isinstance(char_data['alternate_greetings'], list):
-            char_data['alternate_greetings'] = [
+        if (
+            "alternate_greetings" in char_data
+            and char_data["alternate_greetings"] is not None
+            and isinstance(char_data["alternate_greetings"], list)
+        ):
+            char_data["alternate_greetings"] = [
                 replace_placeholders(ag, char_name_from_card, user_name)
-                for ag in char_data['alternate_greetings'] if isinstance(ag, str)
+                for ag in char_data["alternate_greetings"]
+                if isinstance(ag, str)
             ]
 
         # The 'first_message' field from DB corresponds to 'first_mes' from old card spec
-        first_mes_content = char_data.get('first_message')  # Already processed by placeholders if it was a string
-        if not first_mes_content:  # Provide a generic greeting if first_message is empty
-            first_mes_content = replace_placeholders(f"Hello, I am {{char}}. How can I help you, {{user}}?",
-                                                     char_name_from_card, user_name)
+        first_mes_content = char_data.get(
+            "first_message"
+        )  # Already processed by placeholders if it was a string
+        if (
+            not first_mes_content
+        ):  # Provide a generic greeting if first_message is empty
+            first_mes_content = replace_placeholders(
+                "Hello, I am {char}. How can I help you, {user}?",
+                char_name_from_card,
+                user_name,
+            )
 
         # Initial chat history is just the character's first message
-        chat_history: List[Tuple[Optional[str], Optional[str]]] = [(None, first_mes_content)]
+        chat_history: List[Tuple[Optional[str], Optional[str]]] = [
+            (None, first_mes_content)
+        ]
 
         img = None
-        if char_data.get('image') and isinstance(char_data['image'], bytes):  # DB stores image as BLOB
+        if char_data.get("image") and isinstance(
+            char_data["image"], bytes
+        ):  # DB stores image as BLOB
             try:
-                image_data_bytes = char_data['image']
+                image_data_bytes = char_data["image"]
                 img = Image.open(io.BytesIO(image_data_bytes)).convert("RGBA")
-                logger.debug(f"Successfully loaded image for character '{char_name_from_card}'")
+                logger.debug(
+                    f"Successfully loaded image for character '{char_name_from_card}'"
+                )
             except Exception as e:
-                logger.error(f"Error processing image for character '{char_name_from_card}' (ID: {character_id}): {e}")
+                logger.error(
+                    f"Error processing image for character '{char_name_from_card}' (ID: {character_id}): {e}"
+                )
 
         return char_data, chat_history, img
 
     except CharactersRAGDBError as e:
-        logger.error(f"Database error in load_character_and_image for ID {character_id}: {e}")
+        logger.error(
+            f"Database error in load_character_and_image for ID {character_id}: {e}"
+        )
         return None, [], None
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error in load_character_and_image for ID {character_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error in load_character_and_image for ID {character_id}: {e}"
+        )
         return None, [], None
 
 
 def process_db_messages_to_ui_history(
-        db_messages: List[Dict[str, Any]],
-        char_name_from_card: str,
-        user_name_for_placeholders: Optional[str],
-        actual_user_sender_id_in_db: str = "User",
-        actual_char_sender_id_in_db: Optional[str] = None
+    db_messages: List[Dict[str, Any]],
+    char_name_from_card: str,
+    user_name_for_placeholders: Optional[str],
+    actual_user_sender_id_in_db: str = "User",
+    actual_char_sender_id_in_db: Optional[str] = None,
 ) -> List[Tuple[Optional[str], Optional[str]]]:
     """Converts database messages to UI-friendly paired chat history format.
 
@@ -645,15 +1094,35 @@ def process_db_messages_to_ui_history(
     """
     processed_history: List[Tuple[Optional[str], Optional[str]]] = []
     # If char_sender_id is not provided, use the character's name from the card
-    char_sender_identifier = actual_char_sender_id_in_db if actual_char_sender_id_in_db else char_name_from_card
+    char_sender_identifier = (
+        actual_char_sender_id_in_db
+        if actual_char_sender_id_in_db
+        else char_name_from_card
+    )
     user_msg_buffer: Optional[str] = None
 
     for msg_data in db_messages:
-        sender = msg_data.get('sender')
-        content = msg_data.get('content', '')  # DB content should not be None
+        sender = msg_data.get("sender")
+        content = msg_data.get("content", "")  # DB content should not be None
+
+        if sender == char_sender_identifier:
+            continuation_read = read_provider_continuation_json(
+                msg_data.get("provider_continuation_json")
+            )
+            if not assistant_state_allows_provider_history(
+                state=msg_data.get("assistant_generation_state"),
+                has_valid_continuation=(
+                    continuation_read.checkpoint is not None
+                    and continuation_read.checkpoint.state == "active"
+                ),
+                content=content,
+            ):
+                continue
 
         # Replace placeholders in the content from DB
-        processed_content = replace_placeholders(content, char_name_from_card, user_name_for_placeholders)
+        processed_content = replace_placeholders(
+            content, char_name_from_card, user_name_for_placeholders
+        )
 
         if sender == actual_user_sender_id_in_db:
             if user_msg_buffer is not None:
@@ -667,10 +1136,14 @@ def process_db_messages_to_ui_history(
             else:  # Bot message starts the turn or follows another bot message
                 processed_history.append((None, processed_content))
         else:
-            logger.warning(f"Message from unknown sender '{sender}': {processed_content[:50]}...")
+            logger.warning(
+                f"Message from unknown sender '{sender}': {processed_content[:50]}..."
+            )
             # Treat as a system/narrator message, append as bot message
             if user_msg_buffer is not None:
-                processed_history.append((user_msg_buffer, f"[{sender}] {processed_content}"))
+                processed_history.append(
+                    (user_msg_buffer, f"[{sender}] {processed_content}")
+                )
                 user_msg_buffer = None
             else:
                 processed_history.append((None, f"[{sender}] {processed_content}"))
@@ -683,11 +1156,15 @@ def process_db_messages_to_ui_history(
 
 
 def load_chat_and_character(
-        db: CharactersRAGDB,
-        conversation_id_str: str,
-        user_name: Optional[str],
-        messages_limit: int = 2000  # Added parameter with default
-) -> Tuple[Optional[Dict[str, Any]], List[Tuple[Optional[str], Optional[str]]], Optional[Image.Image]]:
+    db: CharactersRAGDB,
+    conversation_id_str: str,
+    user_name: Optional[str],
+    messages_limit: int = 2000,  # Added parameter with default
+) -> Tuple[
+    Optional[Dict[str, Any]],
+    List[Tuple[Optional[str], Optional[str]]],
+    Optional[Image.Image],
+]:
     """Loads an existing chat conversation and associated character data.
 
     Retrieves a conversation by its ID, fetches the associated character's
@@ -714,40 +1191,65 @@ def load_chat_and_character(
               or error.
         Returns (None, [], None) if the conversation itself is not found.
     """
-    logger.debug(f"Loading chat/conversation ID: {conversation_id_str}, User: {user_name}, Msg Limit: {messages_limit}")
+    logger.debug(
+        f"Loading chat/conversation ID: {conversation_id_str}, User: {user_name}, Msg Limit: {messages_limit}"
+    )
     try:
         conversation_data = db.get_conversation_by_id(conversation_id_str)
         if not conversation_data:
             logger.warning(f"No conversation found with ID: {conversation_id_str}")
             return None, [], None
 
-        character_id = conversation_data.get('character_id')
+        character_id = conversation_data.get("character_id")
         if not character_id:
-            logger.error(f"Conversation {conversation_id_str} has no character_id associated.")
+            logger.error(
+                f"Conversation {conversation_id_str} has no character_id associated."
+            )
             # Attempt to load messages anyway, but character data will be missing.
-            raw_db_messages = db.get_messages_for_conversation(conversation_id_str, limit=messages_limit,
-                                                               # Use parameter
-                                                               order_by_timestamp="ASC")
-            processed_ui_history = process_db_messages_to_ui_history(raw_db_messages, "Unknown Character", user_name)
+            raw_db_messages = db.get_messages_for_conversation(
+                conversation_id_str,
+                limit=messages_limit,
+                # Use parameter
+                order_by_timestamp="ASC",
+            )
+            processed_ui_history = process_db_messages_to_ui_history(
+                raw_db_messages, "Unknown Character", user_name
+            )
             return None, processed_ui_history, None
 
         # Load character data and image. Initial history from this call is just the first_message, not used here.
         char_data, _, img = load_character_and_image(db, character_id, user_name)
 
         if not char_data:
-            logger.warning(f"No character card found for char_id {character_id} (from conv {conversation_id_str})")
+            logger.warning(
+                f"No character card found for char_id {character_id} (from conv {conversation_id_str})"
+            )
             # Load messages with a placeholder character name
-            raw_db_messages = db.get_messages_for_conversation(conversation_id_str, limit=messages_limit,
-                                                               # Use parameter
-                                                               order_by_timestamp="ASC")
-            processed_ui_history = process_db_messages_to_ui_history(raw_db_messages, "Unknown Character", user_name)
-            return None, processed_ui_history, img  # img might be None if char_data was None
+            raw_db_messages = db.get_messages_for_conversation(
+                conversation_id_str,
+                limit=messages_limit,
+                # Use parameter
+                order_by_timestamp="ASC",
+            )
+            processed_ui_history = process_db_messages_to_ui_history(
+                raw_db_messages, "Unknown Character", user_name
+            )
+            return (
+                None,
+                processed_ui_history,
+                img,
+            )  # img might be None if char_data was None
 
-        char_name_from_card = char_data.get('name', 'Character')  # Should be valid if char_data exists
+        char_name_from_card = char_data.get(
+            "name", "Character"
+        )  # Should be valid if char_data exists
 
         # Fetch all messages for this conversation
-        raw_db_messages = db.get_messages_for_conversation(conversation_id_str, limit=messages_limit,  # Use parameter
-                                                           order_by_timestamp="ASC")
+        raw_db_messages = db.get_messages_for_conversation(
+            conversation_id_str,
+            limit=messages_limit,  # Use parameter
+            order_by_timestamp="ASC",
+        )
 
         # Convert DB messages to UI history format.
         # The application layer that calls db.add_message needs to set sender consistently.
@@ -758,24 +1260,32 @@ def load_chat_and_character(
             char_name_from_card,
             user_name,
             actual_user_sender_id_in_db="User",
-            actual_char_sender_id_in_db=char_name_from_card
+            actual_char_sender_id_in_db=char_name_from_card,
         )
 
         return char_data, processed_ui_history, img
 
     except CharactersRAGDBError as e:
-        logger.error(f"Database error in load_chat_and_character for conversation ID {conversation_id_str}: {e}")
+        logger.error(
+            f"Database error in load_chat_and_character for conversation ID {conversation_id_str}: {e}"
+        )
         return None, [], None
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error in load_chat_and_character for conv ID {conversation_id_str}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error in load_chat_and_character for conv ID {conversation_id_str}: {e}"
+        )
         return None, [], None
 
 
 def load_character_wrapper(
-        db: CharactersRAGDB,
-        character_id_or_ui_choice: Union[int, str],
-        user_name: Optional[str]
-) -> Tuple[Optional[Dict[str, Any]], List[Tuple[Optional[str], Optional[str]]], Optional[Image.Image]]:
+    db: CharactersRAGDB,
+    character_id_or_ui_choice: Union[int, str],
+    user_name: Optional[str],
+) -> Tuple[
+    Optional[Dict[str, Any]],
+    List[Tuple[Optional[str], Optional[str]]],
+    Optional[Image.Image],
+]:
     """Wraps character loading to accept either an ID or a UI choice string.
 
     This function serves as a convenience wrapper around
@@ -809,11 +1319,17 @@ def load_character_wrapper(
             raise ValueError("character_id_or_ui_choice must be int or string.")
 
         return load_character_and_image(db, char_id_int, user_name)
-    except ValueError as e:  # Catch errors from extract_character_id_from_ui_choice or type check
-        logger.error(f"Error in load_character_wrapper with input '{character_id_or_ui_choice}': {e}")
+    except (
+        ValueError
+    ) as e:  # Catch errors from extract_character_id_from_ui_choice or type check
+        logger.error(
+            f"Error in load_character_wrapper with input '{character_id_or_ui_choice}': {e}"
+        )
         raise  # Re-raise for the caller to handle
     except Exception as e:  # Catch any other unexpected errors
-        logger.opt(exception=True).error(f"Unexpected error in load_character_wrapper for '{character_id_or_ui_choice}': {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error in load_character_wrapper for '{character_id_or_ui_choice}': {e}"
+        )
         raise
 
 
@@ -836,46 +1352,86 @@ def parse_character_book(book_data: Dict[str, Any]) -> Dict[str, Any]:
         Entries are parsed into a structured list.
     """
     parsed_book = {
-        'name': book_data.get('name', ''),
-        'description': book_data.get('description', ''),
-        'scan_depth': book_data.get('scan_depth'),
-        'token_budget': book_data.get('token_budget'),
-        'recursive_scanning': book_data.get('recursive_scanning', False),
-        'extensions': book_data.get('extensions', {}),
-        'entries': []
+        "name": book_data.get("name", ""),
+        "description": book_data.get("description", ""),
+        "scan_depth": book_data.get("scan_depth"),
+        "token_budget": book_data.get("token_budget"),
+        "recursive_scanning": book_data.get("recursive_scanning", False),
+        "extensions": book_data.get("extensions", {}),
+        "entries": [],
     }
 
-    for entry_raw in book_data.get('entries', []):
+    # SillyTavern lorebooks use numeric positions; normalize the common ones
+    # to the V2 spec's string values and keep anything else as-is.
+    numeric_position_map = {0: "before_char", 1: "after_char"}
+
+    raw_entries = book_data.get("entries", [])
+    if not isinstance(raw_entries, list):
+        logger.warning(
+            f"character_book 'entries' is not a list ({type(raw_entries).__name__}); importing book with no entries."
+        )
+        raw_entries = []
+
+    for fallback_order, entry_raw in enumerate(raw_entries):
         if not isinstance(entry_raw, dict):
-            logger.warning(f"Skipping non-dict entry in character_book: {entry_raw}")
+            logger.warning(
+                "Skipping non-dict entry in character_book (entry_index={}, type={}).",
+                fallback_order,
+                type(entry_raw).__name__,
+            )
             continue
 
-        # Ensure required fields for an entry are present
-        if not entry_raw.get('keys') or not isinstance(entry_raw['keys'], list) or \
-                'content' not in entry_raw or \
-                'enabled' not in entry_raw or \
-                'insertion_order' not in entry_raw:
-            logger.warning(
-                f"Skipping invalid character_book entry due to missing core fields: {entry_raw.get('name', 'N/A')}")
-            continue
+        # Lenient parsing: default missing core fields instead of dropping the
+        # entry. 'keys' and 'content' default to empty (entry never triggers),
+        # 'enabled' defaults to True, 'insertion_order' to list position.
+        raw_keys = entry_raw.get("keys", [])
+        if not isinstance(raw_keys, list):
+            raw_keys = [raw_keys] if raw_keys else []
+        keys = [str(k) for k in raw_keys if k is not None and str(k).strip()]
+
+        content = entry_raw.get("content", "")
+        if content is None:
+            content = ""
+        elif not isinstance(content, str):
+            content = str(content)
+
+        enabled = _coerce_bool(entry_raw.get("enabled"), True)
+
+        insertion_order = entry_raw.get("insertion_order", fallback_order)
+        if not isinstance(insertion_order, (int, float)) or isinstance(
+            insertion_order, bool
+        ):
+            insertion_order = fallback_order
+
+        position = entry_raw.get("position", "before_char")
+        if isinstance(position, bool):
+            position = "before_char"
+        elif isinstance(position, (int, float)):
+            position = numeric_position_map.get(int(position), position)
+
+        secondary_keys = entry_raw.get("secondary_keys", [])
+        if not isinstance(secondary_keys, list):
+            secondary_keys = []
 
         parsed_entry = {
-            'keys': entry_raw['keys'],
-            'content': entry_raw['content'],
-            'extensions': entry_raw.get('extensions', {}),
-            'enabled': entry_raw['enabled'],
-            'insertion_order': entry_raw['insertion_order'],
-            'case_sensitive': entry_raw.get('case_sensitive', False),
-            'name': entry_raw.get('name', ''),
-            'priority': entry_raw.get('priority'),
-            'id': entry_raw.get('id'),  # Can be None
-            'comment': entry_raw.get('comment', ''),
-            'selective': entry_raw.get('selective', False),
-            'secondary_keys': entry_raw.get('secondary_keys', []),
-            'constant': entry_raw.get('constant', False),
-            'position': entry_raw.get('position', 'before_char')  # Default if not specified
+            "keys": keys,
+            "content": content,
+            "extensions": entry_raw.get("extensions", {})
+            if isinstance(entry_raw.get("extensions"), dict)
+            else {},
+            "enabled": enabled,
+            "insertion_order": insertion_order,
+            "case_sensitive": _coerce_bool(entry_raw.get("case_sensitive"), False),
+            "name": entry_raw.get("name", ""),
+            "priority": entry_raw.get("priority"),
+            "id": entry_raw.get("id"),  # Can be None
+            "comment": entry_raw.get("comment", ""),
+            "selective": _coerce_bool(entry_raw.get("selective"), False),
+            "secondary_keys": secondary_keys,
+            "constant": _coerce_bool(entry_raw.get("constant"), False),
+            "position": position,
         }
-        parsed_book['entries'].append(parsed_entry)
+        parsed_book["entries"].append(parsed_entry)
     return parsed_book
 
 
@@ -884,8 +1440,12 @@ def parse_character_book(book_data: Dict[str, Any]) -> Dict[str, Any]:
 # Importing and Parsing External Card/Chat Formats
 #
 
+
 # FIXME
-def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO], base_directory: Optional[str] = None) -> Optional[str]:
+def extract_json_from_image_file(
+    image_file_input: Union[str, bytes, io.BytesIO],
+    base_directory: Optional[str] = None,
+) -> Optional[str]:
     """Extracts 'chara' metadata (Base64 encoded JSON) from an image file.
 
     Typically used for PNG character cards (e.g., TavernAI format) that embed
@@ -904,83 +1464,247 @@ def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO]
         an error during decoding or JSON validation.
     """
     img_obj: Optional[Image.Image] = None
-    file_name_for_log = "image_stream"
+    source_kind = "stream"
     image_source_to_use: Optional[io.BytesIO] = None
 
     try:
         if isinstance(image_file_input, str) and os.path.exists(image_file_input):
+            source_kind = "path"
             # Validate the file path to prevent directory traversal
             if base_directory is None:
                 # Default to user data directory for character cards
-                base_directory = os.path.expanduser("~/.local/share/tldw_cli/")
-            
+                from tldw_chatbook.config import get_user_data_dir
+
+                base_directory = str(get_user_data_dir())
+
             try:
-                validated_path = validate_path(image_file_input, base_directory)
-                file_name_for_log = str(validated_path)
-                logger.debug(f"Validated image file path: {validated_path}")
-            except ValueError as e:
-                logger.error(f"Invalid image file path '{image_file_input}': {e}")
+                validated_path = validate_path(
+                    image_file_input,
+                    base_directory,
+                    redact_paths=True,
+                )
+                logger.debug("Validated character image source path.")
+            except ValueError:
+                logger.error("Invalid character image source path.")
                 return None
-                
-            with open(validated_path, 'rb') as f_bytes:
+
+            with open(validated_path, "rb") as f_bytes:
                 image_source_to_use = io.BytesIO(f_bytes.read())
         elif isinstance(image_file_input, bytes):
+            source_kind = "bytes"
             image_source_to_use = io.BytesIO(image_file_input)
-        elif hasattr(image_file_input, 'read'):  # File-like object
-            if hasattr(image_file_input, 'name') and image_file_input.name:
-                file_name_for_log = image_file_input.name
+        elif hasattr(image_file_input, "read"):  # File-like object
             image_file_input.seek(0)
             image_source_to_use = io.BytesIO(image_file_input.read())
             image_file_input.seek(0)  # Reset original stream pointer
         else:
-            logger.error("extract_json_from_image_file: Invalid input type. Must be file path, bytes, or BytesIO.")
+            logger.error(
+                "extract_json_from_image_file: Invalid input type. Must be file path, bytes, or BytesIO."
+            )
             return None
 
-        if not image_source_to_use: return None
+        if not image_source_to_use:
+            return None
 
-        logger.debug(f"Attempting to extract JSON from image: {file_name_for_log}")
+        logger.debug(
+            "Attempting character-card metadata extraction (source_type={}).",
+            source_kind,
+        )
 
         img_obj = Image.open(image_source_to_use)
 
         # Primarily for PNG cards (TavernAI, SillyTavern convention)
-        if img_obj.format != 'PNG':
-            logger.warning(
-                f"Image '{file_name_for_log}' is not in PNG format (format: {img_obj.format}). 'chara' metadata extraction may fail or not be applicable.")
-
+        if img_obj.format != "PNG":
+            logger.warning("Character-card image is not PNG; probing alternate metadata.")
 
         # 'text' attribute in Pillow Image objects holds metadata chunks.
         # For PNGs, these are tEXt, zTXt, or iTXt chunks.
-        if hasattr(img_obj, 'info') and isinstance(img_obj.info, dict) and 'chara' in img_obj.info:
-            chara_base64_str = img_obj.info['chara']
+        # 'chara' holds V1/V2 cards; 'ccv3' holds V3 cards.
+        metadata_key: Optional[str] = None
+        if hasattr(img_obj, "info") and isinstance(img_obj.info, dict):
+            for candidate_key in _CARD_IMAGE_METADATA_KEYS:
+                if candidate_key in img_obj.info:
+                    metadata_key = candidate_key
+                    break
+
+        # SillyTavern and other tools write the character text chunks AFTER
+        # the IDAT (image data) chunk. Pillow only surfaces trailing chunks in
+        # .info once the image data has been decoded, so force a full load and
+        # re-check before falling back to EXIF or giving up. PNG-only: WebP and
+        # JPEG carry card data in EXIF instead, and the decode is bounded by
+        # _MAX_CARD_DECODE_PIXELS to avoid CPU/memory spikes on huge untrusted
+        # images.
+        if metadata_key is None and img_obj.format == "PNG":
+            width, height = img_obj.size
+            if width * height > _MAX_CARD_DECODE_PIXELS:
+                logger.warning(
+                    "Skipping full decode of oversized character-card PNG."
+                )
+            else:
+                try:
+                    img_obj.load()
+                except Exception as load_error:
+                    logger.warning(
+                        "Full character-card PNG decode failed (category={}).",
+                        type(load_error).__name__,
+                    )
+                if hasattr(img_obj, "info") and isinstance(img_obj.info, dict):
+                    for candidate_key in _CARD_IMAGE_METADATA_KEYS:
+                        if candidate_key in img_obj.info:
+                            metadata_key = candidate_key
+                            break
+                if metadata_key:
+                    logger.debug("Found trailing character-card metadata.")
+
+        # WebP (and JPEG) character cards embed the base64 card JSON in the
+        # EXIF UserComment tag (37510) instead of a 'chara' text chunk.
+        exif_user_comment: Optional[Any] = None
+        if metadata_key is None:
             try:
-                decoded_chara_json_str = base64.b64decode(chara_base64_str).decode('utf-8')
+                exif_data = img_obj.getexif()
+                if exif_data:
+                    exif_user_comment = exif_data.get(37510)  # UserComment
+            except Exception as exif_error:
+                logger.debug(
+                    "Could not read character-card EXIF (category={}).",
+                    type(exif_error).__name__,
+                )
+            if exif_user_comment:
+                metadata_key = "exif_user_comment"
+
+        if metadata_key:
+            if metadata_key == "exif_user_comment":
+                chara_base64_str = exif_user_comment
+            else:
+                chara_base64_str = img_obj.info[metadata_key]
+            if isinstance(chara_base64_str, bytes):
+                raw_b64_bytes = chara_base64_str
+                # EXIF UserComment values often carry an 8-byte charset
+                # prefix, e.g. b'ASCII\x00\x00\x00' - strip it if present.
+                if len(raw_b64_bytes) > 8 and raw_b64_bytes[:5] == b"ASCII":
+                    raw_b64_bytes = raw_b64_bytes[8:]
+                chara_base64_str = raw_b64_bytes.decode("utf-8", errors="replace")
+            try:
+                decoded_chara_json_str = base64.b64decode(chara_base64_str).decode(
+                    "utf-8"
+                )
                 json.loads(decoded_chara_json_str)  # Validate it's JSON
-                logger.info(f"Successfully extracted and decoded 'chara' JSON from '{file_name_for_log}'.")
+                logger.info(
+                    "Character-card image metadata decoded successfully."
+                )
                 return decoded_chara_json_str
-            except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as decode_err:
+            except (
+                binascii.Error,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ) as decode_error:
                 logger.error(
-                    f"Error decoding 'chara' metadata from '{file_name_for_log}': {decode_err}. Content (start): {str(chara_base64_str)[:100]}...")
+                    "Character-card image metadata decode failed (category={}).",
+                    type(decode_error).__name__,
+                )
                 return None  # Explicitly return None on decode error
-            except Exception as e:  # Catch any other unexpected error during decode/load
-                logger.opt(exception=True).error(f"Unexpected error during 'chara' processing from '{file_name_for_log}': {e}")
+            except Exception as error:  # Unexpected decode/load failure
+                logger.error(
+                    "Character-card image metadata processing failed (category={}).",
+                    type(error).__name__,
+                )
                 return None
         else:
-            logger.debug(
-                f"'chara' key not found in image metadata for '{file_name_for_log}'. Available metadata keys: {list(img_obj.info.keys()) if isinstance(img_obj.info, dict) else 'N/A'}")
+            logger.debug("Character-card metadata was not found in the image.")
             return None
 
     except FileNotFoundError:
-        logger.error(f"Image file not found for JSON extraction: {file_name_for_log}")
-    except IOError as e:  # Catches PIL.UnidentifiedImageError and other file I/O issues
-        logger.opt(exception=True).error(f"Cannot open or read image file (or not a valid image): {file_name_for_log}. Error: {e}")
-    except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error extracting JSON from image '{file_name_for_log}': {e}")
+        logger.error("Character image source was not found.")
+    except IOError as error:  # Pillow unidentified-image and other I/O failures
+        logger.error(
+            "Cannot open or read character-card image (category={}).",
+            type(error).__name__,
+        )
+    except Exception as error:
+        logger.error(
+            "Unexpected character-card image extraction failure (category={}).",
+            type(error).__name__,
+        )
     finally:
         if img_obj:
             img_obj.close()
         if image_source_to_use:
             image_source_to_use.close()
     return None
+
+
+def _coerce_card_text(value: Any, default: str = "") -> str:
+    """Coerces a character card field to a string for DB storage.
+
+    Cards in the wild sometimes use lists (e.g. personality traits) or
+    numbers where the spec expects strings. Lists are joined with newlines,
+    scalars are stringified, and None/missing becomes the default.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if item is not None)
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    logger.debug(
+        f"Card text field has unsupported type {type(value).__name__}; using default empty string."
+    )
+    return default
+
+
+def _coerce_card_str_list(value: Any) -> List[str]:
+    """Coerces a card field to a list of strings (for tags/alt greetings)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None and str(item).strip()]
+    return []
+
+
+def _find_source_card_name(card_data_json: Dict[str, Any]) -> str:
+    """Finds a usable character name in a raw card dict, if one exists.
+
+    Checks the locations used by every supported format: the V2/V3 'data'
+    node, the V1 root 'name', TextGen's 'char_name', CharacterAI's
+    'participant__name' and nested 'info.character.name', and the generic
+    fallbacks 'character_name'/'title'.
+
+    Returns:
+        str: The stripped name, or "" if the card has no usable name.
+    """
+    if not isinstance(card_data_json, dict):
+        return ""
+
+    data_node = card_data_json.get("data")
+    if isinstance(data_node, dict):
+        name = _coerce_card_text(data_node.get("name")).strip()
+        if name:
+            return name
+
+    for field in (
+        "name",
+        "char_name",
+        "character_name",
+        "title",
+        "participant__name",
+    ):
+        name = _coerce_card_text(card_data_json.get(field)).strip()
+        if name:
+            return name
+
+    info_node = card_data_json.get("info")
+    if isinstance(info_node, dict):
+        character_node = info_node.get("character")
+        if isinstance(character_node, dict):
+            name = _coerce_card_text(character_node.get("name")).strip()
+            if name:
+                return name
+
+    return ""
 
 
 def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -990,8 +1714,11 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     extracts relevant fields from its 'data' node (or root if 'data' is
     absent but structure is V2-like), and maps them to a new dictionary
     with keys corresponding to the application's database schema.
-    It assumes basic structural validity (e.g., presence of key fields)
-    may have been checked by a prior validation step.
+
+    Lenient by design: only 'name' is strictly required. Fields the V2 spec
+    mandates (description, personality, scenario, first_mes, mes_example)
+    default to an empty string when missing or null, and non-string values
+    are coerced, because real-world cards frequently omit them.
 
     Args:
         card_data_json (Dict[str, Any]): The dictionary parsed from a V2
@@ -1000,62 +1727,125 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     Returns:
         Optional[Dict[str, Any]]: A dictionary containing the parsed and
         mapped character data (e.g., 'first_mes' becomes 'first_message').
-        Returns None if essential V2 fields are missing or if an unexpected
+        Returns None only if 'name' is missing/unusable or an unexpected
         error occurs during parsing.
     """
     try:
         # data_node can be 'data' or root for some V2 variants (parsing flexibility)
-        data_node = card_data_json.get('data', card_data_json)
+        data_node = card_data_json.get("data", card_data_json)
         if not isinstance(data_node, dict):
-            logger.error("V2 card 'data' node is missing or not a dictionary during parsing.")
+            logger.error(
+                "V2 card 'data' node is missing or not a dictionary during parsing."
+            )
             return None
 
-        # Required fields in the source V2 card (using original spec names for parsing)
-        # This parsing function relies on these fields existing as per V2 spec.
-        required_spec_fields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example']
-        for field in required_spec_fields:
-            if field not in data_node or data_node[field] is None:
-                logger.error(f"Missing required field '{field}' in V2 card data node during parsing.")
-                return None
+        # Only 'name' is strictly required for a usable character.
+        name = _coerce_card_text(data_node.get("name")).strip()
+        if not name:
+            logger.error(
+                "Missing or empty required field 'name' in V2 card data node during parsing."
+            )
+            return None
 
-        # Map to DB schema names
+        # Map to DB schema names, defaulting/coercing as needed
         parsed_data = {
-            'name': data_node['name'],
-            'description': data_node['description'],
-            'personality': data_node['personality'],
-            'scenario': data_node['scenario'],
-            'first_message': data_node['first_mes'],
-            'message_example': data_node['mes_example'],
-
-            'creator_notes': data_node.get('creator_notes', ''),
-            'system_prompt': data_node.get('system_prompt', ''),
-            'post_history_instructions': data_node.get('post_history_instructions', ''),
-            'alternate_greetings': data_node.get('alternate_greetings', []),
-            'tags': data_node.get('tags', []),
-            'creator': data_node.get('creator', ''),
-            'character_version': data_node.get('character_version', ''),
-            'extensions': data_node.get('extensions', {}),
-            'image_base64': data_node.get('char_image') or data_node.get('image')
+            "name": name,
+            "description": _coerce_card_text(data_node.get("description")),
+            "personality": _coerce_card_text(data_node.get("personality")),
+            "scenario": _coerce_card_text(data_node.get("scenario")),
+            "first_message": _coerce_card_text(data_node.get("first_mes")),
+            "message_example": _coerce_card_text(data_node.get("mes_example")),
+            "creator_notes": _coerce_card_text(data_node.get("creator_notes")),
+            "system_prompt": _coerce_card_text(data_node.get("system_prompt")),
+            "post_history_instructions": _coerce_card_text(
+                data_node.get("post_history_instructions")
+            ),
+            "alternate_greetings": _coerce_card_str_list(
+                data_node.get("alternate_greetings")
+            ),
+            "tags": _coerce_card_str_list(data_node.get("tags")),
+            "creator": _coerce_card_text(data_node.get("creator")),
+            "character_version": _coerce_card_text(
+                data_node.get("character_version")
+            ),
+            # Shallow copy so the character_book insertion below can never
+            # mutate the caller's original card dict.
+            "extensions": dict(data_node["extensions"])
+            if isinstance(data_node.get("extensions"), dict)
+            else {},
+            "image_base64": data_node.get("char_image") or data_node.get("image"),
         }
 
-        if 'character_book' in data_node and isinstance(data_node['character_book'], dict):
-            if not isinstance(parsed_data['extensions'], dict):
-                parsed_data['extensions'] = {}
-            parsed_data['extensions']['character_book'] = parse_character_book(data_node['character_book'])
+        # Preserve dev's behaviour first: the parsed card carries the legacy
+        # character_book in its extensions. The conversion below removes it
+        # again ONLY once a usable world-book block exists, so a book that
+        # yields nothing keeps this key and still injects the old way.
+        if isinstance(data_node.get("character_book"), dict):
+            parsed_data["extensions"]["character_book"] = parse_character_book(
+                data_node["character_book"]
+            )
+
+        # TASK-429: convert an embedded V2 character_book into the app's managed
+        # character_world_books snapshot so it is visible/attached and injects
+        # ONCE. Handle the top-level V2 field AND the nested legacy key (cards
+        # exported by this app before the fix carry the book under extensions).
+        # Only drop character_book after a block with >=1 entry is built, so a
+        # book that yields nothing keeps its legacy key (still injects).
+        try:
+            if not isinstance(parsed_data["extensions"], dict):
+                parsed_data["extensions"] = {}
+            _source_book = None
+            if isinstance(data_node.get("character_book"), dict):
+                _source_book = data_node["character_book"]
+            elif isinstance(parsed_data["extensions"].get("character_book"), dict):
+                _source_book = parsed_data["extensions"]["character_book"]
+            if _source_book is not None:
+                _fallback = f"{parsed_data.get('name') or 'Character'} Lorebook"
+                _block, _imported, _skipped = character_book_to_world_book_block(
+                    _source_book, _fallback
+                )
+                if _block is not None and _imported > 0:
+                    _existing = parsed_data["extensions"].get("character_world_books")
+                    if not isinstance(_existing, list):
+                        _existing = []
+                    if not any(
+                        isinstance(b, dict)
+                        and str(b.get("name")) == str(_block.get("name"))
+                        for b in _existing
+                    ):
+                        _existing = _existing + [_block]
+                    parsed_data["extensions"]["character_world_books"] = _existing
+                    parsed_data["extensions"].pop("character_book", None)
+                    logger.info(
+                        "Imported character lorebook (entries={}, skipped={}).",
+                        _imported,
+                        _skipped,
+                    )
+                else:
+                    logger.warning(
+                        f"character_book on import yielded no usable entries "
+                        f"({_skipped} skipped); leaving any legacy key intact."
+                    )
+        except Exception as error:
+            logger.error(
+                "Character lorebook conversion failed (category={}).",
+                type(error).__name__,
+            )
 
         # Log spec/version from top level if present, for info, but parsing proceeds based on data_node content.
-        spec = card_data_json.get('spec')
-        spec_version = card_data_json.get('spec_version')
-        if spec and spec != 'chara_card_v2':
-            logger.warning(f"Parsing V2-like card with unexpected 'spec': {spec}.")
-        if spec_version and spec_version != '2.0':
-            logger.warning(f"Parsing V2-like card with 'spec_version': {spec_version} (expected '2.0').")
+        spec = card_data_json.get("spec")
+        spec_version = card_data_json.get("spec_version")
+        if spec and spec != "chara_card_v2":
+            logger.info("Parsing V2-like card with a noncanonical spec.")
+        if spec_version and str(spec_version) != "2.0":
+            logger.info("Parsing V2-like card with a noncanonical spec version.")
 
         return parsed_data
-    except KeyError as e:
-        logger.error(f"Missing key during V2 card parsing: {e}")
-    except Exception as e:
-        logger.opt(exception=True).error(f"Error parsing V2 card data: {e}")
+    except Exception as error:
+        logger.error(
+            "Unexpected V2 card parsing failure (category={}).",
+            type(error).__name__,
+        )
     return None
 
 
@@ -1077,42 +1867,71 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         mapped character data. Returns None if an unexpected error occurs.
 
     Raises:
-        ValueError: If any of the required V1 fields ('name', 'description',
-            'personality', 'scenario', 'first_mes', 'mes_example') are missing
-            from `card_data_json`.
+        ValueError: If the required V1 field 'name' is missing or empty in
+            `card_data_json`. Other spec-required fields default to empty
+            strings when absent (lenient parsing).
     """
     try:
-        # Required fields in the source V1 card (using original spec names)
-        required_spec_fields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example']
-        for field in required_spec_fields:
-            if field not in card_data_json:  # V1 cards are flat, check directly in card_data_json
-                raise ValueError(f"Missing required field in V1 card: {field}")
+        # Only 'name' is strictly required; other spec-required V1 fields are
+        # commonly absent in the wild and default to empty strings.
+        name = _coerce_card_text(card_data_json.get("name")).strip()
+        if not name:
+            raise ValueError("Missing required field in V1 card: name")
 
         # Map to DB schema names
         v2_like_data: Dict[str, Any] = {
-            'name': card_data_json['name'],
-            'description': card_data_json['description'],
-            'personality': card_data_json['personality'],
-            'scenario': card_data_json['scenario'],
-            'first_message': card_data_json['first_mes'],  # Map first_mes -> first_message
-            'message_example': card_data_json['mes_example'],  # Map mes_example -> message_example
-
-            'creator_notes': card_data_json.get('creator_notes', ''),
-            'system_prompt': card_data_json.get('system_prompt', ''),
-            'post_history_instructions': card_data_json.get('post_history_instructions', ''),
-            'alternate_greetings': card_data_json.get('alternate_greetings', []),
-            'tags': card_data_json.get('tags', []),  # Ensure tags is a list
-            'creator': card_data_json.get('creator', ''),
-            'character_version': card_data_json.get('character_version', ''),
-            'extensions': {},  # Initialize extensions
-            'image_base64': card_data_json.get('char_image') or card_data_json.get('image')
+            "name": name,
+            "description": _coerce_card_text(card_data_json.get("description")),
+            "personality": _coerce_card_text(card_data_json.get("personality")),
+            "scenario": _coerce_card_text(card_data_json.get("scenario")),
+            "first_message": _coerce_card_text(
+                card_data_json.get("first_mes")
+            ),  # Map first_mes -> first_message
+            "message_example": _coerce_card_text(
+                card_data_json.get("mes_example")
+            ),  # Map mes_example -> message_example
+            "creator_notes": _coerce_card_text(card_data_json.get("creator_notes")),
+            "system_prompt": _coerce_card_text(card_data_json.get("system_prompt")),
+            "post_history_instructions": _coerce_card_text(
+                card_data_json.get("post_history_instructions")
+            ),
+            "alternate_greetings": _coerce_card_str_list(
+                card_data_json.get("alternate_greetings")
+            ),
+            "tags": _coerce_card_str_list(card_data_json.get("tags")),
+            "creator": _coerce_card_text(card_data_json.get("creator")),
+            "character_version": _coerce_card_text(
+                card_data_json.get("character_version")
+            ),
+            "extensions": {},  # Initialize extensions
+            # task-15769: `image_base64` is the app's own backup-export /
+            # load_characters compatibility key -- treat it as an image
+            # source, not an unknown field (which would dump the whole
+            # base64 payload into extensions and lose the avatar).
+            "image_base64": card_data_json.get("char_image")
+            or card_data_json.get("image")
+            or card_data_json.get("image_base64"),
         }
 
         # Collect any non-standard V1 fields into 'extensions'
-        standard_v1_keys_mapped_or_known = set(required_spec_fields + [
-            'creator_notes', 'system_prompt', 'post_history_instructions',
-            'alternate_greetings', 'tags', 'creator', 'character_version', 'char_image', 'image'
-        ])
+        standard_v1_keys_mapped_or_known = {
+            "name",
+            "description",
+            "personality",
+            "scenario",
+            "first_mes",
+            "mes_example",
+            "creator_notes",
+            "system_prompt",
+            "post_history_instructions",
+            "alternate_greetings",
+            "tags",
+            "creator",
+            "character_version",
+            "char_image",
+            "image",
+            "image_base64",
+        }
 
         extra_extensions = {}
         for key, value in card_data_json.items():
@@ -1120,19 +1939,22 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 extra_extensions[key] = value
 
         if extra_extensions:
-            if isinstance(v2_like_data.get('extensions'), dict):
-                v2_like_data['extensions'].update(extra_extensions)
+            if isinstance(v2_like_data.get("extensions"), dict):
+                v2_like_data["extensions"].update(extra_extensions)
             else:  # Should be a dict due to initialization
-                v2_like_data['extensions'] = extra_extensions
+                v2_like_data["extensions"] = extra_extensions
 
-        if v2_like_data['extensions'] is None:  # Defensive
-            v2_like_data['extensions'] = {}
+        if v2_like_data["extensions"] is None:  # Defensive
+            v2_like_data["extensions"] = {}
 
         return v2_like_data
     except ValueError:  # Re-raise from missing required fields check
         raise
-    except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error parsing V1 card: {e}")
+    except Exception as error:
+        logger.error(
+            "Unexpected V1 card parsing failure (category={}).",
+            type(error).__name__,
+        )
     return None
 
 
@@ -1141,12 +1963,15 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # Character card parsing & Validation functions
 # These validate the *structure* of the card data, typically after parsing from JSON.
 
+
 def validate_character_book(book_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """Validates the structure and content of a 'character_book' dictionary.
 
-    Checks for required fields, correct data types, and valid values within
-    the character book data, including its entries. This is typically part
-    of validating a V2 character card.
+    Lenient by design: character books (lorebooks) in the wild frequently use
+    integer positions, omit 'enabled'/'insertion_order', or contain empty
+    entries. All such issues are reported as non-fatal warnings; the parser
+    applies sensible defaults instead of rejecting the card. This function
+    only returns `False` when `book_data` itself is not a dictionary.
 
     Args:
         book_data (Dict[str, Any]): The character book dictionary to validate.
@@ -1155,58 +1980,72 @@ def validate_character_book(book_data: Dict[str, Any]) -> Tuple[bool, List[str]]
 
     Returns:
         Tuple[bool, List[str]]: A tuple where:
-            - The first element (bool) is `True` if the book data is valid,
-              `False` otherwise.
-            - The second element (List[str]) is a list of error messages
-              describing validation failures. Empty if valid.
+            - The first element (bool) is `True` if the book is usable,
+              `False` only if `book_data` is not a dictionary.
+            - The second element (List[str]) is a list of warning messages
+              describing deviations from the spec. Empty if fully clean.
     """
-    validation_messages = []
+    if not isinstance(book_data, dict):
+        return False, ["'character_book' must be a dictionary."]
+
+    validation_messages: List[str] = []
 
     # Optional fields with expected types
     optional_fields = {
-        'name': str,
-        'description': str,
-        'scan_depth': (int, float),
-        'token_budget': (int, float),
-        'recursive_scanning': bool,
-        'extensions': dict,
-        # 'entries' is technically required if 'character_book' exists
+        "name": str,
+        "description": str,
+        "scan_depth": (int, float),
+        "token_budget": (int, float),
+        "recursive_scanning": bool,
+        "extensions": dict,
     }
 
     for field, expected_type in optional_fields.items():
-        if field in book_data:
+        if field in book_data and book_data[field] is not None:
             if not isinstance(book_data[field], expected_type):
                 validation_messages.append(
-                    f"Field 'character_book.{field}' must be of type '{expected_type.__name__ if isinstance(expected_type, type) else expected_type}'.")
+                    f"Field 'character_book.{field}' should be of type '{expected_type}'. Tolerated."
+                )
 
-    # 'entries' is required if character_book itself is present
-    if 'entries' not in book_data or not isinstance(book_data['entries'], list):
+    # 'entries' is expected if character_book itself is present, but a
+    # missing/mistyped entries list is not fatal (parsed as no entries).
+    if "entries" not in book_data:
         validation_messages.append(
-            "Field 'character_book.entries' is required and must be a list if 'character_book' is defined.")
-        return False, validation_messages  # Cannot proceed without entries
+            "Field 'character_book.entries' is missing; the book will be imported with no entries."
+        )
+        return True, validation_messages
+    if not isinstance(book_data["entries"], list):
+        validation_messages.append(
+            "Field 'character_book.entries' should be a list; the book will be imported with no entries."
+        )
+        return True, validation_messages
 
-    # Validate each entry in 'entries'
-    entries = book_data.get('entries', [])
+    # Validate each entry in 'entries' (all findings are non-fatal warnings)
+    entries = book_data.get("entries", [])
     entry_ids: Set[Union[int, float]] = set()  # Store IDs to check for uniqueness
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
-            validation_messages.append(f"Entry {idx} in 'character_book.entries' is not a dictionary.")
+            validation_messages.append(
+                f"Entry {idx} in 'character_book.entries' is not a dictionary and will be skipped."
+            )
             continue
-        is_valid_entry, entry_messages = validate_character_book_entry(entry, idx, entry_ids)
-        if not is_valid_entry:
-            validation_messages.extend(entry_messages)
+        _is_valid_entry, entry_messages = validate_character_book_entry(
+            entry, idx, entry_ids
+        )
+        validation_messages.extend(entry_messages)
 
-    is_valid = len(validation_messages) == 0
-    return is_valid, validation_messages
+    return True, validation_messages
 
 
-def validate_character_book_entry(entry: Dict[str, Any], idx: int, entry_ids: Set[Union[int, float]]) -> Tuple[
-    bool, List[str]]:
+def validate_character_book_entry(
+    entry: Dict[str, Any], idx: int, entry_ids: Set[Union[int, float]]
+) -> Tuple[bool, List[str]]:
     """Validates a single entry within a 'character_book.entries' list.
 
-    Checks an individual character book entry for required fields (like 'keys',
-    'content'), correct data types, valid 'position' values, constraints
-    related to 'selective' entries, and uniqueness of 'id' if present.
+    Lenient: every finding is a non-fatal warning. Real-world lorebook
+    entries often use integer positions (SillyTavern), omit 'enabled' or
+    'insertion_order', or carry empty 'content'; the parser defaults these
+    instead of rejecting the card.
 
     Args:
         entry (Dict[str, Any]): The character book entry dictionary to validate.
@@ -1219,111 +2058,175 @@ def validate_character_book_entry(entry: Dict[str, Any], idx: int, entry_ids: Se
 
     Returns:
         Tuple[bool, List[str]]: A tuple where:
-            - The first element (bool) is `True` if the entry is valid,
-              `False` otherwise.
-            - The second element (List[str]) is a list of error messages
-              describing validation failures. Empty if valid.
+            - The first element (bool) is always `True` (kept for API
+              compatibility; all findings are warnings).
+            - The second element (List[str]) is a list of warning messages.
     """
-    validation_messages = []
-    required_fields_entry = {
-        'keys': list,
-        'content': str,
-        # 'extensions': dict, # Extensions can be missing
-        'enabled': bool,
-        'insertion_order': (int, float)
+    validation_messages: List[str] = []
+
+    # Fields the V2 spec requires; the parser defaults them when missing.
+    spec_required_fields = {
+        "keys": list,
+        "content": str,
+        "enabled": bool,
+        "insertion_order": (int, float),
     }
 
-    for field, expected_type in required_fields_entry.items():
-        if field not in entry:
-            validation_messages.append(f"Entry {idx}: Missing required field '{field}'.")
+    for field, expected_type in spec_required_fields.items():
+        if field not in entry or entry[field] is None:
+            validation_messages.append(
+                f"Entry {idx}: Missing spec-required field '{field}'; a default will be used."
+            )
         elif not isinstance(entry[field], expected_type):
+            # bool is a subclass of int - avoid flagging bools for numeric fields
+            if expected_type == (int, float) and isinstance(entry[field], bool):
+                validation_messages.append(
+                    f"Entry {idx}: Field '{field}' should be a number; a default will be used."
+                )
+            else:
+                validation_messages.append(
+                    f"Entry {idx}: Field '{field}' should be of type '{expected_type}'; it will be coerced or defaulted."
+                )
+        elif field == "keys" and not entry[field]:
             validation_messages.append(
-                f"Entry {idx}: Field '{field}' must be of type '{expected_type.__name__ if isinstance(expected_type, type) else expected_type}'.")
-        elif field == 'content' and not entry[field].strip() and entry[
-            field] is not None:  # Allow None content if type check allows, but not empty string
-            validation_messages.append(
-                f"Entry {idx}: Field 'content' cannot be an empty or whitespace-only string if present.")
-        elif field == 'keys' and not entry[field]:  # Must have at least one key
-            validation_messages.append(f"Entry {idx}: Field 'keys' cannot be empty.")
+                f"Entry {idx}: Field 'keys' is empty; the entry will never trigger."
+            )
 
     # Optional fields
     optional_fields_entry = {
-        'extensions': dict,
-        'case_sensitive': bool,
-        'name': str,
-        'priority': (int, float),
-        'id': (int, float),  # ID can be int or float (number)
-        'comment': str,
-        'selective': bool,
-        'secondary_keys': list,
-        'constant': bool,
-        'position': str  # Should be 'before_char' or 'after_char' or 'after_prompt' etc.
+        "extensions": dict,
+        "case_sensitive": bool,
+        "name": str,
+        "priority": (int, float),
+        "id": (int, float),  # ID can be int or float (number)
+        "comment": str,
+        "selective": bool,
+        "secondary_keys": list,
+        "constant": bool,
+        "position": (str, int, float),  # str per spec; numeric in the wild
     }
 
     for field, expected_type in optional_fields_entry.items():
-        if field in entry and entry[field] is not None and not isinstance(entry[field],
-                                                                          expected_type):  # Check type only if field is present and not None
+        if (
+            field in entry
+            and entry[field] is not None
+            and not isinstance(entry[field], expected_type)
+        ):
             validation_messages.append(
-                f"Entry {idx}: Field '{field}' must be of type '{expected_type.__name__ if isinstance(expected_type, type) else expected_type}'.")
+                f"Entry {idx}: Field '{field}' should be of type '{expected_type}'. Tolerated."
+            )
 
-    # Validate 'position' value if present
-    if 'position' in entry and entry['position'] is not None:
-        # This list might need to be expanded based on spec (e.g. SillyTavern lorebook positions)
-        valid_positions = ['before_char', 'after_char', 'after_prompt', 'before_history']
-        if entry['position'] not in valid_positions:
+    # Validate 'position' value if present. Spec says 'before_char'/'after_char';
+    # SillyTavern lorebooks also use integers (0=before_char, 1=after_char, ...)
+    # and other strings ('before_history', 'after_prompt'). All tolerated.
+    if "position" in entry and entry["position"] is not None:
+        position_val = entry["position"]
+        known_string_positions = [
+            "before_char",
+            "after_char",
+            "after_prompt",
+            "before_history",
+            "before_prompt",
+            "at_depth",
+        ]
+        if isinstance(position_val, str) and position_val not in known_string_positions:
             validation_messages.append(
-                f"Entry {idx}: Field 'position' ('{entry['position']}') is not a recognized value (e.g., {', '.join(valid_positions)}).")
+                f"Entry {idx}: Field 'position' ('{position_val}') is not a recognized string value (e.g., {', '.join(known_string_positions)}). Tolerated."
+            )
+        elif isinstance(position_val, bool) or not isinstance(
+            position_val, (str, int, float)
+        ):
+            validation_messages.append(
+                f"Entry {idx}: Field 'position' has an unexpected type ({type(position_val).__name__}). Tolerated."
+            )
 
     # Validate 'secondary_keys' if 'selective' is True
-    if entry.get('selective') is True:  # Check for explicit True
-        if 'secondary_keys' not in entry or not isinstance(entry.get('secondary_keys'), list):
-            validation_messages.append(f"Entry {idx}: 'secondary_keys' must be a list when 'selective' is True.")
-        elif not entry.get('secondary_keys'):  # If list exists, it must not be empty for selective=true
-            validation_messages.append(f"Entry {idx}: 'secondary_keys' cannot be empty when 'selective' is True.")
+    if entry.get("selective") is True:
+        if not isinstance(entry.get("secondary_keys"), list):
+            validation_messages.append(
+                f"Entry {idx}: 'secondary_keys' should be a list when 'selective' is True. Tolerated."
+            )
+        elif not entry.get("secondary_keys"):
+            validation_messages.append(
+                f"Entry {idx}: 'secondary_keys' is empty while 'selective' is True; the entry may never trigger."
+            )
 
-    # Validate 'keys' list elements (must be non-empty strings)
-    if 'keys' in entry and isinstance(entry['keys'], list):
-        for i, key_val in enumerate(entry['keys']):
+    # Validate 'keys' list elements (should be non-empty strings)
+    if "keys" in entry and isinstance(entry["keys"], list):
+        for i, key_val in enumerate(entry["keys"]):
             if not isinstance(key_val, str) or not key_val.strip():
-                validation_messages.append(f"Entry {idx}: Element {i} in 'keys' must be a non-empty string.")
+                validation_messages.append(
+                    f"Entry {idx}: Element {i} in 'keys' is not a non-empty string; it will be coerced or dropped."
+                )
 
-    # Validate 'secondary_keys' list elements (must be non-empty strings)
-    if 'secondary_keys' in entry and isinstance(entry.get('secondary_keys'), list):
-        for i, skey_val in enumerate(entry['secondary_keys']):
+    # Validate 'secondary_keys' list elements (should be non-empty strings)
+    if "secondary_keys" in entry and isinstance(entry.get("secondary_keys"), list):
+        for i, skey_val in enumerate(entry["secondary_keys"]):
             if not isinstance(skey_val, str) or not skey_val.strip():
-                validation_messages.append(f"Entry {idx}: Element {i} in 'secondary_keys' must be a non-empty string.")
+                validation_messages.append(
+                    f"Entry {idx}: Element {i} in 'secondary_keys' is not a non-empty string; it will be coerced or dropped."
+                )
 
     # Validate 'id' uniqueness
-    if 'id' in entry and entry['id'] is not None:
-        entry_id_val = entry['id']
-        if entry_id_val in entry_ids:
-            validation_messages.append(
-                f"Entry {idx}: Duplicate 'id' value '{entry_id_val}'. Each entry 'id' in a book must be unique.")
-        else:
-            entry_ids.add(entry_id_val)
+    if "id" in entry and entry["id"] is not None:
+        entry_id_val = entry["id"]
+        if isinstance(entry_id_val, (int, float)) and not isinstance(
+            entry_id_val, bool
+        ):
+            if entry_id_val in entry_ids:
+                validation_messages.append(
+                    f"Entry {idx}: Duplicate 'id' value '{entry_id_val}'. Tolerated."
+                )
+            else:
+                entry_ids.add(entry_id_val)
 
-    # Validate 'extensions' keys are namespaced (convention)
-    if 'extensions' in entry and isinstance(entry.get('extensions'), dict):
+    # Validate 'extensions' keys are namespaced (convention, non-fatal)
+    if "extensions" in entry and isinstance(entry.get("extensions"), dict):
         # Common platform keys that are allowed without namespacing
-        allowed_unnamespaced_keys = {'chub', 'depth', 'weight', 'exclude_from_recursion'}
-        for ext_key in entry['extensions'].keys():
+        allowed_unnamespaced_keys = {
+            "chub",
+            "depth",
+            "weight",
+            "exclude_from_recursion",
+            "position",
+            "probability",
+            "use_probability",
+            "display_index",
+            "role",
+            "vectorized",
+        }
+        for ext_key in entry["extensions"].keys():
             if not isinstance(ext_key, str):
                 validation_messages.append(
-                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' must be a string.")
-            elif ext_key not in allowed_unnamespaced_keys and ('/' not in ext_key and '_' not in ext_key and ':' not in ext_key):
+                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' is not a string. Tolerated."
+                )
+            elif ext_key not in allowed_unnamespaced_keys and (
+                "/" not in ext_key and "_" not in ext_key and ":" not in ext_key
+            ):
                 validation_messages.append(
-                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' should be namespaced (e.g., 'myorg/mykey') to prevent conflicts.")
+                    f"Entry {idx}: Extension key '{ext_key}' in 'extensions' is not namespaced (e.g., 'myorg/mykey'). Tolerated."
+                )
 
-    is_valid = len(validation_messages) == 0
-    return is_valid, validation_messages
+    return True, validation_messages
 
 
 def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """Validates a character card dictionary against the V2 specification.
 
-    Checks top-level fields like 'spec' and 'spec_version', the presence and
-    type of the 'data' node, and required/optional fields within 'data'.
-    It also invokes `validate_character_book` if a 'character_book' is present.
+    This validator is intentionally lenient: real-world cards (Chub.ai,
+    SillyTavern exports, older generators) routinely omit spec-required
+    fields, use numeric lorebook positions, or add un-namespaced extension
+    keys. Only problems that would make the card unusable are treated as
+    fatal errors; everything else is reported as a non-fatal warning so the
+    caller can log it without rejecting the card.
+
+    Fatal errors:
+    - 'data' node missing or not a dictionary (when the card claims to be V2)
+    - 'data.name' missing, not a string, or empty/whitespace
+
+    Everything else (missing description/personality/scenario/first_mes/
+    mes_example, wrong types on optional fields, extension namespacing,
+    character_book issues, unexpected spec/spec_version values) is a warning.
 
     Args:
         card_data (Dict[str, Any]): The full character card dictionary (parsed
@@ -1331,111 +2234,184 @@ def validate_v2_card(card_data: Dict[str, Any]) -> Tuple[bool, List[str]]:
 
     Returns:
         Tuple[bool, List[str]]: A tuple where:
-            - The first element (bool) is `True` if the card is valid according
-              to V2 spec, `False` otherwise.
-            - The second element (List[str]) is a list of error messages
-              describing validation failures. Empty if valid.
+            - The first element (bool) is `True` if the card has no fatal
+              errors, `False` otherwise.
+            - The second element (List[str]) is a list of messages describing
+              fatal errors (prefixed 'ERROR:') and non-fatal warnings
+              (prefixed 'WARNING:'). Empty if the card is fully spec-clean.
     """
-    validation_messages = []
+    errors: List[str] = []
+    warnings: List[str] = []
 
-    # Check top-level fields for full V2 spec compliance
-    if 'spec' not in card_data:
-        validation_messages.append("Missing 'spec' field (expected 'chara_card_v2' for V2 spec).")
-    elif card_data['spec'] != 'chara_card_v2':
-        validation_messages.append(f"Invalid 'spec' value: '{card_data['spec']}'. Expected 'chara_card_v2'.")
+    # Check top-level fields for full V2 spec compliance (non-fatal: many
+    # V3 cards and V2-ish exports use different spec markers but still carry
+    # a usable 'data' node).
+    if "spec" not in card_data:
+        warnings.append(
+            "WARNING: Missing 'spec' field (expected 'chara_card_v2' for V2 spec)."
+        )
+    elif card_data["spec"] != "chara_card_v2":
+        warnings.append(
+            f"WARNING: Unexpected 'spec' value: '{card_data['spec']}'. Expected 'chara_card_v2'; will attempt lenient parsing."
+        )
 
-    if 'spec_version' not in card_data:
-        validation_messages.append("Missing 'spec_version' field (expected '2.0' for V2 spec).")
+    if "spec_version" not in card_data:
+        warnings.append(
+            "WARNING: Missing 'spec_version' field (expected '2.0' for V2 spec)."
+        )
     else:
         try:
             # Spec version should be a string like "2.0"
-            if isinstance(card_data['spec_version'], str):
-                spec_version_float = float(
-                    card_data['spec_version'])  # TODO: More robust version comparison if needed (e.g., major.minor)
+            if isinstance(card_data["spec_version"], str):
+                spec_version_float = float(card_data["spec_version"])
                 if spec_version_float < 2.0:
-                    validation_messages.append(
-                        f"'spec_version' must be '2.0' or higher. Found '{card_data['spec_version']}'.")
+                    warnings.append(
+                        f"WARNING: 'spec_version' should be '2.0' or higher. Found '{card_data['spec_version']}'."
+                    )
+            elif isinstance(card_data["spec_version"], (int, float)):
+                warnings.append(
+                    f"WARNING: 'spec_version' is a number ({card_data['spec_version']}), not a string (e.g., '2.0'). Tolerated."
+                )
             else:
-                validation_messages.append(
-                    f"Invalid 'spec_version' format: {card_data['spec_version']}. Must be a string (e.g., '2.0').")
-        except ValueError:
-            validation_messages.append(
-                f"Invalid 'spec_version' format: {card_data['spec_version']}. Must be a number as a string (e.g., '2.0').")
+                warnings.append(
+                    f"WARNING: Invalid 'spec_version' format: {card_data['spec_version']}. Expected a string (e.g., '2.0'). Tolerated."
+                )
+        except (ValueError, TypeError):
+            warnings.append(
+                f"WARNING: Unparseable 'spec_version': {card_data['spec_version']}. Tolerated."
+            )
 
-    if 'data' not in card_data or not isinstance(card_data.get('data'), dict):  # Use .get for safety before isinstance
-        validation_messages.append(
-            "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key.")
-        # If 'data' is missing, further checks on data_node will likely fail or be irrelevant.
-        # However, some V2 cards might be flat if spec is missing, so we don't hard return here
-        # unless spec explicitly stated V2. The calling function will decide based on results.
-        data_node = {}  # Avoid None for data_node if it's missing for subsequent checks to not error out
+    if "data" not in card_data or not isinstance(card_data.get("data"), dict):
+        # Fatal only when the card *claims* to be V2/V3; a flat card without a
+        # 'data' node may be a V1 card and is handled by the V1 parser.
+        claims_v2 = (
+            card_data.get("spec") in ("chara_card_v2", "chara_card_v3")
+            or str(card_data.get("spec_version", "")).startswith(("2.", "3."))
+        )
+        msg = (
+            "Missing 'data' field, or it's not a dictionary. V2 spec requires character data under a 'data' key."
+        )
+        if claims_v2:
+            errors.append(f"ERROR: {msg}")
+        else:
+            warnings.append(f"WARNING: {msg}")
+        data_node = {}  # Avoid None for subsequent checks
     else:
-        data_node = card_data['data']
+        data_node = card_data["data"]
 
-    # Required fields in 'data' node
-    required_data_fields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example']
-    for field in required_data_fields:
-        if field not in data_node:
-            validation_messages.append(f"Missing required field in 'data': '{field}'.")
+    # Required-by-spec fields in 'data' node. Only 'name' is fatal; the rest
+    # are commonly absent in the wild and default to "" during parsing.
+    name_val = data_node.get("name")
+    if name_val is None:
+        errors.append("ERROR: Missing required field in 'data': 'name'.")
+    elif not isinstance(name_val, str):
+        if isinstance(name_val, (int, float, bool)):
+            warnings.append(
+                f"WARNING: Field 'data.name' is not a string ({type(name_val).__name__}); it will be coerced."
+            )
+        else:
+            errors.append(
+                f"ERROR: Field 'data.name' must be a string, got {type(name_val).__name__}."
+            )
+    elif not name_val.strip():
+        errors.append("ERROR: Field 'data.name' cannot be empty or just whitespace.")
+
+    for field in ["description", "personality", "scenario", "first_mes", "mes_example"]:
+        if field not in data_node or data_node[field] is None:
+            warnings.append(
+                f"WARNING: Missing field in 'data': '{field}'. It will default to an empty string."
+            )
         elif not isinstance(data_node[field], str):
-            validation_messages.append(f"Field 'data.{field}' must be a string.")
-        elif field in ['name', 'first_mes'] and not data_node[field].strip():
-            validation_messages.append(f"Field 'data.{field}' cannot be empty or just whitespace.")
+            warnings.append(
+                f"WARNING: Field 'data.{field}' should be a string (got {type(data_node[field]).__name__}); it will be coerced."
+            )
 
-    # Optional fields with expected types in 'data' node
+    # Optional fields with expected types in 'data' node (all non-fatal)
     optional_data_fields = {
-        'creator_notes': str,
-        'system_prompt': str,
-        'post_history_instructions': str,
-        'alternate_greetings': list,
-        'tags': list,
-        'creator': str,
-        'character_version': str,
-        'extensions': dict,
-        'character_book': dict,
-        'char_image': str,
-        'image': str,
+        "creator_notes": str,
+        "system_prompt": str,
+        "post_history_instructions": str,
+        "alternate_greetings": list,
+        "tags": list,
+        "creator": str,
+        "character_version": str,
+        "extensions": dict,
+        "character_book": dict,
+        "char_image": str,
+        "image": str,
     }
 
     for field, expected_type in optional_data_fields.items():
         if field in data_node and data_node[field] is not None:
             if not isinstance(data_node[field], expected_type):
-                validation_messages.append(f"Field 'data.{field}' must be of type '{expected_type.__name__}'.")
-            elif field == 'extensions' and isinstance(data_node[field], dict):  # Check only if it's a dict
+                warnings.append(
+                    f"WARNING: Field 'data.{field}' should be of type '{expected_type.__name__}' (got {type(data_node[field]).__name__}). Tolerated."
+                )
+            elif field == "extensions" and isinstance(data_node[field], dict):
                 # Common platform keys that are allowed without namespacing
-                allowed_unnamespaced_keys = {'chub', 'depth', 'weight', 'exclude_from_recursion'}
+                allowed_unnamespaced_keys = {
+                    "chub",
+                    "depth",
+                    "weight",
+                    "exclude_from_recursion",
+                    # SillyTavern built-in extension keys
+                    "world",
+                    "talkativeness",
+                    "fav",
+                    "depth_prompt",
+                    "regex_scripts",
+                    "character_book",
+                }
                 for ext_key in data_node[field].keys():
                     if not isinstance(ext_key, str):
-                        validation_messages.append(
-                            f"Extension key '{ext_key}' in 'data.extensions' must be a string.")
+                        warnings.append(
+                            f"WARNING: Extension key '{ext_key}' in 'data.extensions' is not a string. Tolerated."
+                        )
                     elif ext_key not in allowed_unnamespaced_keys and (
-                            '/' not in ext_key and '_' not in ext_key and ':' not in ext_key):
-                        validation_messages.append(
-                            f"Extension key '{ext_key}' in 'data.extensions' should be namespaced (e.g., 'myorg/mykey').")
+                        "/" not in ext_key and "_" not in ext_key and ":" not in ext_key
+                    ):
+                        warnings.append(
+                            f"WARNING: Extension key '{ext_key}' in 'data.extensions' is not namespaced (e.g., 'myorg/mykey'). Tolerated."
+                        )
 
-    if 'alternate_greetings' in data_node and isinstance(data_node.get('alternate_greetings'), list):
-        for idx, greeting in enumerate(data_node['alternate_greetings']):
+    if "alternate_greetings" in data_node and isinstance(
+        data_node.get("alternate_greetings"), list
+    ):
+        for idx, greeting in enumerate(data_node["alternate_greetings"]):
             if not isinstance(greeting, str) or not greeting.strip():
-                validation_messages.append(f"Element {idx} in 'data.alternate_greetings' must be a non-empty string.")
+                warnings.append(
+                    f"WARNING: Element {idx} in 'data.alternate_greetings' is not a non-empty string. It will be dropped or coerced."
+                )
 
-    if 'tags' in data_node and isinstance(data_node.get('tags'), list):
-        for idx, tag_val in enumerate(data_node['tags']):
+    if "tags" in data_node and isinstance(data_node.get("tags"), list):
+        for idx, tag_val in enumerate(data_node["tags"]):
             if not isinstance(tag_val, str) or not tag_val.strip():
-                validation_messages.append(f"Element {idx} in 'data.tags' must be a non-empty string.")
+                warnings.append(
+                    f"WARNING: Element {idx} in 'data.tags' is not a non-empty string. It will be dropped or coerced."
+                )
 
-    if 'character_book' in data_node and data_node['character_book'] is not None:
-        if isinstance(data_node['character_book'], dict):
-            is_valid_book, book_messages = validate_character_book(data_node['character_book'])
-            if not is_valid_book:
-                validation_messages.extend(book_messages)
+    if "character_book" in data_node and data_node["character_book"] is not None:
+        if isinstance(data_node["character_book"], dict):
+            _book_ok, book_messages = validate_character_book(
+                data_node["character_book"]
+            )
+            # Character book issues never block import; keep them as warnings.
+            warnings.extend(
+                m if m.startswith(("WARNING:", "ERROR:")) else f"WARNING: {m}"
+                for m in book_messages
+            )
         else:
-            validation_messages.append("'data.character_book' must be a dictionary if present.")
+            warnings.append(
+                "WARNING: 'data.character_book' should be a dictionary if present. It will be ignored."
+            )
 
-    is_valid = len(validation_messages) == 0
-    return is_valid, validation_messages
+    is_valid = len(errors) == 0
+    return is_valid, errors + warnings
 
 
-def import_character_card_from_json_string(json_content_str: str) -> Optional[Dict[str, Any]]:
+def import_character_card_from_json_string(
+    json_content_str: str,
+) -> Optional[Dict[str, Any]]:
     """Imports and parses a character card from a JSON string.
 
     This function attempts to parse a character card from the provided JSON
@@ -1466,67 +2442,131 @@ def import_character_card_from_json_string(json_content_str: str) -> Optional[Di
         parsed_card: Optional[Dict[str, Any]] = None
 
         # Determine if V2 validation should be attempted
-        is_explicit_v2_spec = card_data_dict.get('spec') == 'chara_card_v2'
+        is_explicit_v2_spec = card_data_dict.get("spec") == "chara_card_v2"
         # Consider "2.0", "2.1", etc. as valid V2 versions for initial check
-        is_explicit_v2_version_str = str(card_data_dict.get('spec_version', ''))
+        is_explicit_v2_version_str = str(card_data_dict.get("spec_version", ""))
         is_explicit_v2_version = is_explicit_v2_version_str.startswith("2.")
 
-        has_data_node_heuristic = isinstance(card_data_dict.get('data'), dict) and \
-                                  'name' in card_data_dict['data']  # Heuristic for implicit V2
+        has_data_node_heuristic = (
+            isinstance(card_data_dict.get("data"), dict)
+            and "name" in card_data_dict["data"]
+        )  # Heuristic for implicit V2
 
-        attempt_v2_processing = is_explicit_v2_spec or is_explicit_v2_version or \
-                                (has_data_node_heuristic and not is_explicit_v2_spec and not is_explicit_v2_version)
+        attempt_v2_processing = (
+            is_explicit_v2_spec
+            or is_explicit_v2_version
+            or (
+                has_data_node_heuristic
+                and not is_explicit_v2_spec
+                and not is_explicit_v2_version
+            )
+        )
 
         if attempt_v2_processing:
             logger.debug("Attempting V2 validation based on card structure/spec.")
-            is_valid_v2_struct, v2_errors = validate_v2_card(card_data_dict)
+            is_valid_v2_struct, v2_messages = validate_v2_card(card_data_dict)
 
             if not is_valid_v2_struct:
-                logger.error(f"V2 Card structural validation failed: {'; '.join(v2_errors)}.")
-                if is_explicit_v2_spec or is_explicit_v2_version:
-                    logger.error("Card explicitly declared as V2 but failed V2 structural validation. Import aborted.")
-                    return None
-                else:  # Implicit V2 guess failed validation
-                    logger.warning(
-                        "Heuristically identified V2 card failed V2 structural validation. Will attempt V1 parsing as fallback.")
-                    # No 'return None' here, proceed to V1 attempt below
-            else:  # V2 structural validation passed
-                logger.info("V2 Card structural validation passed. Attempting to parse as V2 character card.")
-                parsed_card = parse_v2_card(card_data_dict)
-                if not parsed_card:
-                    logger.warning(
-                        "V2 parsing failed despite passing V2 structural validation. This might indicate an issue with the parser or an edge case. Attempting V1 parsing as fallback.")
-                    # `parsed_card` is None, will fall through to V1 attempt
+                # Even for explicitly-V2 cards, validation failures are not
+                # fatal: parse_v2_card is lenient and only 'name' is truly
+                # required. Log the findings and try to parse anyway.
+                logger.warning(
+                    "V2 card structural validation reported problems "
+                    "(count={}); attempting lenient parsing.",
+                    len(v2_messages),
+                )
+            elif v2_messages:
+                logger.debug(
+                    "V2 card passed validation with warnings (count={}).",
+                    len(v2_messages),
+                )
+            else:
+                logger.info(
+                    "V2 Card structural validation passed. Attempting to parse as V2 character card."
+                )
+
+            parsed_card = parse_v2_card(card_data_dict)
+            if not parsed_card:
+                logger.warning(
+                    "Lenient V2 parsing failed (likely missing 'name'). Attempting V1 parsing as fallback."
+                )
+                # `parsed_card` is None, will fall through to V1 attempt
 
         # Fallback to V1 if V2 processing was not attempted, or if it was attempted but `parsed_card` is still None
         if parsed_card is None:
             logger.info("Attempting to parse as V1 character card.")
             try:
-                # parse_v1_card raises ValueError if required fields are missing, or returns None on other errors
+                # parse_v1_card raises ValueError if 'name' is missing/empty, or returns None on other errors
                 parsed_card = parse_v1_card(card_data_dict)
-            except ValueError as ve_v1:
-                logger.error(f"V1 card parsing error (likely missing required V1 fields): {ve_v1}")
+            except ValueError:
+                logger.warning("V1 card parsing failed.")
                 parsed_card = None  # Ensure parsed_card is None on this error
 
+        # Last resort: multi-format detector (Agnai, CharacterAI, KoboldAI,
+        # TextGen, generic field mapping)
+        if parsed_card is None:
+            logger.info("Attempting generic multi-format character card parsing.")
+            try:
+                from .character_card_formats import detect_and_parse_character_card
+
+                detected_card, _detected_format = detect_and_parse_character_card(
+                    card_data_dict
+                )
+                if detected_card:
+                    # The detector returns a V2-envelope card; run it through
+                    # the lenient V2 parser to get DB schema field names.
+                    parsed_card = parse_v2_card(detected_card)
+                    if parsed_card:
+                        # The detector substitutes an "Unknown" placeholder when
+                        # no name exists where it looked. If the source card
+                        # genuinely has no name, reject the import: accepting
+                        # the placeholder would silently merge distinct
+                        # nameless cards through name-conflict resolution
+                        # downstream. If a real name exists elsewhere in the
+                        # source card, use it instead of the placeholder.
+                        if parsed_card.get("name") == "Unknown":
+                            source_name = _find_source_card_name(card_data_dict)
+                            if not source_name:
+                                logger.error(
+                                    "Generic parsing produced placeholder name 'Unknown' and the source card has no name; rejecting import to avoid merging distinct nameless cards."
+                                )
+                                parsed_card = None
+                            else:
+                                parsed_card["name"] = source_name
+                        if parsed_card:
+                            logger.info("Parsed card via a format fallback.")
+            except Exception as error:
+                logger.warning(
+                    "Generic multi-format parsing failed (category={}).",
+                    type(error).__name__,
+                )
+
         # Final check and return
-        if parsed_card and parsed_card.get('name'):  # Name is fundamental
-            logger.info(f"Successfully parsed card: '{parsed_card.get('name')}'")
+        if parsed_card and parsed_card.get("name"):  # Name is fundamental
+            logger.info("Character card parsing completed.")
             return parsed_card
         else:
-            if parsed_card and not parsed_card.get('name'):
+            if parsed_card and not parsed_card.get("name"):
                 logger.error("Parsed card is missing 'name'. Import failed.")
             else:  # parsed_card is None
-                logger.error("All parsing attempts (V2 and V1) failed to produce a valid card.")
+                logger.error(
+                    "All parsing attempts (V2 and V1) failed to produce a valid card."
+                )
             return None
 
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error from string: {e}. Content (start): {json_content_str[:150]}...")
-    except Exception as e:  # Catch any other unexpected errors during the process
-        logger.opt(exception=True).error(f"Unexpected error parsing card from JSON string: {e}")
+    except json.JSONDecodeError:
+        logger.error("Character card JSON decoding failed.")
+    except Exception as error:  # Catch any other unexpected errors during the process
+        logger.error(
+            "Unexpected character card parsing failure (category={}).",
+            type(error).__name__,
+        )
     return None
 
 
-def load_character_card_from_string_content(content_str: str) -> Optional[Dict[str, Any]]:
+def load_character_card_from_string_content(
+    content_str: str,
+) -> Optional[Dict[str, Any]]:
     """Loads a character card from various string formats (JSON, Markdown).
 
     This function parses character card data from a string. It supports:
@@ -1554,21 +2594,27 @@ def load_character_card_from_string_content(content_str: str) -> Optional[Dict[s
             not installed. This exception is propagated.
     """
     if not content_str or not content_str.strip():
-        logger.error("Cannot load character card from empty or whitespace string content.")
+        logger.error(
+            "Cannot load character card from empty or whitespace string content."
+        )
         return None
 
     try:
-        content = content_str.replace("\ufeff", "").lstrip()  # Remove BOM, leading whitespace
-        logger.debug(f"Attempting to load card from string content (start): {repr(content[:70])}")
+        content = content_str.replace(
+            "\ufeff", ""
+        ).lstrip()  # Remove BOM, leading whitespace
+        logger.debug("Attempting to load character card string content.")
 
         json_card_data_str: Optional[str] = None
 
-        if content.startswith('{'):  # Likely direct JSON
+        if content.startswith("{"):  # Likely direct JSON
             json_card_data_str = content
-        elif content.startswith('---'):  # Likely Markdown with YAML frontmatter
+        elif content.startswith("---"):  # Likely Markdown with YAML frontmatter
             try:
                 # Regex to match YAML front matter strictly at the start, allowing for optional whitespace before ---
-                yaml_match = re.match(r"^\s*---\s*\n(.*?)\n\s*---\s*", content, re.DOTALL)
+                yaml_match = re.match(
+                    r"^\s*---\s*\n(.*?)\n\s*---\s*", content, re.DOTALL
+                )
                 if yaml_match:
                     yaml_content = yaml_match.group(1).strip()
                     # Convert YAML to JSON string for consistent parsing by import_character_card_from_json_string
@@ -1576,28 +2622,41 @@ def load_character_card_from_string_content(content_str: str) -> Optional[Dict[s
                     if isinstance(card_dict_from_yaml, dict):
                         json_card_data_str = json.dumps(card_dict_from_yaml)
                     else:
-                        logger.error("YAML frontmatter did not parse into a dictionary.")
+                        logger.error(
+                            "YAML frontmatter did not parse into a dictionary."
+                        )
                 else:  # If frontmatter malformed, check for JSON block in the rest of the content
-                    logger.debug("Markdown frontmatter not found or malformed, checking for JSON code block.")
-            except ImportError: # PyYAML not installed
-                logger.error("PyYAML is required for loading YAML front matter. Install it via 'pip install PyYAML'.")
-                raise # Re-raise to notify caller of missing dependency
-            except yaml.YAMLError as ye:
-                logger.error(f"Error parsing YAML frontmatter: {ye}")
+                    logger.debug(
+                        "Markdown frontmatter not found or malformed, checking for JSON code block."
+                    )
+            except ImportError:  # PyYAML not installed
+                logger.error(
+                    "PyYAML is required for loading YAML front matter. Install it via 'pip install PyYAML'."
+                )
+                raise  # Re-raise to notify caller of missing dependency
+            except yaml.YAMLError:
+                logger.error("Character card YAML frontmatter parsing failed.")
                 # Fall through
 
-        if not json_card_data_str:  # If not direct JSON or YAML processed, look for JSON code block
+        if (
+            not json_card_data_str
+        ):  # If not direct JSON or YAML processed, look for JSON code block
             # Regex to find a JSON code block (```json ... ``` or ``` ... ```)
             # DOTALL allows . to match newlines, IGNORECASE for 'json' tag
-            pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+            pattern = re.compile(
+                r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE
+            )
             match = pattern.search(content)
             if match:
                 json_card_data_str = match.group(1).strip()
                 logger.debug("Extracted JSON from code block.")
             else:
-                if not content.startswith('{'):  # Only error if it wasn't direct JSON to begin with
+                if not content.startswith(
+                    "{"
+                ):  # Only error if it wasn't direct JSON to begin with
                     logger.error(
-                        "No valid character card data found: not direct JSON, no YAML frontmatter, and no JSON code block.")
+                        "No valid character card data found: not direct JSON, no YAML frontmatter, and no JSON code block."
+                    )
                     return None
 
         if not json_card_data_str:
@@ -1608,17 +2667,110 @@ def load_character_card_from_string_content(content_str: str) -> Optional[Dict[s
 
     except ImportError:  # Specifically for PyYAML
         raise  # Let it propagate so user knows dependency is missing
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Unexpected error in load_character_card_from_string_content: {e}. Content (start): {content_str[:100]}")
+    except Exception as error:
+        logger.error(
+            "Unexpected character card content failure (category={}).",
+            type(error).__name__,
+        )
     return None
 
 
-def import_and_save_character_from_file(
-        db: CharactersRAGDB,
-        file_input: Union[str, io.BytesIO, bytes]  # File path, BytesIO stream, or raw bytes
-) -> Optional[int]:
-    """Imports a character card from a file, saves it to DB, and returns ID.
+def inspect_character_card_tts_attachment(
+    file_input: Union[str, io.BytesIO, bytes],
+) -> CharacterCardTTSInspection | None:
+    """Inspect one card's TTS attachment without writing or returning card text.
+
+    Passing immutable bytes lets the caller preflight capabilities and then
+    give the exact same source to the detailed importer, avoiding a path
+    time-of-check/time-of-use gap.
+    """
+
+    source_kind = "stream"
+    try:
+        card_json: str | None
+        if isinstance(file_input, str):
+            source_kind = _bounded_card_source_type(file_input)
+            try:
+                validated_path = validate_path_simple(
+                    file_input,
+                    require_exists=True,
+                )
+            except ValueError:
+                logger.error(
+                    "Character inspection source path was rejected "
+                    "(source_type={}).",
+                    source_kind,
+                )
+                return None
+            if not validated_path.is_file():
+                logger.error(
+                    "Character inspection source was not found (source_type={}).",
+                    source_kind,
+                )
+                return None
+            if source_kind in {".png", ".webp"}:
+                with open(validated_path, "rb") as source:
+                    source_bytes = source.read()
+                card_json = extract_json_from_image_file(io.BytesIO(source_bytes))
+            else:
+                with open(validated_path, "r", encoding="utf-8") as source:
+                    card_json = source.read()
+        else:
+            if isinstance(file_input, bytes):
+                source_bytes = file_input
+                source_kind = "bytes"
+            elif hasattr(file_input, "read"):
+                file_input.seek(0)
+                source_bytes = file_input.read()
+                file_input.seek(0)
+                if not isinstance(source_bytes, bytes):
+                    return None
+            else:
+                return None
+            is_image = source_bytes.startswith(b"\x89PNG") or (
+                source_bytes.startswith(b"RIFF") and b"WEBP" in source_bytes[:12]
+            )
+            card_json = (
+                extract_json_from_image_file(io.BytesIO(source_bytes))
+                if is_image
+                else source_bytes.decode("utf-8")
+            )
+
+        if not card_json:
+            return None
+        parsed = load_character_card_from_string_content(card_json)
+        if not parsed:
+            return None
+        extensions = parsed.get("extensions")
+        if type(extensions) is not dict:
+            return CharacterCardTTSInspection()
+        marker = object()
+        attachment = extensions.get(CHARACTER_CARD_TTS_EXTENSION_KEY, marker)
+        if attachment is marker:
+            return CharacterCardTTSInspection()
+        decoded = decode_portable_profile(attachment)
+        return CharacterCardTTSInspection(
+            portable_profile=decoded.profile,
+            warning_code=decoded.warning_code,
+        )
+    except ImportError:
+        raise
+    except Exception as error:
+        logger.error(
+            "Character TTS inspection failed (source_type={}, category={}).",
+            source_kind,
+            type(error).__name__,
+        )
+        return None
+
+
+def import_and_save_character_from_file_with_outcome(
+    db: CharactersRAGDB,
+    file_input: Union[
+        str, io.BytesIO, bytes
+    ],  # File path, BytesIO stream, or raw bytes
+) -> Optional[CharacterCardImportOutcome]:
+    """Import a character card and report created/reused TTS-safe state.
 
     This function handles multiple input types for character cards:
     - Text files (e.g., .json, .md) containing character data.
@@ -1635,36 +2787,48 @@ def import_and_save_character_from_file(
             card. Can be a file path (str), a BytesIO stream, or raw bytes.
 
     Returns:
-        Optional[int]: The database ID of the newly imported character if
-        successful. Returns the ID of an existing character if a conflict
-        (e.g., duplicate name) occurs and the character already exists.
-        Returns None if the import or save process fails for any other reason
-        (e.g., file not found, invalid format, DB error).
+        The persisted character outcome, including a structurally valid
+        sanitized TTS attachment when present. Returns ``None`` when parsing
+        or character persistence fails.
 
     Raises:
         ImportError: If PyYAML is required for parsing (e.g., Markdown with
             YAML frontmatter in a text file input) but is not installed.
     """
     parsed_card_dict: Optional[Dict[str, Any]] = None
-    image_bytes_for_db: Optional[bytes] = None  # This will hold the avatar image for the DB
+    portable_profile: PortableTTSProfile | None = None
+    attachment_warning: PortableProfileWarningCode | None = None
+    image_bytes_for_db: Optional[bytes] = (
+        None  # This will hold the avatar image for the DB
+    )
     filename_for_log = "input_stream"
+    source_kind = "stream"
 
     try:
         # 1. Determine input type and get card JSON string and potentially image bytes
         if isinstance(file_input, str):  # File path
             filename_for_log = file_input
+            source_kind = _bounded_card_source_type(file_input)
             if not os.path.exists(filename_for_log):
-                logger.error(f"File not found: {filename_for_log}")
+                logger.error(
+                    "Character import source was not found (source_type={}).",
+                    source_kind,
+                )
                 return None
 
             _, ext = os.path.splitext(filename_for_log.lower())
-            if ext in ['.png', '.webp']:  # Image file
-                with open(filename_for_log, 'rb') as f_img:
+            if ext in [".png", ".webp"]:  # Image file
+                with open(filename_for_log, "rb") as f_img:
                     image_bytes_for_db = f_img.read()  # The file itself is the image
-                card_json_str = extract_json_from_image_file(io.BytesIO(image_bytes_for_db))
+                card_json_str = extract_json_from_image_file(
+                    io.BytesIO(image_bytes_for_db)
+                )
                 if not card_json_str:
                     logger.warning(
-                        f"No character JSON data extracted from image file: {filename_for_log}. Image itself will be used if JSON is found elsewhere or card has default image handling.")
+                        "No character JSON metadata was found in the image "
+                        "(source_type={}).",
+                        source_kind,
+                    )
                     # If no JSON in image, card_json_str will be None. Parsing might happen from a text file later if this function is adapted
                     # For current design, if image has no JSON, it must be a text file for card data.
                     # If the intent is to load image AND then separately load a JSON file, this function would need changes.
@@ -1672,153 +2836,272 @@ def import_and_save_character_from_file(
                     # Re-evaluating based on typical use: if image file, json expected inside.
                     # If no JSON inside, we don't then try to read the image file as text.
                     # So, if card_json_str is None here, and it's an image, then we lack card data.
-                    if ext in ['.png', '.webp'] and not card_json_str:  # Explicitly state no card data from image
+                    if (
+                        ext in [".png", ".webp"] and not card_json_str
+                    ):  # Explicitly state no card data from image
                         logger.error(
-                            f"Image file {filename_for_log} provided, but no character JSON metadata found within it.")
+                            "Character image import had no card metadata "
+                            "(source_type={}).",
+                            source_kind,
+                        )
                         return None
             else:  # Assume text file (JSON/MD)
-                with open(filename_for_log, 'r', encoding='utf-8') as f_text:
+                with open(filename_for_log, "r", encoding="utf-8") as f_text:
                     card_json_str = f_text.read()
 
         elif isinstance(file_input, bytes):  # Raw bytes input
+            source_kind = "bytes"
             try:
                 temp_image_stream = io.BytesIO(file_input)
-                potential_json_from_bytes_img = extract_json_from_image_file(temp_image_stream)
+                potential_json_from_bytes_img = extract_json_from_image_file(
+                    temp_image_stream
+                )
                 if potential_json_from_bytes_img:
                     card_json_str = potential_json_from_bytes_img
                     image_bytes_for_db = file_input
                 else:
-                    logger.debug("Input bytes not an image with chara data, or not an image; trying as text.")
-                    card_json_str = file_input.decode('utf-8')
+                    logger.debug(
+                        "Input bytes not an image with chara data, or not an image; trying as text."
+                    )
+                    card_json_str = file_input.decode("utf-8")
                     # If it was an image but without chara, image_bytes_for_db would still be None.
                     # We could try to set image_bytes_for_db = file_input here if we confirm it IS an image
                     # even if chara extraction failed. For now, only if chara data is from image.
             except UnicodeDecodeError:
-                logger.error("Input bytes are not valid UTF-8 text and didn't yield chara data as an image.")
+                logger.error(
+                    "Input bytes are not valid UTF-8 text and didn't yield chara data as an image."
+                )
                 return None
             except Exception as e_bytes_img:
-                logger.debug(f"Input bytes not processed as image ({e_bytes_img}), trying as text.")
+                logger.debug(
+                    "Character import bytes image decoding failed; trying text "
+                    "(category={}).",
+                    type(e_bytes_img).__name__,
+                )
                 try:
-                    card_json_str = file_input.decode('utf-8')
+                    card_json_str = file_input.decode("utf-8")
                 except UnicodeDecodeError:
                     logger.error("Input bytes are not valid UTF-8 text.")
                     return None
 
-        elif hasattr(file_input, 'read'):  # File-like object (e.g., BytesIO from upload)
-            if hasattr(file_input, 'name') and file_input.name: filename_for_log = file_input.name
+        elif hasattr(
+            file_input, "read"
+        ):  # File-like object (e.g., BytesIO from upload)
+            if hasattr(file_input, "name") and file_input.name:
+                filename_for_log = file_input.name
+                source_kind = _bounded_card_source_type(file_input.name)
             file_input.seek(0)
             stream_bytes = file_input.read()
             file_input.seek(0)
 
             try:
                 temp_image_stream_from_obj = io.BytesIO(stream_bytes)
-                potential_json_from_stream_img = extract_json_from_image_file(temp_image_stream_from_obj)
+                potential_json_from_stream_img = extract_json_from_image_file(
+                    temp_image_stream_from_obj
+                )
                 if potential_json_from_stream_img:
                     card_json_str = potential_json_from_stream_img
                     image_bytes_for_db = stream_bytes
                 else:
                     logger.debug(
-                        f"Stream {filename_for_log} not an image with chara data, or not an image; trying as text.")
-                    card_json_str = stream_bytes.decode('utf-8')
+                        "Character import stream was not an embedded card image; "
+                        "trying text (source_type={}).",
+                        source_kind,
+                    )
+                    card_json_str = stream_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 logger.error(
-                    f"Stream content for {filename_for_log} is not valid UTF-8 and didn't yield chara from image.")
+                    "Character import stream was neither card image nor UTF-8 "
+                    "text (source_type={}).",
+                    source_kind,
+                )
                 return None
             except Exception as e_stream_img:
-                logger.debug(f"Stream {filename_for_log} not processed as image ({e_stream_img}), trying as text.")
+                logger.debug(
+                    "Character import stream image decoding failed; trying text "
+                    "(source_type={}, category={}).",
+                    source_kind,
+                    type(e_stream_img).__name__,
+                )
                 try:
-                    card_json_str = stream_bytes.decode('utf-8')
+                    card_json_str = stream_bytes.decode("utf-8")
                 except UnicodeDecodeError:
-                    logger.error(f"Stream content for {filename_for_log} is not valid UTF-8 text.")
+                    logger.error(
+                        "Character import stream is not UTF-8 text "
+                        "(source_type={}).",
+                        source_kind,
+                    )
                     return None
         else:
-            logger.error("Invalid file_input type. Must be file path, BytesIO, or bytes.")
+            logger.error(
+                "Invalid file_input type. Must be file path, BytesIO, or bytes."
+            )
             return None
 
         if not card_json_str:
-            logger.error(f"Could not obtain character card JSON string from input: {filename_for_log}")
+            logger.error(
+                "Character import produced no card JSON (source_type={}).",
+                source_kind,
+            )
             return None
 
         # 2. Parse and Validate the extracted JSON string.
         # load_character_card_from_string_content now incorporates validation.
         parsed_card_dict = load_character_card_from_string_content(card_json_str)
         if not parsed_card_dict:  # This means parsing or validation failed.
-            logger.error(f"Failed to parse or validate character data from content of: {filename_for_log}")
+            logger.error(
+                "Character import failed parsing or validation "
+                "(source_type={}).",
+                source_kind,
+            )
             return None
 
         # 3. Post-parsing check (essential fields on the *parsed and mapped* dictionary)
-        if not parsed_card_dict.get('name'):
+        if not parsed_card_dict.get("name"):
             logger.error(
-                "Character import failed: 'name' is missing in the successfully parsed and DB-schema-mapped card data.")
+                "Character import failed: 'name' is missing in the successfully parsed and DB-schema-mapped card data."
+            )
             return None
         # Add more critical field checks here on `parsed_card_dict` if needed.
 
+        # The reserved TTS namespace is a transient transport attachment, not
+        # stored character truth. Decode it before the character write and
+        # remove it even when invalid or unsupported.
+        parsed_extensions = parsed_card_dict.get("extensions")
+        if isinstance(parsed_extensions, dict):
+            sanitized_extensions = dict(parsed_extensions)
+        else:
+            sanitized_extensions = {}
+        marker = object()
+        raw_attachment = sanitized_extensions.pop(
+            CHARACTER_CARD_TTS_EXTENSION_KEY,
+            marker,
+        )
+        parsed_card_dict["extensions"] = sanitized_extensions
+        if raw_attachment is not marker:
+            decoded_attachment = decode_portable_profile(raw_attachment)
+            portable_profile = decoded_attachment.profile
+            attachment_warning = decoded_attachment.warning_code
+            if attachment_warning is not None:
+                logger.warning(
+                    "Character TTS attachment skipped: {}.",
+                    attachment_warning,
+                )
+
         # 4. Handle image if it's base64 in the JSON and not already set from image file
-        if not image_bytes_for_db and parsed_card_dict.get('image_base64'):
+        if not image_bytes_for_db and parsed_card_dict.get("image_base64"):
             try:
-                image_bytes_for_db = base64.b64decode(str(parsed_card_dict['image_base64']))
+                image_bytes_for_db = base64.b64decode(
+                    str(parsed_card_dict["image_base64"])
+                )
                 logger.debug("Decoded base64 image from card JSON.")
             except Exception as e_b64:
-                logger.warning(f"Failed to decode base64 image string from card data: {e_b64}")
+                logger.warning(
+                    "Character card image payload could not be decoded "
+                    "(category={}).",
+                    type(e_b64).__name__,
+                )
                 # Keep image_bytes_for_db as None
 
         # 5. Prepare the payload for the database, using DB schema field names
         db_payload = {
-            'name': parsed_card_dict['name'],
-            'description': parsed_card_dict.get('description'),
-            'personality': parsed_card_dict.get('personality'),
-            'scenario': parsed_card_dict.get('scenario'),
-            'system_prompt': parsed_card_dict.get('system_prompt'),
-            'image': image_bytes_for_db,
-            'post_history_instructions': parsed_card_dict.get('post_history_instructions'),
-            'first_message': parsed_card_dict.get('first_message'),
-            'message_example': parsed_card_dict.get('message_example'),
-            'creator_notes': parsed_card_dict.get('creator_notes'),
-            'alternate_greetings': parsed_card_dict.get('alternate_greetings', []),
-            'tags': parsed_card_dict.get('tags', []),
-            'creator': parsed_card_dict.get('creator'),
-            'character_version': parsed_card_dict.get('character_version'),
-            'extensions': parsed_card_dict.get('extensions', {})
+            "name": parsed_card_dict["name"],
+            "description": parsed_card_dict.get("description"),
+            "personality": parsed_card_dict.get("personality"),
+            "scenario": parsed_card_dict.get("scenario"),
+            "system_prompt": parsed_card_dict.get("system_prompt"),
+            "image": image_bytes_for_db,
+            "post_history_instructions": parsed_card_dict.get(
+                "post_history_instructions"
+            ),
+            "first_message": parsed_card_dict.get("first_message"),
+            "message_example": parsed_card_dict.get("message_example"),
+            "creator_notes": parsed_card_dict.get("creator_notes"),
+            "alternate_greetings": parsed_card_dict.get("alternate_greetings", []),
+            "tags": parsed_card_dict.get("tags", []),
+            "creator": parsed_card_dict.get("creator"),
+            "character_version": parsed_card_dict.get("character_version"),
+            "extensions": parsed_card_dict.get("extensions", {}),
         }
 
-        if not isinstance(db_payload['alternate_greetings'], list): db_payload['alternate_greetings'] = []
-        if not isinstance(db_payload['tags'], list): db_payload['tags'] = []
-        if not isinstance(db_payload['extensions'], dict): db_payload['extensions'] = {}
+        if not isinstance(db_payload["alternate_greetings"], list):
+            db_payload["alternate_greetings"] = []
+        if not isinstance(db_payload["tags"], list):
+            db_payload["tags"] = []
+        if not isinstance(db_payload["extensions"], dict):
+            db_payload["extensions"] = {}
 
         # 6. Add to database
         char_id = db.add_character_card(db_payload)
         if char_id:
-            logger.info(f"Successfully imported character '{db_payload['name']}' with DB ID: {char_id}")
+            logger.info("Character import persisted (disposition=created).")
         else:
             logger.error(
-                f"Failed to save character '{db_payload['name']}' to DB (add_character_card returned None without error).")  # Should ideally not happen
-        return char_id
+                "Character import persistence returned no identifier."
+            )
+        if char_id is None:
+            return None
+        return CharacterCardImportOutcome(
+            character_id=char_id,
+            created=True,
+            portable_profile=portable_profile,
+            warning_code=attachment_warning,
+        )
 
-    except ConflictError as ce:
-        logger.warning(f"Conflict importing character: {ce}. Name likely already exists.")
+    except ConflictError:
+        logger.warning("Character import reused an existing name conflict.")
         if parsed_card_dict and parsed_card_dict.get(
-                'name'):  # parsed_card_dict might be None if error happened before it was set
-            existing_char = db.get_character_card_by_name(parsed_card_dict['name'])
-            if existing_char and existing_char.get('id'):
-                logger.info(f"Character '{parsed_card_dict['name']}' already exists with ID {existing_char['id']}.")
-                return existing_char['id']
+            "name"
+        ):  # parsed_card_dict might be None if error happened before it was set
+            existing_char = db.get_character_card_by_name(parsed_card_dict["name"])
+            if existing_char and existing_char.get("id"):
+                logger.info("Character import persisted (disposition=reused).")
+                return CharacterCardImportOutcome(
+                    character_id=existing_char["id"],
+                    created=False,
+                    portable_profile=portable_profile,
+                    warning_code=attachment_warning,
+                )
         return None
     except (CharactersRAGDBError, InputError) as db_e:
-        logger.error(f"Database or input error importing character from {filename_for_log}: {db_e}")
+        logger.error(
+            "Character import database/input failure "
+            "(source_type={}, category={}).",
+            source_kind,
+            type(db_e).__name__,
+        )
     except ImportError as imp_err:
-        logger.error(f"Import error during character import: {imp_err}. A required library might be missing.")
+        logger.error(
+            "Character import dependency failure (category={}).",
+            type(imp_err).__name__,
+        )
         raise
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error importing character from {filename_for_log}: {e}")
+        logger.error(
+            "Unexpected character import failure "
+            "(source_type={}, category={}).",
+            source_kind,
+            type(e).__name__,
+        )
     return None
 
 
+def import_and_save_character_from_file(
+    db: CharactersRAGDB,
+    file_input: Union[str, io.BytesIO, bytes],
+) -> Optional[int]:
+    """Import a character card through the legacy ID-returning interface."""
+
+    outcome = import_and_save_character_from_file_with_outcome(db, file_input)
+    return None if outcome is None else outcome.character_id
+
+
 def load_chat_history_from_file_and_save_to_db(
-        db: CharactersRAGDB,
-        file_path_or_obj: Union[str, io.BytesIO],
-        user_name_for_placeholders: Optional[str] = "User",
-        default_user_sender_in_db: str = "User",
-        base_directory: Optional[str] = None
+    db: CharactersRAGDB,
+    file_path_or_obj: Union[str, io.BytesIO],
+    user_name_for_placeholders: Optional[str] = "User",
+    default_user_sender_in_db: str = "User",
+    base_directory: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[int]]:
     """Loads chat history from a JSON file and saves it to the database.
 
@@ -1874,60 +3157,249 @@ def load_chat_history_from_file_and_save_to_db(
         error, JSON parsing error, character not found in DB, DB error).
     """
     filename_for_log = "chat_log_stream"
+    source_kind = (
+        "path"
+        if isinstance(file_path_or_obj, str)
+        else "stream"
+        if hasattr(file_path_or_obj, "read")
+        else "unknown"
+    )
     try:
         content_str: str
         if isinstance(file_path_or_obj, str):
             # Validate the file path to prevent directory traversal
             if base_directory is None:
                 # Default to user data directory for chat history files
-                base_directory = os.path.expanduser("~/.local/share/tldw_cli/")
-            
+                from tldw_chatbook.config import get_user_data_dir
+
+                base_directory = str(get_user_data_dir())
+
             try:
                 validated_path = validate_path(file_path_or_obj, base_directory)
                 filename_for_log = str(validated_path)
-                logger.debug(f"Validated chat history file path: {validated_path}")
-            except ValueError as e:
-                logger.error(f"Invalid chat history file path '{file_path_or_obj}': {e}")
+            except ValueError:
+                logger.error("Invalid chat history file path.")
                 return None, None
-                
-            with open(validated_path, 'r', encoding='utf-8') as f:
-                content_str = f.read()
-        elif hasattr(file_path_or_obj, 'read'):  # File-like object
-            if hasattr(file_path_or_obj, 'name') and file_path_or_obj.name:
+
+            if validated_path.stat().st_size > _MAX_EXPORTED_HISTORY_FILE_BYTES:
+                raise ValueError("Chat history exceeds safety limits.")
+            with open(validated_path, "rb") as f:
+                content_str = _read_bounded_chat_history(f)
+        elif hasattr(file_path_or_obj, "read"):  # File-like object
+            if hasattr(file_path_or_obj, "name") and file_path_or_obj.name:
                 filename_for_log = file_path_or_obj.name
             file_path_or_obj.seek(0)
-            raw_bytes = file_path_or_obj.read()
-            content_str = raw_bytes.decode('utf-8') if isinstance(raw_bytes, bytes) else str(raw_bytes)
+            content_str = _read_bounded_chat_history(file_path_or_obj)
         else:
-            raise ValueError("Invalid input for chat history: must be file path or file-like object.")
+            raise ValueError(
+                "Invalid input for chat history: must be file path or file-like object."
+            )
 
         chat_data_dict = json.loads(content_str)
+        if not isinstance(chat_data_dict, dict) or not _json_depth_is_bounded(
+            chat_data_dict, _MAX_EXPORTED_HISTORY_JSON_DEPTH
+        ):
+            raise ValueError("Invalid chat history.")
+
+        # Chatbook's ordinary JSON export is a bounded active-path projection,
+        # not a character-card log and not a replacement conversation graph.
+        projected_history = chat_data_dict.get("history")
+        exported_format = chat_data_dict.get("format")
+        exported_version = chat_data_dict.get("format_version")
+        if exported_format == _EXPORTED_HISTORY_FORMAT and (
+            type(exported_version) is not int
+            or exported_version != _EXPORTED_HISTORY_FORMAT_VERSION
+        ):
+            raise ValueError("Unsupported exported chat history format.")
+        if (
+            exported_format == _EXPORTED_HISTORY_FORMAT
+            and exported_version == _EXPORTED_HISTORY_FORMAT_VERSION
+        ):
+            if (
+                not isinstance(chat_data_dict.get("conversation_name"), str)
+                or not isinstance(projected_history, list)
+                or not projected_history
+                or len(projected_history) > _MAX_EXPORTED_HISTORY_MESSAGES
+                or not all(
+                    isinstance(message, dict) for message in projected_history
+                )
+            ):
+                raise ValueError("Invalid exported chat history.")
+            staged_messages: list[dict[str, Any]] = []
+            thinking_policy, policy_warning = preflight_thinking_history_policy(
+                chat_data_dict.get("thinking_history_policy")
+            )
+            total_content_chars = 0
+            total_id_chars = 0
+            total_private_bytes = 0
+            total_thinking_bytes = 0
+            for ordinal, message in enumerate(projected_history, start=1):
+                role = message.get("role")
+                content = message.get("content")
+                if (
+                    role not in {"user", "assistant", "system", "tool"}
+                    or not isinstance(content, str)
+                    or len(content) > _MAX_EXPORTED_HISTORY_CONTENT_CHARS
+                ):
+                    raise ValueError("Invalid exported chat history.")
+                total_content_chars += len(content)
+                if total_content_chars > _MAX_EXPORTED_HISTORY_TOTAL_CONTENT_CHARS:
+                    raise ValueError("Invalid exported chat history.")
+                for key in ("id", "parent_id", "variant_of"):
+                    identifier = message.get(key)
+                    if identifier is not None and (
+                        not isinstance(identifier, str)
+                        or len(identifier) > _MAX_EXPORTED_HISTORY_ID_CHARS
+                    ):
+                        raise ValueError("Invalid exported chat history.")
+                    total_id_chars += len(identifier or "")
+                if total_id_chars > _MAX_EXPORTED_HISTORY_TOTAL_ID_CHARS:
+                    raise ValueError("Invalid exported chat history.")
+                staged = {"sender": role, "role": role, "content": content}
+                if "thinking_blocks" in message:
+                    thinking_value = message["thinking_blocks"]
+                    if role != "assistant":
+                        raise ValueError("Invalid exported chat history.")
+                    canonical_thinking = thinking_exchange_to_json(thinking_value)
+                    total_thinking_bytes += len(
+                        canonical_thinking.encode("utf-8")
+                    )
+                    if (
+                        total_thinking_bytes
+                        > _MAX_EXPORTED_HISTORY_THINKING_BYTES
+                    ):
+                        raise ValueError("Invalid exported chat history.")
+                    staged["thinking_blocks_json"] = canonical_thinking
+                private = message.get("_private")
+                checkpoint = None
+                if (
+                    role == "assistant"
+                    and isinstance(private, dict)
+                    and set(private) == {"provider_continuation"}
+                ):
+                    checkpoint = read_provider_continuation_json(
+                        private.get("provider_continuation")
+                    ).checkpoint
+                    # TASK-19170: the exact-owner rule for complete
+                    # preserved-thinking checkpoints follows the versioned
+                    # kimi reasoning family; pre-19170 family checkpoints
+                    # ending with a tool round are exempt (shape guard).
+                    if (
+                        checkpoint is not None
+                        and checkpoint.provider == "moonshot"
+                        and moonshot_model_returns_reasoning_content(
+                            checkpoint.model
+                        )
+                        and checkpoint.state == "complete"
+                        and not checkpoint.rounds[-1].calls
+                        and checkpoint.rounds[-1].assistant_content != content
+                    ):
+                        checkpoint = None
+                canonical = None
+                if checkpoint is not None:
+                    canonical = dump_provider_continuation_json(checkpoint)
+                    private_bytes = len(
+                        (f'{{"provider_continuation":{canonical}}}').encode("utf-8")
+                    )
+                    if (
+                        total_private_bytes + private_bytes
+                        > _MAX_EXPORTED_HISTORY_PRIVATE_BYTES
+                    ):
+                        checkpoint = None
+                        canonical = None
+                    else:
+                        total_private_bytes += private_bytes
+                if private is not None and checkpoint is None:
+                    logger.warning(
+                        "Exact tool continuation was discarded for message {}.",
+                        ordinal,
+                    )
+                if checkpoint is not None:
+                    staged["provider_continuation_json"] = canonical
+                raw_state = message.get("assistant_generation_state")
+                if raw_state is not None and role != "assistant":
+                    raise ValueError("Invalid exported chat history.")
+                try:
+                    generation_state = normalize_assistant_generation_state(
+                        role=role,
+                        raw_state=raw_state,
+                        has_valid_active_continuation=(
+                            checkpoint is not None and checkpoint.state == "active"
+                        ),
+                    )
+                except ValueError:
+                    raise ValueError("Invalid exported chat history.") from None
+                staged["assistant_generation_state"] = (
+                    generation_state.value
+                    if generation_state is not None
+                    else None
+                )
+                staged_messages.append(staged)
+
+            if policy_warning is not None:
+                logger.warning(policy_warning)
+
+            title = chat_data_dict.get("conversation_name")
+            if not isinstance(title, str) or not title.strip():
+                title = "Imported Chat"
+            title = title[:255]
+            with db.transaction():
+                new_conv_id = db.add_conversation(
+                    {
+                        "title": title,
+                        "assistant_authority_id": None,
+                        "thinking_history_policy": thinking_policy,
+                    }
+                )
+                if not new_conv_id:
+                    raise CharactersRAGDBError("Failed to import chat history.")
+                parent_id = None
+                for staged in staged_messages:
+                    staged["conversation_id"] = new_conv_id
+                    staged["parent_message_id"] = parent_id
+                    new_message_id = db.add_message(staged)
+                    if not new_message_id:
+                        raise CharactersRAGDBError("Failed to import chat history.")
+                    parent_id = str(new_message_id)
+                db.set_conversation_active_leaf(new_conv_id, parent_id)
+            return str(new_conv_id), None
 
         # Extract character name (flexible key search)
-        char_name_from_log = chat_data_dict.get('char_name') or \
-                             chat_data_dict.get('character') or \
-                             chat_data_dict.get('name')  # Some formats might use 'name' for char
+        char_name_from_log = (
+            chat_data_dict.get("char_name")
+            or chat_data_dict.get("character")
+            or chat_data_dict.get("name")
+        )  # Some formats might use 'name' for char
 
         if not char_name_from_log:
-            logger.error(f"Chat log '{filename_for_log}' is missing character name ('char_name' or 'character').")
+            logger.error(
+                f"Chat log '{filename_for_log}' is missing character name ('char_name' or 'character')."
+            )
             return None, None
 
         # Extract history pairs (flexible key search for history structure)
         history_pairs_raw: Optional[List[List[str]]] = None
-        if 'history' in chat_data_dict:
-            if isinstance(chat_data_dict['history'], list):  # Simple list of pairs
-                history_pairs_raw = chat_data_dict['history']
-            elif isinstance(chat_data_dict['history'], dict):  # Tavern/SillyTavern structure
-                history_pairs_raw = chat_data_dict['history'].get('internal') or chat_data_dict['history'].get(
-                    'visible')
-        elif 'chat' in chat_data_dict:  # Alternative key for history
-            if isinstance(chat_data_dict['chat'], list):
-                history_pairs_raw = chat_data_dict['chat']
-            elif isinstance(chat_data_dict['chat'], dict):
-                history_pairs_raw = chat_data_dict['chat'].get('internal') or chat_data_dict['chat'].get('visible')
+        if "history" in chat_data_dict:
+            if isinstance(chat_data_dict["history"], list):  # Simple list of pairs
+                history_pairs_raw = chat_data_dict["history"]
+            elif isinstance(
+                chat_data_dict["history"], dict
+            ):  # Tavern/SillyTavern structure
+                history_pairs_raw = chat_data_dict["history"].get(
+                    "internal"
+                ) or chat_data_dict["history"].get("visible")
+        elif "chat" in chat_data_dict:  # Alternative key for history
+            if isinstance(chat_data_dict["chat"], list):
+                history_pairs_raw = chat_data_dict["chat"]
+            elif isinstance(chat_data_dict["chat"], dict):
+                history_pairs_raw = chat_data_dict["chat"].get(
+                    "internal"
+                ) or chat_data_dict["chat"].get("visible")
 
         if not history_pairs_raw or not isinstance(history_pairs_raw, list):
-            logger.error(f"Chat log '{filename_for_log}' is missing valid 'history' (list of message pairs).")
+            logger.error(
+                f"Chat log '{filename_for_log}' is missing valid 'history' (list of message pairs)."
+            )
             return None, None
 
         # Validate and clean history pairs
@@ -1935,73 +3407,120 @@ def load_chat_history_from_file_and_save_to_db(
         for pair_idx, raw_pair in enumerate(history_pairs_raw):
             if isinstance(raw_pair, list) and len(raw_pair) >= 1 and len(raw_pair) <= 2:
                 user_m = str(raw_pair[0]) if raw_pair[0] is not None else None
-                bot_m = str(raw_pair[1]) if len(raw_pair) > 1 and raw_pair[1] is not None else None
+                bot_m = (
+                    str(raw_pair[1])
+                    if len(raw_pair) > 1 and raw_pair[1] is not None
+                    else None
+                )
                 # Skip pairs where both are None or effectively empty after stripping
                 if (user_m and user_m.strip()) or (bot_m and bot_m.strip()):
                     history_pairs.append((user_m, bot_m))
             else:
                 logger.warning(
-                    f"Skipping malformed message pair at index {pair_idx} in '{filename_for_log}': {raw_pair}")
+                    "Skipping malformed message pair {} (category={}).",
+                    pair_idx,
+                    type(raw_pair).__name__,
+                )
 
         if not history_pairs:
-            logger.error(f"No valid message pairs found in chat log '{filename_for_log}'.")
+            logger.error(
+                f"No valid message pairs found in chat log '{filename_for_log}'."
+            )
             return None, None
 
         # Find character in DB
         character_db_entry = db.get_character_card_by_name(char_name_from_log)
-        if not character_db_entry or not character_db_entry.get('id'):
+        if not character_db_entry or not character_db_entry.get("id"):
             logger.error(
-                f"Character '{char_name_from_log}' from chat log '{filename_for_log}' not found in the database.")
+                f"Character '{char_name_from_log}' from chat log '{filename_for_log}' not found in the database."
+            )
             return None, None
 
-        character_id_from_db: int = character_db_entry['id']
-        actual_char_name_from_db = character_db_entry.get('name', char_name_from_log)  # Prefer DB name
+        character_id_from_db: int = character_db_entry["id"]
+        actual_char_name_from_db = character_db_entry.get(
+            "name", char_name_from_log
+        )  # Prefer DB name
 
         # Create a new conversation for this imported chat
         conv_title = f"Imported Chat: {actual_char_name_from_db} ({time.strftime('%Y-%m-%d %H:%M')})"
-        new_conv_id = db.add_conversation({
-            'character_id': character_id_from_db,
-            'title': conv_title
-        })
+        new_conv_id = db.add_conversation(
+            {
+                "character_id": character_id_from_db,
+                "title": conv_title,
+                "assistant_authority_id": None,
+            }
+        )
 
         if not new_conv_id:
-            logger.error(f"Failed to create a new conversation in DB for chat with '{actual_char_name_from_db}'.")
+            logger.error(
+                f"Failed to create a new conversation in DB for chat with '{actual_char_name_from_db}'."
+            )
             return None, None
 
         logger.info(
-            f"Created new conversation (ID: {new_conv_id}) for imported chat with '{actual_char_name_from_db}'.")
+            f"Created new conversation (ID: {new_conv_id}) for imported chat with '{actual_char_name_from_db}'."
+        )
 
         with db.transaction():
             for user_msg_str, char_msg_str in history_pairs:
-                log_user_name = chat_data_dict.get('user_name') or user_name_for_placeholders
+                log_user_name = (
+                    chat_data_dict.get("user_name") or user_name_for_placeholders
+                )
 
                 if user_msg_str and user_msg_str.strip():
-                    processed_user_msg = replace_placeholders(user_msg_str, actual_char_name_from_db, log_user_name)
-                    db.add_message({
-                        'conversation_id': new_conv_id,
-                        'sender': default_user_sender_in_db,
-                        'content': processed_user_msg
-                    })
+                    processed_user_msg = replace_placeholders(
+                        user_msg_str, actual_char_name_from_db, log_user_name
+                    )
+                    db.add_message(
+                        {
+                            "conversation_id": new_conv_id,
+                            "sender": default_user_sender_in_db,
+                            "content": processed_user_msg,
+                        }
+                    )
 
                 if char_msg_str and char_msg_str.strip():
-                    processed_char_msg = replace_placeholders(char_msg_str, actual_char_name_from_db, log_user_name)
-                    db.add_message({
-                        'conversation_id': new_conv_id,
-                        'sender': actual_char_name_from_db,
-                        'content': processed_char_msg
-                    })
-            logger.info(f"Successfully imported {len(history_pairs)} message pairs into conversation ID {new_conv_id}.")
+                    processed_char_msg = replace_placeholders(
+                        char_msg_str, actual_char_name_from_db, log_user_name
+                    )
+                    db.add_message(
+                        {
+                            "conversation_id": new_conv_id,
+                            "sender": actual_char_name_from_db,
+                            "content": processed_char_msg,
+                        }
+                    )
+            logger.info(
+                f"Successfully imported {len(history_pairs)} message pairs into conversation ID {new_conv_id}."
+            )
 
         return new_conv_id, character_id_from_db
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON from chat log '{filename_for_log}': {e}")
-    except ValueError as ve:
-        logger.error(f"Invalid data or format in chat log '{filename_for_log}': {ve}")
-    except CharactersRAGDBError as dbe:
-        logger.error(f"Database error during chat history import from '{filename_for_log}': {dbe}")
+    except json.JSONDecodeError:
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=JSONDecodeError).",
+            source_kind,
+        )
+    except ValueError:
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=ValueError).",
+            source_kind,
+        )
+    except CharactersRAGDBError:
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category=CharactersRAGDBError).",
+            source_kind,
+        )
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error importing chat history from '{filename_for_log}': {e}")
+        logger.error(
+            "Chat history import failed (operation=chat_history_import, "
+            "source={}, category={}).",
+            source_kind,
+            type(e).__name__,
+        )
 
     return None, None
 
@@ -2013,12 +3532,20 @@ def load_chat_history_from_file_and_save_to_db(
 
 # --- Conversation Management ---
 
+
 def start_new_chat_session(
     db: CharactersRAGDB,
     character_id: int,
-    user_name: Optional[str], # For placeholder replacement in initial/retrieved messages
-    custom_title: Optional[str] = None
-) -> Tuple[Optional[str], Optional[Dict[str, Any]], Optional[List[Tuple[Optional[str], Optional[str]]]], Optional[Image.Image]]:
+    user_name: Optional[
+        str
+    ],  # For placeholder replacement in initial/retrieved messages
+    custom_title: Optional[str] = None,
+) -> Tuple[
+    Optional[str],
+    Optional[Dict[str, Any]],
+    Optional[List[Tuple[Optional[str], Optional[str]]]],
+    Optional[Image.Image],
+]:
     """Starts a new chat session with a specified character.
 
     This function performs the following steps:
@@ -2057,86 +3584,136 @@ def start_new_chat_session(
         If conversation creation or message adding fails, some elements might
         still be populated from the successful character load.
     """
-    logger.debug(f"Starting new chat session for character_id: {character_id}, user: {user_name}")
+    logger.debug(
+        f"Starting new chat session for character_id: {character_id}, user: {user_name}"
+    )
 
     original_first_message_content: Optional[str] = None
     try:
         # 1. Get raw character data first for the original first_message content
         raw_char_data_for_first_message = db.get_character_card_by_id(character_id)
         if raw_char_data_for_first_message:
-            original_first_message_content = raw_char_data_for_first_message.get('first_message')
+            original_first_message_content = raw_char_data_for_first_message.get(
+                "first_message"
+            )
         else:
-            logger.warning(f"Could not load raw character data for ID {character_id} to get original first message. Will rely on processed version if available.")
+            logger.warning(
+                f"Could not load raw character data for ID {character_id} to get original first message. Will rely on processed version if available."
+            )
     except CharactersRAGDBError as e:
-        logger.warning(f"DB error fetching raw character data for ID {character_id}: {e}. Proceeding with caution.")
-
+        logger.warning(
+            f"DB error fetching raw character data for ID {character_id}: {e}. Proceeding with caution."
+        )
 
     # 2. Load character for UI processing (placeholders, image etc.)
     # This char_data will have its fields (like 'first_message') processed with placeholders.
-    char_data, initial_ui_history, img = load_character_and_image(db, character_id, user_name)
+    char_data, initial_ui_history, img = load_character_and_image(
+        db, character_id, user_name
+    )
 
     if not char_data:
-        logger.error(f"Failed to load character_id {character_id} (for UI processing) to start new chat session.")
+        logger.error(
+            f"Failed to load character_id {character_id} (for UI processing) to start new chat session."
+        )
         return None, None, None, None
 
-    char_name = char_data.get('name', 'Character') # Should be valid if char_data exists
+    char_name = char_data.get(
+        "name", "Character"
+    )  # Should be valid if char_data exists
 
     # Create a title for the conversation
-    conv_title = custom_title if custom_title else f"Chat with {char_name} ({time.strftime('%Y-%m-%d %H:%M')})"
+    conv_title = (
+        custom_title
+        if custom_title
+        else f"Chat with {char_name} ({time.strftime('%Y-%m-%d %H:%M')})"
+    )
 
-    conversation_id_val: Optional[str] = None # Ensure it's defined for return in except block
+    conversation_id_val: Optional[str] = (
+        None  # Ensure it's defined for return in except block
+    )
     try:
         # Add conversation to DB
         conv_payload = {
-            'character_id': character_id,
-            'title': conv_title,
+            "character_id": character_id,
+            "title": conv_title,
         }
         conversation_id_val = db.add_conversation(conv_payload)
 
         if not conversation_id_val:
-            logger.error(f"Failed to create conversation record in DB for character {char_name}.")
+            logger.error(
+                f"Failed to create conversation record in DB for character {char_name}."
+            )
             return None, char_data, initial_ui_history, img
 
-        logger.info(f"Created new conversation ID: {conversation_id_val} for character '{char_name}'.")
+        logger.info(
+            f"Created new conversation ID: {conversation_id_val} for character '{char_name}'."
+        )
 
         # Determine the first message content to store in the DB for the new conversation
         message_to_store_in_db: Optional[str] = original_first_message_content
 
-        if message_to_store_in_db is None: # Fallback if raw fetch failed but processed one exists
-            if initial_ui_history and initial_ui_history[0] and initial_ui_history[0][1]:
+        if (
+            message_to_store_in_db is None
+        ):  # Fallback if raw fetch failed but processed one exists
+            if (
+                initial_ui_history
+                and initial_ui_history[0]
+                and initial_ui_history[0][1]
+            ):
                 # This is already processed. Storing processed message if raw isn't available.
                 # This implies the char_data['first_message'] from load_character_and_image
                 message_to_store_in_db = initial_ui_history[0][1]
-                logger.warning(f"Storing processed first message for char {char_name} in new conversation {conversation_id_val} as raw version was not available.")
-            elif char_data.get('first_message'): # Another fallback to the processed field from char_data
-                 message_to_store_in_db = char_data['first_message']
-                 logger.warning(f"Storing processed first_message from char_data for char {char_name} in new conversation {conversation_id_val}.")
-
+                logger.warning(
+                    f"Storing processed first message for char {char_name} in new conversation {conversation_id_val} as raw version was not available."
+                )
+            elif char_data.get(
+                "first_message"
+            ):  # Another fallback to the processed field from char_data
+                message_to_store_in_db = char_data["first_message"]
+                logger.warning(
+                    f"Storing processed first_message from char_data for char {char_name} in new conversation {conversation_id_val}."
+                )
 
         if message_to_store_in_db:
-            db.add_message({
-                'conversation_id': conversation_id_val,
-                'sender': char_name, # Character's name as sender
-                'content': message_to_store_in_db, # Stored raw preferably, or processed as fallback
-            })
-            logger.debug(f"Added character's first message to new conversation {conversation_id_val}.")
+            db.add_message(
+                {
+                    "conversation_id": conversation_id_val,
+                    "sender": char_name,  # Character's name as sender
+                    "content": message_to_store_in_db,  # Stored raw preferably, or processed as fallback
+                }
+            )
+            logger.debug(
+                f"Added character's first message to new conversation {conversation_id_val}."
+            )
         else:
-            logger.warning(f"Character {char_name} (ID: {character_id}) has no first message to add to new conversation {conversation_id_val}.")
+            logger.warning(
+                f"Character {char_name} (ID: {character_id}) has no first message to add to new conversation {conversation_id_val}."
+            )
             # Ensure initial_ui_history is empty if no first message was effectively determined for UI
-            if not (initial_ui_history and initial_ui_history[0] and initial_ui_history[0][1]):
-                 initial_ui_history = []
+            if not (
+                initial_ui_history
+                and initial_ui_history[0]
+                and initial_ui_history[0][1]
+            ):
+                initial_ui_history = []
 
         return conversation_id_val, char_data, initial_ui_history, img
 
     except (CharactersRAGDBError, InputError, ConflictError) as e:
-        logger.error(f"Error during new chat session creation for char {char_name}: {e}")
+        logger.error(
+            f"Error during new chat session creation for char {char_name}: {e}"
+        )
         return conversation_id_val, char_data, initial_ui_history, img
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error in start_new_chat_session: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error in start_new_chat_session: {e}"
+        )
         return conversation_id_val, char_data, initial_ui_history, img
 
 
-def list_character_conversations(db: CharactersRAGDB, character_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def list_character_conversations(
+    db: CharactersRAGDB, character_id: int, limit: int = 50, offset: int = 0
+) -> List[Dict[str, Any]]:
     """Lists active conversations for a given character.
 
     Retrieves a paginated list of conversation metadata dictionaries associated
@@ -2157,16 +3734,24 @@ def list_character_conversations(db: CharactersRAGDB, character_id: int, limit: 
         are found or an error occurs.
     """
     try:
-        return db.get_conversations_for_character(character_id, limit=limit, offset=offset)
+        return db.get_conversations_for_character(
+            character_id, limit=limit, offset=offset
+        )
     except CharactersRAGDBError as e:
-        logger.error(f"Failed to list conversations for character ID {character_id}: {e}")
+        logger.error(
+            f"Failed to list conversations for character ID {character_id}: {e}"
+        )
         return []
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error listing conversations for char ID {character_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error listing conversations for char ID {character_id}: {e}"
+        )
         return []
 
 
-def get_conversation_metadata(db: CharactersRAGDB, conversation_id: str) -> Optional[Dict[str, Any]]:
+def get_conversation_metadata(
+    db: CharactersRAGDB, conversation_id: str
+) -> Optional[Dict[str, Any]]:
     """Retrieves metadata for a specific conversation.
 
     Fetches the metadata associated with a given conversation ID from the database.
@@ -2184,14 +3769,23 @@ def get_conversation_metadata(db: CharactersRAGDB, conversation_id: str) -> Opti
     try:
         return db.get_conversation_by_id(conversation_id)
     except CharactersRAGDBError as e:
-        logger.error(f"Failed to get metadata for conversation ID {conversation_id}: {e}")
+        logger.error(
+            f"Failed to get metadata for conversation ID {conversation_id}: {e}"
+        )
         return None
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error getting conversation metadata for ID {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error getting conversation metadata for ID {conversation_id}: {e}"
+        )
         return None
 
 
-def update_conversation_metadata(db: CharactersRAGDB, conversation_id: str, update_data: Dict[str, Any], expected_version: int) -> bool:
+def update_conversation_metadata(
+    db: CharactersRAGDB,
+    conversation_id: str,
+    update_data: Dict[str, Any],
+    expected_version: int,
+) -> bool:
     """Updates metadata for a specific conversation.
 
     Allows modification of permissible fields of a conversation's metadata,
@@ -2214,11 +3808,16 @@ def update_conversation_metadata(db: CharactersRAGDB, conversation_id: str, upda
     try:
         # Ensure client_id is not in update_data, as db layer handles it.
         # Also, character_id, root_id, etc., are typically not changed via this simple update.
-        valid_update_keys = {'title', 'rating'} # Define what's permissible to update via this func
+        valid_update_keys = {
+            "title",
+            "rating",
+        }  # Define what's permissible to update via this func
         payload_to_db = {k: v for k, v in update_data.items() if k in valid_update_keys}
 
         if not payload_to_db:
-            logger.warning(f"No valid fields to update for conversation ID {conversation_id} from data: {update_data}")
+            logger.warning(
+                f"No valid fields to update for conversation ID {conversation_id} from data: {update_data}"
+            )
             # Depending on desired behavior, could return True (if version matches, effectively a "touch")
             # or False. db.update_conversation will still bump version if payload is empty.
             # Let's proceed, db layer will handle empty payload by just bumping version.
@@ -2226,14 +3825,20 @@ def update_conversation_metadata(db: CharactersRAGDB, conversation_id: str, upda
 
         return db.update_conversation(conversation_id, payload_to_db, expected_version)
     except (CharactersRAGDBError, InputError, ConflictError) as e:
-        logger.error(f"Failed to update metadata for conversation ID {conversation_id}: {e}")
+        logger.error(
+            f"Failed to update metadata for conversation ID {conversation_id}: {e}"
+        )
         return False
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error updating conversation metadata for ID {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error updating conversation metadata for ID {conversation_id}: {e}"
+        )
         return False
 
 
-def delete_conversation_by_id(db: CharactersRAGDB, conversation_id: str, expected_version: int) -> bool:
+def delete_conversation_by_id(
+    db: CharactersRAGDB, conversation_id: str, expected_version: int
+) -> bool:
     """Soft-deletes a conversation from the database.
 
     Marks a conversation as deleted rather than physically removing it.
@@ -2256,11 +3861,18 @@ def delete_conversation_by_id(db: CharactersRAGDB, conversation_id: str, expecte
         logger.error(f"Failed to delete conversation ID {conversation_id}: {e}")
         return False
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error deleting conversation ID {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error deleting conversation ID {conversation_id}: {e}"
+        )
         return False
 
 
-def search_conversations_by_title_query(db: CharactersRAGDB, title_query: str, character_id: Optional[int] = None, limit: int = 10) -> List[Dict[str, Any]]:
+def search_conversations_by_title_query(
+    db: CharactersRAGDB,
+    title_query: str,
+    character_id: Optional[int] = None,
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
     """Searches for conversations by their title.
 
     Performs a search for conversations whose titles match (partially or fully,
@@ -2281,26 +3893,32 @@ def search_conversations_by_title_query(db: CharactersRAGDB, title_query: str, c
         found or an error occurs.
     """
     try:
-        return db.search_conversations_by_title(title_query, character_id=character_id, limit=limit)
+        return db.search_conversations_by_title(
+            title_query, character_id=character_id, limit=limit
+        )
     except CharactersRAGDBError as e:
         logger.error(f"Failed to search conversations with query '{title_query}': {e}")
         return []
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error searching conversations: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error searching conversations: {e}"
+        )
         return []
 
+
 # --- Message Management ---
+
 
 def post_message_to_conversation(
     db: CharactersRAGDB,
     conversation_id: str,
-    character_name: str, # The actual name of the character involved, used if is_user_message is False
+    character_name: str,  # The actual name of the character involved, used if is_user_message is False
     message_content: str,
     is_user_message: bool,
     parent_message_id: Optional[str] = None,
     ranking: Optional[int] = None,
     image_data: Optional[bytes] = None,
-    image_mime_type: Optional[str] = None
+    image_mime_type: Optional[str] = None,
 ) -> Optional[str]:
     """Posts a new message to a specified conversation.
 
@@ -2341,7 +3959,9 @@ def post_message_to_conversation(
     """
     if not conversation_id:
         logger.error("Cannot post message: conversation_id is required.")
-        raise InputError("conversation_id is required for posting a message.") # Raise to signal client error
+        raise InputError(
+            "conversation_id is required for posting a message."
+        )  # Raise to signal client error
     if not character_name and not is_user_message:
         logger.error("Cannot post character message: character_name is required.")
         raise InputError("character_name is required for character messages.")
@@ -2350,39 +3970,52 @@ def post_message_to_conversation(
 
     # Ensure content or image is present, as per DB layer check
     if not message_content and not image_data:
-        logger.error("Cannot post message: Message must have text content or image data.")
+        logger.error(
+            "Cannot post message: Message must have text content or image data."
+        )
         raise InputError("Message must have text content or image data.")
 
-
     msg_payload = {
-        'conversation_id': conversation_id,
-        'sender': sender_name,
-        'content': message_content,
-        'parent_message_id': parent_message_id,
-        'ranking': ranking,
-        'image_data': image_data,
-        'image_mime_type': image_mime_type,
+        "conversation_id": conversation_id,
+        "sender": sender_name,
+        "content": message_content,
+        "parent_message_id": parent_message_id,
+        "ranking": ranking,
+        "image_data": image_data,
+        "image_mime_type": image_mime_type,
     }
 
     try:
         message_id = db.add_message(msg_payload)
         if message_id:
-            logger.info(f"Posted message ID {message_id} from '{sender_name}' to conversation {conversation_id}.")
+            logger.info(
+                f"Posted message ID {message_id} from '{sender_name}' to conversation {conversation_id}."
+            )
         else:
             # This case should ideally be covered by exceptions from db.add_message
-            logger.error(f"Failed to post message from '{sender_name}' to conversation {conversation_id} (DB returned no ID without error).")
+            logger.error(
+                f"Failed to post message from '{sender_name}' to conversation {conversation_id} (DB returned no ID without error)."
+            )
         return message_id
-    except (CharactersRAGDBError, InputError, ConflictError) as e: # InputError, ConflictError from DB layer
-        logger.error(f"Error posting message from '{sender_name}' to conversation {conversation_id}: {e}")
-        raise # Re-raise client-correctable or conflict errors
+    except (
+        CharactersRAGDBError,
+        InputError,
+        ConflictError,
+    ) as e:  # InputError, ConflictError from DB layer
+        logger.error(
+            f"Error posting message from '{sender_name}' to conversation {conversation_id}: {e}"
+        )
+        raise  # Re-raise client-correctable or conflict errors
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error posting message to conv {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error posting message to conv {conversation_id}: {e}"
+        )
         # For unexpected errors, convert to a library-specific error or return None
         # depending on desired API contract for unhandled exceptions.
         # For now, re-raising as a generic error or letting it propagate if not caught by CharactersRAGDBError.
         # To be safe, wrap in CharactersRAGDBError if it's not one already.
         if not isinstance(e, CharactersRAGDBError):
-             raise CharactersRAGDBError(f"Unexpected error posting message: {e}") from e
+            raise CharactersRAGDBError(f"Unexpected error posting message: {e}") from e
         raise
 
 
@@ -2390,7 +4023,7 @@ def retrieve_message_details(
     db: CharactersRAGDB,
     message_id: str,
     character_name_for_placeholders: str,
-    user_name_for_placeholders: Optional[str]
+    user_name_for_placeholders: Optional[str],
 ) -> Optional[Dict[str, Any]]:
     """Retrieves a specific message by its ID and processes its content.
 
@@ -2417,18 +4050,20 @@ def retrieve_message_details(
         if not message_data:
             return None
 
-        if 'content' in message_data and isinstance(message_data['content'], str):
-            message_data['content'] = replace_placeholders(
-                message_data['content'],
+        if "content" in message_data and isinstance(message_data["content"], str):
+            message_data["content"] = replace_placeholders(
+                message_data["content"],
                 character_name_for_placeholders,
-                user_name_for_placeholders
+                user_name_for_placeholders,
             )
         return message_data
     except CharactersRAGDBError as e:
         logger.error(f"Failed to retrieve message ID {message_id}: {e}")
         return None
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error retrieving message ID {message_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error retrieving message ID {message_id}: {e}"
+        )
         return None
 
 
@@ -2439,7 +4074,7 @@ def retrieve_conversation_messages_for_ui(
     user_name: Optional[str],
     limit: int = 2000,
     offset: int = 0,
-    order: str = "ASC"
+    order: str = "ASC",
 ) -> List[Tuple[Optional[str], Optional[str]]]:
     """Retrieves and processes conversation messages for UI display.
 
@@ -2471,39 +4106,42 @@ def retrieve_conversation_messages_for_ui(
     """
     order_upper = order.upper()
     if order_upper not in ["ASC", "DESC"]:
-        logger.warning(f"Invalid order '{order}' for message retrieval. Defaulting to ASC.")
+        logger.warning(
+            f"Invalid order '{order}' for message retrieval. Defaulting to ASC."
+        )
         order_upper = "ASC"
 
     try:
         raw_db_messages = db.get_messages_for_conversation(
-            conversation_id,
-            limit=limit,
-            offset=offset,
-            order_by_timestamp=order_upper
+            conversation_id, limit=limit, offset=offset, order_by_timestamp=order_upper
         )
 
         processed_ui_history = process_db_messages_to_ui_history(
             raw_db_messages,
             char_name_from_card=character_name,
             user_name_for_placeholders=user_name,
-            actual_user_sender_id_in_db="User", # Convention from post_message_to_conversation
-            actual_char_sender_id_in_db=character_name # Convention from post_message_to_conversation
+            actual_user_sender_id_in_db="User",  # Convention from post_message_to_conversation
+            actual_char_sender_id_in_db=character_name,  # Convention from post_message_to_conversation
         )
         return processed_ui_history
 
     except CharactersRAGDBError as e:
-        logger.error(f"Failed to retrieve and process messages for conversation ID {conversation_id}: {e}")
+        logger.error(
+            f"Failed to retrieve and process messages for conversation ID {conversation_id}: {e}"
+        )
         return []
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error retrieving UI messages for conversation {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error retrieving UI messages for conversation {conversation_id}: {e}"
+        )
         return []
 
 
 def edit_message_content(
     db: CharactersRAGDB,
     message_id: str,
-    new_content: str, # Raw content; placeholders processed on display
-    expected_version: int
+    new_content: str,  # Raw content; placeholders processed on display
+    expected_version: int,
 ) -> bool:
     """Updates the text content of a specific message.
 
@@ -2523,22 +4161,21 @@ def edit_message_content(
         if the update failed, e.g., due to a version mismatch (ConflictError),
         invalid input, or a database error.
     """
-    update_payload = {'content': new_content}
+    update_payload = {"content": new_content}
     try:
         return db.update_message(message_id, update_payload, expected_version)
     except (CharactersRAGDBError, InputError, ConflictError) as e:
         logger.error(f"Failed to edit content for message ID {message_id}: {e}")
-        return False # Or re-raise depending on API contract for these errors
+        return False  # Or re-raise depending on API contract for these errors
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error editing message content for ID {message_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error editing message content for ID {message_id}: {e}"
+        )
         return False
 
 
 def set_message_ranking(
-    db: CharactersRAGDB,
-    message_id: str,
-    ranking: int,
-    expected_version: int
+    db: CharactersRAGDB, message_id: str, ranking: int, expected_version: int
 ) -> bool:
     """Sets or updates the ranking of a specific message.
 
@@ -2558,20 +4195,21 @@ def set_message_ranking(
         if the update failed, e.g., due to a version mismatch (ConflictError),
         invalid input, or a database error.
     """
-    update_payload = {'ranking': ranking}
+    update_payload = {"ranking": ranking}
     try:
         return db.update_message(message_id, update_payload, expected_version)
     except (CharactersRAGDBError, InputError, ConflictError) as e:
         logger.error(f"Failed to set ranking for message ID {message_id}: {e}")
         return False
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error setting message ranking for ID {message_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error setting message ranking for ID {message_id}: {e}"
+        )
         return False
 
+
 def remove_message_from_conversation(
-    db: CharactersRAGDB,
-    message_id: str,
-    expected_version: int
+    db: CharactersRAGDB, message_id: str, expected_version: int
 ) -> bool:
     """Soft-deletes a message from a conversation.
 
@@ -2595,7 +4233,9 @@ def remove_message_from_conversation(
         logger.error(f"Failed to remove message ID {message_id}: {e}")
         return False
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error removing message ID {message_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error removing message ID {message_id}: {e}"
+        )
         return False
 
 
@@ -2605,7 +4245,7 @@ def find_messages_in_conversation(
     search_query: str,
     character_name_for_placeholders: str,
     user_name_for_placeholders: Optional[str],
-    limit: int = 10
+    limit: int = 10,
 ) -> List[Dict[str, Any]]:
     """Searches for messages within a specific conversation by content.
 
@@ -2633,27 +4273,30 @@ def find_messages_in_conversation(
     """
     try:
         found_messages = db.search_messages_by_content(
-            content_query=search_query,
-            conversation_id=conversation_id,
-            limit=limit
+            content_query=search_query, conversation_id=conversation_id, limit=limit
         )
 
         processed_results = []
         for msg_data in found_messages:
-            if 'content' in msg_data and isinstance(msg_data['content'], str):
-                msg_data['content'] = replace_placeholders(
-                    msg_data['content'],
+            if "content" in msg_data and isinstance(msg_data["content"], str):
+                msg_data["content"] = replace_placeholders(
+                    msg_data["content"],
                     character_name_for_placeholders,
-                    user_name_for_placeholders
+                    user_name_for_placeholders,
                 )
             processed_results.append(msg_data)
         return processed_results
     except CharactersRAGDBError as e:
-        logger.error(f"Failed to search messages in conversation ID {conversation_id} for '{search_query}': {e}")
+        logger.error(
+            f"Failed to search messages in conversation ID {conversation_id} for '{search_query}': {e}"
+        )
         return []
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error searching messages in conversation {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error searching messages in conversation {conversation_id}: {e}"
+        )
         return []
+
 
 # End of Conversation and Message Management Functions
 #################################################################################
@@ -2663,80 +4306,115 @@ def find_messages_in_conversation(
 # Character Card Export Functions
 #################################################################################
 
+
 def export_character_card_to_json(
     db: CharactersRAGDB,
     character_id: int,
-    include_image: bool = True
+    include_image: bool = True,
+    portable_tts_profile: PortableTTSProfile | None = None,
 ) -> Optional[str]:
     """Exports a character card to JSON format (V2 spec).
-    
+
     Args:
         db: Database instance
         character_id: ID of the character to export
         include_image: Whether to include the character's image as base64
-        
+        portable_tts_profile: Explicit sanitized profile attachment to add to
+            this transient export only. Ordinary exports omit the reserved
+            TTS namespace.
+
     Returns:
         JSON string of the character card, or None if export fails
     """
     try:
         char_data = db.get_character_card_by_id(character_id)
         if not char_data:
-            logger.error(f"Character ID {character_id} not found for export")
+            logger.error("Character card not found for export.")
             return None
-            
+
         # Build V2 character card structure
         v2_card = {
             "spec": "chara_card_v2",
             "spec_version": "2.0",
             "data": {
-                "name": char_data.get('name', ''),
-                "description": char_data.get('description', ''),
-                "personality": char_data.get('personality', ''),
-                "scenario": char_data.get('scenario') or '',  # Ensure string
-                "first_mes": char_data.get('first_message') or '',  # Ensure string
-                "mes_example": char_data.get('example_messages', ''),
-                "creator_notes": char_data.get('creator_notes', ''),
-                "system_prompt": char_data.get('system_prompt', ''),
-                "post_history_instructions": char_data.get('post_history_instructions', ''),
-                "tags": char_data.get('tags', []),
-                "creator": char_data.get('creator', ''),
-                "character_version": char_data.get('character_version', '1.0'),
-                "alternate_greetings": char_data.get('alternate_greetings', [])
-            }
+                "name": char_data.get("name", ""),
+                "description": char_data.get("description", ""),
+                "personality": char_data.get("personality", ""),
+                "scenario": char_data.get("scenario") or "",  # Ensure string
+                "first_mes": char_data.get("first_message") or "",  # Ensure string
+                "mes_example": char_data.get("example_messages", ""),
+                "creator_notes": char_data.get("creator_notes", ""),
+                "system_prompt": char_data.get("system_prompt", ""),
+                "post_history_instructions": char_data.get(
+                    "post_history_instructions", ""
+                ),
+                "tags": char_data.get("tags", []),
+                "creator": char_data.get("creator", ""),
+                "character_version": char_data.get("character_version", "1.0"),
+                "alternate_greetings": char_data.get("alternate_greetings", []),
+            },
         }
-        
+
         # Handle extensions if present
-        extensions = char_data.get('extensions')
-        if extensions:
-            v2_card['data']['extensions'] = extensions
-            
+        extensions = char_data.get("extensions")
+        if portable_tts_profile is not None:
+            if extensions is not None and type(extensions) is not dict:
+                raise ValueError("invalid_extensions")
+            export_extensions = (
+                {} if extensions is None else copy.deepcopy(extensions)
+            )
+            if CHARACTER_CARD_TTS_EXTENSION_KEY in export_extensions:
+                raise ValueError("reserved_extension_occupied")
+            export_extensions[CHARACTER_CARD_TTS_EXTENSION_KEY] = (
+                portable_profile_payload(portable_tts_profile)
+            )
+            v2_card["data"]["extensions"] = export_extensions
+        elif type(extensions) is dict:
+            export_extensions = copy.deepcopy(extensions)
+            export_extensions.pop(CHARACTER_CARD_TTS_EXTENSION_KEY, None)
+            if export_extensions:
+                v2_card["data"]["extensions"] = export_extensions
+        elif extensions:
+            # Preserve legacy non-dict behavior for ordinary exports. Explicit
+            # attachment export rejects this malformed namespace above.
+            v2_card["data"]["extensions"] = extensions
+
         # Handle image if requested and available
-        if include_image and char_data.get('image'):
+        if include_image and char_data.get("image"):
             try:
                 # The image is stored as bytes in the database
-                image_bytes = char_data['image']
+                image_bytes = char_data["image"]
                 if isinstance(image_bytes, bytes):
                     # Convert to base64 for JSON serialization
                     import base64
-                    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+
+                    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
                     # Determine image format by checking magic bytes
-                    if image_bytes.startswith(b'\x89PNG'):
-                        v2_card['data']['image'] = f"data:image/png;base64,{image_b64}"
-                    elif image_bytes.startswith(b'\xff\xd8\xff'):
-                        v2_card['data']['image'] = f"data:image/jpeg;base64,{image_b64}"
-                    elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[:12]:
-                        v2_card['data']['image'] = f"data:image/webp;base64,{image_b64}"
+                    if image_bytes.startswith(b"\x89PNG"):
+                        v2_card["data"]["image"] = f"data:image/png;base64,{image_b64}"
+                    elif image_bytes.startswith(b"\xff\xd8\xff"):
+                        v2_card["data"]["image"] = f"data:image/jpeg;base64,{image_b64}"
+                    elif (
+                        image_bytes.startswith(b"RIFF") and b"WEBP" in image_bytes[:12]
+                    ):
+                        v2_card["data"]["image"] = f"data:image/webp;base64,{image_b64}"
                     else:
                         # Default to PNG if format unknown
-                        v2_card['data']['image'] = f"data:image/png;base64,{image_b64}"
-            except Exception as e:
-                logger.warning(f"Failed to include image in export: {e}")
+                        v2_card["data"]["image"] = f"data:image/png;base64,{image_b64}"
+            except Exception as error:
+                logger.warning(
+                    "Character export omitted its image (category={}).",
+                    type(error).__name__,
+                )
                 # Continue without image
-                
+
         return json.dumps(v2_card, indent=2, ensure_ascii=False)
-        
-    except Exception as e:
-        logger.opt(exception=True).error(f"Failed to export character card {character_id}: {e}")
+
+    except Exception as error:
+        logger.error(
+            "Character JSON export failed (category={}).",
+            type(error).__name__,
+        )
         return None
 
 
@@ -2744,77 +4422,92 @@ def export_character_card_to_png(
     db: CharactersRAGDB,
     character_id: int,
     output_path: str,
-    base_directory: Optional[str] = None
+    base_directory: Optional[str] = None,
+    portable_tts_profile: PortableTTSProfile | None = None,
 ) -> bool:
     """Exports a character card as a PNG file with embedded JSON metadata.
-    
+
     Args:
         db: Database instance
         character_id: ID of the character to export
         output_path: Path where the PNG file should be saved
         base_directory: Optional base directory for path validation
-        
+        portable_tts_profile: Explicit sanitized attachment for this transient
+            PNG export only.
+
     Returns:
         True if export successful, False otherwise
     """
     try:
         # Get the character data as JSON (without image in JSON)
-        json_data = export_character_card_to_json(db, character_id, include_image=False)
+        json_data = export_character_card_to_json(
+            db,
+            character_id,
+            include_image=False,
+            portable_tts_profile=portable_tts_profile,
+        )
         if not json_data:
             return False
-            
+
         char_data = db.get_character_card_by_id(character_id)
         if not char_data:
             return False
-            
+
         # Validate output path
         if base_directory is None:
-            base_directory = os.path.expanduser("~/.local/share/tldw_cli/exports/")
+            from tldw_chatbook.config import get_user_data_dir
+
+            base_directory = str(get_user_data_dir() / "exports")
             os.makedirs(base_directory, exist_ok=True)
-            
+
         try:
-            validated_path = validate_path(output_path, base_directory)
-        except ValueError as e:
-            logger.error(f"Invalid export path '{output_path}': {e}")
+            validated_path = validate_path(
+                output_path,
+                base_directory,
+                redact_paths=True,
+            )
+        except ValueError:
+            logger.error("Invalid character PNG export destination.")
             return False
-            
+
         # Get or create character image
-        if char_data.get('image'):
+        if char_data.get("image"):
             # Use existing image
-            image_bytes = char_data['image']
+            image_bytes = char_data["image"]
             img = Image.open(io.BytesIO(image_bytes))
         else:
             # Create a default image if none exists
-            img = Image.new('RGB', (256, 256), color='gray')
-            
+            img = Image.new("RGB", (256, 256), color="gray")
+
         # Prepare metadata
         pnginfo = PngInfo()
         # The 'chara' field should contain base64 encoded JSON
-        chara_b64 = base64.b64encode(json_data.encode('utf-8')).decode('utf-8')
+        chara_b64 = base64.b64encode(json_data.encode("utf-8")).decode("utf-8")
         pnginfo.add_text("chara", chara_b64)
-        
+
         # Save as PNG with metadata
-        img.save(validated_path, format='PNG', pnginfo=pnginfo)
-        logger.info(f"Successfully exported character card to PNG: {validated_path}")
+        img.save(validated_path, format="PNG", pnginfo=pnginfo)
+        logger.info("Character PNG export completed.")
         return True
-        
-    except Exception as e:
-        logger.opt(exception=True).error(f"Failed to export character card {character_id} to PNG: {e}")
+
+    except Exception as error:
+        logger.error(
+            "Character PNG export failed (category={}).",
+            type(error).__name__,
+        )
         return False
 
 
 def export_conversation_to_json(
-    db: CharactersRAGDB,
-    conversation_id: str,
-    include_character_card: bool = True
+    db: CharactersRAGDB, conversation_id: str, include_character_card: bool = True
 ) -> Optional[str]:
     """Exports a conversation and its messages to JSON format.
-    
+
     Args:
         db: Database instance
         conversation_id: ID of the conversation to export
         include_character_card: Whether to include the full character card data
-        
+
     Returns:
         JSON string of the conversation, or None if export fails
     """
@@ -2824,78 +4517,107 @@ def export_conversation_to_json(
         if not conv_details:
             logger.error(f"Conversation {conversation_id} not found for export")
             return None
-            
+
         # Convert datetime objects to strings
-        created_at = conv_details['metadata'].get('created_at', '')
-        updated_at = conv_details['metadata'].get('updated_at', '')
-        if hasattr(created_at, 'isoformat'):
+        created_at = conv_details["metadata"].get("created_at", "")
+        updated_at = conv_details["metadata"].get("updated_at", "")
+        if hasattr(created_at, "isoformat"):
             created_at = created_at.isoformat()
-        if hasattr(updated_at, 'isoformat'):
+        if hasattr(updated_at, "isoformat"):
             updated_at = updated_at.isoformat()
-            
+
         # Get keywords from keywords_display or parse them
         keywords = []
-        keywords_display = conv_details['metadata'].get('keywords_display', '')
+        keywords_display = conv_details["metadata"].get("keywords_display", "")
         if keywords_display:
-            keywords = [k.strip() for k in keywords_display.split(',') if k.strip()]
-            
+            keywords = [k.strip() for k in keywords_display.split(",") if k.strip()]
+
         export_data = {
             "conversation": {
                 "id": conversation_id,
-                "title": conv_details['metadata'].get('title', ''),
+                "title": conv_details["metadata"].get("title", ""),
                 "created_at": created_at,
                 "updated_at": updated_at,
-                "keywords": keywords
+                "keywords": keywords,
             },
-            "character_name": conv_details.get('character_name', ''),
-            "messages": []
+            "character_name": conv_details.get("character_name", ""),
+            "messages": [],
         }
-        
+
         # Include character card if requested
         if include_character_card:
-            char_id = conv_details['metadata'].get('character_id')
+            char_id = conv_details["metadata"].get("character_id")
             if char_id:
                 char_data = db.get_character_card_by_id(char_id)
                 if char_data:
                     # Remove the image bytes for JSON export
                     char_export = char_data.copy()
-                    char_export.pop('image', None)
+                    char_export.pop("image", None)
                     # Convert any datetime fields to strings
                     for key, value in char_export.items():
-                        if hasattr(value, 'isoformat'):
+                        if hasattr(value, "isoformat"):
                             char_export[key] = value.isoformat()
-                    export_data['character_card'] = char_export
-                    
+                    export_data["character_card"] = char_export
+
         # Add messages
-        for msg in conv_details.get('messages', []):
-            timestamp = msg.get('timestamp', '')
-            if hasattr(timestamp, 'isoformat'):
+        for msg in conv_details.get("messages", []):
+            timestamp = msg.get("timestamp", "")
+            if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
-            export_data['messages'].append({
-                'sender': msg.get('sender', ''),
-                'content': msg.get('content', ''),
-                'timestamp': timestamp
-            })
-            
+            private = read_provider_continuation_json(
+                msg.get("provider_continuation_json")
+            )
+            generation_state = normalize_assistant_generation_state(
+                role=msg.get("role") or msg.get("sender"),
+                raw_state=msg.get("assistant_generation_state"),
+                has_valid_active_continuation=(
+                    private.checkpoint is not None
+                    and private.checkpoint.state == "active"
+                ),
+            )
+            entry = {
+                "sender": msg.get("sender", ""),
+                "content": msg.get("content", ""),
+                "timestamp": timestamp,
+                "assistant_generation_state": generation_state.value
+                if generation_state is not None
+                else None,
+            }
+            # tasks 15660/15667: the message row's normalized provider
+            # usage (`messages.usage_json`, the Console cost ticker's
+            # local-only column) rides the export when present, so a
+            # conversation export accounts for what a turn actually
+            # billed -- including sub-agent spend folded back onto the
+            # assistant row when a surviving fleet child finishes. Rows
+            # with no recorded usage (every non-assistant row, plus
+            # legacy assistant rows) simply omit the key.
+            usage_json = msg.get("usage_json")
+            if usage_json:
+                try:
+                    entry["usage"] = json.loads(usage_json)
+                except (TypeError, ValueError):
+                    logger.debug("Skipping malformed usage_json on message export")
+            export_data["messages"].append(entry)
+
         return json.dumps(export_data, indent=2, ensure_ascii=False)
-        
+
     except Exception as e:
-        logger.opt(exception=True).error(f"Failed to export conversation {conversation_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Failed to export conversation {conversation_id}: {e}"
+        )
         return None
 
 
 def export_conversation_to_text(
-    db: CharactersRAGDB,
-    conversation_id: str,
-    user_name: str = "User"
+    db: CharactersRAGDB, conversation_id: str, user_name: str = "User"
 ) -> Optional[str]:
     """Exports a conversation to a human-readable text format.
-    
+
     Args:
         db: Database instance
         conversation_id: ID of the conversation to export
         user_name: Name to use for the user in the export
-        
+
     Returns:
         Text string of the conversation, or None if export fails
     """
@@ -2905,49 +4627,57 @@ def export_conversation_to_text(
         if not conv_details:
             logger.error(f"Conversation {conversation_id} not found for export")
             return None
-            
+
         # Build text output
         lines = []
-        lines.append(f"Conversation: {conv_details['metadata'].get('title', 'Untitled')}")
+        lines.append(
+            f"Conversation: {conv_details['metadata'].get('title', 'Untitled')}"
+        )
         lines.append(f"Character: {conv_details.get('character_name', 'Unknown')}")
-        
+
         # Handle datetime objects
-        created_at = conv_details['metadata'].get('created_at', 'Unknown')
-        if hasattr(created_at, 'isoformat'):
+        created_at = conv_details["metadata"].get("created_at", "Unknown")
+        if hasattr(created_at, "isoformat"):
             created_at = created_at.isoformat()
-        updated_at = conv_details['metadata'].get('updated_at', 'Unknown')
-        if hasattr(updated_at, 'isoformat'):
+        updated_at = conv_details["metadata"].get("updated_at", "Unknown")
+        if hasattr(updated_at, "isoformat"):
             updated_at = updated_at.isoformat()
-            
+
         lines.append(f"Created: {created_at}")
         lines.append(f"Updated: {updated_at}")
-        
-        keywords = conv_details['metadata'].get('keywords', [])
+
+        keywords = conv_details["metadata"].get("keywords", [])
         if keywords:
             lines.append(f"Keywords: {', '.join(keywords)}")
-            
-        lines.append("\n" + "="*60 + "\n")
-        
+
+        lines.append("\n" + "=" * 60 + "\n")
+
         # Add messages
-        for msg in conv_details.get('messages', []):
-            sender = msg.get('sender', 'Unknown')
+        for msg in conv_details.get("messages", []):
+            sender = msg.get("sender", "Unknown")
             # Replace "User" with the actual user name
             if sender == "User":
                 sender = user_name
-                
-            content = msg.get('content', '')
-            timestamp = msg.get('timestamp', '')
-            if hasattr(timestamp, 'isoformat'):
+
+            content = render_exported_assistant_content(
+                role=msg.get("role") or msg.get("sender"),
+                content=msg.get("content", ""),
+                state=msg.get("assistant_generation_state"),
+            )
+            timestamp = msg.get("timestamp", "")
+            if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
-            
+
             lines.append(f"[{timestamp}] {sender}:")
             lines.append(content)
             lines.append("")  # Empty line between messages
-            
+
         return "\n".join(lines)
-        
+
     except Exception as e:
-        logger.opt(exception=True).error(f"Failed to export conversation {conversation_id} to text: {e}")
+        logger.opt(exception=True).error(
+            f"Failed to export conversation {conversation_id} to text: {e}"
+        )
         return None
 
 
@@ -2955,8 +4685,89 @@ def export_conversation_to_text(
 #################################################################################
 
 
+def load_character_card_from_file(
+    file_path: Union[str, Path],
+) -> Optional[Dict[str, Any]]:
+    """Loads and parses a character card from a file (parse-only, no DB save).
+
+    This is the parse-only counterpart to `import_and_save_character_from_file`.
+    It supports:
+    - Text files (.json, .yaml, .yml, .md, .txt) containing card data as raw
+      JSON, YAML frontmatter, or a fenced JSON code block.
+    - Image files (.png, .webp) with embedded card metadata: 'chara' (V1/V2)
+      or 'ccv3' (V3) text chunks for PNG, EXIF UserComment for WebP.
+
+    Args:
+        file_path (Union[str, Path]): Path to the character card file.
+
+    Returns:
+        Optional[Dict[str, Any]]: A dictionary with character data mapped to
+        DB schema field names (e.g., 'first_message', 'message_example') if
+        parsing succeeds. Returns None if the file cannot be read or no valid
+        card data can be extracted.
+
+    Raises:
+        ImportError: If PyYAML is required for parsing (e.g., Markdown with
+            YAML frontmatter) but is not installed.
+    """
+    try:
+        # Validate the user-supplied path per the path_validation policy.
+        # validate_path_simple (not validate_path) is the right tool here:
+        # character cards are user-picked files that may legitimately live
+        # anywhere on disk (e.g. another drive), so no base-directory
+        # restriction applies - but traversal/shell-metacharacter checks do.
+        try:
+            path_obj = Path(validate_path_simple(file_path, require_exists=True))
+        except ValueError as e:
+            logger.error(f"Invalid character card file path '{file_path}': {e}")
+            return None
+
+        if not path_obj.is_file():
+            logger.error(f"Character card file not found: {file_path}")
+            return None
+
+        ext = path_obj.suffix.lower()
+        card_content_str: Optional[str]
+
+        if ext in (".png", ".webp"):
+            # Read the bytes ourselves and hand Pillow a stream: this keeps
+            # extraction working for user-picked files anywhere on disk.
+            with open(path_obj, "rb") as f_img:
+                image_bytes = f_img.read()
+            card_content_str = extract_json_from_image_file(io.BytesIO(image_bytes))
+            if not card_content_str:
+                logger.error(
+                    f"No embedded character metadata ('chara'/'ccv3'/EXIF) found in image file: {path_obj.name}"
+                )
+                return None
+        elif ext in (".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".avif"):
+            # Other image formats have no verified embedded-card extraction
+            # path; reject explicitly instead of failing obscurely as text.
+            logger.error(
+                f"Unsupported image format for character cards: '{ext}'. Use PNG or WebP cards."
+            )
+            return None
+        else:
+            with open(path_obj, "r", encoding="utf-8") as f_text:
+                card_content_str = f_text.read()
+
+        parsed_card = load_character_card_from_string_content(card_content_str)
+        if not parsed_card:
+            logger.error(
+                f"Could not parse a valid character card from file: {path_obj.name}"
+            )
+            return None
+        return parsed_card
+
+    except ImportError:  # PyYAML missing for frontmatter parsing
+        raise
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"Unexpected error loading character card from file '{file_path}': {e}"
+        )
+        return None
+
+
 #
 # End of File
 ########################################################################################################################
-def load_character_card_from_file(param):
-    return None

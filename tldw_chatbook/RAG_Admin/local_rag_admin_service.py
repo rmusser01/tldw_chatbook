@@ -1,40 +1,47 @@
-"""Local retrieval-admin adapter for chunking templates and embedding collections."""
+"""Local retrieval-admin adapter for chunking templates and embedding collections.
+
+The embedding-collection surface operates on the *shared* RAG vector store
+(``RAG_Search/ingestion_indexing.get_shared_rag_service().vector_store``) —
+the same persistent ChromaDB store that ingestion-time indexing writes and
+RAG semantic search reads (task-248). The legacy per-user
+``Embeddings/Chroma_Lib.ChromaDBManager`` stack this service previously
+wrapped has been removed.
+"""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import uuid4
 
-from ..Chunking.chunking_interop_library import get_chunking_service
-from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-try:
-    from ..Embeddings.Chroma_Lib import ChromaDBManager
-except Exception:  # pragma: no cover - optional dependency fallback
-    ChromaDBManager = None  # type: ignore[assignment]
+# (task-21102) ``Chunking.auto_selection`` / ``Chunking.chunking_interop_
+# library`` are deliberately NOT imported at module scope: this module is on
+# the app's boot-import path (``RAG_Admin/__init__`` <- app.py), and any
+# ``tldw_chatbook.Chunking`` import executes the full shim + vendored engine
+# (~15k LOC). Both names are imported function-locally at their use sites --
+# a sys.modules hit after the first template operation.
 
 
 class LocalRAGAdminService:
-    """Wrap existing local chunking-template and Chroma collection operations."""
+    """Wrap local chunking-template and shared-vector-store collection operations."""
 
     def __init__(
         self,
         media_db: Any,
         *,
-        app_config: Optional[Mapping[str, Any]] = None,
-        user_id: Optional[str] = None,
         chunking_service: Any = None,
-        chroma_manager: Any = None,
+        vector_store: Any = None,
         media_service: Any = None,
     ):
         self.media_db = media_db
-        self.app_config = dict(app_config or {})
-        self.user_id = str(user_id or self.app_config.get("USERS_NAME") or "default_user")
-        self.chunking_service = chunking_service or (get_chunking_service(media_db) if media_db is not None else None)
-        self._chroma_manager = chroma_manager
+        # ``not chunking_service`` (not ``is None``) preserves the original
+        # ``chunking_service or ...`` falsy semantics exactly.
+        if not chunking_service and media_db is not None:
+            from ..Chunking.chunking_interop_library import get_chunking_service
+
+            chunking_service = get_chunking_service(media_db)
+        self.chunking_service = chunking_service or None
+        self._vector_store = vector_store
         self.media_service = media_service
 
     def _require_chunking_service(self) -> Any:
@@ -42,15 +49,36 @@ class LocalRAGAdminService:
             raise ValueError("Local chunking template backend is unavailable.")
         return self.chunking_service
 
-    def _build_chroma_manager(self) -> Any:
-        if self._chroma_manager is not None:
-            return self._chroma_manager
-        if not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) or ChromaDBManager is None:
+    def _resolve_vector_store(self) -> Any:
+        """Return the vector store RAG search reads (injected or shared service's)."""
+        if self._vector_store is not None:
+            return self._vector_store
+        from ..RAG_Search.ingestion_indexing import get_shared_rag_service
+
+        service = get_shared_rag_service()
+        store = getattr(service, "vector_store", None) if service is not None else None
+        if store is None:
             raise ValueError("Local embeddings backend is unavailable.")
-        self._chroma_manager = ChromaDBManager(self.user_id, dict(self.app_config))
-        return self._chroma_manager
+        return store
+
+    def _require_chroma_client(self) -> Any:
+        """Return the raw ChromaDB client behind the shared store.
+
+        Collection detail/export need raw collection access, which only the
+        persistent ChromaDB store exposes (the in-memory fallback store has
+        no ``client``).
+        """
+        client = getattr(self._resolve_vector_store(), "client", None)
+        if client is None:
+            raise ValueError(
+                "Local embedding collections require the persistent ChromaDB vector store."
+            )
+        return client
 
     def _coerce_collection(self, collection: Any) -> dict[str, Any]:
+        if isinstance(collection, str):
+            # Some chromadb versions list collection names rather than objects.
+            return {"name": collection, "metadata": {}}
         return {
             "name": getattr(collection, "name", ""),
             "metadata": dict(getattr(collection, "metadata", {}) or {}),
@@ -77,7 +105,9 @@ class LocalRAGAdminService:
         return [str(tag) for tag in candidates if str(tag).strip()]
 
     @classmethod
-    def _extract_template_tags(cls, record: Mapping[str, Any], template_config: Mapping[str, Any]) -> list[str]:
+    def _extract_template_tags(
+        cls, record: Mapping[str, Any], template_config: Mapping[str, Any]
+    ) -> list[str]:
         raw_tags = record.get("tags")
         if raw_tags is None:
             raw_tags = template_config.get("tags")
@@ -87,7 +117,9 @@ class LocalRAGAdminService:
                 raw_tags = metadata.get("tags")
         return cls._normalize_tags(raw_tags)
 
-    def _decorate_template_record(self, record: Mapping[str, Any] | None) -> dict[str, Any]:
+    def _decorate_template_record(
+        self, record: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
         if not record:
             return {}
         decorated = dict(record)
@@ -95,81 +127,70 @@ class LocalRAGAdminService:
             decorated.get("template") or decorated.get("template_json")
         )
         decorated["tags"] = self._extract_template_tags(decorated, template_config)
+        # (auto-selection spec §4.3/AC 14) A legacy row named "auto" —
+        # minted before the CRUD reservation — is never hidden or deleted:
+        # the listing flags it ``name_reserved`` so surfaces can render it
+        # as shadowed by the picker sentinel, and auto tier 1 skips it by
+        # name (never selected, never auto-shadowed). Case-insensitive on
+        # the whole word (Qodo #4): "Auto"/"AUTO" render indistinguishably
+        # from the picker's built-in Auto option, so they are flagged too.
+        from ..Chunking.auto_selection import AUTO_SENTINEL
+
+        if str(decorated.get("name") or "").strip().lower() == AUTO_SENTINEL:
+            decorated["name_reserved"] = True
+        # (task 10, AC-24a) The listing surface carries validity DATA: a
+        # stored-invalid template is listed WITH a flag rather than hidden
+        # or silently applied. The flag is computed here (the data half);
+        # where it renders is the UI task's. The validator never raises
+        # (Task 6 contract: ``{valid, errors, warnings}``), so decoration
+        # cannot break a listing.
+        validated = {
+            key: value
+            for key, value in template_config.items()
+            if key not in ("name", "description")
+        }
+        result = self._validate_template_body(validated)
+        decorated["template_valid"] = bool(result["valid"])
+        issues = [
+            f"{issue['field']}: {issue['message']}"
+            for issue in result["errors"]
+        ]
+        if issues:
+            decorated["template_validation_errors"] = issues
         return decorated
 
     @staticmethod
-    def _with_template_tags(template: Mapping[str, Any], tags: Sequence[str] | None) -> dict[str, Any]:
-        payload = dict(template)
-        if tags is None:
-            return payload
-        normalized_tags = LocalRAGAdminService._normalize_tags(tags)
-        metadata = dict(payload.get("metadata") or {})
-        metadata["tags"] = normalized_tags
-        payload["metadata"] = metadata
-        payload["tags"] = normalized_tags
-        return payload
+    def _validate_template_body(body: Mapping[str, Any]) -> dict[str, Any]:
+        """Run the server-parity validator on a template body.
+
+        Never raises (the validator's own contract, Task 6): returns
+        ``{"valid": bool, "errors": [...], "warnings": [...]}`` so callers
+        can flag rather than crash. An un-runnable body (not a mapping)
+        reports invalid instead of blowing up the listing/apply surface.
+        """
+        # Lazy: module scope would be circular (RAG_Admin imports this
+        # module's package through the scope service).
+        from .template_validation import validate_template
+
+        if not isinstance(body, Mapping):
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "field": "template",
+                        "message": "template body is not an object",
+                    }
+                ],
+                "warnings": [],
+            }
+        return validate_template(dict(body))
 
     def _get_collection(self, collection_name: str) -> Any:
-        manager = self._build_chroma_manager()
-        return manager.client.get_collection(name=collection_name)
+        return self._require_chroma_client().get_collection(name=collection_name)
 
-    def _default_collection_name(self, collection_name: Optional[str] = None) -> str:
-        if collection_name:
-            return str(collection_name)
-        return str(self._build_chroma_manager().get_user_default_collection_name())
-
-    def _get_media_for_embedding(self, media_id: int) -> dict[str, Any]:
-        if self.media_db is None:
-            raise ValueError("Local media DB is required for local embedding generation.")
-
-        getter = getattr(self.media_db, "get_media_by_ids_for_embedding", None)
-        if callable(getter):
-            rows = list(getter([media_id]) or [])
-            if rows:
-                return dict(rows[0])
-
-        detail_getter = getattr(self.media_db, "get_media_by_id", None)
-        if callable(detail_getter):
-            row = detail_getter(media_id)
-            if row:
-                return dict(row)
-
-        raise ValueError(f"Local media item {media_id} was not found or has no embeddable content.")
-
-    @staticmethod
-    def _word_chunks_for_reprocess(content: str, *, chunk_size: int, chunk_overlap: int) -> list[dict[str, Any]]:
-        words = [(match.group(0), match.start(), match.end()) for match in re.finditer(r"\S+", content)]
-        if not words:
-            return []
-        size = max(1, int(chunk_size))
-        overlap = min(max(0, int(chunk_overlap)), size - 1)
-        step = max(1, size - overlap)
-        chunks: list[dict[str, Any]] = []
-        for start in range(0, len(words), step):
-            bucket = words[start:start + size]
-            if not bucket:
-                continue
-            chunks.append(
-                {
-                    "text": " ".join(word for word, _start, _end in bucket),
-                    "start_index": bucket[0][1],
-                    "end_index": bucket[-1][2],
-                }
-            )
-            if start + size >= len(words):
-                break
-        return chunks
-
-    def _embedding_ids_for_media(self, media_id: int, *, collection_name: Optional[str] = None) -> list[str]:
-        collection_name = self._default_collection_name(collection_name)
-        try:
-            collection = self._build_chroma_manager().client.get_collection(name=collection_name)
-            payload = collection.get(where={"media_id": str(media_id)}, include=["metadatas"])
-        except Exception:
-            return []
-        return [str(item_id) for item_id in payload.get("ids", []) if item_id]
-
-    def _infer_collection_dimension(self, collection: Any, metadata: Mapping[str, Any]) -> int | None:
+    def _infer_collection_dimension(
+        self, collection: Any, metadata: Mapping[str, Any]
+    ) -> int | None:
         dimension = metadata.get("embedding_dimension")
         try:
             return int(dimension) if dimension is not None else None
@@ -185,41 +206,17 @@ class LocalRAGAdminService:
         if not embeddings:
             return None
         first_bucket = embeddings[0]
-        candidate = first_bucket[0] if isinstance(first_bucket, list) and first_bucket else first_bucket
+        candidate = (
+            first_bucket[0]
+            if isinstance(first_bucket, list) and first_bucket
+            else first_bucket
+        )
         if candidate is None or not hasattr(candidate, "__len__"):
             return None
         try:
             return len(candidate)
         except TypeError:
             return None
-
-    def _record_local_media_job(
-        self,
-        *,
-        operation: str,
-        media_id: int,
-        result: Mapping[str, Any],
-        request: Mapping[str, Any] | None = None,
-        status: str = "completed",
-    ) -> dict[str, Any]:
-        prefix = "local-embedding" if operation == "media_embeddings" else "local-reprocess"
-        job_id = f"{prefix}-{media_id}-{uuid4().hex[:12]}"
-        now = datetime.now(timezone.utc).isoformat()
-        record = {
-            "id": job_id,
-            "job_id": job_id,
-            "uuid": job_id,
-            "operation": operation,
-            "media_id": media_id,
-            "status": status,
-            "backend": "local",
-            "created_at": now,
-            "updated_at": now,
-            "request": dict(request or {}),
-            "result": dict(result),
-        }
-        self._local_media_jobs[job_id] = record
-        return record
 
     def list_templates(
         self,
@@ -231,12 +228,23 @@ class LocalRAGAdminService:
     ) -> list[dict[str, Any]]:
         templates = [
             self._decorate_template_record(template)
-            for template in list(self._require_chunking_service().get_all_templates(include_system=True) or [])
+            for template in list(
+                self._require_chunking_service().get_all_templates(include_builtin=True)
+                or []
+            )
         ]
         if not include_builtin:
-            templates = [template for template in templates if not bool(template.get("is_system", False))]
+            templates = [
+                template
+                for template in templates
+                if not bool(template.get("is_builtin", False))
+            ]
         if not include_custom:
-            templates = [template for template in templates if bool(template.get("is_system", False))]
+            templates = [
+                template
+                for template in templates
+                if bool(template.get("is_builtin", False))
+            ]
         if tags:
             requested_tags = {str(tag) for tag in tags if str(tag).strip()}
             templates = [
@@ -262,12 +270,17 @@ class LocalRAGAdminService:
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
+        # task-8: tags persist in the v7 ``tags`` column (the interop also
+        # moves any body tags there), not embedded in the JSON body.
         template_id = service.create_template(
             name=name,
             description=description,
-            template_json=self._with_template_tags(template, tags),
+            template_json=dict(template),
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
-        return self._decorate_template_record(service.get_template_by_id(int(template_id)))
+        return self._decorate_template_record(
+            service.get_template_by_id(int(template_id))
+        )
 
     def update_template(
         self,
@@ -279,34 +292,92 @@ class LocalRAGAdminService:
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
         existing = self.get_template(template_name)
-        template_payload: dict[str, Any] | None = None
-        if template is not None:
-            template_payload = self._with_template_tags(template, tags if tags is not None else existing.get("tags"))
-        elif tags is not None:
-            template_payload = self._with_template_tags(
-                self._parse_template_config(existing.get("template_json")),
-                tags,
-            )
         service.update_template(
             int(existing["id"]),
             description=description,
-            template_json=template_payload,
+            template_json=dict(template) if template is not None else None,
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
-        return self._decorate_template_record(service.get_template_by_id(int(existing["id"])))
+        return self._decorate_template_record(
+            service.get_template_by_id(int(existing["id"]))
+        )
 
     def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
         existing = self.get_template(template_name)
         self._require_chunking_service().delete_template(int(existing["id"]))
 
+    def diagnostics_are_thread_safe(self) -> bool:
+        """Report whether ``get_template_diagnostics`` may run off the loop.
+
+        (TASK-21126) The diagnostics payload's only I/O is the legacy-chunk
+        census, a read-only SELECT against the media DB. ``MediaDatabase``
+        hands out THREAD-LOCAL connections, so a worker thread opens its
+        own — fine (and WAL-safe) for a file-backed database, but for a
+        ``:memory:`` one it opens a *different, empty* database and the
+        census would silently report zero legacy items instead of raising.
+        Every production wiring is file-backed (``app.media_db``); the
+        memory case is tests and ephemeral fixtures, and it stays on the
+        calling thread rather than getting a wrong answer quietly.
+
+        Returns:
+            True when the census is safe to run on a worker thread.
+        """
+        db = self.media_db
+        if db is None:
+            # No media DB: `get_legacy_chunk_report_line` returns "" without
+            # touching sqlite, so there is nothing thread-bound to protect.
+            return True
+        return not bool(getattr(db, "is_memory_db", False))
+
     def get_template_diagnostics(self) -> dict[str, Any]:
         service = self._require_chunking_service()
-        return {
+        diagnostics = {
             "db_class": f"{service.__class__.__module__}.{service.__class__.__name__}",
             "capability": "native",
             "missing_methods": [],
             "fallback_enabled": False,
             "hint": "Local chunking templates use the bundled chunking interop service.",
         }
+        # task-12 (spec §8): the read-only legacy-chunk report rides this
+        # diagnostics payload -- the surviving RAG Admin stats surface (the
+        # legacy UI was deleted with PR #669; the scope service routes this
+        # as the local admin "observe" action). Rendered only when legacy
+        # chunks exist (N > 0): a fully stamped library shows nothing
+        # (report-only-when-actionable choice; no pre-existing omit-empty
+        # convention on this dict). Guarded so a media DB the
+        # report can't query never breaks template diagnostics.
+        try:
+            report = self.get_legacy_chunk_report_line()
+        except Exception:  # pragma: no cover - unmigrated/read-only media DB
+            report = ""
+        if report:
+            diagnostics["legacy_chunk_report"] = report
+        return diagnostics
+
+    def get_legacy_chunk_report_line(self) -> str:
+        """One read-only report line for the RAG Admin stats surface.
+
+        Returns ``"Chunked by an older engine: N items"`` where N is the
+        count of media items with live chunk rows persisted before the
+        engine-version stamp (NULL ``chunk_engine_version``); an empty
+        string when there are none
+        (nothing to report -- the library is fully stamped). Read-only by
+        construction (``count_chunks_by_engine_version`` is a plain SELECT;
+        spec §8: stamp + report only, no re-chunk action).
+
+        Raises:
+            Whatever ``db.get_connection().execute`` raises (e.g. a media DB
+            too old to have the column) -- callers composing this into a
+            larger surface should guard, as ``get_template_diagnostics`` does.
+        """
+        if self.media_db is None:
+            return ""
+        legacy = self.count_chunks_by_engine_version(self.media_db).get(
+            "legacy", 0
+        )
+        if legacy <= 0:
+            return ""
+        return f"Chunked by an older engine: {legacy} items"
 
     def apply_template(
         self,
@@ -316,8 +387,36 @@ class LocalRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        """Apply a stored template to text.
+
+        (task 10, AC-24b) A stored-invalid template body is REFUSED here
+        with the named :class:`InvalidTemplateError` -- never an unnamed
+        engine error surfacing mid-chunk. The apply path cannot rely on
+        validate-on-write alone: stored-invalid rows exist (v6→v7
+        conversion can mint them; rows written before the gate existed),
+        and they remain deliberately editable (update validates the NEW
+        body only) -- so apply is the last line of defense.
+        """
         record = self.get_template(template_name)
         template_config = self._parse_template_config(record.get("template_json"))
+        validation = self._validate_template_body(
+            {
+                key: value
+                for key, value in template_config.items()
+                if key not in ("name", "description")
+            }
+        )
+        if not validation["valid"]:
+            from ..Chunking.chunking_interop_library import InvalidTemplateError
+
+            summary = "; ".join(
+                f"{issue['field']}: {issue['message']}"
+                for issue in validation["errors"][:3]
+            )
+            raise InvalidTemplateError(
+                f"Template '{template_name}' failed validation and was "
+                f"refused: {summary}"
+            )
         method, options = self._chunking_options_from_template(template_config)
         options.update(dict(override_options or {}))
 
@@ -326,7 +425,9 @@ class LocalRAGAdminService:
         chunker = Chunker(options=options, template_manager=object())
         raw_chunks = chunker.chunk_text(text, method=method, use_template=False)
         chunks = [
-            chunk.get("text") if isinstance(chunk, Mapping) and "text" in chunk else chunk
+            chunk.get("text")
+            if isinstance(chunk, Mapping) and "text" in chunk
+            else chunk
             for chunk in list(raw_chunks or [])
         ]
         result: dict[str, Any] = {
@@ -343,7 +444,9 @@ class LocalRAGAdminService:
         return result
 
     @staticmethod
-    def _chunking_options_from_template(template_config: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    def _chunking_options_from_template(
+        template_config: Mapping[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
         chunking = template_config.get("chunking")
         if isinstance(chunking, Mapping):
             method = str(chunking.get("method") or "words")
@@ -355,17 +458,26 @@ class LocalRAGAdminService:
             for stage in pipeline:
                 if not isinstance(stage, Mapping) or stage.get("stage") != "chunk":
                     continue
-                method = str(stage.get("method") or template_config.get("base_method") or "words")
+                method = str(
+                    stage.get("method") or template_config.get("base_method") or "words"
+                )
                 return method, dict(stage.get("options") or {})
 
         method = str(template_config.get("base_method") or "words")
         metadata = template_config.get("metadata")
-        options = dict(metadata.get("default_options") or {}) if isinstance(metadata, Mapping) else {}
+        options = (
+            dict(metadata.get("default_options") or {})
+            if isinstance(metadata, Mapping)
+            else {}
+        )
         return method, options
 
     def list_collections(self) -> list[dict[str, Any]]:
-        manager = self._build_chroma_manager()
-        return [self._coerce_collection(collection) for collection in list(manager.list_collections() or [])]
+        client = self._require_chroma_client()
+        return [
+            self._coerce_collection(collection)
+            for collection in list(client.list_collections() or [])
+        ]
 
     def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
         collection = self._get_collection(collection_name)
@@ -379,7 +491,9 @@ class LocalRAGAdminService:
         return {
             "name": getattr(collection, "name", collection_name),
             "count": count,
-            "embedding_dimension": self._infer_collection_dimension(collection, metadata),
+            "embedding_dimension": self._infer_collection_dimension(
+                collection, metadata
+            ),
             "metadata": metadata,
         }
 
@@ -415,7 +529,9 @@ class LocalRAGAdminService:
                 "metadata": metadatas[index] if index < len(metadatas) else {},
             }
             if include_embeddings:
-                item["embedding"] = embeddings[index] if index < len(embeddings) else None
+                item["embedding"] = (
+                    embeddings[index] if index < len(embeddings) else None
+                )
             items.append(item)
 
         try:
@@ -432,7 +548,19 @@ class LocalRAGAdminService:
         }
 
     def delete_collection(self, collection_name: str) -> None:
-        self._build_chroma_manager().delete_collection(collection_name)
+        store = self._resolve_vector_store()
+        deleter = getattr(store, "delete_collection", None)
+        if not callable(deleter):
+            raise ValueError("Local embeddings backend is unavailable.")
+        # ChromaVectorStore.delete_collection also resets its cached handle
+        # when the active collection is deleted, so delegate to the store.
+        # Both bundled stores return a success bool (and log rather than
+        # raise); surface an explicit False as a hard failure so the admin
+        # seam never reports success for a collection that still exists.
+        if deleter(collection_name) is False:
+            raise ValueError(
+                f"Failed to delete local embedding collection '{collection_name}'."
+            )
 
     def reprocess_media(self, media_id: Any, **options: Any) -> Any:
         if self.media_service is None:
@@ -441,3 +569,76 @@ class LocalRAGAdminService:
         if not callable(method):
             raise ValueError("Local media reprocess backend is unavailable.")
         return method(media_id, **options)
+
+    async def rechunk_legacy_media(
+        self,
+        *,
+        rag_service: Any = None,
+        indexing_db: Any = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Re-chunk every older-engine item (task-13, spec §10.2-§10.2.1).
+
+        Thin delegate to the Library re-chunk service (the owner of the
+        per-item flow, the hard-delete replacement ruling, and the forced
+        re-index); reached through the scope service's ``rag.admin.launch``
+        action.
+        """
+        if self.media_db is None:
+            raise ValueError("Local re-chunk backend is unavailable (no media DB).")
+        from ..Library.library_rechunk_service import rechunk_legacy_items
+
+        return await rechunk_legacy_items(
+            self.media_db,
+            rag_service=rag_service,
+            indexing_db=indexing_db,
+            progress_callback=progress_callback,
+        )
+
+    def count_chunks_by_engine_version(self, db: Any) -> dict[str, int]:
+        """Count media items per chunking-engine version (read-only).
+
+        task-12 (spec §8): the RAG Admin report surface. The spec's AC counts
+        media *items*, not chunk rows — an item with many chunks counts once
+        per version it appears under. Rows persisted before the
+        engine-version stamp (schema v6 / task-11) carry NULL in
+        ``UnvectorizedMediaChunks.chunk_engine_version`` and are reported
+        under the ``"legacy"`` key; stamped rows are keyed by their version
+        string verbatim. A partially stamped item counts under each version
+        it has live rows for.
+
+        Deliberately dependency-light: takes the media DB explicitly (no
+        ``__init__`` state -- callable on a bare ``__new__`` instance) so the
+        report never needs the chunking service or vector store backends,
+        and never mutates anything (a plain SELECT; stamp + report only,
+        there is no re-chunk action).
+
+        BLOCKING. Cost is proportional to live chunk rows; media schema v8
+        (TASK-21126) adds ``idx_unvectorizedmediachunks_engine_census``, a
+        partial covering index whose column order is chosen so this exact
+        SQL text uses it *without* ``ANALYZE`` -- do not re-spell the query
+        (the ``WHERE deleted = 0`` and the ``GROUP BY
+        chunk_engine_version`` are what match the index) and do not call
+        this from the event loop. Async callers go through
+        ``RAGAdminScopeService.get_template_diagnostics``, which offloads
+        it; ``Tests/DB/test_media_db_schema_v8.py`` pins the plan.
+
+        Args:
+            db: The ``MediaDatabase`` (or compatible) holding
+                ``UnvectorizedMediaChunks``.
+
+        Returns:
+            dict mapping engine version (``"legacy"`` for NULL) to the count
+            of media items with non-deleted chunk rows under that version.
+            Empty dict when the table has no live rows.
+        """
+        cursor = db.get_connection().execute(
+            "SELECT chunk_engine_version, COUNT(DISTINCT media_id) AS n "
+            "FROM UnvectorizedMediaChunks WHERE deleted = 0 "
+            "GROUP BY chunk_engine_version"
+        )
+        counts: dict[str, int] = {}
+        for row in cursor.fetchall():
+            version = row["chunk_engine_version"]
+            counts[version if version is not None else "legacy"] = int(row["n"])
+        return counts

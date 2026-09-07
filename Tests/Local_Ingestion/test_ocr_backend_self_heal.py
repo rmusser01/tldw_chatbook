@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.Local_Ingestion.OCR_Backends import (
+    DocextOCRBackend,
     OCRBackend,
     OCRManager,
     OCRResult,
@@ -55,12 +56,18 @@ class _BrokenImportBackend(OCRBackend):
     def process_image(self, image_path, language="en", **kwargs) -> OCRResult:
         if not self._initialized:
             self.initialize()
-        return OCRResult(text="broken", confidence=1.0, language=language, backend="broken")
+        return OCRResult(
+            text="broken", confidence=1.0, language=language, backend="broken"
+        )
 
     def process_pdf(self, pdf_path, language="en", **kwargs):
         if not self._initialized:
             self.initialize()
-        return [OCRResult(text="broken", confidence=1.0, language=language, backend="broken")]
+        return [
+            OCRResult(
+                text="broken", confidence=1.0, language=language, backend="broken"
+            )
+        ]
 
     def get_supported_languages(self):
         return ["en"]
@@ -76,10 +83,14 @@ class _WorkingBackend(OCRBackend):
         self._initialized = True
 
     def process_image(self, image_path, language="en", **kwargs) -> OCRResult:
-        return OCRResult(text="ok", confidence=0.9, language=language, backend="working")
+        return OCRResult(
+            text="ok", confidence=0.9, language=language, backend="working"
+        )
 
     def process_pdf(self, pdf_path, language="en", **kwargs):
-        return [OCRResult(text="ok", confidence=0.9, language=language, backend="working")]
+        return [
+            OCRResult(text="ok", confidence=0.9, language=language, backend="working")
+        ]
 
     def get_supported_languages(self):
         return ["en"]
@@ -194,3 +205,17 @@ def test_all_backends_broken_raises_no_backend_available():
     assert b1.import_attempts == 1
     assert b2.import_attempts == 1
     assert manager.get_available_backends() == []
+
+
+def test_docext_backend_cleanup_in_model_mode_does_not_raise_nameerror():
+    """task-168(b): ``DocextOCRBackend.cleanup`` referenced ``torch``
+    without ever importing it anywhere in this module -- a ``NameError``
+    on this (until now unreached, since it required 'model' mode with a
+    loaded model) path. ``cleanup`` must guard-import ``torch`` itself."""
+    backend = DocextOCRBackend(config={"mode": "model"})
+    backend.model = object()  # simulate a loaded model without a real one
+
+    backend.cleanup()  # must not raise NameError
+
+    assert backend.model is None
+    assert backend._initialized is False

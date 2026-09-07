@@ -8,10 +8,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
-class ConsoleSaveAsModal(ModalScreen[str | None]):
-    """List available and WIP Save as destinations for a selected message."""
+class ConsoleSaveAsModal(SafeModalDismissMixin, ModalScreen[str | None]):
+    """List available and unavailable Save as destinations for a selected message."""
 
     DEFAULT_CSS = """
     ConsoleSaveAsModal {
@@ -27,7 +28,7 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
     }
 
     .console-save-as-destination,
-    .console-save-as-wip,
+    .console-save-as-unavailable,
     .console-save-as-empty-state {
         height: auto;
         margin: 0 0 1 0;
@@ -39,7 +40,8 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    SAFE_MODAL_CONTENT = "#console-save-as-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
 
     def __init__(
         self,
@@ -47,11 +49,13 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
         destinations: list[ConsoleSaveDestination],
         message_role: str = "Message",
         message_excerpt: str = "",
+        ephemeral: bool = False,
     ) -> None:
         super().__init__()
         self.destinations = destinations
         self.message_role = message_role.strip() or "Message"
         self.message_excerpt = message_excerpt.strip()
+        self.ephemeral = ephemeral
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-save-as-modal"):
@@ -70,8 +74,18 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                     markup=False,
                 )
             if not any(destination.available for destination in self.destinations):
+                # F3 (task-9 review): in a temporary chat every destination
+                # is unavailable, so this copy always fires there -- the
+                # generic "not wired yet" phrasing reads as an unfinished
+                # feature instead of naming the actual (permanent) rule.
+                empty_state_text = (
+                    "This chat is temporary, so Save as destinations are "
+                    "not available."
+                    if self.ephemeral
+                    else "No Save as destinations are wired for selected messages yet."
+                )
                 yield Static(
-                    "No Save as destinations are wired for selected messages yet.",
+                    empty_state_text,
                     classes="console-save-as-empty-state",
                 )
             for destination in self.destinations:
@@ -85,28 +99,30 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                     continue
                 reason = f"\n{destination.reason}" if destination.reason else ""
                 yield Static(
-                    f"{destination.label} [WIP]{reason}",
-                    id=_destination_id(destination.label, prefix="wip"),
-                    classes="console-save-as-wip",
+                    f"{destination.label} (unavailable){reason}",
+                    id=_destination_id(destination.label, prefix="unavailable"),
+                    classes="console-save-as-unavailable",
+                    markup=False,
                 )
             yield Button("Close", id="console-save-as-close")
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "console-save-as-close":
             event.stop()
-            self.dismiss(None)
+            await self.request_safe_cancel(source="button")
             return
         for destination in self.destinations:
-            if destination.available and event.button.id == _destination_id(destination.label):
+            if destination.available and event.button.id == _destination_id(
+                destination.label
+            ):
                 event.stop()
                 self.dismiss(destination.label)
                 return
 
 
 def _destination_id(label: str, prefix: str = "destination") -> str:
-    safe_label = "".join(character.lower() if character.isalnum() else "-" for character in label)
+    safe_label = "".join(
+        character.lower() if character.isalnum() else "-" for character in label
+    )
     safe_label = "-".join(part for part in safe_label.split("-") if part)
     return f"console-save-as-{prefix}-{safe_label}"

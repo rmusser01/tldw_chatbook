@@ -12,8 +12,12 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    nav_button_label,
+)
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,24 +26,19 @@ PHASE_6_README = Path("Docs/superpowers/qa/unified-shell/phase-6/README.md")
 PHASE_6_FIRST_TIME_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-6/2026-05-05-phase-6-1-first-time-user-replay.md"
 )
-PHASE_6_PARENT_TASK = Path("backlog/tasks/task-7 - Phase-6-Audit-Replay-And-Closeout.md")
+PHASE_6_PARENT_TASK = Path(
+    "backlog/tasks/task-7 - Phase-6-Audit-Replay-And-Closeout.md"
+)
 PHASE_6_FIRST_TIME_TASK = Path(
     "backlog/tasks/task-7.1 - Phase-6.1-Replay-first-time-user-walkthrough.md"
 )
 
 EXPECTED_NAV = [
-    ("nav-home", "Home"),
-    ("nav-console", "Console"),
-    ("nav-library", "Library"),
-    ("nav-artifacts", "Artifacts"),
-    ("nav-personas", "Personas"),
-    ("nav-watchlists_collections", "Watchlists"),
-    ("nav-schedules", "Schedules"),
-    ("nav-workflows", "Workflows"),
-    ("nav-mcp", "MCP"),
-    ("nav-acp", "ACP"),
-    ("nav-skills", "Skills"),
-    ("nav-settings", "Settings"),
+    (
+        f"nav-{destination.destination_id}",
+        nav_button_label(destination.destination_id, destination.label),
+    )
+    for index, destination in enumerate(SHELL_DESTINATION_ORDER)
 ]
 
 
@@ -117,7 +116,9 @@ def _test_cli_setting(section: str, key: str, default=None):
 
 
 @pytest.mark.asyncio
-async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> None:
+async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> (
+    None
+):
     """Verify first-time launch exposes the shell's primary orientation paths."""
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -127,54 +128,65 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
-            assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
+            nav_buttons = list(
+                app.screen.query(MainNavigationBar).first().query(".nav-button")
+            )
+            assert [
+                (button.id, str(button.label).strip()) for button in nav_buttons
+            ] == EXPECTED_NAV
 
             home_text = _screen_text(app)
             assert "Console needs a working model before live AI tasks." in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More: Ctrl+P" in home_text
+            # NV-01 (TASK-2154.21): at 180 cols every destination fits, so
+            # the overflow affordance hides instead of docking over the strip.
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one("#nav-overflow-hint").display is False,
+            )
 
             for button_id, current_tab, screen_name, required_copy in (
                 (
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Live work sources", "Watchlists: Connected"),
+                    ("Live work sources", "Watchlists: Available"),
                 ),
                 (
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-personas",
                     "personas",
                     "PersonasScreen",
                     (
-                        "Personas",
-                        "Behavior profiles for chat and agents",
-                        "characters, personas, prompts, dictionaries, and lore",
-                        "Attach to Console",
+                        "Roleplay",
+                        "Author the pieces that shape a chat",
+                        "Characters",
+                        "Lore",
                     ),
-                ),
-                (
-                    "nav-skills",
-                    "skills",
-                    "SkillsScreen",
-                    ("Skills", "Agent Skills", "SKILL.md"),
                 ),
             ):
                 app.screen.query_one(f"#{button_id}", Button).press()
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
-                        app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                        app.current_tab == current_tab
+                        and app.screen.__class__.__name__ == screen_name
                     ),
                 )
                 screen_text = _screen_text(app)

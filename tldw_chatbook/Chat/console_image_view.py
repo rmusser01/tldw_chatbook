@@ -1,0 +1,539 @@
+"""Console inline-image view modes, per-message state, and render cache.
+
+Pure module: no Textual imports (rich_pixels renders via Rich, PIL is
+imaging). The graphics-mode widget itself is created in the transcript.
+
+This module is the FIRST real consumer of ``[chat.images].default_render_mode``,
+``[chat.images.terminal_overrides]``, and ``terminal_utils`` detection —
+legacy chat defines those keys but never reads them.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass
+from io import BytesIO
+from typing import Any, Iterable, Literal, Mapping
+
+from loguru import logger
+from PIL import Image as PILImage
+from rich_pixels import Pixels
+
+from tldw_chatbook.Utils.terminal_utils import (
+    detect_terminal_capabilities,
+    get_image_render_mode,
+)
+
+ConsoleImageViewMode = Literal["pixels", "graphics", "hidden"]
+
+IMAGE_DECODE_MAX_DIMENSION = 1024
+IMAGE_CACHE_MAX_ENTRIES = 16
+PIXELS_MAX_COLS = 80
+PIXELS_MAX_LINES = 40
+
+_RENDER_MODES: tuple[ConsoleImageViewMode, ...] = ("pixels", "graphics", "hidden")
+_LEGACY_TO_MODE = {"pixels": "pixels", "regular": "graphics"}
+
+
+def fit_image_cell_size(
+    pixel_width: int, pixel_height: int, box_cols: int, box_lines: int
+) -> tuple[int, int]:
+    """Fit a PIL image's pixel size into a cell box, preserving aspect ratio.
+
+    A ``textual_image.widget.Image`` sized with only ``max-width``/``max-height``
+    resolves its render region from the parent container's *settled* layout;
+    mounting at runtime (vs. compose time) can paint one tick before that
+    settles, asking the renderer to scale into a transient 0-width/height region
+    -- which PIL's ``resize()`` raises ``ValueError`` on. Setting BOTH cell
+    dimensions to explicit ints sidesteps that race (a fixed size resolves
+    without waiting on parent layout). Terminal cells are ~2x taller than wide
+    in pixels, so the image aspect is converted to "cell units" (halving the
+    height) before fitting.
+
+    Args:
+        pixel_width: Source image width in pixels.
+        pixel_height: Source image height in pixels.
+        box_cols: Target box width in character columns.
+        box_lines: Target box height in character lines.
+
+    Returns:
+        ``(width_cells, height_cells)``, each an int clamped to
+        ``[1, box_cols]`` / ``[1, box_lines]``. Degenerate input returns the
+        full box.
+    """
+    if pixel_width <= 0 or pixel_height <= 0:
+        return box_cols, box_lines
+    cell_aspect = pixel_width / (pixel_height / 2)
+    box_aspect = box_cols / box_lines
+    if cell_aspect >= box_aspect:
+        # Relatively wider than the box -> fit to width.
+        w_cells = box_cols
+        h_cells = max(1, round(box_cols / cell_aspect))
+    else:
+        # Relatively taller than the box -> fit to height.
+        h_cells = box_lines
+        w_cells = max(1, round(box_lines * cell_aspect))
+    w_cells = max(1, min(box_cols, w_cells))
+    h_cells = max(1, min(box_lines, h_cells))
+    return w_cells, h_cells
+
+
+def scale_image_pixel_size_for_cell_box(
+    pixel_width: int, pixel_height: int, box_cols: int, box_lines: int
+) -> tuple[int, int]:
+    """Return the pixel size ``scale_image_for_cell_box`` would produce.
+
+    Exactly replicates ``PIL.Image.thumbnail``'s aspect-preserving size
+    arithmetic (``preserve_aspect_ratio``/``round_aspect``, Pillow 12.3.0)
+    WITHOUT copying or resampling the image. Callers that only need the
+    resulting dimensions -- ``fit_character_avatar_cell_box`` reads
+    ``.width``/``.height`` off the scaled copy and discards every pixel --
+    must use this instead: a LANCZOS thumbnail of a 1024px card costs ~0.7 ms,
+    and the Console rail pays one per distinct viewport size during a
+    resize drag, synchronously on the event loop (TASK-22221).
+
+    ``Image.thumbnail`` never enlarges: a box at least as large as the source
+    in both axes leaves the source size untouched. ``draft()`` only changes
+    the JPEG decode box, never the final size, so the result is a pure
+    function of the source size and the requested box.
+
+    Args:
+        pixel_width: Source image width in pixels.
+        pixel_height: Source image height in pixels.
+        box_cols: Destination box width in character columns.
+        box_lines: Destination box height in character lines.
+
+    Returns:
+        ``(width, height)`` in pixels, identical to the size of the image
+        returned by ``scale_image_for_cell_box`` for the same arguments.
+    """
+    source_width = max(1, int(pixel_width))
+    source_height = max(1, int(pixel_height))
+    # The same requested box scale_image_for_cell_box asks thumbnail for.
+    requested_width = math.floor(max(1, int(box_cols)))
+    requested_height = math.floor(max(1, int(box_lines)) * 2)
+    if requested_width >= source_width and requested_height >= source_height:
+        # thumbnail() returns early: the source is already within the box.
+        return source_width, source_height
+
+    def round_aspect(number: float, key) -> int:
+        return max(min(math.floor(number), math.ceil(number), key=key), 1)
+
+    aspect = source_width / source_height
+    width, height = requested_width, requested_height
+    if width / height >= aspect:
+        width = round_aspect(height * aspect, key=lambda n: abs(aspect - n / height))
+    else:
+        height = round_aspect(
+            width / aspect, key=lambda n: 0 if n == 0 else abs(aspect - width / n)
+        )
+    return width, height
+
+
+def scale_image_for_cell_box(
+    image: "PILImage.Image", box_cols: int, box_lines: int
+) -> "PILImage.Image":
+    """Return a copy of ``image`` scaled to fit a character-cell box.
+
+    ``Pixels.from_image`` bakes one cell per source pixel row-pair, so a Pixels
+    renderable built for a *large* box and then placed in a *small* widget is
+    clipped by Rich, not scaled -- the viewer sees the image's top-left corner.
+    Sizing the source to the destination box before building Pixels is what
+    makes the whole image visible.
+
+    Args:
+        image: Source PIL image; never modified.
+        box_cols: Destination box width in character columns.
+        box_lines: Destination box height in character lines.
+
+    Returns:
+        A scaled copy that fits within ``box_cols`` x ``box_lines * 2`` pixels
+        (terminal cells are ~2x taller than wide), preserving aspect ratio.
+    """
+    scaled = image.copy()
+    scaled.thumbnail(
+        (max(1, box_cols), max(1, box_lines) * 2), PILImage.Resampling.LANCZOS
+    )
+    return scaled
+
+
+def next_view_mode(current: ConsoleImageViewMode) -> ConsoleImageViewMode:
+    """Return the next mode in the pixels -> graphics -> hidden cycle.
+
+    Args:
+        current: The current view mode.
+
+    Returns:
+        The next mode; unknown input restarts the cycle at "pixels".
+    """
+    try:
+        index = _RENDER_MODES.index(current)
+    except ValueError:
+        return "pixels"
+    return _RENDER_MODES[(index + 1) % len(_RENDER_MODES)]
+
+
+def _chat_images_config(app_config: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not isinstance(app_config, Mapping):
+        return {}
+    # Same both-shapes handling as config.resolve_tldw_api_config: the live app_config nests raw TOML under COMPREHENSIVE_CONFIG_RAW.
+    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+    source = raw if isinstance(raw, Mapping) else app_config
+    chat = source.get("chat")
+    images = chat.get("images") if isinstance(chat, Mapping) else None
+    return images if isinstance(images, Mapping) else {}
+
+
+def resolve_show_character_avatar(app_config: Mapping[str, Any]) -> bool:
+    """Whether the Console shows the active character's avatar (default True).
+
+    Reads ``[chat.images].show_character_avatar`` via the same both-shapes
+    accessor as ``resolve_default_mode`` (raw TOML or the live
+    ``COMPREHENSIVE_CONFIG_RAW`` nesting).
+
+    Args:
+        app_config: The application config mapping (``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True unless explicitly disabled via ``show_character_avatar = false``.
+    """
+    value = _chat_images_config(app_config).get("show_character_avatar", True)
+    return bool(value)
+
+
+def resolve_render_remote_images(app_config: Mapping[str, Any]) -> bool:
+    """Whether the transcript renders images referenced by LINKS in replies.
+
+    Security-sensitive: fetching a model-suggested URL leaks the reader's
+    IP/user-agent to that host, so this is OFF unless the user explicitly
+    sets ``[chat.images] render_remote_images = true``. The fetch path
+    itself always goes through the egress-hardened image fetcher
+    (per-hop SSRF policy + byte caps) regardless of this setting.
+
+    Args:
+        app_config: The application config mapping (``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True only when explicitly enabled.
+    """
+    return bool(_chat_images_config(app_config).get("render_remote_images", False))
+
+
+#: Markdown image links: ![alt](url) -- any http(s) URL.
+_MD_IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)]+)\)")
+#: Bare URLs are only treated as images when they end in an image
+#: extension (optionally followed by a query string).
+_BARE_IMAGE_URL_RE = re.compile(
+    r"(?<!\()\bhttps?://[^\s)\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s)\"'<>]*)?",
+    re.IGNORECASE,
+)
+
+
+def extract_image_urls(text: str, *, limit: int = 3) -> list[str]:
+    """Extract renderable image URLs from message text.
+
+    Accepts markdown image links (any http(s) URL) and bare http(s) URLs
+    with an image extension. Order-preserving, deduplicated, capped.
+
+    Args:
+        text: The raw message body.
+        limit: Maximum URLs returned.
+
+    Returns:
+        Up to ``limit`` unique image URLs in first-appearance order.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    matches = [
+        (m.start(), m.group(1)) for m in _MD_IMAGE_LINK_RE.finditer(text or "")
+    ] + [(m.start(), m.group(0)) for m in _BARE_IMAGE_URL_RE.finditer(text or "")]
+    for _pos, url in sorted(matches):
+        if url in seen:
+            continue
+        seen.add(url)
+        found.append(url)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def resolve_react_character_expressions(app_config: Mapping[str, Any]) -> bool:
+    """Whether the Console avatar reacts (swaps images) as the character
+    thinks/speaks (default True). Reads ``[chat.images].react_character_expressions``
+    via the same both-shapes accessor as ``resolve_show_character_avatar``.
+
+    Args:
+        app_config: The application config mapping (the ``[chat.images]``
+            section is read; missing sections are tolerated).
+
+    Returns:
+        True unless explicitly disabled via ``react_character_expressions = false``.
+    """
+    value = _chat_images_config(app_config).get("react_character_expressions", True)
+    return bool(value)
+
+
+def resolve_default_mode(
+    app_config: Mapping[str, Any],
+) -> Literal["pixels", "graphics"]:
+    """Resolve the session-default inline render mode from config + terminal.
+
+    Resolution order (spec-defined; no prior consumer existed to mirror):
+    explicit ``default_render_mode`` of ``pixels``/``regular`` wins; ``auto``
+    consults ``terminal_overrides[<terminal_type>]``, then
+    ``terminal_overrides["default"]``, then ``get_image_render_mode("auto")``;
+    anything unrecognized falls back to "pixels".
+
+    Args:
+        app_config: The application config mapping (``[chat.images]`` section
+            is read; missing sections are tolerated).
+
+    Returns:
+        "pixels" or "graphics" (the config value "regular" maps to "graphics").
+    """
+    images = _chat_images_config(app_config)
+    configured = str(images.get("default_render_mode", "auto")).strip().lower()
+    if configured in _LEGACY_TO_MODE:
+        return _LEGACY_TO_MODE[configured]  # type: ignore[return-value]
+    if configured not in ("auto", ""):
+        # Anything unrecognized (not "pixels"/"regular", not "auto", not
+        # missing/empty) pins to "pixels" immediately rather than falling
+        # through the terminal-auto path.
+        return "pixels"
+
+    overrides = images.get("terminal_overrides")
+    overrides = overrides if isinstance(overrides, Mapping) else {}
+    try:
+        terminal_type = str(
+            detect_terminal_capabilities().get("terminal_type", "unknown")
+        )
+    except Exception:
+        logger.opt(exception=True).warning("Terminal capability detection failed.")
+        terminal_type = "unknown"
+    for key in (terminal_type, "default"):
+        override = str(overrides.get(key, "")).strip().lower()
+        if override in _LEGACY_TO_MODE:
+            return _LEGACY_TO_MODE[override]  # type: ignore[return-value]
+
+    try:
+        resolved = get_image_render_mode("auto")
+    except Exception:
+        logger.opt(exception=True).warning("Image render mode resolution failed.")
+        resolved = "pixels"
+    return _LEGACY_TO_MODE.get(resolved, "pixels")  # type: ignore[return-value]
+
+
+class ConsoleImageViewState:
+    """Per-message inline-image view overrides (non-default entries only)."""
+
+    def __init__(self) -> None:
+        self._overrides: dict[str, ConsoleImageViewMode] = {}
+
+    def mode_for(
+        self,
+        message_id: str,
+        *,
+        default: Literal["pixels", "graphics"],
+    ) -> ConsoleImageViewMode:
+        """Return the effective mode for a message.
+
+        Args:
+            message_id: Native Console message ID.
+            default: The session-default render mode.
+
+        Returns:
+            The stored override, or the default when none is stored.
+        """
+        return self._overrides.get(message_id, default)
+
+    def set_mode(
+        self,
+        message_id: str,
+        mode: ConsoleImageViewMode,
+        *,
+        default: Literal["pixels", "graphics"],
+    ) -> None:
+        """Store a mode override, dropping entries equal to the default.
+
+        Args:
+            message_id: Native Console message ID.
+            mode: The mode chosen for this message.
+            default: The session-default render mode.
+        """
+        if mode == default:
+            self._overrides.pop(message_id, None)
+        else:
+            self._overrides[message_id] = mode
+
+    def serialize(self) -> dict[str, str]:
+        """Return a JSON-safe snapshot of the overrides."""
+        return dict(self._overrides)
+
+    def restore(self, payload: Any) -> None:
+        """Replace overrides from a saved snapshot, ignoring invalid entries.
+
+        Args:
+            payload: The previously serialized mapping (tolerates garbage).
+        """
+        self._overrides.clear()
+        if not isinstance(payload, Mapping):
+            return
+        for key, value in payload.items():
+            if isinstance(key, str) and value in _RENDER_MODES:
+                self._overrides[key] = value
+
+    def prune(self, live_message_ids: Iterable[str]) -> None:
+        """Drop overrides for messages that no longer exist.
+
+        Args:
+            live_message_ids: IDs of messages currently in any session.
+        """
+        live = set(live_message_ids)
+        for message_id in [m for m in self._overrides if m not in live]:
+            del self._overrides[message_id]
+
+
+@dataclass(frozen=True)
+class ConsoleImageRowSpec:
+    """Prebuilt payload for one transcript image row."""
+
+    message_id: str
+    mode: Literal["pixels", "graphics"]
+    pixels: Pixels | None = None
+    pil: "PILImage.Image | None" = None
+
+
+class ConsoleImageRenderCache:
+    """Bounded cache of decoded transcript images (LRU + negative cache).
+
+    ``prepare`` is synchronous CPU work (PIL decode + LANCZOS downscale) —
+    callers must run it off the event loop (``asyncio.to_thread``).
+
+    Thread model: a reentrant lock guards all cache state; ``prepare`` runs
+    in a worker thread while the event loop reads concurrently. Heavy PIL
+    work happens outside the lock.
+    """
+
+    def __init__(self, *, max_entries: int = IMAGE_CACHE_MAX_ENTRIES) -> None:
+        self._max_entries = max_entries
+        self._images: OrderedDict[str, PILImage.Image] = OrderedDict()
+        self._pixels: dict[str, Pixels] = {}
+        self._failed: set[str] = set()
+        self._lock = threading.RLock()
+
+    def prepare(self, message_id: str, image_data: bytes) -> bool:
+        """Decode, downscale, and cache an image; negative-cache failures.
+
+        Args:
+            message_id: Native Console message ID (cache key).
+            image_data: Raw image bytes.
+
+        Returns:
+            True when the image is cached, False when decoding failed.
+        """
+        try:
+            pil = PILImage.open(BytesIO(image_data))
+            pil.load()
+            if max(pil.width, pil.height) > IMAGE_DECODE_MAX_DIMENSION:
+                pil.thumbnail(
+                    (IMAGE_DECODE_MAX_DIMENSION, IMAGE_DECODE_MAX_DIMENSION),
+                    PILImage.Resampling.LANCZOS,
+                )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Console image prep failed for message {message_id}."
+            )
+            with self._lock:
+                self._failed.add(message_id)
+            return False
+        with self._lock:
+            self._failed.discard(message_id)
+            self._images[message_id] = pil
+            self._images.move_to_end(message_id)
+            self._pixels.pop(message_id, None)
+            while len(self._images) > self._max_entries:
+                evicted_id, _ = self._images.popitem(last=False)
+                self._pixels.pop(evicted_id, None)
+        return True
+
+    def get_pil(self, message_id: str) -> PILImage.Image | None:
+        """Return the cached decoded image, refreshing its LRU position."""
+        with self._lock:
+            pil = self._images.get(message_id)
+            if pil is not None:
+                self._images.move_to_end(message_id)
+            return pil
+
+    def get_pixels(self, message_id: str) -> Pixels | None:
+        """Return (lazily building) the pixels renderable for a cached image."""
+        with self._lock:
+            cached = self._pixels.get(message_id)
+            if cached is not None:
+                return cached
+            pil = self._images.get(message_id)
+            if pil is None:
+                return None
+            self._images.move_to_end(message_id)
+            pil = pil.copy()
+        # Half-block rendering: one text line shows two pixel rows. Heavy
+        # PIL/Pixels work happens outside the lock.
+        pil.thumbnail(
+            (PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2), PILImage.Resampling.LANCZOS
+        )
+        pixels = Pixels.from_image(pil)
+        with self._lock:
+            # A racing evict may have dropped this entry while we were
+            # thumbnailing; only store if it's still live, else drop the
+            # now-orphaned pixels on the floor.
+            if message_id in self._images:
+                self._pixels[message_id] = pixels
+        return pixels
+
+    def is_failed(self, message_id: str) -> bool:
+        """Return whether decoding previously failed for this message."""
+        with self._lock:
+            return message_id in self._failed
+
+    def pending_ids(self, messages: Iterable[Any]) -> list[tuple[str, bytes]]:
+        """Return (message_id, bytes) pairs needing preparation.
+
+        Args:
+            messages: Objects with ``id`` and ``image_data`` attributes.
+
+        Returns:
+            Pairs for messages that carry bytes but are neither cached nor
+            negative-cached.
+        """
+        pending: list[tuple[str, bytes]] = []
+        with self._lock:
+            for message in messages:
+                image_data = getattr(message, "image_data", None)
+                message_id = getattr(message, "id", None)
+                if (
+                    isinstance(message_id, str)
+                    and image_data
+                    and message_id not in self._images
+                    and message_id not in self._failed
+                ):
+                    pending.append((message_id, image_data))
+        return pending
+
+    def evict_session(self, message_ids: Iterable[str]) -> None:
+        """Drop cache entries (and failure marks) for a closed session."""
+        with self._lock:
+            for message_id in message_ids:
+                self._images.pop(message_id, None)
+                self._pixels.pop(message_id, None)
+                self._failed.discard(message_id)
+
+    def clear(self) -> None:
+        """Drop all cache state (used on full store restore)."""
+        with self._lock:
+            self._images.clear()
+            self._pixels.clear()
+            self._failed.clear()

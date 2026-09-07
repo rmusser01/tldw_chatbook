@@ -1,4 +1,10 @@
-"""Schedules destination shell for run timing and recovery."""
+"""Schedules destination shell for run timing and recovery.
+
+DEPRECATED: superseded by ``scheduling/schedules_workbench.py``
+(SchedulesWorkbench), which is the routed implementation of the Schedules
+destination. This screen is unrouted and retained only because existing
+tests still exercise it directly; do not add new features here.
+"""
 
 from collections.abc import Mapping
 from typing import Any
@@ -20,6 +26,7 @@ from ...Home.dashboard_state import (
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.screen_state_store import RuntimeIdentity
 from .destination_recovery import DestinationRecoveryState
 
 
@@ -38,7 +45,7 @@ SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
 
 
 class SchedulesScreen(BaseAppScreen):
-    """When jobs, watchlists, and workflows run."""
+    """When scheduled tasks fire and recurring questions run."""
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "schedules", **kwargs)
@@ -48,12 +55,21 @@ class SchedulesScreen(BaseAppScreen):
         self._latest_console_context_loaded = False
 
     def on_mount(self) -> None:
-        super().on_mount()
-        self._refresh_latest_console_context()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        self._refresh_latest_console_context(has_recent_work)
 
-    @work(exclusive=True, thread=True)
-    def _refresh_latest_console_context(self) -> None:
-        latest_console_item = self._latest_console_follow_item_from_adapter()
+    @work(exclusive=True, group="schedules-refresh-console-context", thread=True)
+    def _refresh_latest_console_context(self, has_recent_work: bool) -> None:
+        latest_console_item = self._latest_console_follow_item_from_adapter(
+            has_recent_work
+        )
         latest_console_launch = None
         if latest_console_item is None:
             latest_console_launch = self._latest_reading_digest_console_launch()
@@ -63,7 +79,9 @@ class SchedulesScreen(BaseAppScreen):
             latest_console_launch,
         )
 
-    def _apply_latest_console_context(self, latest_console_item, latest_console_launch) -> None:
+    def _apply_latest_console_context(
+        self, latest_console_item, latest_console_launch
+    ) -> None:
         self._current_console_follow_item = latest_console_item
         self._latest_console_follow_item_id = (
             getattr(latest_console_item, "item_id", None)
@@ -76,16 +94,21 @@ class SchedulesScreen(BaseAppScreen):
             self.refresh(recompose=True)
 
     def _latest_console_follow_item(self):
-        return self._latest_console_follow_item_from_adapter()
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        return self._latest_console_follow_item_from_adapter(has_recent_work)
 
-    def _latest_console_follow_item_from_adapter(self):
+    def _latest_console_follow_item_from_adapter(self, has_recent_work: bool):
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
         if not callable(build_dashboard_input):
             return None
         try:
             providers = getattr(self.app_instance, "providers_models", {}) or {}
-            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
             dashboard_input = build_dashboard_input(
                 providers_models=providers,
                 has_recent_work=has_recent_work,
@@ -116,7 +139,9 @@ class SchedulesScreen(BaseAppScreen):
                 "Failed to load Schedules Console launch context from local reading digest outputs.",
             )
             return None
-        items = output_listing.get("items") if isinstance(output_listing, Mapping) else None
+        items = (
+            output_listing.get("items") if isinstance(output_listing, Mapping) else None
+        )
         latest_output = next(iter(tuple(items or ())), None)
         if not isinstance(latest_output, Mapping):
             return None
@@ -133,14 +158,17 @@ class SchedulesScreen(BaseAppScreen):
             or latest_output.get("schedule_id")
             or ""
         ).strip()
-        title = str(latest_output.get("title") or schedule_name or "Reading digest output").strip()
+        title = str(
+            latest_output.get("title") or schedule_name or "Reading digest output"
+        ).strip()
         item_count = metadata.get("item_count", latest_output.get("item_count"))
         payload = {
             "target_id": f"local:reading_digest_output:{output_id}",
             "output_id": output_id,
             "schedule_id": latest_output.get("schedule_id"),
             "schedule_name": schedule_name or None,
-            "download_url": latest_output.get("download_url") or latest_output.get("storage_path"),
+            "download_url": latest_output.get("download_url")
+            or latest_output.get("storage_path"),
             "created_at": latest_output.get("created_at"),
             "item_count": item_count,
         }
@@ -181,7 +209,9 @@ class SchedulesScreen(BaseAppScreen):
                 return "Retry/backoff: not applicable to digest output"
             return "Retry/backoff: no active run selected"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Retry/backoff: retry available from Schedules"
         if status_category == PAUSED_RUN_STATUS:
@@ -198,7 +228,9 @@ class SchedulesScreen(BaseAppScreen):
                 return "Run control: digest output is read-only"
             return "Run control: no active run selected"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Run control: retry available"
         if status_category == RUNNING_RUN_STATUS:
@@ -215,7 +247,9 @@ class SchedulesScreen(BaseAppScreen):
                 return "Next action: open digest output in Console"
             return "Next action: start or select a schedule run"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Next action: retry or open in Console"
         if status_category == PAUSED_RUN_STATUS:
@@ -230,7 +264,9 @@ class SchedulesScreen(BaseAppScreen):
                 return "Digest output is read-only"
             return "Recovery controls require an active schedule run"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Retry controls are not wired yet"
         if status_category == RUNNING_RUN_STATUS:
@@ -254,33 +290,59 @@ class SchedulesScreen(BaseAppScreen):
                 id="schedules-title",
                 classes="ds-destination-header",
             )
-            with DestinationModeStrip(id="schedules-filter-strip", classes="destination-filter-strip"):
+            with DestinationModeStrip(
+                id="schedules-filter-strip", classes="destination-filter-strip"
+            ):
                 yield Static(
                     "Filters: Next run Paused Failed Retry History",
                     id="schedules-filter-label",
                     classes="destination-section",
                 )
-            with Horizontal(id="schedules-workbench", classes="ds-panel destination-workbench"):
-                with Vertical(id="schedules-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Schedule Queue", classes="destination-section schedules-column-title")
+            with Horizontal(
+                id="schedules-workbench", classes="ds-panel destination-workbench"
+            ):
+                with Vertical(
+                    id="schedules-list-pane", classes="destination-workbench-pane"
+                ):
+                    yield Static(
+                        "Schedule Queue",
+                        classes="destination-section schedules-column-title",
+                    )
                     yield Static("Next Run 0", classes="destination-section")
                     yield Static("Paused 0", classes="destination-section")
                     yield Static("Failed 0", classes="destination-section")
                     yield Static("Retry 0", classes="destination-section")
-                    yield Static("History 0", id="schedules-history-row", classes="destination-section")
-                    yield Static("No scheduled runs are active.", id="schedules-queue-empty")
+                    yield Static(
+                        "History 0",
+                        id="schedules-history-row",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        "No scheduled runs are active.", id="schedules-queue-empty"
+                    )
                 yield self._column_divider("schedules-list-detail-divider")
-                with Vertical(id="schedules-detail-pane", classes="destination-workbench-pane"):
-                    yield Static("Run Detail", classes="destination-section schedules-column-title")
+                with Vertical(
+                    id="schedules-detail-pane", classes="destination-workbench-pane"
+                ):
+                    yield Static(
+                        "Run Detail",
+                        classes="destination-section schedules-column-title",
+                    )
                     if not self._latest_console_context_loaded:
                         yield Static(
                             "Loading schedule and Console follow context...",
                             id="schedules-loading-state",
                         )
                     elif latest_console_item is not None:
-                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
-                        status = str(getattr(latest_console_item, "status", None) or "unknown")
-                        yield Static("Console launch available", classes="destination-section")
+                        title = str(
+                            getattr(latest_console_item, "title", None) or "Untitled"
+                        )
+                        status = str(
+                            getattr(latest_console_item, "status", None) or "unknown"
+                        )
+                        yield Static(
+                            "Console launch available", classes="destination-section"
+                        )
                         yield Static(
                             f"Status: {escape_markup(status)}",
                             id="schedules-run-status",
@@ -294,7 +356,9 @@ class SchedulesScreen(BaseAppScreen):
                         )
                     elif self._latest_console_launch_kwargs is not None:
                         title = str(self._latest_console_launch_kwargs["title"])
-                        yield Static("Console launch available", classes="destination-section")
+                        yield Static(
+                            "Console launch available", classes="destination-section"
+                        )
                         yield Static(
                             Text.from_markup(
                                 "Console can launch latest reading digest output: "
@@ -303,16 +367,30 @@ class SchedulesScreen(BaseAppScreen):
                             id="schedules-console-available",
                         )
                     else:
-                        yield Static("No active schedule run selected", id="schedules-empty-state")
-                        yield Static("Select a run from the queue or create a scheduled job to enable controls.")
-                        yield Static("Console recovery unavailable", classes="destination-section")
+                        yield Static(
+                            "No active schedule run selected",
+                            id="schedules-empty-state",
+                        )
+                        yield Static(
+                            "Select a run from the queue or create a scheduled job to enable controls."
+                        )
+                        yield Static(
+                            "Console recovery unavailable",
+                            classes="destination-section",
+                        )
                         yield Static(
                             SCHEDULES_EMPTY_CONSOLE_RECOVERY.visible_copy,
                             id=SCHEDULES_EMPTY_CONSOLE_RECOVERY.stable_selector,
                         )
                 yield self._column_divider("schedules-detail-inspector-divider")
-                with Vertical(id="schedules-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Status Inspector", classes="destination-section schedules-column-title")
+                with Vertical(
+                    id="schedules-inspector-pane",
+                    classes="destination-workbench-pane ds-inspector",
+                ):
+                    yield Static(
+                        "Status Inspector",
+                        classes="destination-section schedules-column-title",
+                    )
                     yield Static(
                         self._inspector_state_summary(latest_console_item),
                         id="schedules-state-summary",
@@ -325,9 +403,15 @@ class SchedulesScreen(BaseAppScreen):
                         self._run_control_summary(latest_console_item),
                         id="schedules-run-control-summary",
                     )
-                    if latest_console_item is not None or self._latest_console_launch_kwargs is not None:
+                    if (
+                        latest_console_item is not None
+                        or self._latest_console_launch_kwargs is not None
+                    ):
                         yield Static("Console: ready", id="schedules-console-state")
-                        yield Static(self._next_action_summary(latest_console_item), id="schedules-next-action")
+                        yield Static(
+                            self._next_action_summary(latest_console_item),
+                            id="schedules-next-action",
+                        )
                     else:
                         yield Static("Console: blocked", id="schedules-console-state")
                         yield Static(
@@ -365,16 +449,22 @@ class SchedulesScreen(BaseAppScreen):
                             tooltip="Stage schedule context after Schedules finishes loading.",
                         )
                     elif latest_console_item is not None:
-                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        title = str(
+                            getattr(latest_console_item, "title", None) or "Untitled"
+                        )
                         yield Button(
-                            Text.from_markup(f"Follow {escape_markup(title)} in Console"),
+                            Text.from_markup(
+                                f"Follow {escape_markup(title)} in Console"
+                            ),
                             id="schedules-follow-in-console",
                             tooltip="Open the active schedule run in Console.",
                         )
                     elif self._latest_console_launch_kwargs is not None:
                         title = str(self._latest_console_launch_kwargs["title"])
                         yield Button(
-                            Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                            Text.from_markup(
+                                f"Launch {escape_markup(title)} in Console"
+                            ),
                             id="schedules-follow-in-console",
                             tooltip="Open the latest local reading digest output in Console.",
                         )
@@ -391,7 +481,9 @@ class SchedulesScreen(BaseAppScreen):
         event.stop()
         target_id = self._latest_console_follow_item_id
         if target_id:
-            open_active_item_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
+            open_active_item_in_console = getattr(
+                self.app_instance, "open_active_home_item_in_console", None
+            )
             if not callable(open_active_item_in_console):
                 self.app_instance.notify(
                     "Console follow is unavailable for Schedules in this runtime.",
@@ -406,7 +498,9 @@ class SchedulesScreen(BaseAppScreen):
 
         launch_kwargs = self._latest_console_launch_kwargs
         if launch_kwargs is not None:
-            open_in_console = getattr(self.app_instance, "open_console_for_live_work", None)
+            open_in_console = getattr(
+                self.app_instance, "open_console_for_live_work", None
+            )
             if not callable(open_in_console):
                 self.app_instance.notify(
                     "Console launch is unavailable for Schedules in this runtime.",

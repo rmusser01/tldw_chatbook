@@ -7,7 +7,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SPEC = Path("Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md")
+SPEC = Path(
+    "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 ROUTE_INVENTORY = Path("Docs/Design/master-shell-route-inventory.md")
 PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
@@ -125,7 +127,11 @@ def test_phase30_spec_has_destination_contracts_and_image_briefs() -> None:
         assert f"### {destination}" in spec
         section_start = spec.index(f"### {destination}")
         next_heading = spec.find("\n### ", section_start + 1)
-        section = spec[section_start:] if next_heading == -1 else spec[section_start:next_heading]
+        section = (
+            spec[section_start:]
+            if next_heading == -1
+            else spec[section_start:next_heading]
+        )
         assert "User goal:" in section
         assert "Screen role:" in section
         assert "Binding regions:" in section
@@ -145,7 +151,9 @@ def test_phase30_image_prompt_manifest_has_one_prompt_per_destination() -> None:
     assert "# Destination Layout Image Reference Prompts" in manifest
     assert caption in manifest
 
-    destination_headings = list(re.finditer(r"^##\s+(.+?)\s*$", manifest, flags=re.MULTILINE))
+    destination_headings = list(
+        re.finditer(r"^##\s+(.+?)\s*$", manifest, flags=re.MULTILINE)
+    )
     assert [heading.group(1) for heading in destination_headings] == list(DESTINATIONS)
 
     for index, heading in enumerate(destination_headings):
@@ -157,8 +165,17 @@ def test_phase30_image_prompt_manifest_has_one_prompt_per_destination() -> None:
         )
         section = manifest[section_start:section_end]
 
-        assert re.search(rf"^Caption:\s*.*{re.escape(caption)}.*$", section, flags=re.MULTILINE)
-        assert len(re.findall(r"^```text\s*\n.*?^```\s*$", section, flags=re.MULTILINE | re.DOTALL)) == 1
+        assert re.search(
+            rf"^Caption:\s*.*{re.escape(caption)}.*$", section, flags=re.MULTILINE
+        )
+        assert (
+            len(
+                re.findall(
+                    r"^```text\s*\n.*?^```\s*$", section, flags=re.MULTILINE | re.DOTALL
+                )
+            )
+            == 1
+        )
         assert "Textual-native terminal UI concept" in section
         assert "Avoid" in section
         assert "Non-binding inspiration" in section
@@ -171,7 +188,11 @@ def test_phase30_spec_has_major_subflow_contracts() -> None:
         assert f"### {subflow}" in spec
         section_start = spec.index(f"### {subflow}")
         next_heading = spec.find("\n### ", section_start + 1)
-        section = spec[section_start:] if next_heading == -1 else spec[section_start:next_heading]
+        section = (
+            spec[section_start:]
+            if next_heading == -1
+            else spec[section_start:next_heading]
+        )
         assert "```text" in section
         assert "Required behavior:" in section
     assert "`study`, Study Dashboard, Flashcards, and Quizzes" in spec
@@ -196,7 +217,9 @@ def test_phase30_route_inventory_keeps_study_library_owned() -> None:
     assert "do not create a separate top-level Study destination" in study_row[3]
 
 
-def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope() -> None:
+def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope() -> (
+    None
+):
     spec = _text(SPEC)
     tracker = _text(TRACKER)
 
@@ -211,7 +234,9 @@ def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope
     assert "citation" in spec.lower()
     assert "snippet" in spec.lower()
 
-    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
+    phase_three_row = _markdown_table_row(
+        tracker, "Phase 3: Knowledge And Study Workflows"
+    )
     assert "Library-owned local Collections management" in phase_three_row[5]
     assert re.search(r"\bare verified\b", phase_three_row[5])
     assert "collection item membership" in phase_three_row[5]
@@ -221,7 +246,10 @@ def test_phase30_collections_are_library_owned_with_later_citation_snippet_scope
 def test_phase30_tracker_records_layout_contract_gate() -> None:
     tracker = _text(TRACKER)
 
-    assert "Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`" in tracker
+    assert (
+        "Layout Contract Spec: `Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md`"
+        in tracker
+    )
     assert "Phase 3.0: Destination Layout And IA Contracts - `TASK-10.0`" in tracker
     assert "destination layout and IA contracts must be approved" in tracker
 
@@ -250,7 +278,13 @@ def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
         "### Task 5: Gate 1.6.5 QA Closeout And Tracking",
     ):
         assert required_section in plan
-    for child_task in ("TASK-10.8.1", "TASK-10.8.2", "TASK-10.8.3", "TASK-10.8.4", "TASK-10.8.5"):
+    for child_task in (
+        "TASK-10.8.1",
+        "TASK-10.8.2",
+        "TASK-10.8.3",
+        "TASK-10.8.4",
+        "TASK-10.8.5",
+    ):
         assert child_task in plan
         assert child_task in tracker
     assert "status: Done" in task
@@ -275,12 +309,20 @@ def test_phase30_tracker_has_evidence_row() -> None:
     tracker = _text(TRACKER)
 
     row = _markdown_table_row(tracker, "Phase 3.0")
-    assert "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md" in row[1]
+    assert (
+        "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-0-destination-layout-contracts.md"
+        in row[1]
+    )
     assert row[2] == "verified"
-    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
+    phase_three_row = _markdown_table_row(
+        tracker, "Phase 3: Knowledge And Study Workflows"
+    )
     assert "Phase 3.0 verified" in phase_three_row[2]
     assert "Phase 3.2 verified" in phase_three_row[2]
-    assert "phase-3/2026-05-06-phase-3-2-library-source-study-context.md" in phase_three_row[4]
+    assert (
+        "phase-3/2026-05-06-phase-3-2-library-source-study-context.md"
+        in phase_three_row[4]
+    )
     assert "Phase 3.0 evidence pending" not in phase_three_row[4]
     assert "Phase 3.0 prerequisite planned" not in tracker
     status = _status_line(tracker)
@@ -303,8 +345,11 @@ def test_phase30_backlog_task_is_closed_after_verification() -> None:
     assert "## Implementation Plan" in task
     assert "## Implementation Notes" in task
     assert (REPO_ROOT / SPEC).is_file()
-    assert (REPO_ROOT / Path("Tests/UI/test_product_maturity_phase3_layout_contracts.py")).is_file()
-    assert "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md" in task
+    assert (
+        REPO_ROOT / Path("Tests/UI/test_product_maturity_phase3_layout_contracts.py")
+    ).is_file()
+    assert (
+        "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md"
+        in task
+    )
     assert "Tests/UI/test_product_maturity_phase3_layout_contracts.py" in task
-
-

@@ -3,9 +3,15 @@
 #
 # Imports
 import asyncio
+import faulthandler
 import logging
+import os
+import signal
 import sys
 import traceback
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 #
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
@@ -13,14 +19,26 @@ from textual.app import App
 from textual.css.query import QueryError
 from textual.logging import TextualHandler
 from textual.widgets import RichLog
+
 #
 # Local Imports
 from tldw_chatbook.config import get_cli_log_file_path, get_cli_setting
+from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    lexical_path,
+    open_private_binary,
+    open_private_text_append_stream,
+    secure_private_directory,
+)
+from tldw_chatbook.Utils.persistent_diagnostics import (
+    PersistentDiagnosticFilter,
+    persist_event,
+)
 #
 ########################################################################################################################
 #
 # Functions:
-
 
 
 # --- Custom Logging Handler ---
@@ -31,13 +49,16 @@ class RichLogHandler(logging.Handler):
         self.log_queue = asyncio.Queue()
         self.formatter = logging.Formatter(
             "{asctime} [{levelname:<8}] {name}:{lineno:<4} : {message}",
-            style="{", datefmt="%Y-%m-%d %H:%M:%S"
+            style="{",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
         self.setFormatter(self.formatter)
         self._queue_processor_task = None
         self._closed = False
 
-    def start_processor(self, app: App):  # Keep 'app' param for context if needed elsewhere, but don't use for run_task
+    def start_processor(
+        self, app: App
+    ):  # Keep 'app' param for context if needed elsewhere, but don't use for run_task
         """Starts the log queue processing task using the widget's run_task."""
         if not self._queue_processor_task or self._queue_processor_task.done():
             try:
@@ -45,15 +66,18 @@ class RichLogHandler(logging.Handler):
                 loop = asyncio.get_running_loop()
                 # Check if the loop is closed before creating task
                 if loop.is_closed():
-                    logging.warning("Cannot start RichLog processor: event loop is closed")
+                    logging.warning(
+                        "Cannot start RichLog processor: event loop is closed"
+                    )
                     return
-                    
+
                 # Create the task using the standard asyncio function
                 self._queue_processor_task = loop.create_task(
-                    self._process_log_queue(),
-                    name="RichLogProcessor"
+                    self._process_log_queue(), name="RichLogProcessor"
                 )
-                logging.debug("RichLog queue processor task started via asyncio.create_task.")
+                logging.debug(
+                    "RichLog queue processor task started via asyncio.create_task."
+                )
             except RuntimeError as e:
                 # Handle cases where the loop might not be running (shouldn't happen if called from on_mount)
                 logging.error(f"Failed to get running loop to start log processor: {e}")
@@ -74,10 +98,13 @@ class RichLogHandler(logging.Handler):
                 logging.debug("RichLog queue processor task cancelled successfully.")
             except Exception as e:
                 # Log errors during cancellation itself
-                logging.error(f"Error occurred while awaiting cancelled log processor task: {e}", exc_info=True)
+                logging.error(
+                    f"Error occurred while awaiting cancelled log processor task: {e}",
+                    exc_info=True,
+                )
             finally:
                 self._queue_processor_task = None  # Ensure it's cleared
-                
+
     def close(self):
         """Close the handler and mark it as closed."""
         self._closed = True
@@ -98,7 +125,10 @@ class RichLogHandler(logging.Handler):
                     while not self.log_queue.empty():
                         try:
                             message = self.log_queue.get_nowait()
-                            if self.rich_log_widget.is_mounted and self.rich_log_widget.app:
+                            if (
+                                self.rich_log_widget.is_mounted
+                                and self.rich_log_widget.app
+                            ):
                                 self.rich_log_widget.write(message)
                             self.log_queue.task_done()
                         except asyncio.QueueEmpty:
@@ -112,7 +142,9 @@ class RichLogHandler(logging.Handler):
                     logging.debug("RichLog processor exiting due to closed event loop")
                     break
                 else:
-                    print(f"!!! RUNTIME ERROR in RichLog processor: {e}", file=sys.stderr)
+                    print(
+                        f"!!! RUNTIME ERROR in RichLog processor: {e}", file=sys.stderr
+                    )
                     traceback.print_exc(file=sys.stderr)
                     await asyncio.sleep(1)
             except Exception as e:
@@ -132,7 +164,7 @@ class RichLogHandler(logging.Handler):
             if self._queue_processor_task and self._queue_processor_task.done():
                 # Task is done, don't try to emit
                 return
-                
+
             message = self.format(record)
             # Use call_soon_threadsafe if emit might be called from non-asyncio threads (workers)
             # For workers started with thread=True, this is necessary.
@@ -147,7 +179,7 @@ class RichLogHandler(logging.Handler):
                     print(f"LOG_FALLBACK (loop closed): {message}", file=sys.stderr)
             except RuntimeError:
                 # No event loop running, fallback to direct logging for warnings and above
-                if record.levelno >= logging.WARNING: 
+                if record.levelno >= logging.WARNING:
                     print(f"LOG_FALLBACK: {message}", file=sys.stderr)
             except Exception as e:
                 # Don't re-raise to avoid breaking the logging system
@@ -155,8 +187,366 @@ class RichLogHandler(logging.Handler):
                     print(f"LOG_FALLBACK: {message} (Error: {e})", file=sys.stderr)
         except Exception:
             # Last resort - print to stderr to avoid losing critical messages
-            print(f"!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr)
+            print(
+                "!!!!!!!! ERROR within RichLogHandler.emit !!!!!!!!!!", file=sys.stderr
+            )
             traceback.print_exc(file=sys.stderr)
+
+
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """A rotating handler whose files stay inside the private-path boundary."""
+
+    def __init__(
+        self,
+        filename: str | Path,
+        mode: str = "a",
+        maxBytes: int = 0,
+        backupCount: int = 0,
+        encoding: str | None = None,
+        delay: bool = False,
+        errors: str | None = None,
+    ) -> None:
+        selected = lexical_path(filename)
+        self._private_parent = selected.parent
+        self._configured_backup_count = backupCount
+        secure_private_directory(
+            self._private_parent,
+            create=True,
+            application_owned=True,
+        )
+        self._harden_existing_generations(selected)
+        super().__init__(
+            selected,
+            mode=mode,
+            maxBytes=maxBytes,
+            backupCount=backupCount,
+            encoding=encoding,
+            delay=delay,
+            errors=errors,
+        )
+        try:
+            self._harden_existing_generations(selected)
+        except BaseException:
+            self.close()
+            raise
+
+    def _generation_paths(self, active: Path) -> list[Path]:
+        return [
+            active,
+            *(
+                active.with_name(f"{active.name}.{index}")
+                for index in range(1, self._configured_backup_count + 1)
+            ),
+        ]
+
+    def _harden_existing_generations(self, active: Path | None = None) -> None:
+        selected = active or lexical_path(self.baseFilename)
+        for generation in self._generation_paths(selected):
+            try:
+                generation.lstat()
+            except FileNotFoundError:
+                continue
+            with open_private_binary(generation):
+                pass
+
+    def _open(self):
+        self._harden_existing_generations()
+        return open_private_text_append_stream(
+            self.baseFilename,
+            application_owned_directory=self._private_parent,
+            encoding=self.encoding or "utf-8",
+            errors=self.errors,
+        )
+
+    def doRollover(self) -> None:
+        """Rotate only after every existing generation passes private checks."""
+
+        self._harden_existing_generations()
+        super().doRollover()
+        self._harden_existing_generations()
+
+
+class RedactingFileFormatter(logging.Formatter):
+    """Formatter that redacts recognised credentials from every line it emits.
+
+    TASK-23190. Redaction here is a property of the *sink*, not of the caller:
+    a record is sanitized on the way to disk whoever logged it and whether or
+    not that code opted in. The standing rule from the loguru ``diagnose``
+    incident is to fix disclosure at the sink rather than at each call site,
+    and TASK-23108 leans on exactly that by telling users "Details are in Logs
+    (F8)" while its own user-facing paths log only exception type names.
+
+    Applied at the format step rather than as a ``logging.Filter`` for two
+    reasons:
+
+    * A filter would have to rewrite ``record.msg``/``record.args``, and the
+      record object is shared with every other handler on the logger. Mutating
+      it changes what the terminal and the in-app Logs screen see, and does so
+      from whichever thread emitted the record.
+    * Only the formatted string contains the exception traceback and stack
+      info. A filter that scrubbed ``record.msg`` would leave a credential
+      embedded in ``str(exc)`` -- the exact shape TASK-23108 was filed about --
+      untouched in the ``exc_info`` block appended after it.
+
+    Cost is paid only on records that are actually written. ``Handler.handle``
+    runs the handler's filters *before* ``emit``, so
+    :class:`PersistentDiagnosticFilter` rejects a record long before this
+    formatter is reached -- and it admits only schema-validated metadata
+    events, a handful per session. Measured on a typical metadata line:
+    33.6 us/record versus 1.4 us for the plain formatter it replaces.
+
+    ``redact_log_line`` is reused verbatim -- the same function the in-app Logs
+    buffer applies -- so the two sinks cannot drift on what counts as a secret.
+    Its ``MAX_REDACTED_LINE_CHARS`` cap is kept rather than disabled: the cap
+    only ever keeps *less* data than the raw line, its cut is token-aligned so
+    it cannot slice a credential into an unmatchable fragment, and it is what
+    bounds that 32 us on whichever thread emitted the record. The cost of
+    keeping it is that a single record longer than 2,000 characters is
+    truncated on disk as well as in the Logs screen; nothing that reaches this
+    sink today comes close.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Return the fully formatted record with recognised secrets removed."""
+
+        return redact_log_line(super().format(record))
+
+
+def _private_file_formatter() -> logging.Formatter:
+    """Return the redacting formatter used by the private file sink."""
+
+    return RedactingFileFormatter(
+        "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
+def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
+    """Install the private file sink, leaving existing handlers on failure."""
+
+    try:
+        log_file_path = get_cli_log_file_path()
+        existing_handler = next(
+            (
+                handler
+                for handler in root_logger.handlers
+                if isinstance(handler, PrivateRotatingFileHandler)
+                and handler.baseFilename == str(log_file_path)
+            ),
+            None,
+        )
+        if existing_handler is not None:
+            if not any(
+                isinstance(item, PersistentDiagnosticFilter)
+                for item in existing_handler.filters
+            ):
+                existing_handler.addFilter(PersistentDiagnosticFilter())
+            # TASK-23190. Reconciled for the same reason the filter above is:
+            # a handler installed by an earlier revision (or by any other
+            # caller that built one) would otherwise keep writing unredacted
+            # lines for the rest of the process.
+            if not isinstance(existing_handler.formatter, RedactingFileFormatter):
+                existing_handler.setFormatter(_private_file_formatter())
+            root_logger.info("Private rotating file logging is already installed.")
+            # TASK-1240 (M8). This path returns True exactly like the install
+            # path below, so it has to emit exactly like it too. An earlier
+            # revision returned here directly, which let a caller be told the
+            # sink is live while the log stayed empty -- the one state this
+            # design instructs a maintainer to read as "the sink did not
+            # install".
+        else:
+            max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
+            backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
+            file_log_level_name = str(
+                get_cli_setting("logging", "file_log_level", "INFO")
+            ).upper()
+            file_log_level = getattr(logging, file_log_level_name, logging.INFO)
+            file_handler = PrivateRotatingFileHandler(
+                log_file_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+            file_handler.setLevel(file_log_level)
+            file_handler.setFormatter(_private_file_formatter())
+            file_handler.addFilter(PersistentDiagnosticFilter())
+            root_logger.addHandler(file_handler)
+            root_logger.info(
+                "Private rotating file logging installed at level %s.",
+                logging.getLevelName(file_log_level),
+            )
+    except PrivatePathError as exc:
+        root_logger.warning(
+            "File logging disabled: unsafe persistent target (%s).",
+            exc.result.status.value,
+        )
+        return False
+    except Exception as exc:
+        root_logger.warning(
+            "File logging disabled: persistent sink setup failed (%s).",
+            type(exc).__name__,
+        )
+        return False
+
+    # TASK-1240. Written the moment the sink is live, so at the *default*
+    # `file_log_level` an empty file means "the sink did not install" rather
+    # than "nothing has happened yet". This function swallows install failures
+    # (it warns and returns False), so without this line those two states are
+    # indistinguishable.
+    #
+    # That reading is scoped to the default. Under a raised `file_log_level`,
+    # or a raised `general.log_level` (root still sits at that value here --
+    # `configure_application_logging` lowers root to match the most verbose
+    # handler only *after* calling this function), this INFO record is filtered
+    # like any other. An empty log there means "configured to be quiet", not
+    # "failed".
+    #
+    # Severity is deliberately NOT inflated to force the line past those gates.
+    # An earlier revision emitted at max(handler level, root level), which made
+    # a *successful install* render as WARNING or CRITICAL. These records
+    # propagate to every root handler -- the terminal and the in-app Logs
+    # screen included -- so a normal startup would read as a critical event and
+    # could trip alerting integrations. Severity is semantic; it is not a
+    # transport for defeating a level gate. INFO is the honest severity for a
+    # success, and a configuration that filters it is working as asked.
+    #
+    # Emitted OUTSIDE the try above (M7): that try's handlers report "install
+    # failed" and return False, so a future failure originating in this call --
+    # after the handler is built, filtered and attached -- would misreport a
+    # working sink as a broken one.
+    try:
+        persist_event(
+            "logging",
+            "persistent_sink_installed",
+            level=logging.INFO,
+            status="ok",
+        )
+    except Exception:
+        # Diagnostics must never be the reason the sink reports failure.
+        pass
+    return True
+
+
+def _forward_loguru_to_standard(message) -> None:
+    """Forward a Loguru record while preserving its original ownership.
+
+    The source path is attached for the persistent handler's admission filter.
+    Non-persistent handlers continue to receive the original message and
+    exception details.
+    """
+
+    record = message.record
+    level_mapping = {
+        "TRACE": logging.DEBUG,
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "SUCCESS": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    std_level = level_mapping.get(record["level"].name, logging.INFO)
+    std_logger = logging.getLogger(record["name"])
+    extra = {"_tldw_source_path": str(record["file"].path)}
+    if record["exception"]:
+        std_logger.log(
+            std_level,
+            record["message"],
+            exc_info=record["exception"],
+            extra=extra,
+        )
+    else:
+        std_logger.log(std_level, record["message"], extra=extra)
+
+
+#: Where faulthandler writes. Sits beside the private application log, and is
+#: treated with the same care: a dump contains live stack frames.
+CRASH_DUMP_FILENAME = "faulthandler.log"
+
+#: Dumps append, so an unattended process that keeps hitting the same fault
+#: could grow the file without bound. Reset at startup once past this ceiling.
+#: ponytail: truncate-at-startup, not real rotation -- a single oversized file
+#: is the only failure mode, and one previous crash is what anyone actually
+#: reads. Move to a generation scheme only if that proves insufficient.
+CRASH_DUMP_MAX_BYTES = 1_048_576
+
+#: Held open for the process lifetime: faulthandler writes to this descriptor
+#: from a signal/fault context, so it cannot be reopened lazily.
+_crash_dump_stream = None
+
+
+def enable_crash_forensics():
+    """Install faulthandler so a segfault or deadlock leaves evidence.
+
+    Writes to the private log directory rather than stderr, because a TUI owns
+    the screen and a dump printed there is lost with the alternate buffer. All
+    threads are included so a deadlock -- not just a crash -- is diagnosable,
+    and ``SIGUSR2`` dumps on demand from a process that is still hung.
+
+    Never raises: this is a diagnostic aid, and failing to install it must not
+    become a boot failure.
+
+    Returns:
+        The dump file path, or None when forensics could not be installed.
+    """
+    global _crash_dump_stream
+
+    if _crash_dump_stream is not None:
+        # `configure_application_logging` runs twice in a normal boot; the
+        # first install is the one that counts.
+        return None
+
+    stream = None
+    try:
+        log_directory = lexical_path(get_cli_log_file_path()).parent
+        secure_private_directory(log_directory, create=True, application_owned=True)
+        dump_path = log_directory / CRASH_DUMP_FILENAME
+
+        descriptor = os.open(
+            dump_path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        stream = os.fdopen(descriptor, "ab", buffering=0)
+
+        # Bound the file through the descriptor we just opened, not by path.
+        # `os.truncate(path, 0)` follows symlinks, so a link planted at
+        # faulthandler.log would have had its TARGET truncated before the
+        # O_NOFOLLOW open refused it.
+        if os.fstat(stream.fileno()).st_size > CRASH_DUMP_MAX_BYTES:
+            os.ftruncate(stream.fileno(), 0)
+
+        faulthandler.enable(file=stream, all_threads=True)
+
+        # On-demand dump from a wedged process. Absent on Windows.
+        on_demand_signal = getattr(signal, "SIGUSR2", None)
+        if on_demand_signal is not None and hasattr(faulthandler, "register"):
+            try:
+                faulthandler.register(
+                    on_demand_signal, file=stream, all_threads=True, chain=False
+                )
+            except (OSError, RuntimeError, ValueError):
+                # Some embeddings disallow handler registration; the crash
+                # dump above is the part that matters.
+                pass
+
+        # Keep a reference so the descriptor outlives this frame.
+        _crash_dump_stream = stream
+        return dump_path
+    except Exception as exc:  # noqa: BLE001 -- must never break startup
+        if stream is not None:
+            # Otherwise the descriptor leaks on every failed attempt.
+            try:
+                stream.close()
+            except OSError:
+                pass
+        # Swallowing silently would make a misconfiguration invisible -- this
+        # branch hid a TypeError during development. Report the class only; the
+        # message could carry a path.
+        logging.debug(
+            "Crash forensics unavailable (exception_type=%s).", type(exc).__name__
+        )
+        return None
 
 
 def configure_application_logging(app_instance):
@@ -167,6 +557,9 @@ def configure_application_logging(app_instance):
     logging.getLogger().addHandler(temp_handler)
     # This first logging.info will go to the stderr handler from the initial basicConfig
     logging.info("--- _setup_logging START (from Logging_Config.py) ---")
+    # Install before the rest of setup: a crash during logging configuration is
+    # exactly the sort this is meant to catch (TASK-26037).
+    enable_crash_forensics()
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -176,31 +569,37 @@ def configure_application_logging(app_instance):
         loguru_logger.remove()  # Good: removes Loguru's default stderr sink
         logging.info("Loguru: All pre-existing sinks removed.")
 
-        def sink_to_standard_logging(message):
-            # ... (your existing sink_to_standard_logging function)
-            record = message.record
-            level_mapping = {
-                "TRACE": logging.DEBUG, "DEBUG": logging.DEBUG, "INFO": logging.INFO,
-                "SUCCESS": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR,
-                "CRITICAL": logging.CRITICAL,
-            }
-            std_level = level_mapping.get(record["level"].name, logging.INFO)
-            std_logger = logging.getLogger(record["name"])
-            if record["exception"]:
-                std_logger.log(std_level, record["message"], exc_info=record["exception"])
-            else:
-                std_logger.log(std_level, record["message"])
-
         loguru_logger.add(
-            sink_to_standard_logging,
+            _forward_loguru_to_standard,
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-            level="TRACE"
+            level="TRACE",
+            # task-2119 (security): diagnose=False is load-bearing, not
+            # cosmetic. With it left at loguru's default (True), any
+            # exception logged via `logger.opt(exception=True)` -- e.g. the
+            # provider request handlers in LLM_Calls/LLM_API_Calls.py, which
+            # hold the raw Authorization/x-api-key header and the resolved
+            # API key as frame locals -- has those locals dumped alongside
+            # the traceback. `_forward_loguru_to_standard` itself only reads
+            # `record["exception"]` (safe against stdlib's own, locals-free
+            # formatter), but loguru builds the diagnose-formatted text for
+            # *every* sink on this record regardless of what the sink does
+            # with it, so leaving this sink diagnose=True still means a
+            # secret-bearing string gets materialized on each such call.
+            # backtrace stays True: the exception type, message, and full
+            # stack of *source lines* are still logged -- only the per-frame
+            # local-variable dump is suppressed.
+            diagnose=False,
+            backtrace=True,
         )
         # This log message will also currently go to the initial basicConfig stderr handler
-        logging.info("Loguru: Configured to forward its messages to standard Python logging system.")
+        logging.info(
+            "Loguru: Configured to forward its messages to standard Python logging system."
+        )
     except Exception as e:
         # This log message will also currently go to the initial basicConfig stderr handler
-        logging.error(f"Loguru: Error during Loguru reconfiguration: {e}", exc_info=True)
+        logging.error(
+            f"Loguru: Error during Loguru reconfiguration: {e}", exc_info=True
+        )
     # --- END LOGURU MANAGEMENT ---
 
     # --- CONFIGURE STANDARD PYTHON LOGGING ROOT LOGGER ---
@@ -212,7 +611,7 @@ def configure_application_logging(app_instance):
     initial_handlers_removed_count = 0
     for handler in root_logger.handlers[:]:  # Iterate over a copy
         root_logger.removeHandler(handler)
-        if hasattr(handler, 'close') and callable(handler.close):
+        if hasattr(handler, "close") and callable(handler.close):
             try:
                 handler.close()
             except Exception:
@@ -223,45 +622,68 @@ def configure_application_logging(app_instance):
     # This message will go to Loguru's sink (which forwards to std logging,
     # but std logging has no handlers yet, so it might hit Python's "last resort" stderr).
     # Or, better, print to stderr just for this one-off setup message if needed, then rely on proper handlers.
-    if initial_handlers_removed_count > 0:
+    from tldw_chatbook.Utils.startup_logging import startup_stderr_is_quiet
+
+    quiet_startup = startup_stderr_is_quiet()
+    if initial_handlers_removed_count > 0 and not quiet_startup:
         # Using print here because logging state is actively being changed.
         # This should be one of the last messages to hit raw stderr if setup is correct.
         print(
             f"INFO: _setup_logging: Removed {initial_handlers_removed_count} pre-existing handler(s) from root logger.",
-            file=sys.stderr)
+            file=sys.stderr,
+        )
 
     # Now that root_logger is clean, set its overall level.
     # This level acts as a filter before messages reach any of its handlers.
-    initial_log_level_str = app_instance.app_config.get("general", {}).get("log_level", "INFO").upper()
+    initial_log_level_str = (
+        app_instance.app_config.get("general", {}).get("log_level", "INFO").upper()
+    )
     initial_log_level = getattr(logging, initial_log_level_str, logging.INFO)
     root_logger.setLevel(initial_log_level)
     # (A temporary print to confirm, as logging to root_logger now might go to "last resort" until a handler is added)
-    print(f"INFO: _setup_logging: Root logger level set to {logging.getLevelName(root_logger.level)}",
-          file=sys.stderr)
+    if not quiet_startup:
+        print(
+            f"INFO: _setup_logging: Root logger level set to {logging.getLevelName(root_logger.level)}",
+            file=sys.stderr,
+        )
 
     # --- Add TextualHandler (to standard logging) ---
     # (Your existing TextualHandler setup code is fine)
     # Ensure it's added AFTER clearing old handlers and setting root level.
     # ...
-    has_textual_handler = any(isinstance(h, TextualHandler) for h in root_logger.handlers)
+    has_textual_handler = any(
+        isinstance(h, TextualHandler) for h in root_logger.handlers
+    )
     if not has_textual_handler:
         textual_console_handler = TextualHandler()
-        textual_console_handler.setLevel(initial_log_level)  # Respects app_config
+        # TASK-21147 (UAT G-7): pre-mount, TextualHandler falls back to
+        # printing on stderr — the cold-start "wall of INFO" (DB migrations
+        # etc.) a first-time user sees before the TUI takes over. Under the
+        # default quiet startup it is capped at WARNING; the file and
+        # RichLog handlers keep the configured level, and
+        # TLDW_VERBOSE_STARTUP=1 restores the historical behavior.
+        textual_console_handler.setLevel(
+            max(initial_log_level, logging.WARNING)
+            if quiet_startup
+            else initial_log_level
+        )
         console_formatter = logging.Formatter(
             "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
         textual_console_handler.setFormatter(console_formatter)
         root_logger.addHandler(textual_console_handler)
         # Now, logging.info should go to Textual's dev console (and other handlers added below)
         logging.info(
-            f"Standard Logging: Added TextualHandler (Level: {logging.getLevelName(textual_console_handler.level)}).")
+            f"Standard Logging: Added TextualHandler (Level: {logging.getLevelName(textual_console_handler.level)})."
+        )
     else:
         logging.info("Standard Logging: TextualHandler already exists.")
 
     # Test Loguru message again. It should now go to TextualHandler (and others).
     loguru_logger.info(
-        "Loguru Test: This message from Loguru should now appear in Textual dev console (and other configured handlers).")
+        "Loguru Test: This message from Loguru should now appear in Textual dev console (and other configured handlers)."
+    )
 
     # --- Setup RichLog Handler (to standard logging) ---
     # (Your existing RichLogHandler setup code is fine, ensure it's added AFTER clearing)
@@ -269,63 +691,43 @@ def configure_application_logging(app_instance):
     try:
         log_display_widget = app_instance.query_one("#app-log-display", RichLog)
         # Check if it's already added by a previous call (should not happen if _setup_logging is called once)
-        if not any(isinstance(h, RichLogHandler) and h.rich_log_widget is log_display_widget for h in
-                   root_logger.handlers):
+        if not any(
+            isinstance(h, RichLogHandler) and h.rich_log_widget is log_display_widget
+            for h in root_logger.handlers
+        ):
             if not app_instance._rich_log_handler:  # Create if it doesn't exist
                 app_instance._rich_log_handler = RichLogHandler(log_display_widget)
             # Configure and add
-            rich_log_handler_level_str = app_instance.app_config.get("logging", {}).get("rich_log_level", "DEBUG").upper()
-            rich_log_handler_level = getattr(logging, rich_log_handler_level_str, logging.DEBUG)
+            rich_log_handler_level_str = (
+                app_instance.app_config.get("logging", {})
+                .get("rich_log_level", "DEBUG")
+                .upper()
+            )
+            rich_log_handler_level = getattr(
+                logging, rich_log_handler_level_str, logging.DEBUG
+            )
             app_instance._rich_log_handler.setLevel(rich_log_handler_level)
             root_logger.addHandler(app_instance._rich_log_handler)
             logging.info(
-                f"Standard Logging: Added RichLogHandler (Level: {logging.getLevelName(app_instance._rich_log_handler.level)}).")
+                f"Standard Logging: Added RichLogHandler (Level: {logging.getLevelName(app_instance._rich_log_handler.level)})."
+            )
         else:
-            logging.info("Standard Logging: RichLogHandler already exists and is added.")
+            logging.info(
+                "Standard Logging: RichLogHandler already exists and is added."
+            )
     except QueryError:
-        logging.error("!!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.")
+        # The legacy Logs window widget (#app-log-display) does not exist in the
+        # master-shell UI, so skipping the RichLogHandler here is expected on every boot.
+        logging.debug(
+            "RichLogHandler setup skipped: #app-log-display widget not present (legacy Logs window)."
+        )
         app_instance._rich_log_handler = None
     except Exception as e:
         logging.error(f"!!! ERROR setting up RichLogHandler: {e}", exc_info=True)
         app_instance._rich_log_handler = None
 
-    # --- Setup File Logging (to standard logging) ---
-    # (Your existing FileHandler setup code is fine, ensure it's added AFTER clearing)
-    # ... (your existing code to add file_handler to root_logger) ...
-    try:
-        log_file_path = get_cli_log_file_path()
-        log_dir = log_file_path.parent
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        has_file_handler = any(
-            isinstance(h, logging.handlers.RotatingFileHandler) and h.baseFilename == str(log_file_path) for h in
-            root_logger.handlers)
-
-        if not has_file_handler:
-            max_bytes_default = 10485760
-            backup_count_default = 5
-            file_log_level_default_str = "INFO"
-            max_bytes = int(get_cli_setting("logging", "log_max_bytes", max_bytes_default))
-            backup_count = int(get_cli_setting("logging", "log_backup_count", backup_count_default))
-            file_log_level_str = get_cli_setting("logging", "file_log_level", file_log_level_default_str).upper()
-            file_log_level = getattr(logging, file_log_level_str, logging.INFO)
-
-            file_handler = logging.handlers.RotatingFileHandler(
-                log_file_path, maxBytes=max_bytes, backupCount=backup_count, encoding='utf-8'
-            )
-            file_handler.setLevel(file_log_level)
-            file_formatter = logging.Formatter(
-                "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S"
-            )
-            file_handler.setFormatter(file_formatter)
-            root_logger.addHandler(file_handler)
-            logging.info(
-                f"Standard Logging: Added RotatingFileHandler (File: '{log_file_path}', Level: {logging.getLevelName(file_log_level)}).")
-        else:
-            logging.info("Standard Logging: RotatingFileHandler already exists for this file path.")
-    except Exception as e:
-        logging.warning(f"!!! ERROR setting up file logging: {e}", exc_info=True)
+    # File logging is isolated so an unsafe target cannot remove terminal/UI sinks.
+    _configure_private_file_logging(root_logger)
 
     # Re-evaluate lowest level for standard logging root logger
     # (Your existing logic for this is fine)
@@ -339,16 +741,19 @@ def configure_application_logging(app_instance):
             # than the most verbose handler.
             if current_root_level > lowest_effective_level:
                 logging.info(
-                    f"Standard Logging: Adjusting root logger level from {logging.getLevelName(current_root_level)} to {logging.getLevelName(lowest_effective_level)} to match most verbose handler.")
+                    f"Standard Logging: Adjusting root logger level from {logging.getLevelName(current_root_level)} to {logging.getLevelName(lowest_effective_level)} to match most verbose handler."
+                )
                 root_logger.setLevel(lowest_effective_level)
-        logging.info(f"Standard Logging: Final Root logger level is: {logging.getLevelName(root_logger.level)}")
+        logging.info(
+            f"Standard Logging: Final Root logger level is: {logging.getLevelName(root_logger.level)}"
+        )
     else:
-        logging.warning("Standard Logging: No handlers found on root logger after setup!")
+        logging.warning(
+            "Standard Logging: No handlers found on root logger after setup!"
+        )
 
     logging.info("Logging setup complete.")
     logging.info("--- _setup_logging END ---")
-
-
 
 
 #

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
     ConsoleWorkspaceACPHandoffState,
@@ -28,6 +30,8 @@ from tldw_chatbook.Workspaces.display_state import (
 
 
 def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+    # Custom database namespaces are caller-owned under ADR-029.
+    tmp_path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )
@@ -46,6 +50,30 @@ def test_console_workspace_state_explains_missing_service() -> None:
     assert "service not ready" in state.recovery_copy.lower()
 
 
+def test_console_scope_shows_readable_label_not_raw_uuid(tmp_path: Path) -> None:
+    """TASK-373/387: the rail Scope shows a human-readable label with the raw
+    conversation id kept as a hover detail, not the raw UUID in the primary row."""
+    service = _registry(tmp_path)
+    service.ensure_default_workspace()
+    conversation_id = "d1ebe478-c825-46b6-83b3-d5901d7bb3a1"
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=conversation_id,
+    )
+
+    assert state.scope_label == "This conversation"
+    assert conversation_id not in state.scope_label
+    assert state.scope_detail == conversation_id
+
+    empty = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+    assert empty.scope_label == ""
+    assert empty.scope_detail == ""
+
+
 def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) -> None:
     service = _registry(tmp_path)
     service.ensure_default_workspace()
@@ -60,7 +88,7 @@ def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) ->
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is True
     assert state.new_conversation_recovery == ""
-    assert state.runtime_label == "Runtime: none, file tools disabled"
+    assert state.runtime_label == "Local file tools: Private scratch"
     assert state.recovery_copy == ""
     assert state.server_readiness_label == "Server: local fallback"
     assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
@@ -81,9 +109,12 @@ def test_console_workspace_state_allows_default_conversation_in_fallback_state(
     assert state.new_conversation_enabled is True
     assert state.new_conversation_recovery == ""
     assert state.recovery_copy == "Workspace switching: locked"
+    assert state.runtime_label == "Local file tools: Private scratch"
 
 
-def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:
+def test_console_workspace_state_reports_active_workspace_and_runtime(
+    tmp_path: Path,
+) -> None:
     service = _registry(tmp_path)
     service.create_workspace(
         workspace_id="ws-a",
@@ -106,6 +137,9 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: 
     state = build_console_workspace_state(
         registry_service=service,
         current_conversation="conv-1",
+        runtime_bindings_by_workspace={
+            "ws-a": service.list_runtime_bindings("ws-a"),
+        },
         conversations=(
             ConsoleWorkspaceConversationRow(
                 conversation_id="conv-1",
@@ -118,12 +152,88 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: 
     assert state.workspace_label == "Workspace: Research Sprint"
     assert state.authority_label == "Authority: local-only"
     assert state.sync_label == "Sync: dry-run only"
-    assert state.runtime_label == "Runtime: 1 binding, 0 ready"
+    assert state.runtime_label == "Local file tools: Private scratch"
     assert state.conversation_rows[0].title == "Planning thread"
     assert state.conversation_rows[0].selected is True
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is True
     assert state.new_conversation_recovery == ""
+
+
+def test_console_workspace_state_renders_the_off_loop_refreshed_filesystem_snapshot(
+    tmp_path: Path,
+) -> None:
+    """The pure builder renders a caller's refreshed folder-status snapshot."""
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    folder = tmp_path / "project"
+    folder.mkdir()
+    service.add_folder_binding("ws-a", folder)
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+        runtime_bindings_by_workspace={"ws-a": service.list_folder_bindings("ws-a")},
+    )
+    assert state.runtime_label == "Local file tools: Private scratch + 1 folder"
+
+    folder.rmdir()
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+        runtime_bindings_by_workspace={"ws-a": service.list_folder_bindings("ws-a")},
+    )
+    assert state.runtime_label == "Local file tools: Private scratch"
+    assert "1 bound folder is missing" in state.recovery_copy
+
+
+def test_console_workspace_state_without_snapshot_never_reads_runtime_bindings_on_ui_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An omitted snapshot fails closed instead of reaching the filesystem seam."""
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    folder = tmp_path / "project"
+    folder.mkdir()
+    service.add_folder_binding("ws-a", folder)
+
+    def unexpected_runtime_read(*_args, **_kwargs):
+        raise AssertionError("synchronous runtime binding read")
+
+    monkeypatch.setattr(display_state, "_safe_runtime_bindings", unexpected_runtime_read)
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+
+    assert state.workspace_files_available is False
+    assert state.runtime_label == "Local file tools: Private scratch"
+
+
+def test_console_workspace_state_freezes_caller_availability_mapping() -> None:
+    """The frozen render state must not expose a mutable nested availability map."""
+    state = display_state.ConsoleWorkspaceContextState(
+        heading="Workspaces",
+        workspace_label="Workspace: A",
+        authority_label="Authority: local-only",
+        sync_label="Sync: ready",
+        runtime_label="Runtime: none",
+        conversation_rows=(),
+        conversation_empty_copy="",
+        change_workspace_enabled=False,
+        change_workspace_recovery="",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
+        recovery_copy="",
+        workspace_files_available_by_id={"ws-a": True},
+    )
+
+    with pytest.raises(TypeError):
+        state.workspace_files_available_by_id["ws-a"] = False
 
 
 def test_console_workspace_state_enables_switching_with_multiple_workspaces(
@@ -144,7 +254,9 @@ def test_console_workspace_state_enables_switching_with_multiple_workspaces(
     assert state.recovery_copy == ""
 
 
-def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkeypatch) -> None:
+def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(
+    monkeypatch,
+) -> None:
     warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class FakeLogger:
@@ -157,7 +269,9 @@ def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkey
     assert warnings == []
 
 
-def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp_path: Path) -> None:
+def test_console_workspace_state_maps_workspace_sync_status_before_promotion(
+    tmp_path: Path,
+) -> None:
     expected_labels = {
         WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",
         WorkspaceSyncStatus.SYNCING: "Sync: syncing",
@@ -360,7 +474,9 @@ def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
     assert "not portable" in rows_by_id["artifact-1"].detail
 
 
-def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> None:
+def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> (
+    None
+):
     class GeneratorMembershipRegistry:
         def list_workspace_memberships(self, workspace_id: str):
             assert workspace_id == "ws-a"
@@ -414,7 +530,9 @@ def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audi
 
     assert state.acp_handoff_label == "ACP task/run: failed"
     assert state.acp_handoff_detail == "ACP runtime package failed preflight."
-    assert state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+    assert (
+        state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+    )
 
 
 def test_console_workspace_state_normalizes_acp_handoff_ready_and_blocked_states(
@@ -532,7 +650,10 @@ def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_wor
     assert "1 blocked" in state.handoff_label
     assert "Copy or link" in state.context_handoff_tooltip
     assert [row.title for row in state.source_rows] == ["Research Note", "Transcript A"]
-    assert [row.workspace_label for row in state.source_rows] == ["Workspace B", "Workspace A"]
+    assert [row.workspace_label for row in state.source_rows] == [
+        "Workspace B",
+        "Workspace A",
+    ]
     assert [row.visible for row in state.source_rows] == [True, True]
     assert state.source_rows[0].active_context_eligible is False
     assert state.source_rows[0].context_label == "Console/RAG: blocked"
@@ -575,3 +696,82 @@ def test_library_workspace_depth_state_recognizes_media_id_and_ignores_idless_ro
     assert state.handoff_label == "Console/RAG handoff: 2 eligible"
     assert [row.item_id for row in state.source_rows] == ["note-1", "media-1"]
     assert all(row.active_context_eligible for row in state.source_rows)
+
+
+def test_library_item_context_handoff_gates_on_the_selected_row_only(
+    tmp_path: Path,
+) -> None:
+    """TASK-15423: one blocked row must not veto every other row's handoff.
+
+    The single-item Library actions ("Open in Console" on one conversation,
+    "Use in Console" on the open media item) used the aggregate
+    `context_handoff_enabled`, which requires blocked_count == 0 across ALL
+    visible rows — so one foreign-workspace item anywhere in the Library
+    disabled the action for fully eligible items. Per-item eligibility
+    already exists on the row model; the decision must come from the
+    selected row.
+    """
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-b", item_type="note", item_id="note-1", title="Research Note"
+    )
+    service.link_membership(
+        "ws-a", item_type="conversation", item_id="chat-1", title="Local Chat"
+    )
+
+    state = build_library_workspace_depth_state(
+        registry_service=service,
+        source_records={
+            "notes": ({"id": "note-1", "title": "Research Note"},),
+            "media": (),
+            "conversations": ({"id": "chat-1", "title": "Local Chat"},),
+        },
+    )
+    assert state.context_handoff_enabled is False  # the aggregate stays put
+
+    eligible, reason = display_state.library_item_context_handoff(
+        state, item_type="conversation", item_id="chat-1"
+    )
+    assert eligible is True
+    assert reason == ""
+
+    blocked, blocked_reason = display_state.library_item_context_handoff(
+        state, item_type="note", item_id="note-1"
+    )
+    assert blocked is False
+    assert blocked_reason == state.source_rows[0].recovery_copy
+    assert blocked_reason, "a blocked row must carry its own recovery copy"
+
+
+def test_library_item_context_handoff_falls_back_to_the_aggregate_for_unknown_ids(
+    tmp_path: Path,
+) -> None:
+    """An item outside the row model keeps the conservative aggregate policy.
+
+    Args:
+        tmp_path: Registry scratch directory.
+    """
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a", item_type="conversation", item_id="chat-1", title="Local Chat"
+    )
+
+    state = build_library_workspace_depth_state(
+        registry_service=service,
+        source_records={
+            "notes": (),
+            "media": (),
+            "conversations": ({"id": "chat-1", "title": "Local Chat"},),
+        },
+    )
+
+    eligible, reason = display_state.library_item_context_handoff(
+        state, item_type="conversation", item_id="chat-does-not-exist"
+    )
+    assert eligible is state.context_handoff_enabled
+    assert reason == state.context_handoff_tooltip

@@ -104,10 +104,14 @@ def normalize_reading_progress(
         "current_page": progress.get("current_page"),
         "total_pages": progress.get("total_pages"),
         "percent_complete": _percent_complete(progress),
-        "view_mode": str(progress.get("view_mode")) if progress.get("view_mode") is not None else None,
+        "view_mode": str(progress.get("view_mode"))
+        if progress.get("view_mode") is not None
+        else None,
         "zoom_level": progress.get("zoom_level"),
         "cfi": progress.get("cfi"),
-        "last_read_at": _clean_timestamp(progress.get("last_read_at"), progress.get("last_modified")),
+        "last_read_at": _clean_timestamp(
+            progress.get("last_read_at"), progress.get("last_modified")
+        ),
     }
 
 
@@ -149,12 +153,14 @@ def normalize_local_media_row(
     raw_source_id = row.get("id")
     source_id = str(raw_source_id)
     backing_media_id = raw_source_id
-    supports_read_it_later, is_read_it_later, read_it_later_saved_at = _normalize_read_it_later_state(
-        row,
-        backend="local",
+    supports_read_it_later, is_read_it_later, read_it_later_saved_at = (
+        _normalize_read_it_later_state(
+            row,
+            backend="local",
+        )
     )
 
-    return {
+    normalized = {
         "id": build_canonical_media_id("local", "media", source_id),
         "backend": "local",
         "entity_kind": "media",
@@ -165,7 +171,9 @@ def normalize_local_media_row(
         "media_type": row.get("media_type") or row.get("type"),
         "author": row.get("author"),
         "url": row.get("url"),
-        "created_at": _clean_timestamp(row.get("created_at"), row.get("date_added"), row.get("ingestion_date")),
+        "created_at": _clean_timestamp(
+            row.get("created_at"), row.get("date_added"), row.get("ingestion_date")
+        ),
         "updated_at": _clean_timestamp(row.get("updated_at"), row.get("last_modified")),
         "status": row.get("status") or "available",
         "deleted": bool(row.get("deleted", False)),
@@ -184,6 +192,20 @@ def normalize_local_media_row(
             backing_media_id=backing_media_id,
         ),
     }
+    # Canonical Media processing fields are retained only when the owner
+    # returned them. Research readiness consumes this read projection; no
+    # parallel status store is introduced.
+    for key in (
+        "content",
+        "chunking_status",
+        "vector_processing",
+        "version",
+        "content_hash",
+        "stale",
+    ):
+        if key in row:
+            normalized[key] = row.get(key)
+    return normalized
 
 
 def normalize_server_reading_item(
@@ -195,9 +217,11 @@ def normalize_server_reading_item(
     source_id = str(raw_source_id)
     raw_media_id = item.get("media_id")
     backing_media_id = raw_media_id
-    supports_read_it_later, is_read_it_later, read_it_later_saved_at = _normalize_read_it_later_state(
-        item,
-        backend="server",
+    supports_read_it_later, is_read_it_later, read_it_later_saved_at = (
+        _normalize_read_it_later_state(
+            item,
+            backend="server",
+        )
     )
 
     return {
@@ -211,13 +235,19 @@ def normalize_server_reading_item(
         "media_type": item.get("media_type") or "reading_item",
         "author": _media_author_from_metadata(item),
         "url": item.get("canonical_url") or item.get("url"),
-        "created_at": _clean_timestamp(item.get("published_at"), item.get("created_at")),
+        "created_at": _clean_timestamp(
+            item.get("published_at"), item.get("created_at")
+        ),
         "updated_at": _clean_timestamp(item.get("updated_at")),
         "status": item.get("status") or item.get("processing_status") or "unknown",
         "deleted": bool(item.get("deleted", False)),
         "is_trash": bool(item.get("is_trash", False)),
         "has_transcript": bool(item.get("has_transcript", False)),
-        "has_chunks": bool(item.get("media_id") or item.get("has_archive_copy") or item.get("has_chunks")),
+        "has_chunks": bool(
+            item.get("media_id")
+            or item.get("has_archive_copy")
+            or item.get("has_chunks")
+        ),
         "supports_read_it_later": supports_read_it_later,
         "is_read_it_later": is_read_it_later,
         "read_it_later_saved_at": read_it_later_saved_at,
@@ -225,7 +255,9 @@ def normalize_server_reading_item(
             reading_progress,
             backend="server",
             backing_media_id=backing_media_id,
-        ) if backing_media_id is not None else None,
+        )
+        if backing_media_id is not None
+        else None,
     }
 
 
@@ -246,7 +278,9 @@ def normalize_ingestion_source(
         "policy": source.get("policy"),
         "enabled": bool(source.get("enabled", False)),
         "schedule_enabled": bool(source.get("schedule_enabled", False)),
-        "schedule_config": _as_mapping(source.get("schedule_config") or source.get("schedule")),
+        "schedule_config": _as_mapping(
+            source.get("schedule_config") or source.get("schedule")
+        ),
         "config": _as_mapping(source.get("config")),
         "last_sync_status": source.get("last_sync_status"),
         "last_error": source.get("last_error"),
@@ -367,7 +401,12 @@ def normalize_reading_summary(
     *,
     backend: str = "server",
 ) -> dict[str, Any]:
-    raw_source_id = summary.get("id") or summary.get("summary_id") or summary.get("item_id") or summary.get("media_id")
+    raw_source_id = (
+        summary.get("id")
+        or summary.get("summary_id")
+        or summary.get("item_id")
+        or summary.get("media_id")
+    )
     source_id = str(raw_source_id)
     item_id = summary.get("item_id", summary.get("media_id"))
     normalized: dict[str, Any] = {
@@ -412,8 +451,7 @@ def normalize_reading_items_bulk_update(
         "succeeded": int(payload_data.get("succeeded") or 0),
         "failed": int(payload_data.get("failed") or 0),
         "results": [
-            _as_mapping(result)
-            for result in list(payload_data.get("results") or [])
+            _as_mapping(result) for result in list(payload_data.get("results") or [])
         ],
     }
 

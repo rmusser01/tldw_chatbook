@@ -1,4 +1,8 @@
-"""The base dialog code for the other dialogs in the library."""
+"""The app-integrated base dialog code for the other picker dialogs.
+
+This vendored fork intentionally uses the application's safe-modal contract and
+therefore requires a small patch when syncing from or extracting to upstream.
+"""
 
 ##############################################################################
 # Backward compatibility.
@@ -8,31 +12,49 @@ from __future__ import annotations
 # Python imports.
 import sys
 from pathlib import Path
-from typing import Callable, List, Dict, Any, Union
-try:
-    from typing import TypeAlias
-except ImportError:
-    from typing_extensions import TypeAlias
-import json
-from datetime import datetime
+from typing import Any, Callable, Dict, List, TypeAlias, Union
 
 ##############################################################################
-# Textual imports.
+# Third-party imports.
+from rich.console import RenderableType
+from rich.table import Table
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.dom import DOMNode
-from textual.events import Mount
-from textual.message import Message
-from textual.reactive import var, reactive
+from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, ListView, ListItem
+from textual.widgets import Button, Label, Input, ListView, ListItem, Static
 
 ##############################################################################
 # Local imports.
-from .path_filters import Filters
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from .parts import DirectoryNavigation, DriveNavigation
+
+
+##############################################################################
+def _listing_column_headers() -> RenderableType:
+    """Build the Name / Size / Modified header row for the listing.
+
+    (task-3304, MI-15) The directory listing renders three data columns
+    with nothing naming them -- a bare right-aligned number next to a
+    timestamp read as noise. The grid mirrors ``DirectoryEntry
+    ._as_renderable``'s exact column recipe (pad 1 / icon 3 / name 1fr /
+    size 10 / time 20 / pad 1) so the headers land over their columns.
+    Known drift: when the list overflows, the OptionList's vertical
+    scrollbar shifts the data columns left by its width relative to this
+    header; and on Windows the DriveNavigation pane sits left of the
+    listing. Both offsets are cosmetic and accepted.
+    """
+    headers = Table.grid(expand=True)
+    headers.add_column(no_wrap=True, width=1)
+    headers.add_column(no_wrap=True, justify="left", width=3)
+    headers.add_column(no_wrap=True, justify="left", ratio=1)
+    headers.add_column(no_wrap=True, justify="right", width=10)
+    headers.add_column(no_wrap=True, justify="right", width=20)
+    headers.add_column(no_wrap=True, width=1)
+    headers.add_row("", "", "Name", "Size", "Modified", "")
+    return headers
 
 
 ##############################################################################
@@ -51,8 +73,10 @@ ButtonLabel: TypeAlias = Union[str, Callable[[str], str]]
 
 
 ##############################################################################
-class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
+class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     """Base screen for the dialogs in this library."""
+
+    SAFE_MODAL_CONTENT = "#file-system-picker-dialog"
 
     DEFAULT_CSS = """
     FileSystemPickerScreen {
@@ -140,8 +164,31 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             width: 1fr;
         }
 
+        /* task-3304 (MI-15) / task-14825 #5: the header cells must land on
+           their own data columns. The listing insets its content THREE
+           ways, and the original padding compensated for only the first:
+             1. DirectoryNavigation's `border: blank`      -> 1 cell each side
+             2. OptionList's own default `padding: 0 1`    -> 1 cell each side
+             3. the vertical scrollbar, on the right only  -> 2 cells
+           (2) cost a permanent one-cell skew (the `Size` header ended at
+           col 188 over values ending at 186 in the live capture) and (3)
+           added two more the moment the list overflowed -- shipped as
+           "cosmetic and accepted", which reads as a broken table. The
+           scrollbar half is made deterministic by reserving the gutter
+           below rather than by guessing whether it is showing. */
+        #file-dialog-column-headers {
+            height: 1;
+            padding: 0 4 0 2;
+            color: $text-muted;
+        }
+
         DirectoryNavigation {
             height: 1fr;
+            /* Reserve the scrollbar column whether or not it is showing:
+               without this the whole listing shifts 2 cells left as soon
+               as a directory overflows, and no static header can be right
+               in both states. */
+            scrollbar-gutter: stable;
         }
 
         InputBar {
@@ -168,16 +215,17 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         Binding("ctrl+d", "bookmark_current", "Bookmark directory"),
         Binding("ctrl+r", "show_recent", "Show recent locations"),
         Binding("ctrl+f", "focus_search", "Search in directory"),
-        Binding("escape", "dismiss(None)", "Cancel")
+        Binding("escape", "request_safe_cancel", "Cancel"),
+        Binding("ctrl+s", "select_current_folder", "Select this folder"),
     ]
     """The bindings for the dialog."""
 
     show_recent = reactive(False)
     """Whether to show recent locations panel."""
-    
+
     search_active = reactive(False)
     """Whether search is active."""
-    
+
     def __init__(
         self,
         location: str | Path = ".",
@@ -230,56 +278,91 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         Returns:
             The widgets to compose.
         """
-        with Dialog() as dialog:
+        with Dialog(id="file-system-picker-dialog") as dialog:
             dialog.border_title = self._title
-            
+
             # Recent locations panel (hidden by default)
             with VerticalScroll(id="recent-locations"):
                 yield Label("Recent Locations", classes="section-title")
                 yield ListView(id="recent-list")
-            
+
             # Path display and breadcrumbs
             yield Label(id="current_path_display")
             with Horizontal(id="path-breadcrumbs"):
                 # Breadcrumbs will be dynamically populated
                 pass
-            
+
             # Path input field (hidden by default, shown with Ctrl+L)
             with Horizontal(id="path-input-container", classes="hidden"):
                 yield Input(placeholder="Enter path...", id="path-input")
                 yield Button("Go", id="go-to-path", variant="primary")
                 yield Button("Cancel", id="cancel-path-input", variant="default")
-            
+
             # Search container (hidden by default)
             with Horizontal(id="search-container"):
                 yield Input(placeholder="Search files...", id="search-input")
                 yield Button("Clear", id="clear-search", variant="default")
-            
+
+            # Column headers for the listing below (task-3304, MI-15).
+            yield Static(
+                _listing_column_headers(), id="file-dialog-column-headers"
+            )
+
             # Main directory navigation
             with Horizontal():
                 if sys.platform == "win32":
                     yield DriveNavigation(self._location)
                 yield DirectoryNavigation(self._location)
-            
+
             # Input bar with buttons
             with InputBar():
                 yield from self._input_bar()
                 yield Button(self._label(self._select_button, "Select"), id="select")
+                # (task-2222) Opt-in folder affordance: a file picker whose
+                # caller also accepts a directory can offer "this folder"
+                # without a second dialog. Off by default, so every other
+                # caller's bar is unchanged.
+                if getattr(self, "_offer_select_folder", False):
+                    yield Button(
+                        "Select folder", id="select-current-folder"
+                    )
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
 
     def on_mount(self) -> None:
-        """Focus directory widget on mount and set initial path."""
+        """Focus the initial widget on mount and set the initial path."""
         dir_nav = self.query_one(DirectoryNavigation)
         current_path_label = self.query_one("#current_path_display", Label)
         current_path_label.update(str(dir_nav.location))
-        
+
         # Initialize breadcrumbs
         self._update_breadcrumbs(dir_nav.location)
-        
+
         # Load recent locations
         self._load_recent_locations()
-        
-        dir_nav.focus()
+
+        self._focus_initial_widget()
+
+    def _focus_initial_widget(self) -> None:
+        """Focus whichever widget should hold focus right after mounting.
+
+        Defaults to the directory listing. Subclasses override this to
+        steer initial focus elsewhere -- e.g. ``FileSave`` (file_save.py)
+        focuses its filename input instead, so a keyboard user can press
+        Enter immediately to confirm the seeded default filename rather
+        than have Enter activate the highlighted directory row (usually
+        ``..``) (task-1479).
+
+        This is a plain method call, not a message handler: overriding it
+        resolves via normal Python MRO, unlike Textual's ``on_mount``/`@on`
+        dispatch, which invokes a handler defined on *every* class in the
+        MRO rather than just the most-derived one -- a subclass adding its
+        own ``on_mount`` here would run *before*, not instead of, this
+        class's own ``on_mount`` (dispatch order walks the MRO
+        most-derived-first, so a naming-convention override defined earlier
+        in the walk fires and then gets clobbered by this method's own
+        ``dir_nav.focus()`` call afterwards).
+        """
+        self.query_one(DirectoryNavigation).focus()
 
     def _set_error(self, message: str = "") -> None:
         """Set or clear the error message.
@@ -302,14 +385,13 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         self._set_error()
         current_path_label = self.query_one("#current_path_display", Label)
         current_path_label.update(str(event.control.location))
-        
+
         # Update breadcrumbs
         self._update_breadcrumbs(event.control.location)
-        
+
         # Add to recent locations
         self._add_to_recent(event.control.location, "directory")
 
-    @on(DirectoryNavigation.Changed)
     def _clear_error(self) -> None:
         """Clear any error that might be showing."""
         self._set_error()
@@ -319,27 +401,94 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         """Show any permission error bubbled up from the directory navigator."""
         self._set_error(self.ERROR_PERMISSION_ERROR)
 
+    def check_action(
+        self, action: str, parameters: tuple[object, ...]
+    ) -> bool | None:
+        """Hide the folder shortcut on dialogs that do not offer it.
+
+        (task-2222 Qodo round) The binding is declared on the shared base,
+        so without this every picker advertised a ctrl+s that did nothing
+        -- including in the F1 help. Returning None removes it from both
+        the key map and the listing.
+
+        Args:
+            action: The action name being checked.
+            parameters: The action's parameters.
+
+        Returns:
+            ``None`` to hide the folder action when this dialog does not
+            offer it; otherwise the base class's decision.
+        """
+        if action == "select_current_folder" and not getattr(
+            self, "_offer_select_folder", False
+        ):
+            return None
+        return super().check_action(action, parameters)
+
+    def action_select_current_folder(self) -> None:
+        """Keyboard route to the folder affordance (task-2222)."""
+        if getattr(self, "_offer_select_folder", False):
+            self.dismiss(self.query_one(DirectoryNavigation).location)
+
+    @on(Button.Pressed, "#select-current-folder")
+    def _select_current_folder(self, event: Button.Pressed) -> None:
+        """Return the directory currently being viewed (task-2222).
+
+        "Open" keeps descending into directories; this returns the one on
+        screen, which is how every OS folder picker behaves.
+
+        Args:
+            event: The button press event.
+        """
+        event.stop()
+        self.dismiss(self.query_one(DirectoryNavigation).location)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Peel transient surfaces for Escape, otherwise cancel immediately."""
+        if source != "escape":
+            self.dismiss_safe_once(None)
+            return
+
+        path_container = self.query_one("#path-input-container")
+        if not path_container.has_class("hidden"):
+            self._on_cancel_path_input()
+            return
+
+        if self.search_active:
+            self.query_one("#search-input", Input).value = ""
+            self.search_active = False
+            self.query_one(DirectoryNavigation).search_filter = ""
+            self.query_one(DirectoryNavigation).focus()
+            return
+
+        if self.show_recent:
+            self.show_recent = False
+            self.query_one(DirectoryNavigation).focus()
+            return
+
+        self.dismiss_safe_once(None)
+
     @on(Button.Pressed, "#cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         """Cancel the dialog.
 
         Args:
             event: The even to handle.
         """
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     def _action_hidden(self) -> None:
         """Action for toggling the display of hidden entries."""
         self.query_one(DirectoryNavigation).toggle_hidden()
         self.notify("Hidden files toggled", timeout=2)
-    
+
     def action_focus_path_input(self) -> None:
         """Toggle and focus the path input field."""
         try:
             path_container = self.query_one("#path-input-container")
             path_input = self.query_one("#path-input", Input)
-            
+
             # Toggle visibility
             if path_container.has_class("hidden"):
                 path_container.remove_class("hidden")
@@ -355,7 +504,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                 self.query_one(DirectoryNavigation).focus()
         except Exception as e:
             self.notify(f"Error toggling path input: {e}", severity="error", timeout=2)
-    
+
     def action_refresh(self) -> None:
         """Refresh the current directory listing."""
         dir_nav = self.query_one(DirectoryNavigation)
@@ -363,18 +512,18 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         current = dir_nav.location
         dir_nav.location = current
         self.notify("Directory refreshed", timeout=2)
-    
+
     def action_bookmark_current(self) -> None:
         """Bookmark the current directory."""
         dir_nav = self.query_one(DirectoryNavigation)
         current_path = dir_nav.location
         # This would need to be implemented with proper bookmark storage
         self.notify(f"Bookmarked: {current_path.name}", timeout=2)
-    
+
     def action_show_recent(self) -> None:
         """Toggle the recent locations panel."""
         self.show_recent = not self.show_recent
-    
+
     def action_focus_search(self) -> None:
         """Toggle search mode and focus search input."""
         self.search_active = not self.search_active
@@ -384,37 +533,39 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                 search_input.focus()
             except Exception:
                 pass
-    
+
     def _update_breadcrumbs(self, path: Path) -> None:
         """Update breadcrumb navigation."""
         try:
             breadcrumb_container = self.query_one("#path-breadcrumbs", Horizontal)
             breadcrumb_container.remove_children()
-            
+
             parts = path.parts
             for i, part in enumerate(parts):
-                partial_path = Path(*parts[:i+1])
-                
+                partial_path = Path(*parts[: i + 1])
+
                 # Create button for each path component
                 btn = Button(part, variant="default", classes="breadcrumb-btn")
                 btn.tooltip = str(partial_path)  # Store full path in tooltip
                 breadcrumb_container.mount(btn)
-                
+
                 # Add separator if not last
                 if i < len(parts) - 1:
-                    breadcrumb_container.mount(Label("/", classes="breadcrumb-separator"))
-        except Exception as e:
+                    breadcrumb_container.mount(
+                        Label("/", classes="breadcrumb-separator")
+                    )
+        except Exception:
             # Silently fail if breadcrumbs can't be updated
             pass
-    
+
     def _load_recent_locations(self) -> None:
         """Load recent locations from storage."""
-        # This is a placeholder - in real implementation, 
+        # This is a placeholder - in real implementation,
         # this would load from a config file or database
         try:
             recent_list = self.query_one("#recent-list", ListView)
             recent_list.clear()
-            
+
             # Add some example recent locations
             for path in self._get_recent_paths():
                 item = ListItem(Label(str(path)))
@@ -422,17 +573,17 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                 recent_list.append(item)
         except Exception:
             pass
-    
+
     def _get_recent_paths(self) -> List[Path]:
         """Get list of recent paths."""
         # Placeholder - would load from persistent storage
         return []
-    
+
     def _add_to_recent(self, path: Path, file_type: str) -> None:
         """Add a path to recent locations."""
         # Placeholder - would save to persistent storage
         pass
-    
+
     @on(Button.Pressed, ".breadcrumb-btn")
     def _on_breadcrumb_click(self, event: Button.Pressed) -> None:
         """Handle breadcrumb navigation clicks."""
@@ -443,11 +594,11 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                 dir_nav.location = path
             except Exception:
                 pass
-    
+
     @on(ListView.Selected, "#recent-list")
     def _on_recent_selected(self, event: ListView.Selected) -> None:
         """Handle selection from recent locations."""
-        if hasattr(event.item, 'data') and event.item.data:
+        if hasattr(event.item, "data") and event.item.data:
             try:
                 path = Path(event.item.data)
                 if path.exists():
@@ -459,7 +610,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
                     self.show_recent = False
             except Exception:
                 pass
-    
+
     @on(Input.Changed, "#search-input")
     def _on_search_changed(self, event: Input.Changed) -> None:
         """Handle search input changes."""
@@ -468,7 +619,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             dir_nav.search_filter = event.value
         except Exception:
             pass
-    
+
     @on(Button.Pressed, "#clear-search")
     def _on_clear_search(self) -> None:
         """Clear the search input."""
@@ -478,7 +629,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             self.search_active = False
         except Exception:
             pass
-    
+
     def watch_show_recent(self, show: bool) -> None:
         """React to show_recent changes."""
         try:
@@ -486,7 +637,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             recent_panel.set_class(show, "visible")
         except Exception:
             pass
-    
+
     def watch_search_active(self, active: bool) -> None:
         """React to search_active changes."""
         try:
@@ -494,7 +645,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             search_container.set_class(active, "visible")
         except Exception:
             pass
-    
+
     @on(Button.Pressed, "#go-to-path")
     @on(Input.Submitted, "#path-input")
     def _on_path_input_submit(self, event=None) -> None:
@@ -502,46 +653,47 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         try:
             path_input = self.query_one("#path-input", Input)
             path_str = path_input.value.strip()
-            
+
             if not path_str:
                 return
-            
+
             # Expand user home directory if needed
             if path_str.startswith("~"):
                 path = Path(path_str).expanduser()
             else:
                 path = Path(path_str)
-            
+
             # Make path absolute if it's relative
             if not path.is_absolute():
                 dir_nav = self.query_one(DirectoryNavigation)
                 path = dir_nav.location / path
-            
+
             # Resolve the path
             path = path.resolve()
-            
+
             # Check if path exists
             if not path.exists():
                 self.notify(f"Path does not exist: {path}", severity="error", timeout=3)
                 return
-            
+
             # Navigate to the path
             dir_nav = self.query_one(DirectoryNavigation)
             if path.is_dir():
                 dir_nav.location = path
             else:
-                # If it's a file, navigate to its parent directory
-                dir_nav.location = path.parent
-                # TODO: Ideally, we would also select the file in the list
-            
+                # If it's a file, navigate to its parent directory AND highlight
+                # the file in the list, so a keyboard user who typed a full path
+                # lands on the file instead of on '..' (TASK-378).
+                dir_nav.show_and_highlight(path)
+
             # Hide the path input
             path_container = self.query_one("#path-input-container")
             path_container.add_class("hidden")
             dir_nav.focus()
-            
+
         except Exception as e:
             self.notify(f"Error navigating to path: {e}", severity="error", timeout=3)
-    
+
     @on(Button.Pressed, "#cancel-path-input")
     def _on_cancel_path_input(self) -> None:
         """Cancel path input and hide the container."""

@@ -13,7 +13,12 @@ This document tracks the remaining tasks and future enhancements for the TTS/S/T
 - [x] Text processing and chunking for long texts
 - [x] Secure temporary file handling for audio files
 - [x] **Simple cross-platform audio player** (NEW)
-- [x] **Audio export with custom naming and metadata** (NEW)
+- [x] **Audio export from the Speech playground** (the per-message
+  `TTSExportEvent` path that once backed this line was never reachable from
+  any UI and was retired in task-16837; export lives on
+  `UI/Speech/speech_playback_mixin.py::_export_audio`/`_handle_audio_export`,
+  driven by `#audio-export-btn` — the orphaned `STTSEventHandler` export
+  method once cited here was removed in task-19043)
 - [x] **Progress tracking for TTS generation** (NEW)
 - [x] **Cost tracking and usage statistics** (NEW)
 
@@ -58,7 +63,7 @@ This document tracks the remaining tasks and future enhancements for the TTS/S/T
 - [ ] Implement pause/resume for long generation tasks
 
 #### 2. **Export and File Management** 💾
-- [x] ~~Implement audio file export with custom naming~~ ✅ COMPLETED
+- [x] ~~Implement audio file export with custom naming~~ ✅ Speech-playground path only (the unreachable per-message event path was retired in task-16837)
 - [ ] Add support for M4B audiobook format
 - [ ] Create playlist generation for multi-file exports
 - [ ] Add audio file compression options

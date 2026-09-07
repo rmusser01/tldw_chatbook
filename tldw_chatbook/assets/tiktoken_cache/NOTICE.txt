@@ -1,0 +1,77 @@
+tiktoken encoding-table redistribution notice
+=============================================
+
+This directory is the reviewed native cache for tiktoken 0.14.0. Its six
+opaque blob names are sha1(source_url UTF-8 bytes), matching tiktoken's own
+cache-key algorithm. The reviewed constructors are in
+tiktoken_ext/openai_public.py. Chatbook installs its closed reader at the
+tiktoken.load seam
+read_file_cached(blobpath: str, expected_hash: str | None = None).
+
+Files and provenance
+--------------------
+
+gpt2
+  URL: https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/vocab.bpe
+  cache key: 6d1cbeee0f20b3d9449abfede4726ed8212e3aee
+  SHA-256: 1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5
+
+gpt2
+  URL: https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/encoder.json
+  cache key: 6c7ea1a7e38e3a7f062df639a5b80947f075ffe6
+  SHA-256: 196139668be63f3b5d6574427317ae82f612a97c5d1cdaf36ed2256dbf636783
+
+r50k_base
+  URL: https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken
+  cache key: 0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4
+  SHA-256: 306cd27f03c1a714eca7108e03d66b7dc042abe8c258b44c199a7ed9838dd930
+
+p50k_base
+  URL: https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken
+  cache key: ec7223a39ce59f226a68acc30dc1af2788490e15
+  SHA-256: 94b5ca7dff4d00767bc256fdd1b27e5b17361d7b8a5f968547f9f23eb70d2069
+
+cl100k_base
+  URL: https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+  cache key: 9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+  SHA-256: 223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7
+
+o200k_base
+  URL: https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+  cache key: fb374d419588a4632f3f557e76b4b70aebbca790
+  SHA-256: 446a9538cb6c348e3516120d7c08b09f57c36495e2acfffe59a5bf8b0cfb1a2d
+
+Model-to-encoding coverage
+--------------------------
+
+- gpt2 is Chatbook's token-chunking default.
+- text-curie/text-babbage/text-ada use r50k_base.
+- text-davinci/code-davinci/code-cushman use p50k_base.
+- GPT-3.5 and legacy GPT-4 families use cl100k_base.
+- GPT-4o, GPT-4.1, GPT-5 (including Chatbook's GPT-5.6 variants), and
+  o1/o3/o4 families use o200k_base through tiktoken's registry.
+
+Redistribution basis
+--------------------
+
+LICENSE.txt is copied verbatim from
+tiktoken-0.14.0.dist-info/licenses/LICENSE (MIT). An OpenAI collaborator
+clarified that the repository license applies to the encoding files:
+https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652
+The Chatbook repository owner accepts that statement as sufficient evidence.
+The GPT-2 pair additionally originates from the MIT-licensed openai/gpt-2
+repository: https://github.com/openai/gpt-2/blob/master/LICENSE
+
+Update procedure
+----------------
+
+1. Pin and install the proposed tiktoken version in the project environment.
+2. Review tiktoken_ext/openai_public.py and tiktoken/load.py for URLs, expected
+   hashes, model mappings, the read_file_cached signature, and URL-key logic.
+3. Download every reviewed URL. Name each file with
+   sha1(source_url UTF-8 bytes), then verify its SHA-256 against the
+   constructor's expected_hash.
+4. Update manifest.json, LICENSE.txt, and this notice. Keep this directory to
+   the exact six blobs plus those three records.
+5. Run source tests and both source-built and sdist-rebuilt installed-wheel
+   offline/read-only/mutation probes before changing the reviewed version pin.

@@ -19,35 +19,57 @@ of time series, overwhelming your Prometheus server.
 - DO NOT use labels for: user IDs, session IDs, trace IDs, URLs, or any
   unbounded unique identifier.
 """
+
 #
 # Imports
 import functools
+import os
 import threading
 import time
 import logging
-import psutil#
+from typing import Any, Dict, Optional
+
+import psutil  #
+
 # Third-party Imports
 try:
     from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
+
     # Create dummy classes to prevent errors when prometheus_client is not installed
     class Counter:
-        def __init__(self, *args, **kwargs): pass
-        def inc(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-    
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def inc(self, *args, **kwargs):
+            pass
+
+        def labels(self, **kwargs):
+            return self
+
     class Histogram:
-        def __init__(self, *args, **kwargs): pass
-        def observe(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-    
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def observe(self, *args, **kwargs):
+            pass
+
+        def labels(self, **kwargs):
+            return self
+
     class Gauge:
-        def __init__(self, *args, **kwargs): pass
-        def set(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-    
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set(self, *args, **kwargs):
+            pass
+
+        def labels(self, **kwargs):
+            return self
+
     def start_http_server(*args, **kwargs):
         logging.warning("Prometheus client not installed. Metrics server not started.")
 #
@@ -80,11 +102,11 @@ def _get_or_create_metric(metric_type, name, documentation, label_keys=None):
         if registry_key in _metrics_registry:
             return _metrics_registry[registry_key]
 
-        if metric_type == 'counter':
+        if metric_type == "counter":
             metric = Counter(name, documentation, label_keys)
-        elif metric_type == 'histogram':
+        elif metric_type == "histogram":
             metric = Histogram(name, documentation, label_keys)
-        elif metric_type == 'gauge':
+        elif metric_type == "gauge":
             metric = Gauge(name, documentation, label_keys)
         else:
             raise ValueError(f"Unsupported metric type: {metric_type}")
@@ -99,12 +121,16 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
-        logging.debug(f"Prometheus not available. Would have logged counter: {metric_name}")
+        logging.debug(
+            f"Prometheus not available. Would have logged counter: {metric_name}"
+        )
         return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
-        counter = _get_or_create_metric('counter', metric_name, documentation, label_keys)
+        counter = _get_or_create_metric(
+            "counter", metric_name, documentation, label_keys
+        )
         if label_keys:
             counter.labels(**eff_labels).inc(value)
         else:
@@ -119,12 +145,16 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
-        logging.debug(f"Prometheus not available. Would have logged histogram: {metric_name} = {value}")
+        logging.debug(
+            f"Prometheus not available. Would have logged histogram: {metric_name} = {value}"
+        )
         return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
-        histogram = _get_or_create_metric('histogram', metric_name, documentation, label_keys)
+        histogram = _get_or_create_metric(
+            "histogram", metric_name, documentation, label_keys
+        )
         if label_keys:
             histogram.labels(**eff_labels).observe(value)
         else:
@@ -140,12 +170,14 @@ def log_gauge(metric_name, value, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
-        logging.debug(f"Prometheus not available. Would have logged gauge: {metric_name} = {value}")
+        logging.debug(
+            f"Prometheus not available. Would have logged gauge: {metric_name} = {value}"
+        )
         return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
-        gauge = _get_or_create_metric('gauge', metric_name, documentation, label_keys)
+        gauge = _get_or_create_metric("gauge", metric_name, documentation, label_keys)
         if label_keys:
             gauge.labels(**eff_labels).set(value)
         else:
@@ -179,13 +211,13 @@ def timeit(metric_name=None, documentation="Execution time of a function."):
                     metric_name=f"{base_name}_duration_seconds",
                     value=elapsed,
                     labels=common_labels,
-                    documentation=documentation
+                    documentation=documentation,
                 )
 
                 log_counter(
                     metric_name=f"{base_name}_calls_total",
                     labels=common_labels,
-                    documentation=f"Total calls to {func.__name__}"
+                    documentation=f"Total calls to {func.__name__}",
                 )
 
         return wrapper
@@ -196,30 +228,148 @@ def timeit(metric_name=None, documentation="Execution time of a function."):
 def log_resource_usage(labels=None):
     """Logs current CPU and Memory usage of the process as gauges."""
     process = psutil.Process()
-    memory_mb = process.memory_info().rss / (1024 ** 2)
+    memory_mb = process.memory_info().rss / (1024**2)
     cpu_percent = process.cpu_percent(interval=None)  # Non-blocking
 
     log_gauge(
         "process_memory_mb",
         memory_mb,
         labels=labels,
-        documentation="Current memory usage of the process in Megabytes."
+        documentation="Current memory usage of the process in Megabytes.",
     )
     log_gauge(
         "process_cpu_percent",
         cpu_percent,
         labels=labels,
-        documentation="Current CPU usage of the process as a percentage."
+        documentation="Current CPU usage of the process as a percentage.",
     )
 
 
-def init_metrics_server(port=8000):
-    """Starts the Prometheus HTTP server in a separate thread."""
+#: Shipped defaults for the metrics listener. Disabled, and loopback-only when
+#: enabled -- ``prometheus_client.start_http_server`` defaults to ``0.0.0.0``,
+#: which we deliberately do not inherit.
+_METRICS_DEFAULT_ENABLED = False
+#: 9090 is the Prometheus convention. 8000 collided with ``[web_server] port``.
+_METRICS_DEFAULT_PORT = 9090
+_METRICS_DEFAULT_BIND_ADDRESS = "127.0.0.1"
+
+#: Addresses that keep the endpoint on this machine. Anything else is reachable
+#: from the network and is warned about loudly when the listener starts.
+_LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _get_cli_setting(section: str, key: str, default: Any) -> Any:
+    """Read one config value.
+
+    Indirection on purpose: it keeps the ``config`` import lazy (this module is
+    imported early) and lets tests exercise resolution without a config file on
+    disk.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    return get_cli_setting(section, key, default)
+
+
+def _metrics_server_config() -> Dict[str, Any]:
+    """Resolve whether to listen, and where.
+
+    Every value fails CLOSED. ``bool("false")`` is ``True`` in Python, so a
+    quoted boolean -- a habit carried over from YAML and environment variables
+    -- would otherwise mean the user typed "off" and got an unauthenticated
+    listener. That is the same fail-open shape this module was fixed to remove,
+    so coercion goes through the shared config helpers rather than builtins.
+
+    ``METRICS_PORT`` continues to override the port because it predates this
+    function, but it does NOT enable the listener -- that is a config decision
+    (TASK-25914 AC#1). A junk env value falls back to the *configured* port
+    rather than discarding it.
+    """
+    from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
+
+    enabled = bool(
+        coerce_bool_setting(
+            _get_cli_setting("metrics", "enabled", _METRICS_DEFAULT_ENABLED),
+            _METRICS_DEFAULT_ENABLED,
+        )
+    )
+
+    configured_port = coerce_int_setting(
+        _get_cli_setting("metrics", "port", _METRICS_DEFAULT_PORT),
+        _METRICS_DEFAULT_PORT,
+        minimum=1,
+        maximum=65535,
+    )
+    env_port = os.environ.get("METRICS_PORT")
+    port = (
+        coerce_int_setting(env_port, configured_port, minimum=1, maximum=65535)
+        if env_port
+        else configured_port
+    )
+
+    # A non-string or empty address would be stringified into the socket layer:
+    # str(0) == "0", which getaddrinfo resolves to 0.0.0.0 -- all interfaces.
+    raw_address = _get_cli_setting(
+        "metrics", "bind_address", _METRICS_DEFAULT_BIND_ADDRESS
+    )
+    bind_address = (
+        raw_address.strip()
+        if isinstance(raw_address, str) and raw_address.strip()
+        else _METRICS_DEFAULT_BIND_ADDRESS
+    )
+
+    return {"enabled": enabled, "port": port, "bind_address": bind_address}
+
+
+def init_metrics_server(port: Optional[int] = None) -> bool:
+    """Start the Prometheus listener if the user has asked for one.
+
+    Binding a network socket is opt-in. Having ``prometheus_client`` installed
+    -- which the ``dev`` and ``debugging`` extras both do -- is not consent, so
+    the config gate is checked before anything is bound, and before the
+    availability check so that a missing dependency can never mask a broken
+    gate (TASK-25914).
+
+    Args:
+        port: Overrides the configured port when given.
+
+    Returns:
+        True when a listener was started, False otherwise.
+    """
+    settings = _metrics_server_config()
+
+    if not settings["enabled"]:
+        logging.debug(
+            "Prometheus metrics listener disabled; set [metrics] enabled = true "
+            "to expose one. Metric collection is unaffected."
+        )
+        return False
+
     if not PROMETHEUS_AVAILABLE:
-        logging.warning("Prometheus client not installed. Metrics server cannot be started.")
-        return
-    start_http_server(port)
-    logging.info(f"Prometheus metrics server started on port {port}")
+        logging.info(
+            "Prometheus metrics listener is enabled in config but the optional "
+            "dependency is missing. Install tldw_chatbook[debugging] to use it."
+        )
+        return False
+
+    bind_port = settings["port"] if port is None else port
+    bind_address = settings["bind_address"]
+
+    start_http_server(bind_port, addr=bind_address)
+
+    if bind_address in _LOOPBACK_ADDRESSES:
+        logging.info(
+            "Prometheus metrics listener started on %s:%s", bind_address, bind_port
+        )
+    else:
+        logging.warning(
+            "Prometheus metrics listener started on %s:%s -- this is NOT "
+            "loopback, so the unauthenticated metrics endpoint is reachable "
+            "from the network. Set [metrics] bind_address = \"127.0.0.1\" to "
+            "restrict it.",
+            bind_address,
+            bind_port,
+        )
+    return True
 
 
 # --- Sample Usage ---
@@ -242,7 +392,7 @@ def init_metrics_server(port=8000):
 #
 # def main():
 #     # Start the metrics server once at the beginning of your app
-#     init_metrics_server(port=8000)
+#     init_metrics_server()  # opt-in via [metrics] enabled
 #
 #     # Example usage
 #     user_id = 0

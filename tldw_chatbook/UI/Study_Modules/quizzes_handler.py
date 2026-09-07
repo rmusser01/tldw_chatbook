@@ -86,9 +86,9 @@ class StudyQuizzesController:
             return True
         if self._scope_type_value(scope_state) != StudyScopeType.WORKSPACE.value:
             return True
-        return bool(getattr(scope_state, "workspace_scope_available", False)) and not bool(
-            str(getattr(scope_state, "error_message", "") or "").strip()
-        )
+        return bool(
+            getattr(scope_state, "workspace_scope_available", False)
+        ) and not bool(str(getattr(scope_state, "error_message", "") or "").strip())
 
     def _scope_unavailable_message(self) -> str:
         scope_state = self._scope_state()
@@ -112,11 +112,16 @@ class StudyQuizzesController:
         scope_type = self._scope_type()
         return {
             "scope_type": scope_type,
-            "workspace_id": self._workspace_id() if scope_type == StudyScopeType.WORKSPACE.value else None,
+            "workspace_id": self._workspace_id()
+            if scope_type == StudyScopeType.WORKSPACE.value
+            else None,
         }
 
     def _workspace_create_arguments(self) -> dict[str, Any]:
-        if self._current_mode() != "server" or self._scope_type() != StudyScopeType.WORKSPACE.value:
+        if (
+            self._current_mode() != "server"
+            or self._scope_type() != StudyScopeType.WORKSPACE.value
+        ):
             return {"scope_type": self._scope_type(), "workspace_id": None}
         return self._scope_arguments()
 
@@ -131,7 +136,9 @@ class StudyQuizzesController:
         return bool(getattr(decision, "allowed", False))
 
     def _sync_quiz_controls(self) -> None:
-        configure_controls = getattr(self.window, "_configure_quizzes_lifecycle_controls", None)
+        configure_controls = getattr(
+            self.window, "_configure_quizzes_lifecycle_controls", None
+        )
         if callable(configure_controls):
             configure_controls()
 
@@ -142,10 +149,14 @@ class StudyQuizzesController:
 
     @staticmethod
     def _is_blank_select_value(value: Any) -> bool:
-        return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
+        return value in {None, "", False, Select.BLANK} or str(value).startswith(
+            "Select."
+        )
 
     def _attempt_active(self) -> bool:
-        return self.current_attempt_id is not None and bool(self.current_attempt_questions)
+        return self.current_attempt_id is not None and bool(
+            self.current_attempt_questions
+        )
 
     def reset_quiz_panel(self, message: str) -> None:
         self.current_attempt_id = None
@@ -173,7 +184,9 @@ class StudyQuizzesController:
             pass
 
         try:
-            history_select = self.window.query_one("#quiz-attempt-history-select", Select)
+            history_select = self.window.query_one(
+                "#quiz-attempt-history-select", Select
+            )
             history_select.set_options([("No attempt history", Select.BLANK)])
             history_select.clear()
         except Exception:
@@ -205,7 +218,9 @@ class StudyQuizzesController:
             local_service = LocalQuizService(db=db)
 
         try:
-            server_service = ServerQuizService.from_config(getattr(self.app_instance, "app_config", {}) or {})
+            server_service = ServerQuizService.from_config(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
         except ValueError:
             server_service = ServerQuizService(client=None)
 
@@ -249,19 +264,25 @@ class StudyQuizzesController:
 
     def _set_attempt_question(self, question_text: str = "") -> None:
         try:
-            self.window.query_one("#quiz-attempt-question", Static).update(question_text)
+            self.window.query_one("#quiz-attempt-question", Static).update(
+                question_text
+            )
         except Exception:
             pass
 
     def _set_attempt_history_summary(self, message: str = "") -> None:
         try:
-            self.window.query_one("#quiz-attempt-history-summary", Static).update(message)
+            self.window.query_one("#quiz-attempt-history-summary", Static).update(
+                message
+            )
         except Exception:
             pass
 
     def _selected_attempt_id(self) -> Optional[str]:
         try:
-            history_select = self.window.query_one("#quiz-attempt-history-select", Select)
+            history_select = self.window.query_one(
+                "#quiz-attempt-history-select", Select
+            )
         except Exception:
             return None
         value = getattr(history_select, "value", None)
@@ -287,7 +308,9 @@ class StudyQuizzesController:
 
     @staticmethod
     def _format_attempt_option_label(attempt: dict[str, Any]) -> str:
-        completed_at = str(attempt.get("completed_at") or attempt.get("started_at") or "Attempt")
+        completed_at = str(
+            attempt.get("completed_at") or attempt.get("started_at") or "Attempt"
+        )
         completed_at = completed_at.replace("T", " ").replace("Z", "")
         score = attempt.get("score")
         total_possible = attempt.get("total_possible")
@@ -330,7 +353,9 @@ class StudyQuizzesController:
             self.reset_quiz_panel(self._scope_unavailable_message())
             return
         if not await self._wait_for_widgets():
-            logger.warning("Study quizzes UI did not finish mounting before initialization")
+            logger.warning(
+                "Study quizzes UI did not finish mounting before initialization"
+            )
             self.reset_quiz_panel("Study quizzes UI is still loading.")
             return
         await self.refresh_quizzes()
@@ -552,7 +577,9 @@ class StudyQuizzesController:
             self._notify("Select a question before deleting it.")
             return
 
-        question_id = str(selected_question.get("backing_id") or selected_question.get("id") or "")
+        question_id = str(
+            selected_question.get("backing_id") or selected_question.get("id") or ""
+        )
         if not question_id:
             self._notify("Selected question is missing an identifier.")
             return
@@ -614,8 +641,12 @@ class StudyQuizzesController:
 
         name_input.value = ""
         description_input.value = ""
-        created_id = str(created.get("backing_id") or created.get("record_id") or Select.BLANK)
-        await self.refresh_quizzes(preserve_selection=False, preferred_selection=created_id)
+        created_id = str(
+            created.get("backing_id") or created.get("record_id") or Select.BLANK
+        )
+        await self.refresh_quizzes(
+            preserve_selection=False, preferred_selection=created_id
+        )
         self._set_attempt_status(f"Quiz '{created.get('name', name)}' created.")
         self._notify_shell_state_changed()
 
@@ -637,7 +668,9 @@ class StudyQuizzesController:
             return
 
         question_text_widget = self.window.query_one("#quiz-question-text", TextArea)
-        correct_answer_widget = self.window.query_one("#quiz-correct-answer-input", Input)
+        correct_answer_widget = self.window.query_one(
+            "#quiz-correct-answer-input", Input
+        )
         question_text = str(question_text_widget.text or "").strip()
         correct_answer = str(correct_answer_widget.value or "").strip()
         if not question_text:
@@ -691,7 +724,9 @@ class StudyQuizzesController:
             self._notify("Select a quiz before starting an attempt.")
             return
 
-        if not self._policy_action_allowed(f"quiz.attempt.create.{self._current_mode()}"):
+        if not self._policy_action_allowed(
+            f"quiz.attempt.create.{self._current_mode()}"
+        ):
             return
         try:
             attempt = await service.start_attempt(
@@ -704,7 +739,9 @@ class StudyQuizzesController:
             self._notify("Failed to start quiz attempt.", severity="error")
             return
 
-        self.current_attempt_id = str(attempt.get("backing_id") or attempt.get("id") or "")
+        self.current_attempt_id = str(
+            attempt.get("backing_id") or attempt.get("id") or ""
+        )
         self.current_attempt_questions = list(attempt.get("questions") or [])
         self.current_attempt_answers = []
         self.current_question_index = 0
@@ -749,7 +786,9 @@ class StudyQuizzesController:
             return
 
         current_question = self.current_attempt_questions[self.current_question_index]
-        question_id = str(current_question.get("backing_id") or current_question.get("id") or "")
+        question_id = str(
+            current_question.get("backing_id") or current_question.get("id") or ""
+        )
         self.current_attempt_answers.append(
             {
                 "question_id": question_id,
@@ -779,7 +818,9 @@ class StudyQuizzesController:
 
         score = submitted.get("score")
         total_possible = submitted.get("total_possible")
-        submitted_attempt_id = str(submitted.get("backing_id") or submitted.get("id") or "")
+        submitted_attempt_id = str(
+            submitted.get("backing_id") or submitted.get("id") or ""
+        )
         answer_widget.value = ""
         self._set_attempt_question("Attempt complete.")
         self._set_attempt_status(f"Score: {score} / {total_possible}")
@@ -830,7 +871,9 @@ class StudyQuizzesController:
         self.current_question_index = 0
         self.window.query_one("#quiz-answer-input", Input).value = ""
         self._set_attempt_question("Loaded completed attempt.")
-        self._set_attempt_status(f"Score: {attempt.get('score')} / {attempt.get('total_possible')}")
+        self._set_attempt_status(
+            f"Score: {attempt.get('score')} / {attempt.get('total_possible')}"
+        )
 
         answers_by_question_id = {
             str(answer.get("question_id")): answer
@@ -841,7 +884,9 @@ class StudyQuizzesController:
         for index, question in enumerate(list(attempt.get("questions") or []), start=1):
             question_id = str(question.get("backing_id") or question.get("id") or "")
             answer = answers_by_question_id.get(question_id, {})
-            summary_lines.append(f"{index}. {question.get('question_text') or 'Untitled question'}")
+            summary_lines.append(
+                f"{index}. {question.get('question_text') or 'Untitled question'}"
+            )
             if answer:
                 summary_lines.append(f"Answer: {answer.get('user_answer') or ''}")
                 if answer.get("correct_answer") is not None:
@@ -868,5 +913,7 @@ class StudyQuizzesController:
     def handle_scope_changed(self) -> None:
         """Reset controller-local state before scoped study data reloads."""
         self.reset_quiz_panel(
-            self._scope_unavailable_message() if not self._scope_is_available() else "Select a quiz to manage its questions."
+            self._scope_unavailable_message()
+            if not self._scope_is_available()
+            else "Select a quiz to manage its questions."
         )

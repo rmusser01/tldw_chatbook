@@ -5,10 +5,15 @@ from __future__ import annotations
 import builtins
 import importlib
 import sys
+import types
 from types import SimpleNamespace
 
 import pytest
 from loguru import logger
+from textual.app import App, ComposeResult
+
+from tldw_chatbook.Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 
 def test_splash_effect_modules_import_without_annotation_name_errors() -> None:
@@ -39,16 +44,133 @@ def test_code_scroll_splash_effect_renders_without_missing_escape_constant() -> 
     assert "tldw" in frame
 
 
-def test_random_splash_selection_skips_missing_active_card_definitions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_game_of_life_splash_effect_renders_without_missing_escape_constant() -> None:
+    """The game_of_life splash card should render a frame without a NameError.
+
+    Regression: game_of_life.py used ESCAPED_OPEN_BRACKET without importing it,
+    crashing every animation frame ("name 'ESCAPED_OPEN_BRACKET' is not defined").
+    Grid dimensions equal to the display height force the title overlay onto grid
+    rows so both escape call sites are exercised.
+    """
+    from tldw_chatbook.Utils.Splash_Screens.gaming.game_of_life import GameOfLifeEffect
+
+    effect = GameOfLifeEffect(
+        parent_widget=object(),
+        title="GoL",
+        width=10,
+        height=10,
+        display_width=20,
+        display_height=10,
+        update_interval=0.0,
+    )
+
+    frame = effect.update()
+
+    assert isinstance(frame, str)
+    assert len(frame.splitlines()) == 10
+
+
+@pytest.mark.parametrize(
+    ("module_name", "class_name", "effect_kwargs"),
+    [
+        (
+            "tldw_chatbook.Utils.Splash_Screens.gaming.tetris_block",
+            "TetrisBlockEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.gaming.maze_generator",
+            "MazeGeneratorEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.classic.pixel_dissolve",
+            "PixelDissolveEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.morphing_shape",
+            "MorphingShapeEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.dna_helix",
+            "DNAHelixEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.wave_ripple",
+            "WaveRippleEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.fireworks",
+            "FireworksEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.ascii_kaleidoscope",
+            "ASCIIKaleidoscopeEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.environmental.particle_swarm",
+            "ParticleSwarmEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.tech.mining",
+            "MiningEffect",
+            {"content": "tldw chatbook"},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.tech.circuit_board",
+            "CircuitBoardEffect",
+            {},
+        ),
+        (
+            "tldw_chatbook.Utils.Splash_Screens.tech.digital_rain",
+            "DigitalRainEffect",
+            {},
+        ),
+    ],
+)
+def test_sibling_splash_effects_render_without_missing_escape_constant(
+    module_name: str, class_name: str, effect_kwargs: dict
+) -> None:
+    """Sibling splash effects must have ESCAPED_OPEN_BRACKET bound and render frames.
+
+    Regression: these effects used ESCAPED_OPEN_BRACKET in their render paths
+    without importing it from base_effect (same bug class as game_of_life),
+    crashing whichever animation frame first reached an escape call site. The
+    module-level assertion makes that NameError class impossible even for
+    effects whose escape path only fires once time-based content appears; the
+    frame advances exercise the escape sites for effects that render styled
+    cells immediately.
+    """
+    module = importlib.import_module(module_name)
+
+    assert getattr(module, "ESCAPED_OPEN_BRACKET", None) == r"\["
+
+    effect = getattr(module, class_name)(parent_widget=object(), **effect_kwargs)
+    frame = None
+    for _ in range(3):
+        frame = effect.update()
+
+    assert isinstance(frame, str)
+
+
+def test_random_splash_selection_skips_missing_active_card_definitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Default active cards can outpace implemented card definitions."""
     from tldw_chatbook.Widgets import splash_screen
 
-    def fake_get_cli_setting(setting: str, default=None, *args, **kwargs):
-        if setting == "splash_screen":
-            return {
-                "card_selection": "random",
-                "active_cards": ["neon_sign", "default"],
-            }
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "splash_screen" and key == "card_selection":
+            return "random"
+        if section == "splash_screen" and key == "active_cards":
+            return ["neon_sign", "default"]
         return default
 
     choices: list[list[str]] = []
@@ -67,43 +189,138 @@ def test_random_splash_selection_skips_missing_active_card_definitions(monkeypat
     assert choices == [["default"]]
 
 
-def test_nltk_download_false_is_not_logged_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
+class _SplashHost(App):
+    """Minimal app host that mounts a single SplashScreen for testing."""
+
+    def __init__(self, card_name: str) -> None:
+        super().__init__()
+        self.card_name = card_name
+        self.screen_under_test: SplashScreen | None = None
+
+    def compose(self) -> ComposeResult:
+        self.screen_under_test = SplashScreen(card_name=self.card_name, duration=10.0)
+        yield self.screen_under_test
+
+
+@pytest.fixture(autouse=True)
+def _isolate_splash_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep splash screen config loading away from the developer's config file."""
+    from tldw_chatbook.Widgets import splash_screen
+
+    monkeypatch.setattr(splash_screen, "get_cli_setting", lambda _setting, default=None, *_args, **_kwargs: default)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "card_name",
+    [
+        name
+        for name, data in get_all_card_definitions().items()
+        if data.get("type") == "animated"
+    ],
+)
+async def test_animated_splash_card_starts_animation(card_name: str) -> None:
+    """Every animated card must instantiate its effect and start its timer.
+
+    Regression: several card definitions passed art-name keys that did not
+    match the effect constructors (e.g. ``background_art_name`` instead of
+    ``background_content``), causing ``SplashScreen`` to fall back to a static
+    image and silently skip the animation.
+    """
+    app = _SplashHost(card_name)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        screen = app.screen_under_test
+        assert screen is not None
+        assert screen.effect_handler is not None, f"{card_name}: effect handler was not created"
+        assert screen.animation_timer is not None, f"{card_name}: animation timer was not started"
+        screen.close()
+
+
+def test_nltk_download_false_is_not_logged_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tldw_chatbook.Chunking import Chunk_Lib
 
+    # `nltk` is an OPTIONAL extra (chunker/websearch). Forcing NLTK_AVAILABLE
+    # below is not enough on its own: `_ensure_nltk()` still does a real
+    # `import nltk`, so without the package it returns early and never reaches
+    # the warning under test -- which surfaces as "no WARNING was logged" and
+    # reads exactly like the production warning having been deleted. It cost a
+    # wrong root-cause once (task-1261); stub the module so this test asserts
+    # our logic, not which extras happen to be installed.
+    #
+    # The stub only has to satisfy the import: `_probe_sent_tokenize` is
+    # stubbed to False below, so this tokenizer is never actually called.
+    fake_nltk = types.ModuleType("nltk")
+    fake_tokenize = types.ModuleType("nltk.tokenize")
+    fake_tokenize.sent_tokenize = lambda text, **kwargs: [text]
+    fake_nltk.tokenize = fake_tokenize
+    fake_nltk.download = lambda *args, **kwargs: False
+    monkeypatch.setitem(sys.modules, "nltk", fake_nltk)
+    monkeypatch.setitem(sys.modules, "nltk.tokenize", fake_tokenize)
+
     messages: list[tuple[str, str]] = []
-    sink_id = logger.add(lambda message: messages.append((message.record["level"].name, message.record["message"])))
-    try:
-        def mock_find(_path):
-            raise LookupError("missing")
-
-        fake_nltk = SimpleNamespace(
-            data=SimpleNamespace(find=mock_find),
-            download=lambda _package: False,
+    sink_id = logger.add(
+        lambda message: messages.append(
+            (message.record["level"].name, message.record["message"])
         )
-
+    )
+    try:
+        # A failed download must be reported as a failure. Readiness is decided
+        # by whether the tokenizer TOKENIZES (a probe), not by whether a named
+        # resource is on disk -- nltk >= 3.9 needs 'punkt_tab' while the old
+        # check asked for 'punkt', so a machine with only 'punkt' was reported
+        # ready and still raised on the next call (task-842). Failing the probe
+        # is therefore how "the data is unusable" is expressed here.
         monkeypatch.setattr(Chunk_Lib, "NLTK_AVAILABLE", True)
-        monkeypatch.setattr(Chunk_Lib, "nltk", fake_nltk)
+        monkeypatch.setattr(Chunk_Lib, "nltk", None)
+        monkeypatch.setattr(Chunk_Lib, "_probe_sent_tokenize", lambda _tokenize: False)
+        monkeypatch.setattr(
+            Chunk_Lib, "_download_nltk_tokenizer_corpora", lambda _nltk: None
+        )
+        # Both gates are idempotence latches; reset them so this test exercises
+        # the real path regardless of whether an earlier test warmed the
+        # tokenizer in this process.
+        monkeypatch.setattr(Chunk_Lib, "_nltk_data_ready", False)
+        monkeypatch.setattr(Chunk_Lib, "_nltk_tokenizer_unusable", False)
 
         Chunk_Lib.ensure_nltk_data()
+
+        assert Chunk_Lib._nltk_data_ready is False, (
+            "unusable tokenizer data was reported ready"
+        )
     finally:
         logger.remove(sink_id)
 
     assert not any("downloaded successfully" in message for _level, message in messages)
-    assert any(level in {"WARNING", "ERROR"} and "punkt" in message for level, message in messages)
+    assert any(
+        level in {"WARNING", "ERROR"} and "punkt" in message
+        for level, message in messages
+    )
 
 
-def test_missing_openai_tts_mapping_falls_back_without_error_logs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_openai_tts_mapping_falls_back_without_error_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from importlib import resources as importlib_resources
     from tldw_chatbook import config
 
     messages: list[tuple[str, str]] = []
-    sink_id = logger.add(lambda message: messages.append((message.record["level"].name, message.record["message"])))
+    sink_id = logger.add(
+        lambda message: messages.append(
+            (message.record["level"].name, message.record["message"])
+        )
+    )
     original_open = builtins.open
     try:
         monkeypatch.setattr(
             importlib_resources,
             "files",
-            lambda _package: (_ for _ in ()).throw(FileNotFoundError("packaged mapping missing")),
+            lambda _package: (_ for _ in ()).throw(
+                FileNotFoundError("packaged mapping missing")
+            ),
         )
 
         def fake_open(path, *args, **kwargs):

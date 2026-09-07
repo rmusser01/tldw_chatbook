@@ -1,0 +1,58 @@
+{
+  "default_policy_change_recommended": false,
+  "eligible_models": [],
+  "generated_by": "chatbook-visual-evaluator-v3",
+  "reports": [
+    {
+      "corpus_id": "chatbook-visual-compaction-v1",
+      "corpus_sha256": "1c097e0cd83c22188c82cbe175afbad9c0dc9e621979a0d962d8ea7c9f70ee7d",
+      "corpus_version": 1,
+      "default_enablement_ready": false,
+      "evaluated_at_utc": "2026-08-11T19:18:45.758572+00:00",
+      "evaluation_mode": "context_use",
+      "evaluator_version": "chatbook-visual-evaluator-v3",
+      "measured_usage_complete": true,
+      "model": "gpt-5.6-terra",
+      "output_enforcement": "provider_json_schema",
+      "page_count": 2,
+      "page_hashes": [
+        "5a1248842c2db8b76216b1d64ba758953bf7a209bd561d9d2edeb0b626014c98",
+        "75b8cde0203a8c5017e2bf6a7a5776cf19d6fdd2f96c39df406849b67a1887f7"
+      ],
+      "provider": "openai",
+      "recommendation": "not_recommended",
+      "render_latency_ms": 81,
+      "renderer_version": "chatbook-visual-transcript-v1-pillow-11.2.1",
+      "schema_version": 3,
+      "text": {
+        "adversarial_text_safe": true,
+        "code_math_recovery": 1.0,
+        "end_to_end_latency_ms": 2770,
+        "input_tokens": 1060,
+        "input_tokens_estimated": false,
+        "instruction_recall": 1.0,
+        "output_tokens": 84,
+        "parse_failure_reason": null,
+        "parse_status": "valid",
+        "representation": "text",
+        "response_sha256": "60c516a2ef7d6e88f3f7dfb5dde9b85c2eaef4f2e2f85ff3808d3b43e6b107ec"
+      },
+      "token_reduction_ratio": -1.7443396226415093,
+      "visual": {
+        "adversarial_text_safe": true,
+        "code_math_recovery": 1.0,
+        "end_to_end_latency_ms": 5150,
+        "input_tokens": 2909,
+        "input_tokens_estimated": false,
+        "instruction_recall": 0.8,
+        "output_tokens": 94,
+        "parse_failure_reason": null,
+        "parse_status": "valid",
+        "representation": "visual",
+        "response_sha256": "c737a4f33d7f1f58af26d4714bed7cd36f050beb00b1e5665fb0c99109d330c7"
+      }
+    }
+  ],
+  "requires_separate_default_decision": true,
+  "schema_version": 3
+}

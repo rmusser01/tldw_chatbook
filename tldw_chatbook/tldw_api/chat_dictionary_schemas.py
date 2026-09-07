@@ -40,7 +40,7 @@ class DictionaryEntryCreateRequest(BaseModel):
     max_replacements: int = 0
     type: DictionaryEntryType = "literal"
     enabled: bool = True
-    case_sensitive: bool = True
+    case_sensitive: bool = False
 
 
 class DictionaryEntryUpdateRequest(BaseModel):

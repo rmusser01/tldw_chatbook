@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.Sync_Interop.sync_profile_status_state import SyncProfileStatusDisplay
+from tldw_chatbook.Sync_Interop.sync_profile_status_state import (
+    SyncProfileStatusDisplay,
+)
 
 
 def _summary(
@@ -35,7 +37,11 @@ def _summary(
             "dispatched": dispatched,
             "by_domain": {"notes": {"pending": pending, "dispatched": dispatched}},
         },
-        "identity_map": {"total": 3, "confirmed": 3, "by_domain": {"notes": {"confirmed": 3}}},
+        "identity_map": {
+            "total": 3,
+            "confirmed": 3,
+            "by_domain": {"notes": {"confirmed": 3}},
+        },
         "conflicts": {"count": conflicts, "latest": []},
         "last_mirror_report": None,
     }
@@ -60,7 +66,10 @@ def test_not_configured_summary_maps_to_local_safe_copy() -> None:
     assert display.detail == (
         "No Sync v2 server profile is configured. Local Library data stays on this device."
     )
-    assert display.read_only_notice == "This view only reads sync state; it does not start sync."
+    assert (
+        display.read_only_notice
+        == "This view only reads sync state; it does not start sync."
+    )
 
 
 def test_server_frontend_summary_maps_to_live_frontend_copy() -> None:
@@ -78,7 +87,9 @@ def test_server_frontend_summary_maps_to_live_frontend_copy() -> None:
 
 
 def test_pending_summary_includes_outbox_count_without_implying_write_action() -> None:
-    display = SyncProfileStatusDisplay.from_summary(_summary(status="pending", pending=2))
+    display = SyncProfileStatusDisplay.from_summary(
+        _summary(status="pending", pending=2)
+    )
 
     assert display.severity == "pending"
     assert display.label == "Sync profile: pending local changes"

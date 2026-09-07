@@ -1,0 +1,771 @@
+{
+  "commit": "597048d9a920592808d7d4e2acd7b9c4596a143a",
+  "packages": [
+    {
+      "artifact_id": "audio-cpp-dramabox-q8-0",
+      "files": [
+        {
+          "managed_path": "dramabox-q8_0.gguf",
+          "sha256": "75e7e80fc748defb188cb902c34c62bc12539a7bba477215dccf59a7218a451e",
+          "size_bytes": 18942803808,
+          "source_path": "DramaBox-GGUF/dramabox-q8_0.gguf"
+        }
+      ],
+      "license_id": "LTX-2 Community License",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "dramabox_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.dramabox.dramabox_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-fish-audio-s2-pro-bf16",
+      "files": [
+        {
+          "managed_path": "fish-audio-s2-pro-bf16.gguf",
+          "sha256": "781fdece3ff837838c48f7d5a7b37e37c4d661a6416416ad57fe92fed47d96ff",
+          "size_bytes": 10229278080,
+          "source_path": "Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-bf16.gguf"
+        }
+      ],
+      "license_id": "Fish Audio Research License",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "fish_audio_s2_pro_bf16",
+      "recipe_id": "audio-cpp-0.5.1.fish_audio.fish_audio_s2_pro_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-fish-audio-s2-pro-q8-0",
+      "files": [
+        {
+          "managed_path": "fish-audio-s2-pro-q8_0.gguf",
+          "sha256": "4ffc169447b7a26df8bf49e8637adb4000bfa763a22c018b6c03968564259d0b",
+          "size_bytes": 6317911232,
+          "source_path": "Fish-Audio-S2-Pro-GGUF/fish-audio-s2-pro-q8_0.gguf"
+        }
+      ],
+      "license_id": "Fish Audio Research License",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "fish_audio_s2_pro_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.fish_audio.fish_audio_s2_pro_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-higgs-audio-tts-4b-bf16",
+      "files": [
+        {
+          "managed_path": "higgs-audio-v3-tts-4b-bf16.gguf",
+          "sha256": "2c04410d9ae6af9a48ce989c1b6d7dfaa0320c8e09ff7da8d3e04b8d9b0669dc",
+          "size_bytes": 8501587648,
+          "source_path": "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-bf16.gguf"
+        }
+      ],
+      "license_id": "Boson Higgs TTS 3 Research and Non-Commercial License",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "higgs_audio_tts_4b_bf16",
+      "recipe_id": "audio-cpp-0.5.1.higgs_audio_tts.higgs_audio_tts_4b_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-higgs-audio-tts-4b-q8-0",
+      "files": [
+        {
+          "managed_path": "higgs-audio-v3-tts-4b-q8_0.gguf",
+          "sha256": "79746822045b5bf8f9ab2bda87b16cd3f8ea3d9e319cbcf887a87aa1b537a74a",
+          "size_bytes": 5095354048,
+          "source_path": "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf"
+        }
+      ],
+      "license_id": "Boson Higgs TTS 3 Research and Non-Commercial License",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "higgs_audio_tts_4b_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.higgs_audio_tts.higgs_audio_tts_4b_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-index-tts2-f16",
+      "files": [
+        {
+          "managed_path": "index-tts2-f16.gguf",
+          "sha256": "0f7b95d3d32e18bf9352912a7b21a0bd4a8406853a0aaa2c9180f77389c21523",
+          "size_bytes": 4646898304,
+          "source_path": "IndexTTS2-GGUF/index-tts2-f16.gguf"
+        }
+      ],
+      "license_id": "bilibili Model Use License Agreement",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "index_tts2_f16",
+      "recipe_id": "audio-cpp-0.5.1.index_tts2.index_tts2_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-index-tts2-orig",
+      "files": [
+        {
+          "managed_path": "index-tts2-orig.gguf",
+          "sha256": "c96cb948339b7169b7240f43dbd42ad6354ae3d0a22465e292ec8e090c338e16",
+          "size_bytes": 8084552000,
+          "source_path": "IndexTTS2-GGUF/index-tts2-orig.gguf"
+        }
+      ],
+      "license_id": "bilibili Model Use License Agreement",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "index_tts2_orig",
+      "recipe_id": "audio-cpp-0.5.1.index_tts2.index_tts2_orig",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-index-tts2-q8-0",
+      "files": [
+        {
+          "managed_path": "index-tts2-q8_0.gguf",
+          "sha256": "f9be73ac5b6cbdc5f603f04dcb6c9fe37b3a301a365a1ea8d580d3ef7ba22e8e",
+          "size_bytes": 3633888608,
+          "source_path": "IndexTTS2-GGUF/index-tts2-q8_0.gguf"
+        }
+      ],
+      "license_id": "bilibili Model Use License Agreement",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "index_tts2_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.index_tts2.index_tts2_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-inflect-micro-v2-orig",
+      "files": [
+        {
+          "managed_path": "inflect-micro-v2-orig.gguf",
+          "sha256": "d4af1cb6a92cdd8be550e8e7c25805ece222ec0f8e75daf26fc00b4e04ef4b03",
+          "size_bytes": 72082176,
+          "source_path": "Inflect-Micro-v2-GGUF/inflect-micro-v2-orig.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "inflect_micro_v2_orig",
+      "recipe_id": "audio-cpp-0.5.1.inflect_v2.inflect_micro_v2_orig",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-irodori-tts-500m-v3-f16",
+      "files": [
+        {
+          "managed_path": "irodori-tts-500m-v3-f16.gguf",
+          "sha256": "24c5d7224c056dd9464c30214067369b0b6e8cb28646e6eda3f41bd8bad332b7",
+          "size_bytes": 1254813120,
+          "source_path": "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-f16.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "irodori_tts_500m_v3_f16",
+      "recipe_id": "audio-cpp-0.5.1.irodori_tts.irodori_tts_500m_v3_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-irodori-tts-500m-v3-q8-0",
+      "files": [
+        {
+          "managed_path": "irodori-tts-500m-v3-q8_0.gguf",
+          "sha256": "4849d69925732232c3f72dedb5d5ae18808b1ca93f5709575829bfbca32a036f",
+          "size_bytes": 1093739584,
+          "source_path": "Irodori-TTS-500M-v3-GGUF/irodori-tts-500m-v3-q8_0.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "irodori_tts_500m_v3_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.irodori_tts.irodori_tts_500m_v3_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-irodori-tts-600m-v3-voicedesign-f16",
+      "files": [
+        {
+          "managed_path": "irodori-tts-600m-v3-voicedesign-f16.gguf",
+          "sha256": "0c40eb114abd94a26270c43f0498c2295df510beab366bc4a5345f1b50820b8c",
+          "size_bytes": 1463787680,
+          "source_path": "Irodori-TTS-600M-v3-VoiceDesign-GGUF/irodori-tts-600m-v3-voicedesign-f16.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "irodori_tts_600m_v3_voicedesign_f16",
+      "recipe_id": "audio-cpp-0.5.1.irodori_tts.irodori_tts_600m_v3_voicedesign_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-irodori-tts-600m-v3-voicedesign-q8-0",
+      "files": [
+        {
+          "managed_path": "irodori-tts-600m-v3-voicedesign-q8_0.gguf",
+          "sha256": "9f8c305fcf9a79d9afc1bdd9b030934822f6d66e58e93ad92553e712ceb057b5",
+          "size_bytes": 1272140064,
+          "source_path": "Irodori-TTS-600M-v3-VoiceDesign-GGUF/irodori-tts-600m-v3-voicedesign-q8_0.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "irodori_tts_600m_v3_voicedesign_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.irodori_tts.irodori_tts_600m_v3_voicedesign_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-irodori-tts-v4-small-f16",
+      "files": [
+        {
+          "managed_path": "irodori-tts-v4-small-f16.gguf",
+          "sha256": "4c30f25aaeb7c273194ee11e25c2ca3e7abde4c09dba8d86b1727528a57bfdd8",
+          "size_bytes": 1762148352,
+          "source_path": "Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-f16.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "irodori_tts_v4_small_f16",
+      "recipe_id": "audio-cpp-0.5.1.irodori_tts.irodori_tts_v4_small_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-irodori-tts-v4-small-q8-0",
+      "files": [
+        {
+          "managed_path": "irodori-tts-v4-small-q8_0.gguf",
+          "sha256": "0f1b96a1608f0a15ef2289e4d23f37c121cb8db3da702d1d5c4c2455b2437190",
+          "size_bytes": 1368991360,
+          "source_path": "Irodori-TTS-v4-Small-GGUF/irodori-tts-v4-small-q8_0.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "irodori_tts_v4_small_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.irodori_tts.irodori_tts_v4_small_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-moss-tts-local-v1-5-bf16",
+      "files": [
+        {
+          "managed_path": "moss-tts-local-v1.5-bf16.gguf",
+          "sha256": "9ff6c86f3d4cfbd227cc1b7618e3e016aaa129686f9939fe422a49e0e7369415",
+          "size_bytes": 13367797280,
+          "source_path": "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-bf16.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "moss_tts_local_v1_5_bf16",
+      "recipe_id": "audio-cpp-0.5.1.moss_tts_local.moss_tts_local_v1_5_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-moss-tts-local-v1-5-q8-0",
+      "files": [
+        {
+          "managed_path": "moss-tts-local-v1.5-q8_0.gguf",
+          "sha256": "ce2d34f73274dcb1e314e884edf6644b74618b99a2ae3256cc4f7b42f59308ea",
+          "size_bytes": 7512220768,
+          "source_path": "MOSS-TTS-Local-v1.5-GGUF/moss-tts-local-v1.5-q8_0.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "moss_tts_local_v1_5_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.moss_tts_local.moss_tts_local_v1_5_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-moss-tts-nano-100m-bf16",
+      "files": [
+        {
+          "managed_path": "moss-tts-nano-100m-bf16.gguf",
+          "sha256": "249a7eb9a8ae2e919946971e8270960f6657c0fbc06c5c7c4929b94af83ade0b",
+          "size_bytes": 332423040,
+          "source_path": "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-bf16.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "moss_tts_nano_100m_bf16",
+      "recipe_id": "audio-cpp-0.5.1.moss_tts_nano.moss_tts_nano_100m_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-moss-tts-nano-100m-q8-0",
+      "files": [
+        {
+          "managed_path": "moss-tts-nano-100m-q8_0.gguf",
+          "sha256": "3b9c138ce4093514b6493b77abaf3e62f4d2ac58412616d2f7ee89cca28be388",
+          "size_bytes": 193337984,
+          "source_path": "MOSS-TTS-Nano-100M-GGUF/moss-tts-nano-100m-q8_0.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "moss_tts_nano_100m_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.moss_tts_nano.moss_tts_nano_100m_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-omnivoice-bf16",
+      "files": [
+        {
+          "managed_path": "omnivoice-bf16.gguf",
+          "sha256": "7301a41a0a5a2cb04430c1831a705e3906bfca51562c5cdb2f30a90d505a819c",
+          "size_bytes": 1639548640,
+          "source_path": "OmniVoice-GGUF/omnivoice-bf16.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "omnivoice_bf16",
+      "recipe_id": "audio-cpp-0.5.1.omnivoice.omnivoice_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-omnivoice-f16",
+      "files": [
+        {
+          "managed_path": "omnivoice-f16.gguf",
+          "sha256": "7421b6c387351d2cdce7eb8b931fa279739d628ef25acd4ff2062a70e6e1ab63",
+          "size_bytes": 1639548768,
+          "source_path": "OmniVoice-GGUF/omnivoice-f16.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "omnivoice_f16",
+      "recipe_id": "audio-cpp-0.5.1.omnivoice.omnivoice_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-omnivoice-q8-0",
+      "files": [
+        {
+          "managed_path": "omnivoice-q8_0.gguf",
+          "sha256": "2f4be637278043c6842de5b85d681532030e9eb6ffe0f8b0e320f68238e3da8b",
+          "size_bytes": 1350288416,
+          "source_path": "OmniVoice-GGUF/omnivoice-q8_0.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "omnivoice_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.omnivoice.omnivoice_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-english-bf16",
+      "files": [
+        {
+          "managed_path": "pocket-tts-english-bf16.gguf",
+          "sha256": "267e774a671138c4ebbc1d6d9d73af92f4a8e83a64b45b84f3457ac700ad0cc9",
+          "size_bytes": 219096064,
+          "source_path": "PocketTTS-GGUF/english/pocket-tts-english-bf16.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_english_bf16",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_english_bf16",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-english-q8-0",
+      "files": [
+        {
+          "managed_path": "pocket-tts-english-q8_0.gguf",
+          "sha256": "0315406421d515d9ffbde49ed998832ff2962562ef8abde440c85fa0a27d8b2a",
+          "size_bytes": 127856704,
+          "source_path": "PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_english_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_english_q8_0",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-german-bf16",
+      "files": [
+        {
+          "managed_path": "pocket-tts-german-bf16.gguf",
+          "sha256": "56a8629fd63dac650c0b19873ee49bde92a8151c044ab8600548ae21dee6f7af",
+          "size_bytes": 219096544,
+          "source_path": "PocketTTS-GGUF/german/pocket-tts-german-bf16.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_german_bf16",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_german_bf16",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-german-q8-0",
+      "files": [
+        {
+          "managed_path": "pocket-tts-german-q8_0.gguf",
+          "sha256": "aec1d5037cf9ecb9a81937075b9046ba89f2be4ff1741dbf26e0a65a0348831d",
+          "size_bytes": 127857184,
+          "source_path": "PocketTTS-GGUF/german/pocket-tts-german-q8_0.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_german_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_german_q8_0",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-italian-bf16",
+      "files": [
+        {
+          "managed_path": "pocket-tts-italian-bf16.gguf",
+          "sha256": "fd8b0fe5406d378548f0dc259f7ae7ff632a524d6e9bfa50d841bdc01819a1ee",
+          "size_bytes": 219096800,
+          "source_path": "PocketTTS-GGUF/italian/pocket-tts-italian-bf16.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_italian_bf16",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_italian_bf16",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-italian-q8-0",
+      "files": [
+        {
+          "managed_path": "pocket-tts-italian-q8_0.gguf",
+          "sha256": "67945665b5c303e53d8de17b3589b2f24e8c14314aa215b9748da3a3d0b4d35c",
+          "size_bytes": 127857440,
+          "source_path": "PocketTTS-GGUF/italian/pocket-tts-italian-q8_0.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_italian_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_italian_q8_0",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-portuguese-bf16",
+      "files": [
+        {
+          "managed_path": "pocket-tts-portuguese-bf16.gguf",
+          "sha256": "ce0e6c26400f22c4419a89cce4bd0ab1b5f188dc21e7519966958749a5e03889",
+          "size_bytes": 219097728,
+          "source_path": "PocketTTS-GGUF/portuguese/pocket-tts-portuguese-bf16.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_portuguese_bf16",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_portuguese_bf16",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-portuguese-q8-0",
+      "files": [
+        {
+          "managed_path": "pocket-tts-portuguese-q8_0.gguf",
+          "sha256": "5714e9b9886176d2df510ba0f138ca10c98a24511b5a1e7178b980ace20fd83d",
+          "size_bytes": 127858368,
+          "source_path": "PocketTTS-GGUF/portuguese/pocket-tts-portuguese-q8_0.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_portuguese_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_portuguese_q8_0",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-spanish-bf16",
+      "files": [
+        {
+          "managed_path": "pocket-tts-spanish-bf16.gguf",
+          "sha256": "cef113cfc7719e1d63b6987c9049b4af5cd2a3dbad406482a819156d005b3466",
+          "size_bytes": 219097600,
+          "source_path": "PocketTTS-GGUF/spanish/pocket-tts-spanish-bf16.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_spanish_bf16",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_spanish_bf16",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-pocket-tts-spanish-q8-0",
+      "files": [
+        {
+          "managed_path": "pocket-tts-spanish-q8_0.gguf",
+          "sha256": "73f0e8fd85472057289b0ae6098be473a5d112cc01b0ecb17f423198bcf445e1",
+          "size_bytes": 127858240,
+          "source_path": "PocketTTS-GGUF/spanish/pocket-tts-spanish-q8_0.gguf"
+        }
+      ],
+      "license_id": "CC-BY-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "pocket_tts_spanish_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.pocket_tts.pocket_tts_spanish_q8_0",
+      "recipe_revision": 2,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-qwen3-tts-1-7b-base-bf16",
+      "files": [
+        {
+          "managed_path": "qwen3-tts-12hz-1.7b-base-bf16.gguf",
+          "sha256": "f5cf4c37b969335e0ffb657119e52025e26192553119590d59fa17b8d36e8b29",
+          "size_bytes": 4203158464,
+          "source_path": "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-bf16.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "qwen3_tts_1_7b_base_bf16",
+      "recipe_id": "audio-cpp-0.5.1.qwen3_tts.qwen3_tts_1_7b_base_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-qwen3-tts-1-7b-base-orig",
+      "files": [
+        {
+          "managed_path": "qwen3-tts-12hz-1.7b-base-orig.gguf",
+          "sha256": "7ab774d56ab9ed9ee7d0ae50917798cda23c7bcc11eaa6c3a4ae32068718b1c1",
+          "size_bytes": 4544273280,
+          "source_path": "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-orig.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "qwen3_tts_1_7b_base_orig",
+      "recipe_id": "audio-cpp-0.5.1.qwen3_tts.qwen3_tts_1_7b_base_orig",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-qwen3-tts-1-7b-base-q8-0",
+      "files": [
+        {
+          "managed_path": "qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+          "sha256": "b55e06c7890d43c208d15aed8b4ed3f18215f295e47d5960e061b15bff338ab0",
+          "size_bytes": 2695175104,
+          "source_path": "Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "qwen3_tts_1_7b_base_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.qwen3_tts.qwen3_tts_1_7b_base_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-supertonic-3-f16",
+      "files": [
+        {
+          "managed_path": "supertonic-3-f16.gguf",
+          "sha256": "b312b57797d40ac5c09d915893dbdbaf6405b7dc043f544776c5c95712dff88c",
+          "size_bytes": 312784196,
+          "source_path": "Supertonic-3-GGUF/supertonic-3-f16.gguf"
+        }
+      ],
+      "license_id": "BigScience Open RAIL-M",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "supertonic_3_f16",
+      "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-supertonic-3-orig",
+      "files": [
+        {
+          "managed_path": "supertonic-3-orig.gguf",
+          "sha256": "af814486a0bc9513fb36afabd9b1155ad14fb2c36a107ac6ffe62ea9adafb662",
+          "size_bytes": 454072836,
+          "source_path": "Supertonic-3-GGUF/supertonic-3-orig.gguf"
+        }
+      ],
+      "license_id": "BigScience Open RAIL-M",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "supertonic_3_orig",
+      "recipe_id": "audio-cpp-0.5.1.supertonic.supertonic_3_orig",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-vevo2-f16",
+      "files": [
+        {
+          "managed_path": "vevo2-f16.gguf",
+          "sha256": "4ae1026b9324882c79deeab683fb5ae6f307b33b82a08623f3b6f3ee014796db",
+          "size_bytes": 5021112128,
+          "source_path": "Vevo2-GGUF/vevo2-f16.gguf"
+        }
+      ],
+      "license_id": "CC-BY-NC-ND-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "vevo2_f16",
+      "recipe_id": "audio-cpp-0.5.1.vevo2.vevo2_f16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-vevo2-orig",
+      "files": [
+        {
+          "managed_path": "vevo2-orig.gguf",
+          "sha256": "8f4d678b08faba711251905c032379a9f763fff942454739f407b3dc07ddc606",
+          "size_bytes": 7449615488,
+          "source_path": "Vevo2-GGUF/vevo2-orig.gguf"
+        }
+      ],
+      "license_id": "CC-BY-NC-ND-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "vevo2_orig",
+      "recipe_id": "audio-cpp-0.5.1.vevo2.vevo2_orig",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-vevo2-q8-0",
+      "files": [
+        {
+          "managed_path": "vevo2-q8_0.gguf",
+          "sha256": "f80a70facaaecfcf1aa417ef16ef091318c5e789b24c16a741233c64a72fcee8",
+          "size_bytes": 3242124800,
+          "source_path": "Vevo2-GGUF/vevo2-q8_0.gguf"
+        }
+      ],
+      "license_id": "CC-BY-NC-ND-4.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "vevo2_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.vevo2.vevo2_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-vibevoice-1-5b-bf16",
+      "files": [
+        {
+          "managed_path": "vibevoice-1.5b-bf16.gguf",
+          "sha256": "9f4837d2153e73b4d3154ecab75eb451d5e05d847f56a334db0e1f2774811fff",
+          "size_bytes": 5420021858,
+          "source_path": "VibeVoice-1.5B-GGUF/vibevoice-1.5b-bf16.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "vibevoice_1_5b_bf16",
+      "recipe_id": "audio-cpp-0.5.1.vibevoice.vibevoice_1_5b_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-vibevoice-1-5b-q8-0",
+      "files": [
+        {
+          "managed_path": "vibevoice-1.5b-q8_0.gguf",
+          "sha256": "b6b7cce33bcf656daee03dab8bf94c29eba6f58ffa4481e61e86325466f711f3",
+          "size_bytes": 3224701538,
+          "source_path": "VibeVoice-1.5B-GGUF/vibevoice-1.5b-q8_0.gguf"
+        }
+      ],
+      "license_id": "MIT",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "vibevoice_1_5b_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.vibevoice.vibevoice_1_5b_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-voxcpm2-bf16",
+      "files": [
+        {
+          "managed_path": "voxcpm2-bf16.gguf",
+          "sha256": "0c0cd2515c7a1145c0ddba06c871724656c36cb53ee3b0118116b34cb4153699",
+          "size_bytes": 4772288288,
+          "source_path": "VoxCPM2-GGUF/voxcpm2-bf16.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "voxcpm2_bf16",
+      "recipe_id": "audio-cpp-0.5.1.voxcpm2.voxcpm2_bf16",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-voxcpm2-orig",
+      "files": [
+        {
+          "managed_path": "voxcpm2-orig.gguf",
+          "sha256": "13181e01e15d555c9eae7779626eb395c69334f15e948c9ea265ddf37ab50b16",
+          "size_bytes": 4960716192,
+          "source_path": "VoxCPM2-GGUF/voxcpm2-orig.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "voxcpm2_orig",
+      "recipe_id": "audio-cpp-0.5.1.voxcpm2.voxcpm2_orig",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    },
+    {
+      "artifact_id": "audio-cpp-voxcpm2-q8-0",
+      "files": [
+        {
+          "managed_path": "voxcpm2-q8_0.gguf",
+          "sha256": "c8e01ab4416011e12a28f24ede298a1aa5ce64b43f8e8aaad53b1e2fe7c96432",
+          "size_bytes": 2955000480,
+          "source_path": "VoxCPM2-GGUF/voxcpm2-q8_0.gguf"
+        }
+      ],
+      "license_id": "Apache-2.0",
+      "license_url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/blob/597048d9a920592808d7d4e2acd7b9c4596a143a/README.md",
+      "package_variant": "voxcpm2_q8_0",
+      "recipe_id": "audio-cpp-0.5.1.voxcpm2.voxcpm2_q8_0",
+      "recipe_revision": 1,
+      "usage_notice": "Converted weights are provided as-is; review the original model license and validate the exact file, backend, and route before use."
+    }
+  ],
+  "repository": "audio-cpp/audio.cpp-gguf"
+}

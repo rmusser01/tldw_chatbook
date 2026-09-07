@@ -1,95 +1,29 @@
 # __init__.py
 # Subscriptions module - Content subscription and monitoring system
 #
-# This module provides comprehensive subscription management including:
+# This module provides subscription management including:
 # - RSS/Atom feed monitoring
 # - URL change detection
-# - Automated content ingestion
-# - LLM analysis integration
-# - Briefing generation
 # - Security features (XXE/SSRF protection)
 #
-
-# Try importing dependencies - some may be optional
-try:
-    from .monitoring_engine import FeedMonitor, URLMonitor, RateLimiter, CircuitBreaker, ContentExtractor
-    from .security import SecurityValidator, SSRFProtector, CredentialEncryptor, InputValidator
-    from .scheduler import SubscriptionScheduler, TextualSchedulerWorker, create_scheduler
-    from .content_processor import ContentProcessor, KeywordExtractor, ContentSummarizer
-    _CORE_AVAILABLE = True
-except ImportError:
-    _CORE_AVAILABLE = False
-
-# These require optional dependencies
-try:
-    from .briefing_generator import BriefingGenerator, BriefingSchedule
-    _BRIEFING_AVAILABLE = True
-except ImportError:
-    BriefingGenerator = None
-    BriefingSchedule = None
-    _BRIEFING_AVAILABLE = False
+# LLM analysis of fetched items was removed in TASK-1220 along with
+# ContentProcessor: its only caller went with the retired ingest pipeline in
+# TASK-1211, leaving it unreachable while Settings still advertised its five
+# prompts as customizable.
+#
+# Scheduling (ADR-019, TASK-1211):
+# Watchlist checks run on the unified scheduler
+# (tldw_chatbook.Scheduling.scheduler.loop.SchedulerLoop) via WatchlistCheckHandler,
+# which delegates to monitoring_engine below. The legacy SubscriptionScheduler,
+# SubscriptionSchedulerWorker and the briefing subsystem they drove have been
+# removed -- they were unreachable, and the dual-run this package's deprecation
+# notice described was never implemented.
+#
 
 from .local_watchlists_service import LocalWatchlistsService
 from .server_watchlists_service import ServerWatchlistsService
 from .watchlist_normalizers import (
     build_watchlist_item_id,
-    normalize_local_subscription_row,
-    normalize_server_watchlist_source,
-)
-from .watchlist_scope_service import WatchlistBackend, WatchlistScopeService
-
-__all__ = []
-
-if _CORE_AVAILABLE:
-    __all__.extend([
-        # Monitoring
-        'FeedMonitor',
-        'URLMonitor', 
-        'RateLimiter',
-        'CircuitBreaker',
-        'ContentExtractor',
-        
-        # Security
-        'SecurityValidator',
-        'SSRFProtector',
-        'CredentialEncryptor',
-        'InputValidator',
-        
-        # Scheduling
-        'SubscriptionScheduler',
-        'TextualSchedulerWorker',
-        'create_scheduler',
-        
-        # Content Processing
-        'ContentProcessor',
-        'KeywordExtractor',
-        'ContentSummarizer',
-    ])
-
-if _BRIEFING_AVAILABLE:
-    __all__.extend([
-        # Briefing Generation
-        'BriefingGenerator',
-        'BriefingSchedule',
-    ])
-
-__all__.extend([
-    "LocalWatchlistsService",
-    "ServerWatchlistsService",
-    "WatchlistBackend",
-    "WatchlistScopeService",
-    "build_watchlist_item_id",
-    "normalize_local_subscription_row",
-    "normalize_server_watchlist_source",
-])
-
-# Version info
-__version__ = '1.0.0'
-__author__ = 'TLDW ChatBook Team'
-
-from .local_watchlists_service import LocalWatchlistsService
-from .server_watchlists_service import ServerWatchlistsService
-from .watchlist_normalizers import (
     normalize_local_subscription_row,
     normalize_server_delete_response,
     normalize_server_watchlist_source,
@@ -98,14 +32,60 @@ from .watchlist_normalizers import (
 )
 from .watchlist_scope_service import WatchlistBackend, WatchlistScopeService
 
-__all__.extend([
-    "LocalWatchlistsService",
-    "ServerWatchlistsService",
-    "WatchlistBackend",
-    "WatchlistScopeService",
-    "normalize_local_subscription_row",
-    "normalize_server_delete_response",
-    "normalize_server_watchlist_source",
-    "normalize_watchlist_alert_rule",
-    "normalize_watchlist_run",
-])
+# Optional core subsystems (feed/URL monitoring, security, content processing).
+# These are re-exported when available; noqa is needed because ruff cannot
+# resolve the dynamic __all__ entries guarded by _CORE_AVAILABLE.
+try:  # noqa: SIM105
+    from .monitoring_engine import (  # noqa: F401
+        FeedMonitor,
+        URLMonitor,
+        RateLimiter,
+        CircuitBreaker,
+        ContentExtractor,
+    )
+    from .security import (  # noqa: F401
+        SecurityValidator,
+        SSRFProtector,
+        CredentialEncryptor,
+        InputValidator,
+    )
+    _CORE_AVAILABLE = True
+except ImportError:
+    _CORE_AVAILABLE = False
+
+__all__ = (
+    (
+        [
+            # Monitoring
+            "FeedMonitor",
+            "URLMonitor",
+            "RateLimiter",
+            "CircuitBreaker",
+            "ContentExtractor",
+            # Security
+            "SecurityValidator",
+            "SSRFProtector",
+            "CredentialEncryptor",
+            "InputValidator",
+        ]
+        if _CORE_AVAILABLE
+        else []
+    )
+    + [
+        # Watchlists
+        "LocalWatchlistsService",
+        "ServerWatchlistsService",
+        "WatchlistBackend",
+        "WatchlistScopeService",
+        "build_watchlist_item_id",
+        "normalize_local_subscription_row",
+        "normalize_server_delete_response",
+        "normalize_server_watchlist_source",
+        "normalize_watchlist_alert_rule",
+        "normalize_watchlist_run",
+    ]
+)
+
+# Version info
+__version__ = "1.0.0"
+__author__ = "TLDW ChatBook Team"

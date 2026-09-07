@@ -1,0 +1,23 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "24ceaf037bfdd7bc938d613ca82ded4f",
+        "chunk_index": 1,
+        "chunk_method": "code",
+        "code_mode_used": "auto",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "<root><item id='0'>text 0</item><item id='1'>text 1</item><item id='2'>text 2</item><item id='3'>text 3</item><item id='4'>text 4</item><item id='5'>text 5</item><item id='6'>text 6</item><item id='7'>text 7</item><item id='8'>text 8</item><item id='9'>text 9</item><item id='10'>text 10</item><item id='11'>text 11</item><item id='12'>text 12</item><item id='13'>text 13</item><item id='14'>text 14</item><item id='15'>text 15</item><item id='16'>text 16</item><item id='17'>text 17</item><item id='18'>text 18</item><item id='19'>text 19</item></root>"
+    }
+  ],
+  "outcome": "ok"
+}

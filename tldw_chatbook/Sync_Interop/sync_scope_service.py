@@ -58,7 +58,13 @@ _LOCAL_UNSUPPORTED_CAPABILITIES = [
 class SyncScopeService:
     """Expose the active-server sync transport without implying local mirroring support."""
 
-    def __init__(self, *, server_service: Any = None, policy_enforcer: Any = None, state_repository: Any = None):
+    def __init__(
+        self,
+        *,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+        state_repository: Any = None,
+    ):
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
         self.state_repository = state_repository
@@ -73,7 +79,9 @@ class SyncScopeService:
         except ValueError as exc:
             raise ValueError(f"Invalid sync backend: {mode}") from exc
 
-    def _normalize_profile_mode(self, profile_mode: SyncV2ProfileMode | str) -> SyncV2ProfileMode:
+    def _normalize_profile_mode(
+        self, profile_mode: SyncV2ProfileMode | str
+    ) -> SyncV2ProfileMode:
         if isinstance(profile_mode, SyncV2ProfileMode):
             return profile_mode
         try:
@@ -107,7 +115,9 @@ class SyncScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _normalize_send_result(mode: SyncBackend, request_data: Any, result: Any) -> dict[str, Any]:
+    def _normalize_send_result(
+        mode: SyncBackend, request_data: Any, result: Any
+    ) -> dict[str, Any]:
         if not isinstance(result, dict):
             result = {"result": result}
         record = dict(result)
@@ -117,17 +127,23 @@ class SyncScopeService:
             client_id = request_data.get("client_id")
         elif hasattr(request_data, "client_id"):
             client_id = getattr(request_data, "client_id")
-        record.setdefault("record_id", f"{mode.value}:sync_batch:{client_id or 'unknown'}")
+        record.setdefault(
+            "record_id", f"{mode.value}:sync_batch:{client_id or 'unknown'}"
+        )
         return record
 
     @staticmethod
-    def _normalize_get_result(mode: SyncBackend, client_id: str, result: Any) -> dict[str, Any]:
+    def _normalize_get_result(
+        mode: SyncBackend, client_id: str, result: Any
+    ) -> dict[str, Any]:
         if not isinstance(result, dict):
             result = {"changes": result, "latest_change_id": 0}
         record = dict(result)
         latest_change_id = record.get("latest_change_id", 0)
         record.setdefault("backend", mode.value)
-        record.setdefault("record_id", f"{mode.value}:sync_delta:{client_id}:{latest_change_id}")
+        record.setdefault(
+            "record_id", f"{mode.value}:sync_delta:{client_id}:{latest_change_id}"
+        )
         if isinstance(record.get("changes"), list):
             record["changes"] = [
                 SyncScopeService._normalize_change(mode, change)
@@ -177,7 +193,9 @@ class SyncScopeService:
         for report in reports:
             if report.sync_eligible:
                 continue
-            reason_code = report.reason_codes[0] if report.reason_codes else "not_eligible"
+            reason_code = (
+                report.reason_codes[0] if report.reason_codes else "not_eligible"
+            )
             unsupported.append(
                 {
                     "operation_id": f"sync.domain.unsupported.{report.domain}",
@@ -267,7 +285,9 @@ class SyncScopeService:
             states.append(
                 build_sync_promotion_state(
                     domain=domain,
-                    surface_label=(surface_labels or {}).get(domain, domain.replace("_", " ").title()),
+                    surface_label=(surface_labels or {}).get(
+                        domain, domain.replace("_", " ").title()
+                    ),
                     readiness=readiness,
                     latest_mirror_report=latest_mirror_report,
                     conflict_count=conflict_count,
@@ -442,7 +462,9 @@ class SyncScopeService:
                 remote_version=str(mapping.details.get("remote_version"))
                 if mapping.details.get("remote_version") is not None
                 else None,
-                last_observed_remote_at=str(mapping.details.get("last_observed_remote_at"))
+                last_observed_remote_at=str(
+                    mapping.details.get("last_observed_remote_at")
+                )
                 if mapping.details.get("last_observed_remote_at") is not None
                 else None,
                 last_local_dirty_at=str(mapping.details.get("last_local_dirty_at"))
@@ -478,5 +500,7 @@ class SyncScopeService:
             last_error=None,
         )
         stored["backend"] = normalized_mode.value
-        stored["record_id"] = f"{normalized_mode.value}:sync_mirror_report:{stored['report_id']}"
+        stored["record_id"] = (
+            f"{normalized_mode.value}:sync_mirror_report:{stored['report_id']}"
+        )
         return stored

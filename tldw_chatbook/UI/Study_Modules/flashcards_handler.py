@@ -6,7 +6,17 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static, TextArea
+from textual.css.query import NoMatches, QueryError
+from textual.widgets import (
+    Button,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    TextArea,
+)
 
 from ...Study_Interop import LocalStudyService, ServerStudyService, StudyScopeService
 
@@ -14,16 +24,16 @@ if TYPE_CHECKING:
     from ..Study_Window import StudyWindow
 
 
-FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP = (
-    "Workspace Flashcards require server mode. Switch to server mode or use Global Study to edit flashcards."
+FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP = "Workspace Flashcards require server mode. Switch to server mode or use Global Study to edit flashcards."
+FLASHCARD_SELECT_DECK_TOOLTIP = (
+    "Select or create a deck before adding cards or starting review."
 )
-FLASHCARD_SELECT_DECK_TOOLTIP = "Select or create a deck before adding cards or starting review."
 FLASHCARD_SELECT_CARD_DELETE_TOOLTIP = "Select a flashcard before deleting it."
-FLASHCARD_SELECT_CARD_MOVE_TOOLTIP = "Select a flashcard and a different target deck before moving it."
-FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
-FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = (
-    "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
+FLASHCARD_SELECT_CARD_MOVE_TOOLTIP = (
+    "Select a flashcard and a different target deck before moving it."
 )
+FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
+FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
 
 
 class StudyFlashcardsController:
@@ -42,6 +52,19 @@ class StudyFlashcardsController:
         self.selected_card_record: Optional[dict[str, Any]] = None
         self._scope_service_cache: Optional[StudyScopeService] = None
         self.has_decks: bool = False
+        # TASK-19559: rating submissions are serialised, never cancelled --
+        # see `submit_rating`.
+        self._review_submit_lock = asyncio.Lock()
+        # TASK-19559 review: a monotonic token for "which card is on screen
+        # right now". It is bumped every time the presented card changes and
+        # every time the panel is torn down, so a rating that finishes saving
+        # can tell whether the panel it was started from is still the one in
+        # front of the user. See `submit_rating`.
+        self._review_presentation: int = 0
+        # The presentation a review has already been written for. SM-2 is
+        # compounding, so a second submission for the SAME presentation is a
+        # double-submit, not a second review -- see `submit_rating`.
+        self._reviewed_presentation: Optional[int] = None
 
     def _current_mode(self) -> str:
         getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
@@ -98,9 +121,9 @@ class StudyFlashcardsController:
             return True
         if self._scope_type_value(scope_state) != "workspace":
             return True
-        return bool(getattr(scope_state, "workspace_scope_available", False)) and not bool(
-            str(getattr(scope_state, "error_message", "") or "").strip()
-        )
+        return bool(
+            getattr(scope_state, "workspace_scope_available", False)
+        ) and not bool(str(getattr(scope_state, "error_message", "") or "").strip())
 
     def _scope_unavailable_message(self) -> str:
         scope_state = self._scope_state()
@@ -118,7 +141,9 @@ class StudyFlashcardsController:
                 "No study decks in this workspace yet. Create a workspace deck, "
                 "or switch to Global Study to review existing decks."
             )
-        return "No study decks yet. Create a deck, add flashcards, then start reviewing."
+        return (
+            "No study decks yet. Create a deck, add flashcards, then start reviewing."
+        )
 
     def _scope_arguments(self) -> dict[str, Any]:
         scope_type = self._scope_type()
@@ -185,7 +210,9 @@ class StudyFlashcardsController:
             local_service = LocalStudyService(db=db)
 
         try:
-            server_service = ServerStudyService.from_config(getattr(self.app_instance, "app_config", {}) or {})
+            server_service = ServerStudyService.from_config(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
         except ValueError:
             server_service = ServerStudyService(client=None)
 
@@ -211,7 +238,9 @@ class StudyFlashcardsController:
 
     @staticmethod
     def _is_blank_select_value(value: Any) -> bool:
-        return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
+        return value in {None, "", False, Select.BLANK} or str(value).startswith(
+            "Select."
+        )
 
     def _selected_deck_id(self) -> Optional[str]:
         try:
@@ -288,7 +317,9 @@ class StudyFlashcardsController:
         self._sync_move_target_options()
         try:
             self.reset_review_panel(
-                self._scope_unavailable_message() if not self._scope_is_available() else "Select a deck to review cards."
+                self._scope_unavailable_message()
+                if not self._scope_is_available()
+                else "Select a deck to review cards."
             )
         except Exception:
             pass
@@ -323,7 +354,9 @@ class StudyFlashcardsController:
 
         target_select.set_options(options)
         valid_values = {option[1] for option in options}
-        if str(getattr(target_select, "value", "")) not in {str(value) for value in valid_values}:
+        if str(getattr(target_select, "value", "")) not in {
+            str(value) for value in valid_values
+        }:
             target_select.clear()
 
     def _update_lifecycle_controls(self) -> None:
@@ -332,8 +365,12 @@ class StudyFlashcardsController:
             create_deck_button = self.window.query_one("#create-deck-button", Button)
             create_card_button = self.window.query_one("#create-card-btn", Button)
             start_review_button = self.window.query_one("#start-review-btn", Button)
-            move_selected_button = self.window.query_one("#move-selected-card-button", Button)
-            delete_selected_button = self.window.query_one("#delete-selected-card-button", Button)
+            move_selected_button = self.window.query_one(
+                "#move-selected-card-button", Button
+            )
+            delete_selected_button = self.window.query_one(
+                "#delete-selected-card-button", Button
+            )
             delete_deck_button = self.window.query_one("#delete-deck-button", Button)
         except Exception:
             return
@@ -363,19 +400,33 @@ class StudyFlashcardsController:
             return
 
         delete_selected_button.disabled = selected_card is None
-        move_selected_button.disabled = selected_card is None or selected_target_deck is None
-        delete_deck_button.disabled = self._current_mode() == "server" or selected_deck is None
+        move_selected_button.disabled = (
+            selected_card is None or selected_target_deck is None
+        )
+        delete_deck_button.disabled = (
+            self._current_mode() == "server" or selected_deck is None
+        )
         create_deck_button.tooltip = None
-        create_card_button.tooltip = FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
-        start_review_button.tooltip = FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
-        delete_selected_button.tooltip = FLASHCARD_SELECT_CARD_DELETE_TOOLTIP if selected_card is None else None
+        create_card_button.tooltip = (
+            FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
+        )
+        start_review_button.tooltip = (
+            FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
+        )
+        delete_selected_button.tooltip = (
+            FLASHCARD_SELECT_CARD_DELETE_TOOLTIP if selected_card is None else None
+        )
         move_selected_button.tooltip = (
-            FLASHCARD_SELECT_CARD_MOVE_TOOLTIP if selected_card is None or selected_target_deck is None else None
+            FLASHCARD_SELECT_CARD_MOVE_TOOLTIP
+            if selected_card is None or selected_target_deck is None
+            else None
         )
         if self._current_mode() == "server":
             delete_deck_button.tooltip = FLASHCARD_DELETE_DECK_SERVER_TOOLTIP
         else:
-            delete_deck_button.tooltip = FLASHCARD_SELECT_DECK_DELETE_TOOLTIP if selected_deck is None else None
+            delete_deck_button.tooltip = (
+                FLASHCARD_SELECT_DECK_DELETE_TOOLTIP if selected_deck is None else None
+            )
 
     def _parse_tags(self, text: str) -> list[str]:
         return [item for item in str(text or "").split() if item.strip()]
@@ -383,7 +434,9 @@ class StudyFlashcardsController:
     def _set_review_status(self, message: str) -> None:
         self.window.query_one("#review-status", Static).update(message)
 
-    def _set_review_card(self, *, front: str = "", back: str = "", show_back: bool = False) -> None:
+    def _set_review_card(
+        self, *, front: str = "", back: str = "", show_back: bool = False
+    ) -> None:
         front_widget = self.window.query_one("#review-front", Static)
         back_widget = self.window.query_one("#review-back", Static)
         front_widget.update(front)
@@ -403,7 +456,10 @@ class StudyFlashcardsController:
         back_widget = self.window.query_one("#review-back", Static)
         intervals_widget = self.window.query_one("#review-next-intervals", Static)
         show_answer_button = self.window.query_one("#show-answer-button", Button)
-        rating_buttons = [self.window.query_one(f"#review-rating-{rating}", Button) for rating in range(6)]
+        rating_buttons = [
+            self.window.query_one(f"#review-rating-{rating}", Button)
+            for rating in range(6)
+        ]
         return {
             "status": str(self.window.query_one("#review-status", Static).render()),
             "front": str(front_widget.render()),
@@ -428,14 +484,44 @@ class StudyFlashcardsController:
             ratings_enabled=bool(state.get("ratings_enabled")),
         )
 
-    def _set_review_controls(self, *, show_answer_enabled: bool, ratings_enabled: bool) -> None:
+    def _set_review_controls(
+        self, *, show_answer_enabled: bool, ratings_enabled: bool
+    ) -> None:
         show_answer = self.window.query_one("#show-answer-button", Button)
         show_answer.disabled = not show_answer_enabled
         for rating in range(6):
             button = self.window.query_one(f"#review-rating-{rating}", Button)
             button.disabled = not ratings_enabled
 
+    def _bump_review_presentation(self) -> int:
+        """Claim a new "card on screen" token.
+
+        TASK-19559 review: called every time the presented card changes or the
+        review panel is torn down. `submit_rating` captures the token before it
+        awaits and re-checks it afterwards, which is the arrival-time guard the
+        rest of this change already applies in `ccp_character_handler`,
+        `model_installed_view` and the Settings backup load.
+        """
+        self._review_presentation += 1
+        return self._review_presentation
+
+    def _review_panel_is_live(self) -> bool:
+        """Is the review panel still mounted?
+
+        `StudyWindow.watch_current_view` calls `remove_children()` on the view
+        container, so switching sub-view destroys these widgets outright while
+        a rating save is still in flight. Every `_set_review_*` helper does a
+        bare `query_one`, so touching them afterwards raises `NoMatches` out of
+        the worker.
+        """
+        try:
+            self.window.query_one("#review-status", Static)
+        except (NoMatches, QueryError):
+            return False
+        return True
+
     def reset_review_panel(self, message: str) -> None:
+        self._bump_review_presentation()
         self.current_review_card = None
         self.current_review_session_id = None
         self.current_review_session_mode = None
@@ -463,7 +549,9 @@ class StudyFlashcardsController:
             self.reset_review_panel("Study flashcards backend is unavailable.")
             return
         if not await self._wait_for_flashcards_widgets():
-            logger.warning("Study flashcards UI did not finish mounting before initialization")
+            logger.warning(
+                "Study flashcards UI did not finish mounting before initialization"
+            )
             self.reset_review_panel("Study flashcards UI is still loading.")
             return
         if not self._scope_is_available():
@@ -615,7 +703,9 @@ class StudyFlashcardsController:
             return
 
         name_input.value = ""
-        created_deck_id = str(created.get("backing_id") or created.get("record_id") or Select.BLANK)
+        created_deck_id = str(
+            created.get("backing_id") or created.get("record_id") or Select.BLANK
+        )
         await self.refresh_decks(
             preserve_selection=False,
             preferred_selection=created_deck_id,
@@ -719,7 +809,9 @@ class StudyFlashcardsController:
             return
 
         review_snapshot = None
-        if self.current_review_card and str(self.current_review_card.get("backing_id") or "") == str(selected_card.get("backing_id") or ""):
+        if self.current_review_card and str(
+            self.current_review_card.get("backing_id") or ""
+        ) == str(selected_card.get("backing_id") or ""):
             await self.end_review_session_if_needed()
             self.reset_review_panel("Selected flashcard deleted.")
             preserve_review_panel = False
@@ -736,7 +828,12 @@ class StudyFlashcardsController:
         self._reconcile_live_selection_state()
         selected_card = self.selected_card_record
         target_deck = self._selected_target_deck_record()
-        if service is None or selected_card is None or target_deck is None or not self._scope_is_available():
+        if (
+            service is None
+            or selected_card is None
+            or target_deck is None
+            or not self._scope_is_available()
+        ):
             return
 
         try:
@@ -752,7 +849,9 @@ class StudyFlashcardsController:
             return
 
         review_snapshot = None
-        if self.current_review_card and str(self.current_review_card.get("backing_id") or "") == str(selected_card.get("backing_id") or ""):
+        if self.current_review_card and str(
+            self.current_review_card.get("backing_id") or ""
+        ) == str(selected_card.get("backing_id") or ""):
             await self.end_review_session_if_needed()
             self.reset_review_panel("Selected flashcard moved.")
             preserve_review_panel = False
@@ -791,7 +890,11 @@ class StudyFlashcardsController:
         self.selected_card_record = None
         await self.refresh_decks(preserve_selection=False)
         await self.refresh_cards()
-        message = "Select a deck to review cards." if self.has_decks else self._scope_empty_message()
+        message = (
+            "Select a deck to review cards."
+            if self.has_decks
+            else self._scope_empty_message()
+        )
         self.reset_review_panel(message)
 
     async def start_review(self) -> None:
@@ -800,7 +903,9 @@ class StudyFlashcardsController:
         if self._pending_review_session_teardown is not None:
             await self.end_review_session_if_needed()
             if self._pending_review_session_teardown is not None:
-                self._notify("Failed to close the previous review session.", severity="error")
+                self._notify(
+                    "Failed to close the previous review session.", severity="error"
+                )
                 return
         deck_id = self._selected_deck_id()
         if deck_id is None:
@@ -819,37 +924,195 @@ class StudyFlashcardsController:
         self._set_review_controls(show_answer_enabled=False, ratings_enabled=True)
 
     async def submit_rating(self, rating: int) -> None:
+        """Write exactly one review for the card currently on screen.
+
+        TASK-19559: a spaced-repetition rating is a durable write, so it must
+        not be raced away by the next press -- exclusivity used to cancel the
+        in-flight save, and `CancelledError` is a `BaseException` that the
+        `except Exception` below cannot even observe. Three rules replace it:
+
+        * **Serialised, never cancelled.** The lock queues a second press
+          behind the first instead of destroying it.
+        * **Once per presentation.** `update_flashcard_review` runs SM-2, which
+          is *compounding and non-idempotent*: applying two reviews to one card
+          moves it from `repetitions=1, interval=1d` to `repetitions=2,
+          interval=6d`. Two rapid presses on the same card are a double-submit,
+          not two recall events, so the second is dropped rather than
+          compounded. (Ratings are also disabled the moment a press is
+          accepted, so the UI cannot produce the second press at all; this
+          check is the durable backstop for any programmatic caller.)
+        * **Guarded at arrival.** `StudyWindow.watch_current_view` calls
+          `remove_children()`, so leaving the flashcards sub-view mid-save
+          destroys the widgets every `_set_review_*` helper queries, and the
+          tail below would otherwise resurrect a review session that teardown
+          had just ended. The presentation token is re-checked after the await.
+
+        Qodo review of PR #1951 caught the corollary of rule two: the marker
+        used to be claimed *before* the await, and the `CancelledError` branch
+        re-raised without giving it back, so a cancelled save froze the panel
+        for good -- buttons disabled, presentation marked reviewed, nothing
+        written. The marker is now claimed only once the write has *returned*,
+        which costs nothing: the lock is held across the await, so a queued
+        second submission cannot reach the check until the first has either
+        recorded its marker or failed. Cancellation therefore needs no rollback
+        at all -- it only has to hand the buttons back (see below).
+        """
         service = self._scope_service()
-        if service is None or not self.current_review_card or not self._scope_is_available():
+        card = self.current_review_card
+        if service is None or not card or not self._scope_is_available():
             return
 
-        try:
-            outcome = await service.submit_flashcard_review(
-                mode=self._current_mode(),
-                **self._scope_arguments(),
-                card_id=str(self.current_review_card.get("backing_id") or ""),
-                rating=rating,
-                current_card=self.current_review_card,
-            )
-        except Exception:
-            logger.opt(exception=True).error("Failed to submit flashcard review")
-            self._notify("Failed to save review.", severity="error")
-            return
+        # Captured synchronously, before the first await, so a queued second
+        # press is judged against the card the user was actually looking at.
+        presentation = self._review_presentation
 
-        review_session = outcome.get("review_session") or {}
-        session_id = review_session.get("review_session_id")
-        if session_id is not None:
-            self.current_review_session_id = int(session_id)
-            self.current_review_session_mode = self._current_mode()
+        card_id = str(card.get("backing_id") or "")
+        mode = self._current_mode()
+        deck_id = self._selected_deck_id()
+        # Qodo review of PR #1951: an error line with no context cannot be
+        # correlated with anything. Ids and enum-ish values ONLY -- never the
+        # card's `front`/`back`, which are the user's own study material, and
+        # never a path (TASK-19864 is open on diagnostics that interpolate user
+        # content into log text). `card_id`/`deck_id` are generated UUIDs
+        # (`CharactersRAGDB._generate_uuid`), not anything the user typed.
+        # The bound fields are the structured record; the same two ids are also
+        # spelled into the message text below, because the shipped loguru sink
+        # format (`Logging_Config.py`) renders `{message}` and not `{extra}`.
+        log = logger.bind(
+            operation="study.flashcard.submit_review",
+            card_id=card_id,
+            deck_id=deck_id,
+            mode=mode,
+            rating=rating,
+            scope_type=self._scope_type(),
+            presentation=presentation,
+        )
+        log_subject = f"card_id={card_id!r} deck_id={deck_id!r} mode={mode}"
 
-        self._set_review_status("Review saved.")
-        self._set_next_intervals(outcome.get("next_intervals"))
-        await self._load_next_review_candidate(deck_id=self._selected_deck_id())
+        async with self._review_submit_lock:
+            if self._reviewed_presentation == presentation:
+                log.info(
+                    "Ignoring a duplicate flashcard rating: this card has "
+                    "already been reviewed once and SM-2 would compound it "
+                    f"({log_subject})."
+                )
+                return
+
+            # Stop the UI producing a second press for this same card.
+            if self._review_panel_is_live():
+                self._set_review_controls(
+                    show_answer_enabled=False, ratings_enabled=False
+                )
+
+            try:
+                outcome = await service.submit_flashcard_review(
+                    mode=mode,
+                    **self._scope_arguments(),
+                    card_id=card_id,
+                    rating=rating,
+                    current_card=card,
+                )
+            except asyncio.CancelledError:
+                # `CancelledError` is a `BaseException`, so the `except
+                # Exception` below can never see it. Log it explicitly rather
+                # than letting a lost review vanish silently, then re-raise so
+                # the worker still unwinds (TASK-19559).
+                #
+                # The write's fate here is only knowable for the local backend:
+                # `StudyScopeService.submit_flashcard_review` reaches
+                # `LocalStudyService` through `_maybe_await`, which never
+                # suspends for a synchronous result, so a cancellation cannot
+                # be delivered between the SM-2 write and the return -- it must
+                # have arrived before the call. The server backend awaits a
+                # real HTTP round-trip, and a cancellation there can lose a
+                # response for a review the server has already applied.
+                #
+                # We do not branch on the backend for that (the reasoning
+                # depends on a collaborator's internal await structure, which
+                # is not ours to pin). We err instead toward *retryable*: the
+                # marker is not claimed, so the user can rate the card again.
+                # The cost of erring this way is one possible re-application of
+                # SM-2 in server mode; the cost of erring the other way is a
+                # frozen panel holding a review that was never written and can
+                # never be written. The retry is also made an informed one --
+                # the status line and a toast say the save may not have landed
+                # rather than letting the panel look untouched.
+                log.warning(
+                    "Flashcard review submission was cancelled before it "
+                    "completed; the rating may not have been saved "
+                    f"({log_subject})."
+                )
+                try:
+                    if self._review_panel_is_live():
+                        self._set_review_status(
+                            "Review save was interrupted -- it may not have "
+                            "been saved. Rate the card again to be sure."
+                        )
+                        self._set_review_controls(
+                            show_answer_enabled=False, ratings_enabled=True
+                        )
+                        self._notify("Review save was interrupted.", severity="warning")
+                except Exception:
+                    # A cancellation usually means the app is going away, and
+                    # nothing here may replace the CancelledError on its way
+                    # out -- swallowing it would leave the worker looking like
+                    # it finished normally.
+                    log.opt(exception=True).warning(
+                        "Could not restore the review panel after a cancelled "
+                        f"rating ({log_subject})"
+                    )
+                raise
+            except Exception:
+                log.opt(exception=True).error(
+                    f"Failed to submit flashcard review ({log_subject})"
+                )
+                self._notify("Failed to save review.", severity="error")
+                # The write did not land, so the marker below was never
+                # claimed and this presentation is still reviewable -- the user
+                # just needs the buttons back to retry.
+                if self._review_panel_is_live():
+                    self._set_review_controls(
+                        show_answer_enabled=False, ratings_enabled=True
+                    )
+                return
+
+            # The write has returned, so SM-2 has been applied exactly once for
+            # this presentation. Claim the marker BEFORE the arrival guard
+            # below can return early, or a panel that moved on mid-save would
+            # leave the presentation submittable a second time.
+            self._reviewed_presentation = presentation
+
+            # ARRIVAL GUARD. The write has landed; everything below only
+            # touches UI and session state, and both are wrong to touch if the
+            # panel this rating came from is gone or has already moved on.
+            if (
+                presentation != self._review_presentation
+                or not self._review_panel_is_live()
+            ):
+                log.info(
+                    "Flashcard review saved, but the review panel moved on "
+                    "before the result arrived; leaving the current view alone."
+                )
+                return
+
+            review_session = outcome.get("review_session") or {}
+            session_id = review_session.get("review_session_id")
+            if session_id is not None:
+                self.current_review_session_id = int(session_id)
+                self.current_review_session_mode = self._current_mode()
+
+            self._set_review_status("Review saved.")
+            self._set_next_intervals(outcome.get("next_intervals"))
+            await self._load_next_review_candidate(deck_id=self._selected_deck_id())
 
     async def _load_next_review_candidate(self, *, deck_id: Optional[str]) -> None:
         service = self._scope_service()
         if service is None or deck_id is None or not self._scope_is_available():
-            self.reset_review_panel(self._scope_empty_message() if deck_id is None and not self.has_decks else "Select a deck to review cards.")
+            self.reset_review_panel(
+                self._scope_empty_message()
+                if deck_id is None and not self.has_decks
+                else "Select a deck to review cards."
+            )
             return
 
         try:
@@ -866,16 +1129,23 @@ class StudyFlashcardsController:
         card = candidate.get("card")
         if not card:
             await self.end_review_session_if_needed()
-            self.reset_review_panel(self._scope_empty_message() if not self.has_decks else "No cards due for review.")
+            self.reset_review_panel(
+                self._scope_empty_message()
+                if not self.has_decks
+                else "No cards due for review."
+            )
             return
 
+        self._bump_review_presentation()
         self.current_review_card = card
         review_session = candidate.get("review_session") or {}
         session_id = review_session.get("review_session_id")
         if session_id is not None:
             self.current_review_session_id = int(session_id)
             self.current_review_session_mode = self._current_mode()
-        self._set_review_status(f"Next card ({candidate.get('selection_reason', 'unknown')}).")
+        self._set_review_status(
+            f"Next card ({candidate.get('selection_reason', 'unknown')})."
+        )
         self._set_review_card(
             front=str(card.get("front") or ""),
             back=str(card.get("back") or ""),
@@ -896,11 +1166,15 @@ class StudyFlashcardsController:
             await service.end_review_session(**teardown_request)
         except Exception:
             self._pending_review_session_teardown = teardown_request
-            logger.opt(exception=True).warning("Failed to end review session {}", teardown_request.get("review_session_id"))
+            logger.opt(exception=True).warning(
+                "Failed to end review session {}",
+                teardown_request.get("review_session_id"),
+            )
             return
 
         self._pending_review_session_teardown = None
         if self.current_review_session_id == teardown_request.get("review_session_id"):
+            self._bump_review_presentation()
             self.current_review_session_id = None
             self.current_review_card = None
             self.current_review_session_mode = None

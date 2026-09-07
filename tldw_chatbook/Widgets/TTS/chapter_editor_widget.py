@@ -2,54 +2,63 @@
 # Description: Enhanced chapter editor widget for audiobook generation
 #
 # Imports
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional
 from dataclasses import dataclass
 from loguru import logger
-import re
 from datetime import timedelta
+
 #
-# Third-party imports  
+# Third-party imports
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import ScrollableContainer, Horizontal, Vertical, Container
+from textual.containers import Horizontal, Vertical, Container
 from textual.widget import Widget
 from textual.widgets import (
-    DataTable, Button, Label, TextArea, 
-    Input, Switch, Select, Static, Rule, Collapsible
+    DataTable,
+    Button,
+    Label,
+    TextArea,
+    Input,
+    Select,
+    Collapsible,
 )
 from textual.reactive import reactive
 from textual.message import Message
-from textual.coordinate import Coordinate
-from rich.text import Text
-from rich.console import RenderableType
+
 #
 # Local imports
 from tldw_chatbook.TTS.audiobook_generator import Chapter
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 #
 #######################################################################################################################
 #
 # Data Models
 
+
 @dataclass
 class ChapterEditEvent(Message):
     """Event emitted when a chapter is edited"""
+
     chapter_index: int
     chapter: Chapter
     action: str  # 'edit', 'split', 'merge', 'delete', 'reorder'
 
-@dataclass 
+
+@dataclass
 class ChapterPreviewEvent(Message):
     """Event emitted when chapter preview is requested"""
+
     chapter: Chapter
     preview_type: str  # 'text', 'audio'
+
 
 #######################################################################################################################
 #
 # Chapter Editor Widget
 
-class ChapterEditorWidget(Widget):
+
+class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
     """Enhanced chapter editor with visual editing capabilities"""
-    
+
     DEFAULT_CSS = """
     ChapterEditorWidget {
         height: 100%;
@@ -115,59 +124,77 @@ class ChapterEditorWidget(Widget):
         height: 3;
     }
     """
-    
+
     # Reactive properties
-    chapters = reactive([], recompose=True)
+    #
+    # `chapters` deliberately does NOT use `recompose=True` (task-15773).
+    # `compose()` is entirely static -- no child reads `self.chapters` -- so a
+    # recompose never rebuilt anything data-dependent. What it DID do, on
+    # every assignment, was tear down and remount the whole subtree AFTER
+    # `watch_chapters` had already populated the (old, doomed) DataTable:
+    # the freshly added rows were discarded with the old tree and the new
+    # table mounted empty. Worse, the remount re-ran `Select`'s
+    # Compose->Mount sequence on every data arrival; a teardown (app
+    # shutdown, view transition) landing between the fresh Select's
+    # registration and its Compose dispatch marks it `_pruning`, which makes
+    # its child mount a silent no-op while the Mount event still fires --
+    # `Select._on_mount` then dies with `NoMatches: No nodes match
+    # 'SelectOverlay'` (reproduced deterministically; the task-15478 flake).
+    # Populating the persistent, already-mounted widgets in place closes
+    # both: data never lands on a doomed tree, and no mount window reopens.
+    chapters = reactive(list)
     selected_chapter_index = reactive(-1)
     preview_content = reactive("")
-    
+
     def __init__(self, chapters: Optional[List[Chapter]] = None, **kwargs):
         super().__init__(**kwargs)
         self.chapters = chapters if chapters else []
         self.dragging_row = None
         self.drop_target_row = None
-    
+
     def compose(self) -> ComposeResult:
         """Compose the chapter editor UI"""
         with Container(classes="chapter-editor-container"):
             # Left side - Chapter list
             with Vertical(classes="chapter-list-section"):
                 yield Label("📖 Chapter Editor", classes="section-title")
-                
+
                 # Chapter controls
                 with Horizontal(classes="chapter-controls"):
                     yield Button("➕ Add", id="add-chapter-btn", variant="default")
                     yield Button("✂️ Split", id="split-chapter-btn", variant="default")
                     yield Button("🔗 Merge", id="merge-chapter-btn", variant="default")
                     yield Button("🗑️ Delete", id="delete-chapter-btn", variant="warning")
-                
+
                 # Chapter table
                 chapter_table = DataTable(
                     id="chapter-table",
                     classes="chapter-table",
                     show_cursor=True,
                     cursor_type="row",
-                    zebra_stripes=True
+                    zebra_stripes=True,
                 )
                 chapter_table.add_columns(
                     "📑", "Chapter", "Title", "Words", "Est. Duration"
                 )
                 yield chapter_table
-                
+
                 # Auto-detect controls
                 with Horizontal(classes="form-row"):
                     yield Label("Chapter Pattern:")
                     yield Input(
                         id="chapter-pattern-input",
                         value="Chapter \\d+",
-                        placeholder="Regex pattern"
+                        placeholder="Regex pattern",
                     )
-                    yield Button("🔍 Detect", id="detect-chapters-btn", variant="primary")
-            
+                    yield Button(
+                        "🔍 Detect", id="detect-chapters-btn", variant="primary"
+                    )
+
             # Right side - Chapter preview and metadata
             with Vertical(classes="chapter-preview-section"):
                 yield Label("👁️ Chapter Preview", classes="section-title")
-                
+
                 # Chapter metadata editor
                 with Collapsible(title="Chapter Details", collapsed=False):
                     with Vertical(classes="chapter-metadata"):
@@ -175,55 +202,64 @@ class ChapterEditorWidget(Widget):
                         yield Input(
                             id="chapter-title-input",
                             classes="chapter-title-input",
-                            placeholder="Enter chapter title..."
+                            placeholder="Enter chapter title...",
                         )
-                        
+
                         with Horizontal(classes="form-row"):
                             yield Label("Voice Override:")
                             yield Select(
                                 options=[
-                                    ("narrator", "Use Narrator Voice"),
-                                    ("custom", "Custom Voice"),
+                                    ("Use Narrator Voice", "narrator"),
+                                    ("Custom Voice", "custom"),
                                 ],
-                                id="chapter-voice-select"
+                                id="chapter-voice-select",
                             )
-                        
+
                         yield Label("Narrator Notes:")
                         yield TextArea(
-                            id="narrator-notes",
-                            classes="narrator-notes-area"
+                            id="narrator-notes", classes="narrator-notes-area"
                         )
-                
+
                 # Preview area
                 yield Label("Content:")
                 yield TextArea(
                     id="chapter-preview",
                     classes="chapter-preview",
                     read_only=True,
-                    show_line_numbers=True
+                    show_line_numbers=True,
                 )
-                
+
                 # Preview controls
                 with Horizontal(classes="form-row"):
-                    yield Button("🔊 Preview Audio", id="preview-audio-btn", variant="success")
+                    yield Button(
+                        "🔊 Preview Audio", id="preview-audio-btn", variant="success"
+                    )
                     yield Label("", id="duration-estimate", classes="duration-estimate")
-    
+
     def on_mount(self) -> None:
-        """Initialize the chapter table when mounted"""
+        """Replay any data that arrived before the widget was ready.
+
+        `watch_chapters`/`watch_selected_chapter_index` are gated on
+        `is_mounted`, so chapters set before mount (e.g. a detection result
+        marshalled in while this widget was still composing) are queued in
+        the reactives and applied here, once the children actually exist.
+        """
         self._refresh_chapter_table()
-    
+        if self.selected_chapter_index >= 0:
+            self._update_preview()
+
     def watch_chapters(self) -> None:
         """React to chapter list changes"""
         # Only refresh if the widget is mounted and composed
         if self.is_mounted:
             self._refresh_chapter_table()
-    
+
     def watch_selected_chapter_index(self) -> None:
         """React to chapter selection changes"""
         # Only update if the widget is mounted and composed
         if self.is_mounted:
             self._update_preview()
-    
+
     def _refresh_chapter_table(self) -> None:
         """Refresh the chapter table with current chapters"""
         try:
@@ -233,14 +269,14 @@ class ChapterEditorWidget(Widget):
             # Widget not ready yet
             logger.debug(f"Chapter table not ready: {e}")
             return
-        
+
         for i, chapter in enumerate(self.chapters):
             # Calculate word count and estimated duration
             word_count = len(chapter.content.split())
             # Rough estimate: 150 words per minute for narration
             duration_minutes = word_count / 150
             duration_str = self._format_duration(duration_minutes * 60)
-            
+
             # Add row with drag handle
             table.add_row(
                 "≡",  # Drag handle
@@ -248,14 +284,55 @@ class ChapterEditorWidget(Widget):
                 chapter.title,
                 f"{word_count:,}",
                 duration_str,
-                key=str(i)
+                key=str(i),
             )
-    
+
+    def _sync_table_cursor(self) -> None:
+        """Move the DataTable cursor onto `selected_chapter_index`.
+
+        `_refresh_chapter_table` clears and repopulates the table, which
+        resets the cursor to its default position; this keeps the
+        highlighted row in sync with `selected_chapter_index` after an
+        in-place edit (task-16849).
+        """
+        if not (0 <= self.selected_chapter_index < len(self.chapters)):
+            return
+        try:
+            table = self.query_one("#chapter-table", DataTable)
+        except Exception as e:
+            logger.debug(f"Chapter table not ready for cursor sync: {e}")
+            return
+        try:
+            table.move_cursor(row=self.selected_chapter_index, animate=False)
+        except Exception as e:
+            logger.debug(f"Could not move chapter table cursor: {e}")
+
+    def _sync_after_edit(self) -> None:
+        """Move the cursor and refresh the preview after an in-place edit.
+
+        Callers force the table refresh themselves via
+        `self.mutate_reactive(ChapterEditorWidget.chapters)` right after
+        mutating the list (the same idiom `CharacterVoiceWidget` already
+        uses for this, task-15479) -- that fires `watch_chapters` ->
+        `_refresh_chapter_table` exactly once. `selected_chapter_index` is
+        updated (where it changes) via `set_reactive`, which is silent by
+        design: a numerically UNCHANGED index can still name a DIFFERENT
+        chapter object after an edit -- delete clamps to the same index,
+        and split/merge never move the index at all but do mutate that
+        chapter's content -- so `watch_selected_chapter_index`'s
+        change-detection would silently miss exactly those cases. This
+        single explicit call (mirroring what `on_mount` does for the
+        set-path) is therefore the ONLY preview refresh per edit; nothing
+        else calls `_update_preview` from these code paths.
+        """
+        self._sync_table_cursor()
+        self._update_preview()
+
     def _update_preview(self) -> None:
         """Update the preview pane with selected chapter"""
         if 0 <= self.selected_chapter_index < len(self.chapters):
             chapter = self.chapters[self.selected_chapter_index]
-            
+
             try:
                 # Update preview text
                 preview = self.query_one("#chapter-preview", TextArea)
@@ -263,33 +340,35 @@ class ChapterEditorWidget(Widget):
             except Exception as e:
                 logger.debug(f"Preview area not ready: {e}")
                 return
-            
+
             try:
                 # Update metadata fields
                 title_input = self.query_one("#chapter-title-input", Input)
                 title_input.value = chapter.title
-                
+
                 if chapter.narrator_notes:
                     notes_area = self.query_one("#narrator-notes", TextArea)
                     notes_area.text = chapter.narrator_notes
-                
+
                 # Update duration estimate
                 word_count = len(chapter.content.split())
                 duration_minutes = word_count / 150
                 duration_label = self.query_one("#duration-estimate", Label)
-                duration_label.update(f"Est. duration: {self._format_duration(duration_minutes * 60)}")
+                duration_label.update(
+                    f"Est. duration: {self._format_duration(duration_minutes * 60)}"
+                )
             except Exception as e:
                 logger.debug(f"Some UI elements not ready: {e}")
-    
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle chapter selection"""
         if event.row_key is not None:
             self.selected_chapter_index = int(event.row_key.value)
-    
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         button_id = event.button.id
-        
+
         if button_id == "detect-chapters-btn":
             self._detect_chapters()
         elif button_id == "add-chapter-btn":
@@ -302,27 +381,32 @@ class ChapterEditorWidget(Widget):
             self._delete_chapter()
         elif button_id == "preview-audio-btn":
             self._preview_audio()
-    
+
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes"""
-        if event.input.id == "chapter-title-input" and 0 <= self.selected_chapter_index < len(self.chapters):
+        if (
+            event.input.id == "chapter-title-input"
+            and 0 <= self.selected_chapter_index < len(self.chapters)
+        ):
             # Update chapter title
             self.chapters[self.selected_chapter_index].title = event.value
             self._refresh_chapter_table()
-    
+
     def _detect_chapters(self) -> None:
         """Run chapter detection with custom pattern"""
         pattern_input = self.query_one("#chapter-pattern-input", Input)
         pattern = pattern_input.value
-        
+
         if not pattern:
             self.app.notify("Please enter a chapter pattern", severity="warning")
             return
-        
+
         # This would integrate with ChapterDetector from audiobook_generator.py
-        self.app.notify(f"Detecting chapters with pattern: {pattern}", severity="information")
+        self.app.notify(
+            f"Detecting chapters with pattern: {pattern}", severity="information"
+        )
         # Implementation would go here
-    
+
     def _add_chapter(self) -> None:
         """Add a new chapter at current position"""
         if self.selected_chapter_index >= 0:
@@ -331,37 +415,44 @@ class ChapterEditorWidget(Widget):
         else:
             # Add at end
             insert_pos = len(self.chapters)
-        
+
         new_chapter = Chapter(
             number=insert_pos + 1,
             title=f"New Chapter {insert_pos + 1}",
             content="",
             start_position=0,
-            end_position=0
+            end_position=0,
         )
-        
+
         self.chapters.insert(insert_pos, new_chapter)
         self._renumber_chapters()
+        # `chapters` mutates in place -- force the watcher (task-16849;
+        # same idiom `CharacterVoiceWidget` uses, task-15479).
+        self.mutate_reactive(ChapterEditorWidget.chapters)
+        # Select the chapter the user just created so the table highlight
+        # and preview follow the edit.
+        self.set_reactive(ChapterEditorWidget.selected_chapter_index, insert_pos)
+        self._sync_after_edit()
         self.post_message(ChapterEditEvent(insert_pos, new_chapter, "add"))
-    
+
     def _split_chapter(self) -> None:
         """Split the selected chapter at cursor position"""
         if not (0 <= self.selected_chapter_index < len(self.chapters)):
             self.app.notify("Please select a chapter to split", severity="warning")
             return
-        
+
         chapter = self.chapters[self.selected_chapter_index]
         preview = self.query_one("#chapter-preview", TextArea)
-        
+
         # Get cursor position
         cursor_pos = preview.cursor_location[0]
-        lines = chapter.content.split('\n')
-        
+        lines = chapter.content.split("\n")
+
         if cursor_pos < len(lines):
             # Split at cursor line
-            first_content = '\n'.join(lines[:cursor_pos])
-            second_content = '\n'.join(lines[cursor_pos:])
-            
+            first_content = "\n".join(lines[:cursor_pos])
+            second_content = "\n".join(lines[cursor_pos:])
+
             # Create two chapters
             chapter.content = first_content
             new_chapter = Chapter(
@@ -369,78 +460,104 @@ class ChapterEditorWidget(Widget):
                 title=f"{chapter.title} (Part 2)",
                 content=second_content,
                 start_position=chapter.start_position + cursor_pos,
-                end_position=chapter.end_position
+                end_position=chapter.end_position,
             )
-            
+
             self.chapters.insert(self.selected_chapter_index + 1, new_chapter)
             self._renumber_chapters()
-            self.post_message(ChapterEditEvent(self.selected_chapter_index, chapter, "split"))
-    
+            # `chapters` mutates in place -- force the watcher (task-16849).
+            self.mutate_reactive(ChapterEditorWidget.chapters)
+            # Selection stays on the original (now-truncated) chapter --
+            # the split was made from its own preview cursor position.
+            self._sync_after_edit()
+            self.post_message(
+                ChapterEditEvent(self.selected_chapter_index, chapter, "split")
+            )
+
     def _merge_chapters(self) -> None:
         """Merge selected chapter with next chapter"""
         if not (0 <= self.selected_chapter_index < len(self.chapters) - 1):
-            self.app.notify("Select a chapter to merge with the next one", severity="warning")
+            self.app.notify(
+                "Select a chapter to merge with the next one", severity="warning"
+            )
             return
-        
+
         current = self.chapters[self.selected_chapter_index]
         next_chapter = self.chapters[self.selected_chapter_index + 1]
-        
+
         # Merge content
         current.content = f"{current.content}\n\n{next_chapter.content}"
         current.end_position = next_chapter.end_position
-        
+
         # Remove next chapter
         self.chapters.pop(self.selected_chapter_index + 1)
         self._renumber_chapters()
-        self.post_message(ChapterEditEvent(self.selected_chapter_index, current, "merge"))
-    
+        # `chapters` mutates in place -- force the watcher (task-16849).
+        self.mutate_reactive(ChapterEditorWidget.chapters)
+        # Selection stays on the (now-merged) current chapter.
+        self._sync_after_edit()
+        self.post_message(
+            ChapterEditEvent(self.selected_chapter_index, current, "merge")
+        )
+
     def _delete_chapter(self) -> None:
         """Delete the selected chapter"""
         if not (0 <= self.selected_chapter_index < len(self.chapters)):
             self.app.notify("Please select a chapter to delete", severity="warning")
             return
-        
+
         if len(self.chapters) <= 1:
             self.app.notify("Cannot delete the last chapter", severity="warning")
             return
-        
+
         deleted = self.chapters.pop(self.selected_chapter_index)
         self._renumber_chapters()
-        self.selected_chapter_index = min(self.selected_chapter_index, len(self.chapters) - 1)
-        self.post_message(ChapterEditEvent(self.selected_chapter_index, deleted, "delete"))
-    
+        # `chapters` mutates in place -- force the watcher (task-16849).
+        self.mutate_reactive(ChapterEditorWidget.chapters)
+        # Select the neighbor that shifted into the deleted slot (or the
+        # new last chapter, if the last one was deleted). `set_reactive`
+        # (silent) because this index can be numerically unchanged while
+        # naming a different chapter object -- `_sync_after_edit` below is
+        # the single, unconditional refresh that covers that case.
+        new_index = min(self.selected_chapter_index, len(self.chapters) - 1)
+        self.set_reactive(ChapterEditorWidget.selected_chapter_index, new_index)
+        self._sync_after_edit()
+        self.post_message(
+            ChapterEditEvent(self.selected_chapter_index, deleted, "delete")
+        )
+
     def _preview_audio(self) -> None:
         """Request audio preview for selected chapter"""
         if not (0 <= self.selected_chapter_index < len(self.chapters)):
             self.app.notify("Please select a chapter to preview", severity="warning")
             return
-        
+
         chapter = self.chapters[self.selected_chapter_index]
         self.post_message(ChapterPreviewEvent(chapter, "audio"))
-    
+
     def _renumber_chapters(self) -> None:
         """Renumber all chapters sequentially"""
         for i, chapter in enumerate(self.chapters):
             chapter.number = i + 1
-    
+
     def _format_duration(self, seconds: float) -> str:
         """Format duration in seconds to human-readable string"""
         td = timedelta(seconds=int(seconds))
         hours = td.seconds // 3600
         minutes = (td.seconds % 3600) // 60
         seconds = td.seconds % 60
-        
+
         if hours > 0:
             return f"{hours}h {minutes}m"
         elif minutes > 0:
             return f"{minutes}m {seconds}s"
         else:
             return f"{seconds}s"
-    
+
     def get_chapters(self) -> List[Chapter]:
         """Get the current chapter list"""
         return self.chapters
-    
+
     def set_chapters(self, chapters: List[Chapter]) -> None:
         """Set the chapter list"""
         self.chapters = chapters

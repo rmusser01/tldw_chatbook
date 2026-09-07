@@ -1,0 +1,760 @@
+{
+  "assets": [
+    {
+      "bytes": 124374,
+      "content_type": "image/webp",
+      "display_label": "Admiration",
+      "duration_ms": null,
+      "expression_key": "custom:admiration",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "softened eyes and quiet impressed respect"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "admiration",
+      "sha256": "e4e0bd9c4390ab5bfc4528e3917898e980a292a3fd369948fa35e305a656a439",
+      "storage_relpath": "characters/samira/expressions/admiration.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 116566,
+      "content_type": "image/webp",
+      "display_label": "Amusement",
+      "duration_ms": null,
+      "expression_key": "custom:amusement",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "restrained closed-mouth smile and bright eyes"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "amusement",
+      "sha256": "3c8b8396a2bfe922fc9b284c266fa6b69ccffe154f33f216ae263f247209db87",
+      "storage_relpath": "characters/samira/expressions/amusement.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 103190,
+      "content_type": "image/webp",
+      "display_label": "Angry",
+      "duration_ms": null,
+      "expression_key": "angry",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "controlled lowered brow and firm jaw, never rage"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "anger",
+      "sha256": "ef430345759b483d9a9f902c2fd7672e82f776819fc0e86e080b2b4f4df71863",
+      "storage_relpath": "characters/samira/expressions/anger.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 99586,
+      "content_type": "image/webp",
+      "display_label": "Annoyance",
+      "duration_ms": null,
+      "expression_key": "custom:annoyance",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "slight brow pinch and restrained exasperation, milder than anger"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "annoyance",
+      "sha256": "df80df074ba564dcf2e7c148eeac820aa88e91d4483af25da272702010c21ddf",
+      "storage_relpath": "characters/samira/expressions/annoyance.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 110568,
+      "content_type": "image/webp",
+      "display_label": "Approval",
+      "duration_ms": null,
+      "expression_key": "custom:approval",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "small affirming nod and composed positive regard"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "approval",
+      "sha256": "fa2d37e72019f70ac8d91b6e1aab9b1cc9cde92c4d5c5cf264bc822085092000",
+      "storage_relpath": "characters/samira/expressions/approval.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 112332,
+      "content_type": "image/webp",
+      "display_label": "Caring",
+      "duration_ms": null,
+      "expression_key": "custom:caring",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "attentive concern and gentle protective warmth"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "caring",
+      "sha256": "15321e616d850d8e29fb274fc2b4d0d42cc50f33da9e5d2320481572c7f11fa4",
+      "storage_relpath": "characters/samira/expressions/caring.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 94366,
+      "content_type": "image/webp",
+      "display_label": "Confused",
+      "duration_ms": null,
+      "expression_key": "confused",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "asymmetrical brow and searching focus"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "confusion",
+      "sha256": "b5b44aa1dcb63f847128af27e08b34353dd83f6f3b5fa80122b735380882139f",
+      "storage_relpath": "characters/samira/expressions/confusion.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 108502,
+      "content_type": "image/webp",
+      "display_label": "Curiosity",
+      "duration_ms": null,
+      "expression_key": "custom:curiosity",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "alert eyes, slight head angle, investigative interest"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "curiosity",
+      "sha256": "fa2529ed53c6111e8f65b497052331bd9c1ecccd2c3a76c3996f0f9dfb1f1435",
+      "storage_relpath": "characters/samira/expressions/curiosity.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 108374,
+      "content_type": "image/webp",
+      "display_label": "Desire",
+      "duration_ms": null,
+      "expression_key": "custom:desire",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "focused yearning toward an idea or objective, never flirtation"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "desire",
+      "sha256": "6289a92eb65ddd89fc79780cfe757cc850e871c30dc2070e506212d7709f429a",
+      "storage_relpath": "characters/samira/expressions/desire.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 103404,
+      "content_type": "image/webp",
+      "display_label": "Disappointment",
+      "duration_ms": null,
+      "expression_key": "custom:disappointment",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "lowered gaze and restrained letdown"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "disappointment",
+      "sha256": "b8cc8dcc02be951a83847896a457ba3d81601d835965f65eb302e3282c8bc35d",
+      "storage_relpath": "characters/samira/expressions/disappointment.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 107672,
+      "content_type": "image/webp",
+      "display_label": "Disapproval",
+      "duration_ms": null,
+      "expression_key": "custom:disapproval",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "steady evaluative gaze and lightly pressed lips"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "disapproval",
+      "sha256": "68cec62bce8bd7fa38dc55262ec6f7b3e7cda4985057a6317c4a21c0887300f0",
+      "storage_relpath": "characters/samira/expressions/disapproval.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 104458,
+      "content_type": "image/webp",
+      "display_label": "Disgust",
+      "duration_ms": null,
+      "expression_key": "custom:disgust",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "subtle nose tension and aversion without caricature"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "disgust",
+      "sha256": "9581ffcfbd80b6ce6663ba4bfd93e7d7b5c23422b1670ba83d8f923333c7e7bc",
+      "storage_relpath": "characters/samira/expressions/disgust.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 123528,
+      "content_type": "image/webp",
+      "display_label": "Embarrassment",
+      "duration_ms": null,
+      "expression_key": "custom:embarrassment",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "averted gaze and contained self-consciousness"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "embarrassment",
+      "sha256": "0e14ea0c7aacdcee80038239a2aca414da0c62d7bb6ae279266bc870660f3185",
+      "storage_relpath": "characters/samira/expressions/embarrassment.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 122702,
+      "content_type": "image/webp",
+      "display_label": "Excited",
+      "duration_ms": null,
+      "expression_key": "excited",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "widened bright eyes and energized posture, not theatrical"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "excitement",
+      "sha256": "1a39674704d87061cbf5627024eb6a283fb7ebfc90c2390674a40a1748495768",
+      "storage_relpath": "characters/samira/expressions/excitement.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 89260,
+      "content_type": "image/webp",
+      "display_label": "Fear",
+      "duration_ms": null,
+      "expression_key": "custom:fear",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "guarded eyes and contained alarm"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "fear",
+      "sha256": "a08c9f5790f42e32d3d912f50a017a33cd464bf336aa8dbf872cbaa4b95c793e",
+      "storage_relpath": "characters/samira/expressions/fear.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 96122,
+      "content_type": "image/webp",
+      "display_label": "Gratitude",
+      "duration_ms": null,
+      "expression_key": "custom:gratitude",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "softened eyes and sincere appreciative warmth"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "gratitude",
+      "sha256": "885a8c26586c2ea21a92695bc1dc66e0f6b7f299871fcbc67f496e47a19055b8",
+      "storage_relpath": "characters/samira/expressions/gratitude.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 96140,
+      "content_type": "image/webp",
+      "display_label": "Grief",
+      "duration_ms": null,
+      "expression_key": "custom:grief",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "heavy eyes and controlled deep loss, no melodrama"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "grief",
+      "sha256": "77f34582ff166094c1df30c9829a054e93d1d350e5060c3cce3914a0ed1d0bd8",
+      "storage_relpath": "characters/samira/expressions/grief.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 109900,
+      "content_type": "image/webp",
+      "display_label": "Happy",
+      "duration_ms": null,
+      "expression_key": "happy",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "genuine warm smile and open eyes"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "joy",
+      "sha256": "cee25e3275dbe469d336282db4e1f086954a586cc689ddf475a13786c62c4419",
+      "storage_relpath": "characters/samira/expressions/joy.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 110070,
+      "content_type": "image/webp",
+      "display_label": "Love",
+      "duration_ms": null,
+      "expression_key": "custom:love",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "deep warm regard and trust, explicitly nonromantic"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "love",
+      "sha256": "438c623e093d3a5b23a23c10c515165449cc50ab70257a0b22cd4a852e336328",
+      "storage_relpath": "characters/samira/expressions/love.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 110252,
+      "content_type": "image/webp",
+      "display_label": "Nervousness",
+      "duration_ms": null,
+      "expression_key": "custom:nervousness",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "slight tension and uncertain focus, no cartoon cues"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "nervousness",
+      "sha256": "20d50c313033aa5e775204e6b0723bdf45b0bb19807285baf660a283492f2779",
+      "storage_relpath": "characters/samira/expressions/nervousness.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 105884,
+      "content_type": "image/webp",
+      "display_label": "Neutral",
+      "duration_ms": null,
+      "expression_key": "neutral",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "deterministic 1024x1024 LANCZOS derivative of the source portrait",
+        "tool": "Pillow 11.2.1",
+        "visual_direction": "canonical quiet recognition and composed warmth"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "neutral",
+      "sha256": "6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463",
+      "storage_relpath": "characters/samira/expressions/neutral.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 99296,
+      "content_type": "image/webp",
+      "display_label": "Optimism",
+      "duration_ms": null,
+      "expression_key": "custom:optimism",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "lifted focus and restrained confidence about what comes next"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "optimism",
+      "sha256": "51c6daf4826ac5bf02df788ab9a9df1b7829bc78638780f51c7aaa433f14de36",
+      "storage_relpath": "characters/samira/expressions/optimism.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 117252,
+      "content_type": "image/webp",
+      "display_label": "Pride",
+      "duration_ms": null,
+      "expression_key": "custom:pride",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "upright composure and earned satisfaction, never smugness"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "pride",
+      "sha256": "e3acea2811dde9c245441ca9b0d75df7f61d7534ecf82b3e789d6396f927f5d7",
+      "storage_relpath": "characters/samira/expressions/pride.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 130864,
+      "content_type": "image/webp",
+      "display_label": "Realization",
+      "duration_ms": null,
+      "expression_key": "custom:realization",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "newly focused eyes and subtle I see it recognition"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "realization",
+      "sha256": "4fd28c3b74a1a8d910f37fb5428454e9e2f748aedbfbfe1f05baeac651067d4b",
+      "storage_relpath": "characters/samira/expressions/realization.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 107880,
+      "content_type": "image/webp",
+      "display_label": "Relief",
+      "duration_ms": null,
+      "expression_key": "custom:relief",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "released facial tension and a small exhale"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "relief",
+      "sha256": "e1ec4ec69f28a8284a815c1ab0b90c50117fb3e5adb3bc2cfe997082600250e1",
+      "storage_relpath": "characters/samira/expressions/relief.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 112130,
+      "content_type": "image/webp",
+      "display_label": "Remorse",
+      "duration_ms": null,
+      "expression_key": "custom:remorse",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "lowered gaze and accountable regret"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "remorse",
+      "sha256": "5d47e0353cbc9ac46cfdcef8a25101e356ed0ec4262ce50d2dc9dd1724802cc3",
+      "storage_relpath": "characters/samira/expressions/remorse.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 111878,
+      "content_type": "image/webp",
+      "display_label": "Sad",
+      "duration_ms": null,
+      "expression_key": "sad",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "quiet sorrow and softened posture"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "sadness",
+      "sha256": "691d89cdd897d2810198de2e5617afcbf28a994bc43e5ff06b4fad0a2452f68c",
+      "storage_relpath": "characters/samira/expressions/sadness.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 120366,
+      "content_type": "image/webp",
+      "display_label": "Surprised",
+      "duration_ms": null,
+      "expression_key": "surprised",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "widened eyes and subtly parted lips, controlled intensity"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "surprise",
+      "sha256": "30f109dc5bb2becb2963ae21fcf3b712872a1c3e57d12f6c847607a99600cc37",
+      "storage_relpath": "characters/samira/expressions/surprise.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 101528,
+      "content_type": "image/webp",
+      "display_label": "Thinking",
+      "duration_ms": null,
+      "expression_key": "thinking",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "pensive focus and slight off-axis gaze"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "thinking",
+      "sha256": "3a5d990716e14245b1e545bff457b9fcd37eb308a544cd342ae06e8f0e4738a4",
+      "storage_relpath": "characters/samira/expressions/thinking.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 100372,
+      "content_type": "image/webp",
+      "display_label": "Speaking",
+      "duration_ms": null,
+      "expression_key": "custom:speaking",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "natural mid-sentence engagement with restrained mouth opening"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "speaking",
+      "sha256": "448d807796618cbaaa7b897b1fcdd2fc67bf81bc5d0f01466b25af735f503c55",
+      "storage_relpath": "characters/samira/expressions/speaking.webp",
+      "width": 1024
+    },
+    {
+      "bytes": 107276,
+      "content_type": "image/webp",
+      "display_label": "Error",
+      "duration_ms": null,
+      "expression_key": "custom:error",
+      "frame_count": 1,
+      "generation": {
+        "date": "2026-08-15",
+        "source_portrait": {
+          "filename": "Sammy.png",
+          "sha256": "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+        },
+        "strategy": "independent edit from the original source portrait",
+        "tool": "built-in image_gen",
+        "visual_direction": "concerned, apologetic recovery focus without a sweatdrop or symbol"
+      },
+      "height": 1024,
+      "is_animated": false,
+      "original_label": "error",
+      "sha256": "0671be46cd874c4f0076d8cce637279b60b5320606c97d4853901d45d9ff3b9f",
+      "storage_relpath": "characters/samira/expressions/error.webp",
+      "width": 1024
+    }
+  ],
+  "default_expression_key": "neutral",
+  "license": "AGPL-3.0-or-later",
+  "normalization_contract": {
+    "source_commit": "385afa951922c8a9dc2002c675bb6cad65e4ac23",
+    "source_module": "app/core/Visual_Identities/expression_slots.py",
+    "source_repository": "tldw_server"
+  },
+  "pack_content_sha256": "5993ec841ca635d99ca83691c3ac284db1b14bff35978c72edad12df04a917c8",
+  "pack_id": "tldw.builtin.samira.reactions",
+  "schema_id": "tldw.visual_identity_pack/v1",
+  "source_server_commit": "385afa951922c8a9dc2002c675bb6cad65e4ac23",
+  "title": "Samira Visual Identity Reactions"
+}

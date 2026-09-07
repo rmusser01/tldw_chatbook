@@ -10,7 +10,6 @@
 ########################################################################################################################
 #
 # Functions:
-from tldw_chatbook.Third_Party.textual_fspicker import Filters
 
 # --- Constants ---
 TAB_CHAT = "chat"
@@ -28,9 +27,9 @@ TAB_STTS = "stts"
 TAB_STUDY = "study"
 TAB_WRITING = "writing"
 TAB_RESEARCH = "research"
+TAB_RESEARCH_WORKSPACE = "research_workspace"
 TAB_SUBSCRIPTIONS = "subscriptions"
 TAB_CHATBOOKS = "chatbooks"
-TAB_CUSTOMIZE = "customize"
 TAB_HOME = "home"
 TAB_LIBRARY = "library"
 TAB_ARTIFACTS = "artifacts"
@@ -42,33 +41,74 @@ TAB_MCP = "mcp"
 TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
+TAB_MEETINGS = "meetings"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
 LIBRARY_NAV_CONTEXT_CONVERSATION_ID = "conversation_id"
 LIBRARY_NAV_CONTEXT_NOTE_ID = "note_id"
 LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
+LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE = "open_source_type"
+LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID = "open_source_id"
 # Home's ingest-jobs "Open details" control (L3b Task 6) re-points here to
 # land the Library shell on the in-canvas Ingest > Import media view.
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
-ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
-            TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH,
-            TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS, TAB_CUSTOMIZE]
+# Console navigation-context contract keys.
+CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
+    "resume_local_conversation_id"
+)
+CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET = "character_conversation_target"
 
-# Visual grouping for tab bar (presentation only, does not affect ALL_TABS order)
-TAB_GROUPS = {
-    "Workspace": [TAB_CHAT, TAB_CODING, TAB_CHATBOOKS],
-    "Content": [TAB_MEDIA, TAB_INGEST, TAB_SEARCH, TAB_SUBSCRIPTIONS],
-    "Characters": [TAB_CCP, TAB_STUDY],
-    "AI Config": [TAB_LLM, TAB_STTS, TAB_EVALS],
-    "System": [TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, TAB_LOGS, TAB_STATS],
-}
+# Trusted character-conversation navigation context keys.
+ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION = "character_conversation"
+LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR = "character_repair"
+LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION = "character_unavailable_inspection"
+LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE = "character_unavailable_browse"
+CHARACTER_NAV_CONTEXT_RETURN_FOCUS = "return_focus"
+
+# Saved-conversation pagination shared by the Roleplay controller and inspector.
+PERSONAS_CONVERSATIONS_PAGE_SIZE = 20
+
+# Watchlists navigation-context contract keys and values.
+WATCHLISTS_NAV_CONTEXT_SECTION = "section"
+WATCHLISTS_NAV_CONTEXT_BACKEND = "backend"
+WATCHLISTS_NAV_CONTEXT_RUN_ID = "run_id"
+WATCHLISTS_NAV_CONTEXT_BRIEFING_ID = "briefing_id"
+WATCHLISTS_SECTION_NOTIFICATIONS = "notifications"
+WATCHLISTS_SECTION_RUNS = "runs"
+
+# Media navigation-context contract keys and values.
+# Applied pre-mount by handle_screen_navigation; MediaScreen stashes the
+# subview and applies it to the freshly composed MediaWindow on mount
+# (mirroring its saved-view restore pattern).
+MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW = "browse_subview"
+MEDIA_BROWSE_SUBVIEW_READ_IT_LATER = "read-it-later"
+
+ALL_TABS = [
+    TAB_CHAT,
+    TAB_CCP,
+    TAB_MEDIA,
+    TAB_SEARCH,
+    TAB_INGEST,
+    TAB_EVALS,
+    TAB_LLM,
+    TAB_STTS,
+    TAB_STUDY,
+    TAB_WRITING,
+    TAB_RESEARCH,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_CHATBOOKS,
+    TAB_TOOLS_SETTINGS,
+    TAB_LOGS,
+    TAB_CODING,
+    TAB_STATS,
+]
 
 TAB_DISPLAY_LABELS = {
     TAB_CHAT: "Console",
-    TAB_CCP: "Personas",
+    TAB_CCP: "Roleplay",
     TAB_MEDIA: "Media",
     TAB_SEARCH: "Search",
     TAB_INGEST: "Ingest",
@@ -82,13 +122,12 @@ TAB_DISPLAY_LABELS = {
     TAB_STUDY: "Study",
     TAB_WRITING: "Writing",
     TAB_RESEARCH: "Research",
-    TAB_SUBSCRIPTIONS: "Subscriptions",
+    TAB_RESEARCH_WORKSPACE: "Research Workspace",
     TAB_CHATBOOKS: "Chatbooks",
-    TAB_CUSTOMIZE: "Customize",
     TAB_HOME: "Home",
     TAB_LIBRARY: "Library",
     TAB_ARTIFACTS: "Artifacts",
-    TAB_PERSONAS: "Personas",
+    TAB_PERSONAS: "Roleplay",
     TAB_WATCHLISTS_COLLECTIONS: "Watchlists",
     TAB_SCHEDULES: "Schedules",
     TAB_WORKFLOWS: "Workflows",
@@ -96,6 +135,7 @@ TAB_DISPLAY_LABELS = {
     TAB_ACP: "ACP",
     TAB_SKILLS: "Skills",
     TAB_SETTINGS: "Settings",
+    TAB_MEETINGS: "Meetings",
 }
 
 
@@ -103,15 +143,16 @@ def get_tab_display_label(tab_id: str) -> str:
     """Return the user-facing label for a top-level tab ID."""
     return TAB_DISPLAY_LABELS.get(tab_id, tab_id.replace("_", " ").title())
 
+
 # Subscription types
 SUBSCRIPTION_TYPES = [
     "rss",
-    "reddit", 
+    "reddit",
     "youtube",
     "github",
     "hackernews",
     "generic",
-    "custom"
+    "custom",
 ]
 
 # Subscription update frequencies (in seconds)
@@ -124,7 +165,7 @@ SUBSCRIPTION_UPDATE_FREQUENCIES = {
     "6 hours": 21600,
     "12 hours": 43200,
     "Daily": 86400,
-    "Weekly": 604800
+    "Weekly": 604800,
 }
 
 # --- TLDW API Form Specific Option Containers (IDs) ---
@@ -138,9 +179,14 @@ TLDW_API_MEDIAWIKI_OPTIONS_ID = "tldw-api-mediawiki-options"
 TLDW_API_PLAINTEXT_OPTIONS_ID = "tldw-api-plaintext-options"
 
 ALL_TLDW_API_OPTION_CONTAINERS = [
-    TLDW_API_VIDEO_OPTIONS_ID, TLDW_API_AUDIO_OPTIONS_ID, TLDW_API_PDF_OPTIONS_ID,
-    TLDW_API_EBOOK_OPTIONS_ID, TLDW_API_DOCUMENT_OPTIONS_ID, TLDW_API_XML_OPTIONS_ID,
-    TLDW_API_MEDIAWIKI_OPTIONS_ID, TLDW_API_PLAINTEXT_OPTIONS_ID
+    TLDW_API_VIDEO_OPTIONS_ID,
+    TLDW_API_AUDIO_OPTIONS_ID,
+    TLDW_API_PDF_OPTIONS_ID,
+    TLDW_API_EBOOK_OPTIONS_ID,
+    TLDW_API_DOCUMENT_OPTIONS_ID,
+    TLDW_API_XML_OPTIONS_ID,
+    TLDW_API_MEDIAWIKI_OPTIONS_ID,
+    TLDW_API_PLAINTEXT_OPTIONS_ID,
 ]
 
 
@@ -190,61 +236,12 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     display: none; /* ensures it doesn’t grab focus */
 }
 
-/* Right sidebar (chat-right-sidebar) */
-#chat-right-sidebar {
-    dock: right;
-    /* width: 70;   <-- REMOVE fixed width */
-    width: 25%;  /* <-- CHANGE to percentage (match .sidebar or use a different one) */
-    min-width: 20; /* <-- ADD a minimum width */
-    max-width: 80; /* <-- ADD a maximum width (optional) */
-    background: $boost;
-    padding: 1 2;
-    border-left: thick $background-darken-1; /* Border on the left */
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* Collapsed state for the new right sidebar */
-#chat-right-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important; /* Ensure min-width is also 0 */
-    border-left: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none; /* Ensures it doesn't take space or grab focus */
-}
-
 /* Common sidebar elements */
 .sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
 .sidebar-label { margin-top: 1; text-style: bold; }
 .sidebar-input { width: 100%; margin-bottom: 1; }
 .sidebar-textarea { width: 100%; border: round $surface; margin-bottom: 1; }
 .sidebar Select { width: 100%; margin-bottom: 1; }
-
-/* Sidebar resize buttons */
-.sidebar-resize-button {
-    min-width: 8;  /* Increased minimum width to 8 cells */
-    width: 8;      /* Fixed width for better visibility */
-    height: 2;     /* Standard button height */
-    margin: 0 1;   /* Small margin on sides */
-    padding: 0 1;  /* Padding for text */
-    border: none;
-    background: $primary;
-    color: white;
-    text-align: center;
-    text-style: bold;
-}
-.sidebar-resize-button:hover {
-    background: $primary-lighten-1;
-    color: white;
-    text-style: bold;
-}
-.sidebar-resize-button:focus {
-    background: $primary-lighten-2;
-    color: white;
-    text-style: bold;
-}
 
 /* Header container for sidebar with resize controls */
 .sidebar-header-with-resize {
@@ -283,32 +280,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     height: 100%;
     width: 1fr; /* This is KEY - it takes up the remaining horizontal space */
 }
-/* VerticalScroll for chat messages */
-#chat-log {
-    height: 1fr; /* Takes remaining space */
-    width: 100%;
-    /* border: round $surface; Optional: Add border to scroll area */
-    padding: 0 1; /* Padding around messages */
-}
-
-/* Input area styling (shared by chat and character) */
-#chat-input-area, #conv-char-input-area { /* Updated from #character-input-area */
-    height: auto;    /* Allow height to adjust */
-    max-height: 12;  /* Limit growth */
-    width: 100%;
-    align: left top; /* Align children to top-left */
-    padding: 1; /* Consistent padding */
-    border-top: round $surface;
-}
-/* Input widget styling (shared) */
-.chat-input { /* Targets TextArea */
-    width: 1fr;
-    height: auto;      /* Allow height to adjust */
-    max-height: 100%;  /* Don't overflow parent */
-    margin-right: 1; /* Space before button */
-    border: round $surface;
-}
-
 /* Send button styling (shared) */
 .send-button { /* Targets Button */
     width: 2;
@@ -322,37 +293,6 @@ Footer { dock: bottom; height: 1; background: $accent-darken-1; }
     width: 2;
     height: 3;
     margin-top: 0;
-}
-
-/* Save Chat Button in chat-right-sidebar in Chat Tab */
-.save-chat-button { /* Class used in character_sidebar.py */
-    margin-top: 2;   /* Add 1 cell/unit of space above the button */
-    /*width: 100%;      Optional: make it full width like other sidebar buttons */
-}
-
-/* chat-right-sidebar Specific Styles */
-#chat-right-sidebar #chat-conversation-title-input { /* Title input */
-    /* width: 100%; (from .sidebar-input) */
-    /* margin-bottom: 1; (from .sidebar-input) */
-}
-
-#chat-right-sidebar .chat-keywords-textarea { /* Keywords TextArea specific class */
-    height: 4;  /* Or 3 to 5, adjust as preferred */
-    /* width: 100%; (from .sidebar-textarea) */
-    /* border: round $surface; (from .sidebar-textarea) */
-    /* margin-bottom: 1; (from .sidebar-textarea) */
-}
-
-/* Styling for the new "Save Details" button */
-#chat-right-sidebar .save-details-button {
-    margin-top: 1; /* Space above this button */
-    /* width: 100%;    Make it full width */
-}
-
-/* Ensure the Save Current Chat button also has clear styling if needed */
-#chat-right-sidebar .save-chat-button {
-    margin-top: 1; /* Ensure it has some space if it's after keywords */
-    /* width: 100%; */
 }
 
 /* Chat Sidebar - Prompts Section */
@@ -700,19 +640,6 @@ ChatMessage.-user > Vertical {
 ChatMessage.-ai .message-actions.-generating {
     display: none;
 }
-/* microphone button – same box as Send but subdued colour */
-.mic-button {
-    width: 1;
-    height: 3;
-    margin-right: 1;           /* gap before Send */
-    border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
-}
-.mic-button:hover {
-    background: $surface;
-    color: $text;
-}
 .sidebar-toggle {
     width: 2;                /* tiny square */
     height: 3;
@@ -722,15 +649,6 @@ ChatMessage.-ai .message-actions.-generating {
     color: $text;
 }
 .sidebar-toggle:hover { background: $surface; }
-
-/* Specific margins for sidebar toggles based on position */
-#toggle-chat-left-sidebar {
-    margin-right: 1; /* Original toggle on the left of input area */
-}
-
-#toggle-chat-right-sidebar {
-    margin-left: 1; /* New toggle on the right of input area */
-}
 
 #app-titlebar {
     dock: top;
@@ -1104,44 +1022,6 @@ MetricsScreen Label.-info-message {
 }
 
 
-/* Chat Sidebar Prompts Section Specific Styles */
-#chat-sidebar-prompts-collapsible { /* The collapsible container itself */
-    /* Add any specific styling for the collapsible if needed */
-}
-
-#chat-sidebar-prompt-search-input,
-#chat-sidebar-prompt-keyword-filter-input {
-    margin-bottom: 1; /* Add some space below these inputs */
-}
-
-#chat-sidebar-prompts-listview {
-    min-height: 5;
-    max-height: 15;
-    height: auto;
-    overflow-y: auto;
-    border: round $surface;
-    margin-bottom: 1;
-}
-
-#chat-sidebar-prompt-system-display,
-#chat-sidebar-prompt-user-display {
-    min-height: 5;
-    max-height: 15;
-    height: auto;
-    width: 100%; /* Ensure they take full width */
-    margin-bottom: 1;
-    border: round $surface; /* Standard border like other textareas */
-    /* read_only is set in Python, CSS cannot enforce it but can style */
-}
-
-#chat-sidebar-copy-system-prompt-button,
-#chat-sidebar-copy-user-prompt-button {
-    width: 100%; /* Make copy buttons full width */
-    margin-top: 0; /* Remove top margin if directly after TextArea */
-    margin-bottom: 1; /* Space after copy buttons */
-}
-/*
-
 /* LLM Management Tab Specific Styles */
 #llm_management-window .llm-view-area > VerticalScroll { /* Target the new VS inside each view */
     height: 100%; /* Ensure the VerticalScroll takes full height of its parent view area */
@@ -1442,66 +1322,6 @@ MetricsScreen Label.-info-message {
 
 
 
-
-
-
-
-/* ----------------------------- ************************* ----------------------------- */
-/* --- Evals Tab --- */
-#evals-window { /* Matches TAB_EVALS, .window class provides layout: horizontal */
-    /* layout: horizontal; /* Provided by .window by default */
-}
-
-#evals-sidebar {
-    dock: left;
-    width: 25%;
-    min-width: 20;
-    max-width: 50; /* Adjusted max-width */
-    height: 100%;
-    background: $boost;
-    padding: 1; /* Standard padding */
-    border-right: thick $background-darken-1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#evals-sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
-    border-right: none !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    display: none !important; /* Ensure it's hidden */
-}
-
-/* Styles for the main content area within the Evals tab */
-#evals-main-content-area {
-    width: 1fr; /* Takes remaining horizontal space */
-    height: 100%;
-    padding: 1 2; /* Padding for the content area */
-    /* border: round $primary; /* Optional: for visual debugging */
-}
-
-/* Styles for the sidebar toggle button in the Evals tab */
-#toggle-evals-sidebar {
-    /* Positioned by EvalsWindow's compose, next to the content area */
-    /* dock: left; is set in EvalsWindow.py's DEFAULT_CSS for the button */
-    width: auto; /* Small width, text will determine */
-    height: 3;   /* Standard button height */
-    min-width: 0; /* Allow it to be small */
-    margin: 0 1 0 0; /* Top, Right, Bottom, Left margin - space it from main content */
-    /* color: $text; */
-    /* background: $surface-darken-1; */
-    /* border: none; */
-}
-/* Hover state for the toggle button if needed, can inherit from general .sidebar-toggle if class is added */
-/* #toggle-evals-sidebar:hover { background: $surface; } */
-
-/* --- End Evals Tab (Old Implementation) --- */
-/* ----------------------------- ************************* ----------------------------- */
-
-
-
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Media Tab Specific Options --- */
 .ingest-form-scrollable {
@@ -1565,23 +1385,6 @@ MetricsScreen Label.-info-message {
 
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Conversations, Characters & Prompts Window specific layouts --- */
-#send-chat {
-    width: 12;
-    min-width: 12 !important;
-    max-width: 12vh !important; /* Using ch unit and important */
-    /* height: 3; /* Already set by .send-button class, but can be reiterated if needed */
-    /* margin-top: 0; /* Already set by .send-button class */
-}
-
-#stop-chat-generation {
-    width: 6;
-    min-width: 6 !important;
-    max-width: 6vh !important; /* Using ch unit and important */
-    margin: 0 1;
-    /* height: 3; /* Already set by .stop-button class, but can be reiterated if needed */
-    /* margin-top: 0; /* Already set by .stop-button class */
-}
-
 .suggest-button {
     width: 8;
     min-width: 8 !important;
@@ -1609,6 +1412,10 @@ MetricsScreen Label.-info-message {
 /* ----------------------------- ************************* ----------------------------- */
 /* --- Window Footer Widget --- */
 
+/* NOTE: this css_content copy is DEAD -- production loads
+   css/tldw_cli_modular.tcss, built from css/components/_widgets.tcss,
+   which is the live source for these AppFooterStatus rules and carries
+   the KEEP-IN-SYNC contract with AppFooterStatus.BUNDLED_CSS (task-264). */
 AppFooterStatus {
     dock: bottom;
     height: 1;
@@ -1706,152 +1513,6 @@ AppFooterStatus {
 .detail-textarea.content-display { height: 10; }
 
 
-/* ----------------------------- ************************* ----------------------------- */
-/* --- Search Tab (RAG/Embeddings) --- */
-#search-window { /* Matches TAB_SEARCH, .window class provides layout: horizontal */
-    /* No explicit layout needed here if .window handles it */
-}
-
-.search-nav-pane { /* Style for the left navigation pane in Search Tab */
-    dock: left;
-    width: 25%;
-    min-width: 25;
-    max-width: 60;
-    height: 100%;
-    background: $boost;
-    padding: 1;
-    border-right: thick $background-darken-1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-.search-nav-pane .search-nav-button { /* Style for navigation buttons in Search Tab */
-    width: 100%;
-    margin-bottom: 1;
-    border: none;
-    height: 3;
-}
-.search-nav-pane .search-nav-button:hover {
-    background: $accent 80%; /* Example: accent color with 80% opacity */
-}
-/* Active state for selected search nav button */
-.search-nav-pane .search-nav-button.-active-search-sub-view {
-    background: $accent;
-    color: $text;
-    text-style: bold;
-}
-.search-content-pane { /* Style for the right content display area in Search Tab */
-    width: 1fr;
-    height: 100%;
-    padding: 1 2;
-    overflow: auto; /* Changed from overflow-y: auto to allow both horizontal and vertical scrolling if needed */
-}
-
-/* -------------------------------------------------------------------------------------- */
-
-/* Web Search Specific Styles within Search Tab */
-#search-view-web-search {
-    /* Overriding the generic .search-view-area Static centering if needed */
-    /* For direct children like Input, Button, VerticalScroll, default layout (vertical) should be fine. */
-    padding: 1; /* Add some padding inside the web search view area */
-}
-
-#search-view-web-search > Input#web-search-input { /* Target Input directly inside */
-    margin-bottom: 1; /* Space below the input field */
-    width: 100%;
-}
-
-/* .search-action-button is used by #web-search-button */
-.search-action-button {
-    width: 100%;
-    margin-bottom: 1; /* Space below the button */
-    /* height: 3; /* Optional: Standard button height */
-}
-
-#search-view-web-search > VerticalScroll > Markdown#web-search-results { /* Target Markdown inside VS */
-    width: 100%; /* Take full width */
-    height: 1fr; /* Take remaining vertical space within its parent VerticalScroll */
-    border: round $primary-background-lighten-2;
-    padding: 1;
-    background: $surface; /* A slightly different background for the results area */
-}
-
-/* Embeddings Creation View Styles */
-#search-view-embeddings-creation {
-    padding: 1;
-}
-
-.search-form-container {
-    width: 100%;
-    margin: 0 0;
-}
-
-.search-view-title {
-    text-style: bold;
-    text-align: center;
-    background: blue 30%;
-    color: $text;
-    padding: 1;
-    margin-bottom: 2;
-    border: round $accent-darken-1;
-}
-
-.search-section-title {
-    text-style: bold;
-    margin-top: 2;
-    margin-bottom: 1;
-    background: $primary-background-lighten-1;
-    padding: 0 1;
-    border-left: thick $accent;
-}
-
-.search-form-row {
-    margin-bottom: 1;
-    height: 3;
-    align: left middle;
-}
-
-.search-form-label {
-    width: 30%;
-    padding-right: 1;
-    text-align: right;
-}
-
-/* Embeddings Management View Styles */
-#search-view-embeddings-management {
-    padding: 1;
-}
-
-.search-management-left-pane {
-    width: 45%;
-    padding-right: 1;
-    border-right: solid $background-darken-1;
-}
-
-.search-management-right-pane {
-    width: 55%;
-    padding-left: 1;
-}
-
-.search-button-row {
-    margin-top: 2;
-    align-horizontal: center;
-}
-
-.search-button-row Button {
-    margin: 0 1;
-}
-
-/* Status output styling */
-#creation-status-output, #mgmt-status-output {
-    margin-top: 2;
-    border: round $primary-background-lighten-2;
-    padding: 1;
-    background: $surface;
-}
-
-/* --- End of Search Tab --- */
-/* ----------------------------- ************************* ----------------------------- */
 
 
 /* ----------------------------- ************************* ----------------------------- */
@@ -1962,8 +1623,6 @@ AppFooterStatus {
 #
 #
 ##########################################################################################################################
-
-
 
 
 ##########################################################################################################################
@@ -2130,11 +1789,7 @@ LLAMA_CPP_SERVER_ARGS_HELP_TEXT = """
 ##########################################################################################################################
 
 
-
-
-
 ##########################################################################################################################
-
 
 
 ##########################################################################################################################
@@ -2202,14 +1857,6 @@ LLAMAFILE_SERVER_ARGS_HELP_TEXT = """
 
 [italic]Obtained from: https://github.com/Mozilla-Ocho/llamafile/blob/main/llama.cpp/server/README.md[/]
 """
-
-
-
-
-
-
-
-
 
 
 #
@@ -2286,6 +1933,21 @@ options:
 [bold]--chat-template-args CHAT_TEMPLATE_ARGS[/]
     A JSON formatted string of arguments for the tokenizer's apply_chat_template, e.g. '{"enable_thinking":false}'
 """
+
+#: Worker group for the provider model-catalog refresh. One constant so the
+#: Default startup-splash duration in seconds. One source of truth for the
+#: SplashScreen constructor, the loaded-config fallback, the app compose
+#: fallback, the Settings viewer defaults, and the config.toml template
+#: (injected via its placeholder) -- so none of them can drift apart
+#: (Qodo review of PR #2329).
+DEFAULT_SPLASH_DURATION_SECONDS: float = 7.0
+
+
+#: dispatch sites and the worker-handler's acknowledgement set cannot drift
+#: apart through a spelling change — exclusivity and event routing both key
+#: off this exact string (Qodo review of PR #2131).
+MODEL_CATALOG_REFRESH_WORKER_GROUP = "model-catalog-refresh"
+
 
 # End of Constants.py
 ########################################################################################################################

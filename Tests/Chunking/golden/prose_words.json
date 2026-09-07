@@ -1,0 +1,90 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "c6eab767879f1dc493d129d69c6c32f2",
+        "chunk_index": 1,
+        "chunk_method": "words",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.2,
+        "total_chunks": 5
+      },
+      "text": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "ebf2791b59d62a529f081aa693453c97",
+        "chunk_index": 2,
+        "chunk_method": "words",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.4,
+        "total_chunks": 5
+      },
+      "text": "jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog."
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "0d5d1a2b635a9acb13983de0c217a00b",
+        "chunk_index": 3,
+        "chunk_method": "words",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.6,
+        "total_chunks": 5
+      },
+      "text": "dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "30f9943a1dd98918462f91c7b816020e",
+        "chunk_index": 4,
+        "chunk_method": "words",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.8,
+        "total_chunks": 5
+      },
+      "text": "fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "410f4e6841c7f7ba08699914ffadcf1c",
+        "chunk_index": 5,
+        "chunk_method": "words",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 5
+      },
+      "text": "lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog."
+    }
+  ],
+  "outcome": "ok"
+}

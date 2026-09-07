@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 
-from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import PersistenceResult
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    PersistenceResult,
+)
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import (
     resolve_provider_list_key,
 )
@@ -66,7 +68,9 @@ def _newly_saved_model_ids(
     return tuple(saved)
 
 
-def _default_save_callback(section_values: Mapping[str, Mapping[str, list[str]]]) -> bool:
+def _default_save_callback(
+    section_values: Mapping[str, Mapping[str, list[str]]],
+) -> bool:
     """Persist via the shared CLI config writer."""
     from tldw_chatbook.config import save_settings_to_cli_config
 
@@ -116,7 +120,11 @@ def persist_discovered_models_to_settings(
     )
     save = save_callback or _default_save_callback
     try:
-        saved = bool(save({"providers": {provider_list_key: updated_providers[provider_list_key]}}))
+        saved = bool(
+            save(
+                {"providers": {provider_list_key: updated_providers[provider_list_key]}}
+            )
+        )
     except Exception:
         saved = False
     if not saved:

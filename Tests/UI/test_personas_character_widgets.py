@@ -2,15 +2,12 @@
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
-    CharacterEditorCancelled,
-    CharacterImageUploadRequested,
-    CharacterSaveRequested,
-    EditCharacterRequested,
-    EditorContentChanged,
-)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
 )
@@ -19,6 +16,13 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterEditorCancelled,
+    CharacterImageUploadRequested,
+    CharacterSaveRequested,
+    EditCharacterRequested,
+    EditorContentChanged,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -60,7 +64,7 @@ LEGACY_EDITOR_KEYS = set(CHARACTER) | {
 }
 
 
-class WidgetApp(App):
+class WidgetApp(ConsolidatedCSSApp):
     def compose(self):
         yield PersonasCharacterCardWidget()
         yield PersonasCharacterEditorWidget()
@@ -76,7 +80,34 @@ class TestCharacterCard:
         async with app.run_test() as pilot:
             assert pilot.app.query_one("#personas-character-card-empty").display is True
             assert pilot.app.query_one("#personas-character-card-body").display is False
-            assert pilot.app.query_one("#personas-card-edit-character", Button).disabled is True
+            edit = pilot.app.query_one("#personas-card-edit-character", Button)
+            assert edit.disabled is True
+            # F-037: the disabled Edit says why.
+            assert edit.tooltip == "Select a character to edit."
+
+    async def test_edit_tooltip_explains_unsaved_record_state(self):
+        """F-037: an id-less (never-saved) card keeps Edit disabled with a reason."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            record = dict(CHARACTER)
+            record.pop("id")
+            card.load_character(record)
+            await pilot.pause()
+            edit = pilot.app.query_one("#personas-card-edit-character", Button)
+            assert edit.disabled is True
+            assert edit.tooltip == "This character has no saved record to edit."
+            # A saved record re-enables Edit and drops the reason.
+            card.load_character(dict(CHARACTER))
+            await pilot.pause()
+            assert edit.disabled is False
+            assert edit.tooltip is None
+            card.load_character({})
+            await pilot.pause()
+            assert pilot.app.query_one("#personas-character-card-empty").display
+            assert not pilot.app.query_one("#personas-character-card-body").display
+            assert edit.disabled is True
+            assert edit.tooltip == "Select a character to edit."
 
     async def test_load_populates_fields_and_enables_edit(self):
         app = WidgetApp()
@@ -84,7 +115,9 @@ class TestCharacterCard:
             card = pilot.app.query_one(PersonasCharacterCardWidget)
             card.load_character(dict(CHARACTER))
             await pilot.pause()
-            assert pilot.app.query_one("#personas-character-card-empty").display is False
+            assert (
+                pilot.app.query_one("#personas-character-card-empty").display is False
+            )
             assert pilot.app.query_one("#personas-character-card-body").display is True
 
             def text(selector: str) -> str:
@@ -103,10 +136,15 @@ class TestCharacterCard:
             assert "rmusser" in text("#personas-character-card-creator")
             assert "1.2" in text("#personas-character-card-version")
             assert text("#personas-character-card-tags") == "Tags: noir, detective"
-            assert "Alternate greetings: 2" in text("#personas-character-card-alt-greetings")
+            assert "Alternate greetings: 2" in text(
+                "#personas-character-card-alt-greetings"
+            )
             assert "Evening." in text("#personas-character-card-greeting-preview")
             assert text("#personas-card-avatar-status") == "Avatar: embedded"
-            assert pilot.app.query_one("#personas-card-edit-character", Button).disabled is False
+            assert (
+                pilot.app.query_one("#personas-card-edit-character", Button).disabled
+                is False
+            )
 
     async def test_load_accepts_first_mes_alias_and_no_avatar(self):
         app = WidgetApp()
@@ -119,10 +157,16 @@ class TestCharacterCard:
             card.load_character(data)
             await pilot.pause()
             assert "Aliased greeting." in str(
-                pilot.app.query_one("#personas-character-card-first-message", Static).renderable
+                pilot.app.query_one(
+                    "#personas-character-card-first-message", Static
+                ).renderable
             )
             assert (
-                str(pilot.app.query_one("#personas-card-avatar-status", Static).renderable)
+                str(
+                    pilot.app.query_one(
+                        "#personas-card-avatar-status", Static
+                    ).renderable
+                )
                 == "Avatar: none"
             )
 
@@ -130,7 +174,9 @@ class TestCharacterCard:
         received = []
 
         class CaptureApp(WidgetApp):
-            def on_edit_character_requested(self, message: EditCharacterRequested) -> None:
+            def on_edit_character_requested(
+                self, message: EditCharacterRequested
+            ) -> None:
                 received.append(message.character_id)
 
         app = CaptureApp()
@@ -220,6 +266,89 @@ class TestCharacterCard:
                 pilot.app.query_one("#personas-character-card-name", Static).renderable
             )
 
+    async def test_load_sanitizes_malformed_display_text_without_mutating_card(self):
+        app = WidgetApp()
+        data = dict(CHARACTER)
+        data["name"] = "Detective\ufffdSam"
+        data["description"] = "Noir\x00detective"
+        data["alternate_greetings"] = ["Evening\u200b."]
+        original = dict(data)
+        original["alternate_greetings"] = list(data["alternate_greetings"])
+
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            card.load_character(data)
+            await pilot.pause()
+
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-name", Static
+                ).renderable
+            ) == "Name: Detective?Sam"
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-description", Static
+                ).renderable
+            ) == "Description: Noir?detective"
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-greeting-preview", Static
+                ).renderable
+            ) == "Evening?."
+
+        assert data == original
+
+    async def test_load_handles_malformed_collection_shapes_without_iteration(self):
+        calls: list[str] = []
+
+        class DangerousIterable:
+            def __iter__(self):
+                calls.append("iter")
+                yield "unsafe"
+
+        app = WidgetApp()
+        data = dict(CHARACTER)
+        data["tags"] = "solo"
+        data["alternate_greetings"] = {"forged": "greeting"}
+
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            card.load_character(data)
+            await pilot.pause()
+
+            assert str(
+                pilot.app.query_one("#personas-character-card-tags", Static).renderable
+            ) == "Tags: solo"
+            assert str(
+                pilot.app.query_one(
+                    "#personas-character-card-greeting-preview", Static
+                ).renderable
+            ) == "<dict>"
+
+            data["tags"] = DangerousIterable()
+            card.load_character(data)
+            await pilot.pause()
+            assert "<DangerousIterable>" in str(
+                pilot.app.query_one("#personas-character-card-tags", Static).renderable
+            )
+
+        assert calls == []
+
+    async def test_editor_reload_preserves_terminal_unsafe_source_fields_exactly(self):
+        app = WidgetApp()
+        data = dict(CHARACTER)
+        data["name"] = "Nyx\n\tAdmin\x00[/bold]"
+        data["description"] = "Lore\u200b stays exact."
+
+        async with app.run_test() as pilot:
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            editor.load_character(data)
+            await pilot.pause()
+            collected = editor.get_character_data()
+
+        assert collected["name"] == data["name"]
+        assert collected["description"] == data["description"]
+
 
 # ===== Editor =====
 
@@ -261,8 +390,11 @@ class TestCharacterEditor:
             collected = editor.get_character_data()
             assert collected["alternate_greetings"] == ["para1\n\npara2"]
 
-    async def test_edited_greetings_are_reparsed_per_line(self):
-        """Once the TextArea is edited, greetings re-parse one per line."""
+    async def test_greeting_update_keeps_embedded_newlines_as_one_entry(self):
+        """Updating a single greeting (via the list editor's mutation API,
+        Roleplay P3b Task 3) never re-splits it by line - each greeting is a
+        discrete list entry, not a line-delimited blob, so embedded blank
+        lines within one greeting survive an explicit edit intact."""
         app = WidgetApp()
         async with app.run_test() as pilot:
             editor = pilot.app.query_one(PersonasCharacterEditorWidget)
@@ -270,11 +402,9 @@ class TestCharacterEditor:
             data["alternate_greetings"] = ["para1\n\npara2"]
             editor.load_character(data)
             await pilot.pause()
-            pilot.app.query_one(
-                "#personas-char-editor-alt-greetings", TextArea
-            ).text = "first\n\nsecond"
+            editor._greetings_update(0, "first\n\nsecond")
             collected = editor.get_character_data()
-            assert collected["alternate_greetings"] == ["first", "second"]
+            assert collected["alternate_greetings"] == ["first\n\nsecond"]
 
     async def test_empty_version_defaults_to_1_0(self):
         """Empty/whitespace Version collects as the new-character default."""
@@ -311,7 +441,8 @@ class TestCharacterEditor:
             await pilot.pause()
             assert pilot.app.query_one("#personas-char-editor-name", Input).value == ""
             assert (
-                pilot.app.query_one("#personas-char-editor-version", Input).value == "1.0"
+                pilot.app.query_one("#personas-char-editor-version", Input).value
+                == "1.0"
             )
             data = editor.get_character_data()
             assert "id" not in data
@@ -323,7 +454,9 @@ class TestCharacterEditor:
         received = []
 
         class CaptureApp(WidgetApp):
-            def on_character_save_requested(self, message: CharacterSaveRequested) -> None:
+            def on_character_save_requested(
+                self, message: CharacterSaveRequested
+            ) -> None:
                 received.append(message.character_data)
 
         app = CaptureApp()
@@ -331,7 +464,9 @@ class TestCharacterEditor:
             editor = pilot.app.query_one(PersonasCharacterEditorWidget)
             editor.new_character()
             pilot.app.query_one("#personas-char-editor-name", Input).value = "New Hero"
-            pilot.app.query_one("#personas-char-editor-tags", Input).value = "brave, kind"
+            pilot.app.query_one(
+                "#personas-char-editor-tags", Input
+            ).value = "brave, kind"
             await pilot.pause()
             pilot.app.query_one("#personas-char-editor-save", Button).press()
             await pilot.pause()
@@ -342,7 +477,9 @@ class TestCharacterEditor:
         received = []
 
         class CaptureApp(WidgetApp):
-            def on_character_save_requested(self, message: CharacterSaveRequested) -> None:
+            def on_character_save_requested(
+                self, message: CharacterSaveRequested
+            ) -> None:
                 received.append(message.character_data)
 
         app = CaptureApp()
@@ -360,7 +497,9 @@ class TestCharacterEditor:
         received = []
 
         class CaptureApp(WidgetApp):
-            def on_character_editor_cancelled(self, message: CharacterEditorCancelled) -> None:
+            def on_character_editor_cancelled(
+                self, message: CharacterEditorCancelled
+            ) -> None:
                 received.append(message)
 
         app = CaptureApp()
@@ -373,7 +512,9 @@ class TestCharacterEditor:
         app = WidgetApp()
         async with app.run_test() as pilot:
             advanced = pilot.app.query_one("#personas-char-editor-advanced")
-            toggle = pilot.app.query_one("#personas-char-editor-advanced-toggle", Button)
+            toggle = pilot.app.query_one(
+                "#personas-char-editor-advanced-toggle", Button
+            )
             assert advanced.display is False
             assert str(toggle.label) == "Advanced ▸"
             toggle.press()
@@ -391,7 +532,9 @@ class TestCharacterEditor:
         async with app.run_test() as pilot:
             editor = pilot.app.query_one(PersonasCharacterEditorWidget)
             advanced = pilot.app.query_one("#personas-char-editor-advanced")
-            toggle = pilot.app.query_one("#personas-char-editor-advanced-toggle", Button)
+            toggle = pilot.app.query_one(
+                "#personas-char-editor-advanced-toggle", Button
+            )
             toggle.press()
             await pilot.pause()
             assert advanced.display is True

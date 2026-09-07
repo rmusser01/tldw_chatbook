@@ -1,4 +1,12 @@
-from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCharacterPersonaService
+import inspect
+import json
+from pathlib import Path
+
+import pytest
+
+from tldw_chatbook.Character_Chat.local_character_persona_service import (
+    LocalCharacterPersonaService,
+)
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     ChatSettingsUpdate,
     CharacterChatSessionCreate,
@@ -13,8 +21,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaExemplarImportRequest,
     PersonaExemplarReviewRequest,
     PersonaExemplarUpdate,
-    PersonaProfileCreate,
-    PersonaProfileUpdate,
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
     PresetCreate,
     PresetUpdate,
 )
@@ -36,14 +44,19 @@ class FakeConversationDB:
         self.restored_character_calls = []
 
     def list_character_cards(self, limit=100, offset=0):
-        records = [dict(record) for record in self.character_cards.values() if not record.get("deleted")]
+        records = [
+            dict(record)
+            for record in self.character_cards.values()
+            if not record.get("deleted")
+        ]
         return records[offset : offset + limit]
 
     def search_character_cards(self, search_term, limit=10):
         records = [
             dict(record)
             for record in self.character_cards.values()
-            if not record.get("deleted") and search_term.lower() in record.get("name", "").lower()
+            if not record.get("deleted")
+            and search_term.lower() in record.get("name", "").lower()
         ]
         return records[:limit]
 
@@ -68,7 +81,9 @@ class FakeConversationDB:
         record = self.character_cards[character_id]
         if record["version"] != expected_version:
             return False
-        self.updated_character_payloads.append((character_id, payload, expected_version))
+        self.updated_character_payloads.append(
+            (character_id, payload, expected_version)
+        )
         record.update(payload)
         record["version"] = expected_version + 1
         return True
@@ -135,15 +150,33 @@ class FakeConversationDB:
             if kwargs.get("include_deleted") or not record.get("deleted")
         ]
         if kwargs.get("character_id") is not None:
-            records = [record for record in records if record.get("character_id") == kwargs["character_id"]]
+            records = [
+                record
+                for record in records
+                if record.get("character_id") == kwargs["character_id"]
+            ]
         if kwargs.get("scope_type"):
-            records = [record for record in records if record.get("scope_type") == kwargs["scope_type"]]
+            records = [
+                record
+                for record in records
+                if record.get("scope_type") == kwargs["scope_type"]
+            ]
         if kwargs.get("workspace_id"):
-            records = [record for record in records if record.get("workspace_id") == kwargs["workspace_id"]]
+            records = [
+                record
+                for record in records
+                if record.get("workspace_id") == kwargs["workspace_id"]
+            ]
         if kwargs.get("state"):
-            records = [record for record in records if record.get("state") == kwargs["state"]]
+            records = [
+                record for record in records if record.get("state") == kwargs["state"]
+            ]
         if query:
-            records = [record for record in records if query.lower() in (record.get("title") or "").lower()]
+            records = [
+                record
+                for record in records
+                if query.lower() in (record.get("title") or "").lower()
+            ]
         return records, len(records), 0.0
 
     def count_messages_for_conversation(self, *args, **kwargs):
@@ -183,7 +216,9 @@ class FakeConversationDB:
         record["version"] = expected_version + 1
         return True
 
-    def get_messages_for_conversation(self, conversation_id, limit=100, offset=0, include_deleted=False):
+    def get_messages_for_conversation(
+        self, conversation_id, limit=100, offset=0, include_deleted=False
+    ):
         return [
             {
                 "id": "msg-1",
@@ -208,15 +243,21 @@ def test_local_character_persona_service_routes_character_session_metadata_crud(
             topic_label="planning",
         )
     )
-    listed = service.list_character_chat_sessions(character_id=7, scope_type="workspace", workspace_id="ws-1")
+    listed = service.list_character_chat_sessions(
+        character_id=7, scope_type="workspace", workspace_id="ws-1"
+    )
     updated = service.update_character_chat_session(
         created["id"],
         CharacterChatSessionUpdate(title="Ada chat renamed", state="resolved"),
         expected_version=created["version"],
     )
     exported = service.export_chat_history(created["id"], format="json")
-    deleted = service.delete_character_chat_session(created["id"], expected_version=updated["version"])
-    restored = service.restore_character_chat_session(created["id"], expected_version=updated["version"] + 1)
+    deleted = service.delete_character_chat_session(
+        created["id"], expected_version=updated["version"]
+    )
+    restored = service.restore_character_chat_session(
+        created["id"], expected_version=updated["version"] + 1
+    )
 
     assert created["record_id"] == f"local:character_chat_session:{created['id']}"
     assert created["backend"] == "local"
@@ -240,14 +281,20 @@ def test_local_character_persona_service_routes_character_card_crud():
     listed = service.list_characters()
     searched = service.search_characters("Ada")
     detail = service.get_character(7)
-    created = service.create_character(CharacterCreateRequest(name="Local New", description="created"))
+    created = service.create_character(
+        CharacterCreateRequest(name="Local New", description="created")
+    )
     updated = service.update_character(
         created["id"],
         CharacterUpdateRequest(name="Local New v2"),
         expected_version=created["version"],
     )
-    deleted = service.delete_character(updated["id"], expected_version=updated["version"])
-    restored = service.restore_character(updated["id"], expected_version=updated["version"] + 1)
+    deleted = service.delete_character(
+        updated["id"], expected_version=updated["version"]
+    )
+    restored = service.restore_character(
+        updated["id"], expected_version=updated["version"] + 1
+    )
 
     assert listed == [{"id": 7, "name": "Ada", "version": 1, "deleted": 0}]
     assert searched[0]["id"] == 7
@@ -275,7 +322,9 @@ def test_local_character_persona_service_supports_persona_session_metadata():
             title="Guide chat",
         )
     )
-    listed = service.list_character_chat_sessions(assistant_kind="persona", assistant_id="persona-1")
+    listed = service.list_character_chat_sessions(
+        assistant_kind="persona", assistant_id="persona-1"
+    )
 
     assert created["character_id"] is None
     assert created["assistant_kind"] == "persona"
@@ -292,7 +341,7 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     service = LocalCharacterPersonaService(db, persona_store_path=store_path)
 
     created = service.create_persona_profile(
-        PersonaProfileCreate(
+        LocalPersonaProfileCreate(
             id="guide",
             name="Guide",
             mode="session_scoped",
@@ -302,13 +351,17 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     listed = service.list_persona_profiles()
     updated = service.update_persona_profile(
         "guide",
-        PersonaProfileUpdate(name="Guide v2", is_active=False),
+        LocalPersonaProfileUpdate(name="Guide v2", is_active=False),
         expected_version=created["version"],
     )
     active_only = service.list_persona_profiles(active_only=True)
-    deleted = service.delete_persona_profile("guide", expected_version=updated["version"])
+    deleted = service.delete_persona_profile(
+        "guide", expected_version=updated["version"]
+    )
     visible_after_delete = service.list_persona_profiles()
-    restored = service.restore_persona_profile("guide", expected_version=updated["version"] + 1)
+    restored = service.restore_persona_profile(
+        "guide", expected_version=updated["version"] + 1
+    )
     reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
 
     assert created["record_id"] == "local:persona_profile:guide"
@@ -326,11 +379,171 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     assert reloaded.get_persona_profile("guide")["name"] == "Guide v2"
 
 
+def test_persona_store_path_passes_through_shared_validation(tmp_path, monkeypatch):
+    """The public path boundary uses the repository's central validator."""
+    from tldw_chatbook.Character_Chat import local_character_persona_service as module
+
+    observed: list[tuple[object, bool, bool]] = []
+
+    def validate(path, require_exists=False, *, probe_existing=True):
+        observed.append((path, require_exists, probe_existing))
+        return Path(path)
+
+    monkeypatch.setattr(module, "validate_path_simple", validate, raising=False)
+    target = tmp_path / "personas.json"
+
+    service = LocalCharacterPersonaService(None, persona_store_path=target)
+
+    assert service.persona_store_path == target
+    assert observed == [(target, False, False)]
+
+
+def test_persona_store_path_validation_failure_is_path_free(tmp_path, monkeypatch):
+    """Rejected configured paths expose only the service's stable category."""
+    from tldw_chatbook.Character_Chat import local_character_persona_service as module
+
+    def reject(*args, **kwargs):
+        raise ValueError("/private/configured/path")
+
+    monkeypatch.setattr(module, "validate_path_simple", reject, raising=False)
+
+    with pytest.raises(ValueError, match="^local_persona_store_invalid$"):
+        LocalCharacterPersonaService(
+            None, persona_store_path=tmp_path / "personas.json"
+        )
+
+
+def test_local_persona_service_has_only_persona_store_and_private_names(tmp_path):
+    parameters = inspect.signature(LocalCharacterPersonaService).parameters
+    assert "persona_store_path" in parameters
+    assert "_".join(("user", "profile", "store", "path")) not in parameters
+
+    service = LocalCharacterPersonaService(
+        None, persona_store_path=tmp_path / "personas.json"
+    )
+    assert service.persona_store_path.name == "personas.json"
+    assert hasattr(service, "_persona_profiles")
+    assert hasattr(service, "_load_personas")
+    assert hasattr(service, "_persist_personas")
+    assert hasattr(service, "_find_persona_profile")
+    retired_names = (
+        "_" + "_".join(("user", "profiles")),
+        "_" + "_".join(("load", "user", "profiles")),
+        "_" + "_".join(("persist", "user", "profiles")),
+        "_" + "_".join(("find", "user", "profile")),
+    )
+    assert all(not hasattr(service, name) for name in retired_names)
+
+
+def test_local_persona_list_and_get_are_lossless_without_rewriting_store(tmp_path):
+    store_path = tmp_path / "tldw_chatbook_personas.json"
+    record = {
+        "id": "local-persona-1",
+        "name": "Archivist",
+        "description": "Local description",
+        "personality_traits": "patient",
+        "future_extension": {"keep": True},
+        "version": 7,
+    }
+    payload = {
+        "profiles": [record],
+        "exemplars": [],
+        "character_exemplars": [],
+        "chat_settings": {},
+        "chat_greeting_selections": {},
+        "chat_presets": [],
+        "character_memories": [],
+    }
+    store_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    original_bytes = store_path.read_bytes()
+
+    service = LocalCharacterPersonaService(None, persona_store_path=store_path)
+    listed = service.list_persona_profiles()
+    fetched = service.get_persona_profile("local-persona-1")
+
+    assert listed[0]["description"] == "Local description"
+    assert listed[0]["personality_traits"] == "patient"
+    assert listed[0]["future_extension"] == {"keep": True}
+    assert fetched["future_extension"] == {"keep": True}
+    assert store_path.read_bytes() == original_bytes
+
+
+def test_local_persona_updates_merge_only_supplied_fields_and_survive_restart(
+    tmp_path,
+):
+    store_path = tmp_path / "tldw_chatbook_personas.json"
+    payload = {
+        "profiles": [
+            {
+                "id": "local-persona-1",
+                "name": "Archivist",
+                "description": "Local description",
+                "character_card_id": 42,
+                "personality_traits": "patient",
+                "system_prompt": "Preserve this prompt.",
+                "future_extension": {"keep": True},
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "last_modified": "2026-01-01T00:00:00+00:00",
+                "version": 7,
+                "deleted": False,
+            }
+        ],
+        "exemplars": [],
+        "character_exemplars": [],
+        "chat_settings": {},
+        "chat_greeting_selections": {},
+        "chat_presets": [],
+        "character_memories": [],
+    }
+    store_path.write_text(json.dumps(payload), encoding="utf-8")
+    service = LocalCharacterPersonaService(None, persona_store_path=store_path)
+
+    renamed = service.update_persona_profile(
+        "local-persona-1",
+        LocalPersonaProfileUpdate(name="Archivist Prime"),
+        expected_version=7,
+    )
+    after_name_update = json.loads(store_path.read_text(encoding="utf-8"))
+    stored_after_name = after_name_update["profiles"][0]
+
+    assert set(after_name_update) == set(payload)
+    assert renamed["name"] == "Archivist Prime"
+    assert renamed["description"] == "Local description"
+    assert renamed["character_card_id"] == 42
+    assert renamed["personality_traits"] == "patient"
+    assert renamed["system_prompt"] == "Preserve this prompt."
+    assert renamed["future_extension"] == {"keep": True}
+    assert stored_after_name["version"] == 8
+
+    cleared = service.update_persona_profile(
+        "local-persona-1",
+        LocalPersonaProfileUpdate(
+            description=None,
+            system_prompt=None,
+            character_card_id=None,
+        ),
+        expected_version=8,
+    )
+    restarted = LocalCharacterPersonaService(None, persona_store_path=store_path)
+    reloaded = restarted.get_persona_profile("local-persona-1")
+
+    assert cleared["description"] is None
+    assert cleared["system_prompt"] is None
+    assert cleared["character_card_id"] is None
+    assert reloaded["description"] is None
+    assert reloaded["system_prompt"] is None
+    assert reloaded["character_card_id"] is None
+    assert reloaded["name"] == "Archivist Prime"
+    assert reloaded["personality_traits"] == "patient"
+    assert reloaded["future_extension"] == {"keep": True}
+    assert reloaded["version"] == 9
+
+
 def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path):
     db = FakeConversationDB()
     store_path = tmp_path / "personas.json"
     service = LocalCharacterPersonaService(db, persona_store_path=store_path)
-    service.create_persona_profile(PersonaProfileCreate(id="guide", name="Guide"))
+    service.create_persona_profile(LocalPersonaProfileCreate(id="guide", name="Guide"))
 
     created = service.create_persona_exemplar(
         "guide",
@@ -344,7 +557,9 @@ def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path
     updated = service.update_persona_exemplar(
         "guide",
         "ex-1",
-        PersonaExemplarUpdate(content="Use concise answers with citations.", enabled=False),
+        PersonaExemplarUpdate(
+            content="Use concise answers with citations.", enabled=False
+        ),
     )
     disabled_hidden = service.list_persona_exemplars("guide")
     reviewed = service.review_persona_exemplar(
@@ -354,10 +569,15 @@ def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path
     )
     imported = service.import_persona_exemplars(
         "guide",
-        PersonaExemplarImportRequest(transcript="Prefer short sentences.\nAsk before destructive actions.", max_candidates=2),
+        PersonaExemplarImportRequest(
+            transcript="Prefer short sentences.\nAsk before destructive actions.",
+            max_candidates=2,
+        ),
     )
     deleted = service.delete_persona_exemplar("guide", "ex-1")
-    visible_after_delete = service.list_persona_exemplars("guide", include_disabled=True)
+    visible_after_delete = service.list_persona_exemplars(
+        "guide", include_disabled=True
+    )
     reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
 
     assert created["record_id"] == "local:persona_exemplar:guide:ex-1"
@@ -373,7 +593,11 @@ def test_local_character_persona_service_persists_persona_exemplar_crud(tmp_path
     assert reviewed["version"] == 3
     assert imported["created"] == 2
     assert imported["items"][0]["source_type"] == "transcript_import"
-    assert deleted == {"status": "deleted", "persona_id": "guide", "exemplar_id": "ex-1"}
+    assert deleted == {
+        "status": "deleted",
+        "persona_id": "guide",
+        "exemplar_id": "ex-1",
+    }
     assert all(item["id"] != "ex-1" for item in visible_after_delete)
     assert len(reloaded.list_persona_exemplars("guide", include_disabled=True)) == 2
 
@@ -399,10 +623,14 @@ def test_local_character_persona_service_persists_character_exemplar_crud(tmp_pa
     )
     debug = service.select_character_exemplars_debug(
         7,
-        CharacterExemplarSelectionDebugRequest(user_turn="Can you answer with dry wit?"),
+        CharacterExemplarSelectionDebugRequest(
+            user_turn="Can you answer with dry wit?"
+        ),
     )
     deleted = service.delete_character_exemplar(7, created["id"])
-    hidden_after_delete = service.search_character_exemplars(7, CharacterExemplarSearchRequest(query="dry"))
+    hidden_after_delete = service.search_character_exemplars(
+        7, CharacterExemplarSearchRequest(query="dry")
+    )
     reloaded = LocalCharacterPersonaService(db, persona_store_path=store_path)
 
     assert created["record_id"] == f"local:character_exemplar:7:{created['id']}"
@@ -412,9 +640,18 @@ def test_local_character_persona_service_persists_character_exemplar_crud(tmp_pa
     assert detail["text"] == "Use dry wit when answering."
     assert updated["text"] == "Use dry wit and concise answers."
     assert debug["selected"][0]["id"] == created["id"]
-    assert deleted == {"status": "deleted", "character_id": 7, "exemplar_id": created["id"]}
+    assert deleted == {
+        "status": "deleted",
+        "character_id": 7,
+        "exemplar_id": created["id"],
+    }
     assert hidden_after_delete["total"] == 0
-    assert reloaded.get_character_exemplar(7, created["id"], include_deleted=True)["deleted"] is True
+    assert (
+        reloaded.get_character_exemplar(7, created["id"], include_deleted=True)[
+            "deleted"
+        ]
+        is True
+    )
 
 
 def test_local_character_persona_service_wraps_chat_execution_adjuncts(tmp_path):
@@ -473,11 +710,22 @@ def test_local_character_persona_service_wraps_chat_execution_adjuncts(tmp_path)
     assert loaded_settings == settings
     assert diagnostics["chat_id"] == chat["id"]
     assert diagnostics["turns"] == []
-    assert diagnostics["diagnostics"]["world_books"] == [{"name": "Ada Lore", "entries": 2}]
+    assert diagnostics["diagnostics"]["world_books"] == [
+        {"name": "Ada Lore", "entries": 2}
+    ]
     assert created_preset["preset_id"] == "local-tight"
     assert any(item["preset_id"] == "default" for item in listed_presets["presets"])
     assert any(item["preset_id"] == "local-tight" for item in listed_presets["presets"])
     assert updated_preset["name"] == "Local Tight Updated"
-    assert deleted_preset == {"status": "deleted", "preset_id": "local-tight", "source": "local"}
-    assert reloaded.get_chat_settings(chat["id"])["settings"] == {"authorNote": "Stay concise."}
-    assert all(item["preset_id"] != "local-tight" for item in reloaded.list_chat_presets()["presets"])
+    assert deleted_preset == {
+        "status": "deleted",
+        "preset_id": "local-tight",
+        "source": "local",
+    }
+    assert reloaded.get_chat_settings(chat["id"])["settings"] == {
+        "authorNote": "Stay concise."
+    }
+    assert all(
+        item["preset_id"] != "local-tight"
+        for item in reloaded.list_chat_presets()["presets"]
+    )

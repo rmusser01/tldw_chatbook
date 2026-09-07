@@ -1,0 +1,1218 @@
+# Tests/Agents/test_agent_runtime.py
+"""Pure loop tests with deterministic fake callables."""
+
+import itertools
+import json
+from collections import deque
+
+from tldw_chatbook.Agents.agent_models import (
+    LOOP_DETECTION_N,
+    MAX_LOOP_PERIOD,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_STUCK,
+    SPAWN_TOOL_NAME,
+    STEP_MODEL,
+    STEP_SPAWN,
+    STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
+    AgentConfig,
+    ModelTurn,
+    RunBudget,
+    ToolCall,
+    ToolCatalogEntry,
+    ToolLoadSelection,
+    ToolRecordProjection,
+    ToolResult,
+    ToolSchema,
+)
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, _detect_cycle, run_agent_loop
+from tldw_chatbook.Agents.run_context import current_tool_call_id
+
+CALC = ToolSchema(
+    id="builtin:calculator",
+    name="calculator",
+    description="math",
+    parameters={"type": "object"},
+)
+
+
+def fence(name, args):
+    return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+def make_deps(turns, *, invoke=None, spawn=None, cancel=None, clock=None):
+    """Deps whose call_model pops scripted ModelTurns."""
+    script = list(turns)
+
+    def call_model(messages, active_schemas):
+        return script.pop(0)
+
+    return LoopDeps(
+        call_model=call_model,
+        invoke_tool=invoke or (lambda c: ToolResult(ok=True, content="42")),
+        spawn=spawn or (lambda task: ToolResult(ok=True, content="sub done")),
+        find_tools=lambda q: [
+            ToolCatalogEntry(
+                id="builtin:calculator",
+                name="calculator",
+                one_line_description="math",
+                source="builtin",
+            )
+        ],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
+            accepted=(CALC,)
+        ),
+        should_cancel=cancel or (lambda: False),
+        clock=clock or (lambda: 0.0),
+    )
+
+
+CFG = AgentConfig(
+    model="m", system_prompt="s", allowed_tools=("calculator", SPAWN_TOOL_NAME)
+)
+
+
+def run(turns, **kw):
+    cfg = kw.pop("config", CFG)
+    active = kw.pop("active", [CALC])
+    return run_agent_loop(
+        cfg, [{"role": "user", "content": "hi"}], active, make_deps(turns, **kw)
+    )
+
+
+def test_plain_answer_no_tools():
+    out = run([ModelTurn(text="Tokyo.")])
+    assert out.status == RUN_DONE and out.final_text == "Tokyo."
+    assert [s.kind for s in out.steps] == ["model"]
+
+
+def test_fenced_tool_call_then_answer():
+    calls = []
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="It is 42."),
+        ],
+        invoke=lambda c: calls.append(c) or ToolResult(ok=True, content="42"),
+    )
+    assert out.status == RUN_DONE and out.final_text == "It is 42."
+    assert calls[0].name == "calculator"
+    kinds = [s.kind for s in out.steps]
+    assert kinds == ["model", "tool_call", "tool_result", "model"]
+
+
+def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history():
+    """Deleting any display/log/cycle projection call site leaks Canvas-like data."""
+    raw_argument = "<canvas-html-argument data-sentinel='task-3-1-round-1'>"
+    raw_result = "<canvas-html-result>"
+    seen_messages = []
+    records = []
+    turns = [
+        ModelTurn(text=fence("calculator", {"html": raw_argument + str(index)}))
+        for index in range(3)
+    ]
+
+    def call_model(messages, _schemas):
+        seen_messages.append(list(messages))
+        return turns.pop(0)
+
+    def project(audience, _call, result=None):
+        if audience == "cycle":
+            # Distinct raw payloads become one stable projected key, proving
+            # cycle detection consumes the projection rather than raw args.
+            return ToolRecordProjection(arguments={"digest": "same"})
+        return ToolRecordProjection(
+            arguments={"audience": audience},
+            content=f"{audience}-result",
+            error=f"{audience}-error",
+            ok=result.ok if result is not None else None,
+        )
+
+    deps = make_deps([], invoke=lambda _call: ToolResult(ok=True, content=raw_result))
+    deps.call_model = call_model
+    deps.on_record = lambda kind, payload: records.append((kind, payload)) or None
+    deps.project_tool_record = project
+    # The registry, rather than the provider, authoritatively identifies this
+    # hook as opt-in.  The loop uses that distinction to protect model steps.
+    deps.has_tool_record_projection = lambda _call: True
+    out = run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        deps,
+    )
+
+    assert out.status == RUN_STUCK
+    assert raw_result in seen_messages[1][-1]["content"]  # volatile model history
+    # Every emitted step is persisted and is also the source for the resumed
+    # Console transcript.  This includes the model step that carried the
+    # fence/native call, not merely the tool call/result rows.
+    assert all(
+        raw_argument not in str(step) and raw_result not in str(step)
+        for step in out.steps
+    )
+    assert all(raw_argument not in str(row) and raw_result not in str(row) for row in records)
+
+    from tldw_chatbook.Agents.agent_service import _safe_agent_step_record
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    persisted = [_safe_agent_step_record("run-1", step) for step in out.steps]
+    assert all(
+        raw_argument not in str(row) and raw_result not in str(row) for row in persisted
+    )
+    assert all(
+        raw_argument not in ConsoleAgentBridge._summarize_persisted_step(row)
+        and raw_result not in ConsoleAgentBridge._summarize_persisted_step(row)
+        for row in persisted
+    )
+
+
+def test_default_projection_keeps_nonfinite_tool_arguments_in_runtime_records():
+    """Default providers retain the legacy JSON spelling for non-finite values."""
+    for value, encoded in (
+        (float("nan"), "NaN"),
+        (float("inf"), "Infinity"),
+        (float("-inf"), "-Infinity"),
+    ):
+        out = run(
+            [
+                ModelTurn(
+                    text="",
+                    tool_calls=(ToolCall("calculator", {"value": value}),),
+                ),
+                ModelTurn(text="done"),
+            ],
+            invoke=lambda _call: ToolResult(ok=True, content="ok"),
+        )
+        assert out.status == RUN_DONE
+        # Display uses the original default projection, retaining Python's
+        # established JSON spelling for these values.
+        step = next(step for step in out.steps if step.kind == STEP_TOOL_CALL)
+        assert json.dumps(step.args, sort_keys=True) == f'{{"value": {encoded}}}'
+
+
+def test_native_tool_calls_take_precedence_over_text():
+    out = run(
+        [
+            ModelTurn(
+                text="ignored prose",
+                tool_calls=(ToolCall(name="calculator", args={"expression": "1"}),),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+    assert out.status == RUN_DONE
+    assert out.steps[1].tool_name == "calculator"
+
+
+def test_ordinary_tool_steps_share_the_native_call_id() -> None:
+    out = run(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name="calculator",
+                        args={"expression": "1"},
+                        call_id="native-call-1",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    pair = [
+        step
+        for step in out.steps
+        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert [step.call_id for step in pair] == ["native-call-1", "native-call-1"]
+
+
+def test_managed_skill_proposal_runtime_binds_call_id_and_is_pure() -> None:
+    call_ids = []
+    pure_sets = []
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        args={"request": "exact"},
+                        call_id="skill-proposal-1",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.prepare_managed_skill_promotion = lambda _args: (
+        call_ids.append(current_tool_call_id())
+        or ToolResult(ok=True, content="proposal")
+    )
+    deps.before_tool_dispatch = lambda _calls, pure: pure_sets.append(pure)
+
+    outcome = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "prepare it"}],
+        [CALC],
+        deps,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert call_ids == ["skill-proposal-1"]
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in pure_sets[0]
+
+
+def test_managed_skill_proposal_runtime_refuses_without_callback() -> None:
+    generic_calls = []
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        args={"request": "hallucinated"},
+                        call_id="skill-proposal-unavailable",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda call: (
+            generic_calls.append(call)
+            or ToolResult(ok=True, content="must not execute")
+        ),
+    )
+
+    outcome = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "prepare it"}],
+        [CALC],
+        deps,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert generic_calls == []
+    results = [step for step in outcome.steps if step.kind == STEP_TOOL_RESULT]
+    assert results[-1].tool_outcome == "blocked"
+    assert "unavailable" in results[-1].result.lower()
+
+
+def test_idless_fence_tool_steps_share_one_deterministic_call_id() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    pair = [
+        step
+        for step in out.steps
+        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert pair[0].call_id
+    assert pair[1].call_id == pair[0].call_id
+
+
+def test_tool_error_is_not_fatal_and_feeds_back():
+    seen = []
+
+    def call_model(messages, active_schemas):
+        seen.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "x"}))
+            if len(seen) == 1
+            else ModelTurn(text="recovered")
+        )
+
+    deps = make_deps([], invoke=lambda c: ToolResult(ok=False, error="boom"))
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+    assert out.status == RUN_DONE and out.final_text == "recovered"
+    assert "ERROR: boom" in seen[1][-1]["content"]
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps and "boom" in result_steps[0].result
+
+
+def test_tool_result_step_records_success_before_flattening_collision_payload() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(
+            ok=True, content="ERROR: harmless successful payload"
+        ),
+    )
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "success"
+
+
+def test_tool_result_step_distinguishes_failure_and_provider_block() -> None:
+    ordinary = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "bad"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(ok=False, error="division failed"),
+    )
+    blocked = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult.blocked(
+            "tool execution is disabled by the kill switch"
+        ),
+    )
+
+    assert (
+        next(
+            step for step in ordinary.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "failed"
+    )
+    assert (
+        next(
+            step for step in blocked.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
+
+
+def test_direct_review_refusal_records_blocked_without_dispatch() -> None:
+    deps = make_deps(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.review_tool_calls = lambda _calls: {"calculator": "review refused"}
+
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "blocked"
+
+
+def test_spawn_result_and_budget():
+    tasks = []
+    turns = [
+        ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "t1"})),
+        ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "t2"})),
+        ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "t3"})),
+        ModelTurn(text="all done"),
+    ]
+    # 3 spawn rounds + the final answer = 11 steps; default max_steps=8
+    # would trip stuck first, so raise it — this test is about spawn budget.
+    out = run(
+        turns,
+        spawn=lambda t: tasks.append(t) or ToolResult(ok=True, content=f"did {t}"),
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", SPAWN_TOOL_NAME),
+            budget=RunBudget(max_steps=20),
+        ),
+    )
+    assert out.status == RUN_DONE
+    assert tasks == ["t1", "t2"]  # max_subagents=2: third refused
+    assert out.subagents_spawned == 2
+    spawn_steps = [s for s in out.steps if s.kind == STEP_SPAWN]
+    assert len(spawn_steps) == 2
+
+
+def test_disclosure_find_then_load_then_invoke():
+    turns = [
+        ModelTurn(text=fence("find_tools", {"query": "math"})),
+        ModelTurn(text=fence("load_tools", {"ids": ["builtin:calculator"]})),
+        ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+        ModelTurn(text="42."),
+    ]
+    # find + load + invoke + answer = 10 steps; default max_steps=8 would
+    # trip stuck first, so raise it — this test is about disclosure flow.
+    out = run(
+        turns,
+        active=[],  # nothing pre-disclosed
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=16),
+        ),
+    )
+    assert out.status == RUN_DONE and out.final_text == "42."
+
+
+def test_step_budget_trips_to_stuck():
+    endless = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)})) for i in range(50)
+    ]
+    out = run(
+        endless,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=4),
+        ),
+    )
+    assert out.status == RUN_STUCK
+
+
+def test_wall_clock_budget_trips_to_stuck():
+    ticker = iter([0.0, 500.0, 1000.0, 1500.0])
+    out = run([ModelTurn(text="never reached")], clock=lambda: next(ticker))
+    assert out.status == RUN_STUCK
+
+
+def test_model_turn_budget_exhaustion_is_distinct_from_step_budget():
+    """A run that spends its model turns on tool rounds must stop with the
+    model-turn copy while raw steps are still well under max_steps."""
+    # budget: max_model_turns=2, max_steps=99 (steps can never bind)
+    # script: every model turn returns a fence tool call (never a final
+    # answer) -> turn 1 (3 steps), turn 2 (3 steps), then the check fires
+    # BEFORE a third provider call.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)})) for i in range(10)
+    ]
+    out = run(
+        turns,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=99, max_model_turns=2),
+        ),
+    )
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].summary == "model-turn budget exhausted"
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == 2
+    assert len(out.steps) < 99
+
+
+def test_console_budget_floor_plus_two_extra_rounds_completes():
+    """AC #2: the documented 4-turn/10-step discovery floor plus TWO more
+    real tool rounds (6 turns / 16 steps) completes under
+    CONSOLE_RUN_BUDGET."""
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    # script: 5 fence tool-call turns then a final answer (6 model turns,
+    # 16 steps) with a generous monotonic fake clock -> RUN_DONE, not stuck.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)})) for i in range(5)
+    ] + [ModelTurn(text="final answer")]
+    tick = iter(float(i) for i in range(100))
+    out = run(
+        turns,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=CONSOLE_RUN_BUDGET,
+        ),
+        clock=lambda: next(tick),
+    )
+    assert out.status == RUN_DONE
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == 6
+    assert len(out.steps) == 16
+
+
+def test_console_budget_step_cap_admits_a_full_model_turn_run():
+    """The Console budget's three caps must be sized together.
+
+    ``max_model_turns`` is meant to be the PRIMARY limiter, so ``max_steps``
+    must be large enough for a full run of fence tool rounds to reach it.
+    A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
+    STEP_TOOL_RESULT) and the wrap-up reply costs 1 more, so N model turns
+    need 3*(N-1)+1 steps. Raising the turn cap without raising the step cap
+    would silently move the wall back to the step check.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    turns = CONSOLE_RUN_BUDGET.max_model_turns
+    assert CONSOLE_RUN_BUDGET.max_steps >= 3 * (turns - 1) + 1
+
+
+def test_console_budget_reaches_its_model_turn_cap_before_step_cap():
+    """Drive a real run to the Console turn cap: it must stop on the
+    model-turn budget, not the step budget."""
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    turns = CONSOLE_RUN_BUDGET.max_model_turns
+    # Never-ending distinct tool calls: only a budget can stop this run.
+    # Distinct args keep loop detection out of it.
+    scripted = [
+        ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
+        for i in range(turns + 5)
+    ]
+    # Unbounded clock: TASK-18600 raised the Console turn cap to 2000, and a
+    # fixed-size tick iterator sized for the old 30-turn cap ran out
+    # mid-run and surfaced as StopIteration instead of a budget verdict.
+    tick = itertools.count(0.0)
+    out = run(
+        scripted,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=CONSOLE_RUN_BUDGET,
+        ),
+        clock=lambda: next(tick),
+    )
+    assert out.steps[-1].summary == "model-turn budget exhausted"
+    assert sum(1 for s in out.steps if s.kind == STEP_MODEL) == turns
+
+
+def test_identical_consecutive_calls_trip_loop_detection():
+    same = ModelTurn(text=fence("calculator", {"expression": "6*7"}))
+    out = run(
+        [same] * (LOOP_DETECTION_N + 1) + [ModelTurn(text="x")],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].kind == "error"
+    # The stuck summary is surfaced verbatim to the user (see
+    # console_chat_controller._agent_failure_visible_copy) -- it must name
+    # the looping tool and read as plain English, not "1-cycle" jargon
+    # (TASK-1231/F3 AC4).
+    summary = out.steps[-1].summary
+    assert "calculator" in summary
+    assert summary == (
+        "Agent stopped: it kept calling calculator with the same arguments "
+        f"({LOOP_DETECTION_N} times) without making progress."
+    )
+    assert "cycle" not in summary
+    assert "loop detected" not in summary
+
+
+def test_same_tool_different_args_is_not_stuck():
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)})) for i in range(3)
+    ] + [ModelTurn(text="fine")]
+    out = run(
+        turns,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status == RUN_DONE
+
+
+def _keys(*names):
+    # cycle-detection keys are (name, args-json); args identical here.
+    return deque([(n, "{}") for n in names], maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
+
+
+def test_detect_cycle_period1_needs_three():
+    assert _detect_cycle(_keys("A", "A")) is None  # 2 identical: not yet
+    assert _detect_cycle(_keys("A", "A", "A")) == (1, 3)  # 3 identical: trip
+
+
+def test_detect_cycle_period2_trips_at_two_repeats():
+    assert _detect_cycle(_keys("A", "B", "A")) is None  # incomplete
+    assert _detect_cycle(_keys("A", "B", "A", "B")) == (2, 2)
+
+
+def test_detect_cycle_period3_trips_at_two_repeats():
+    assert _detect_cycle(_keys("A", "B", "C", "A", "B", "C")) == (3, 2)
+
+
+def test_detect_cycle_non_cyclic_is_none():
+    assert _detect_cycle(_keys("A", "B", "C", "D", "E")) is None
+
+
+def test_detect_cycle_period4_trips_at_two_repeats():
+    # Boundary: MAX_LOOP_PERIOD (4) is the longest period detected.
+    assert _detect_cycle(_keys("A", "B", "C", "D", "A", "B", "C", "D")) == (4, 2)
+
+
+def test_detect_cycle_period5_is_none_too_long():
+    # A period-5 cycle exceeds MAX_LOOP_PERIOD -- never checked, so it must
+    # never be detected even with two full repeats present.
+    assert (
+        _detect_cycle(_keys("A", "B", "C", "D", "E", "A", "B", "C", "D", "E"))
+        is None
+    )
+
+
+def test_alternating_calls_trip_loop_detection():
+    # A->B->A->B with IDENTICAL args must trip RUN_STUCK (was a gap: only
+    # consecutive-identical calls tripped detection before this fix).
+    a = ModelTurn(text=fence("calculator", {"expression": "6*7"}))
+    b = ModelTurn(text=fence("new_tool", {}))
+    out = run(
+        [a, b, a, b, ModelTurn(text="x")],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "new_tool"),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].kind == "error"
+    summary = out.steps[-1].summary
+    # User-comprehensible copy, not "N-cycle" jargon (TASK-1231/F3 AC4).
+    assert "loop detected" not in summary
+    assert summary.startswith("Agent stopped: it kept repeating")
+    assert "without making progress" in summary
+    # Both cycle members must be named -- a period>1 trip that only
+    # mentioned one tool would be just as unactionable as the old
+    # "N-cycle" jargon.
+    assert "calculator" in summary
+    assert "new_tool" in summary
+
+
+def test_same_tool_distinct_args_not_stuck():
+    # Four distinct calculator calls with different args: no repeating
+    # cycle at any period, so this must not trip RUN_STUCK.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
+        for i in range(4)
+    ] + [ModelTurn(text="done")]
+    out = run(
+        turns,
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+    assert out.status != RUN_STUCK
+
+
+def test_cancel_lands_at_step_boundary():
+    flags = iter([False, True])
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="never"),
+        ],
+        cancel=lambda: next(flags, True),
+    )
+    assert out.status == RUN_CANCELLED
+
+
+def test_cancel_recognized_after_final_answer_with_no_tool_call():
+    # Finding B: a Stop that lands mid a plain final answer (no tool call to
+    # dispatch) must not be silently downgraded to "done" -- the loop only
+    # re-polls should_cancel at step/tool-call boundaries, and a no-tool-call
+    # turn used to return RUN_DONE immediately without one more recheck.
+    flags = iter([False, True])
+    trace_steps = []
+    deps = make_deps(
+        [ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True)
+    )
+    deps.on_trace_step = trace_steps.append
+    out = run_agent_loop(
+        CFG, [{"role": "user", "content": "hi"}], [CALC], deps
+    )
+    assert out.status == RUN_CANCELLED
+    assert out.final_text == "Tokyo."
+    assert [step.kind for step in trace_steps] == [
+        "model_request_started",
+        "model_response_completed",
+        "model_cancelled",
+    ]
+    request, completed, cancelled = trace_steps
+    assert cancelled.parent_step_index == completed.index
+    assert cancelled.source_step_index == request.index
+
+
+# --- G1/Q9: load_tools `ids` coercion must never crash and must not
+# char-split a bare string id. ---
+
+
+def test_load_tools_ids_null_does_not_crash_and_reports_no_valid_tools():
+    seen_ids = []
+
+    def load_schemas(ids, _messages, _call):
+        seen_ids.append(ids)
+        return ToolLoadSelection()
+
+    deps = make_deps(
+        [ModelTurn(text=fence("load_tools", {"ids": None})), ModelTurn(text="done")]
+    )
+    deps.load_schemas = load_schemas
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert seen_ids == [[]]  # coerced to empty list, no crash
+    assert out.status == RUN_DONE and out.final_text == "done"
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "ERROR: No tool ids selected"
+
+
+def test_load_tools_ids_as_bare_string_loads_that_one_tool():
+    seen_ids = []
+
+    def load_schemas(ids, _messages, _call):
+        seen_ids.append(ids)
+        return ToolLoadSelection(accepted=(CALC,))
+
+    deps = make_deps(
+        [
+            ModelTurn(text=fence("load_tools", {"ids": "builtin:calculator"})),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.load_schemas = load_schemas
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert seen_ids == [["builtin:calculator"]]  # not char-split
+    assert out.status == RUN_DONE
+
+
+# --- G5: load_tools must distinguish "all ids invalid" from "valid but
+# no room". ---
+
+
+def test_load_tools_all_invalid_ids_reports_no_valid_tools_not_no_room():
+    deps = make_deps(
+        [ModelTurn(text=fence("load_tools", {"ids": ["nope"]})), ModelTurn(text="done")]
+    )
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        invalid_inputs=("nope",)
+    )
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "ERROR: invalid tool ids: nope"
+
+
+NEW_TOOL = ToolSchema(
+    id="builtin:new_tool",
+    name="new_tool",
+    description="new",
+    parameters={"type": "object"},
+)
+
+
+def test_budget_omitted_load_preserves_current_working_set():
+    """A budget omission is explicit and leaves the prior set callable."""
+    turns = [
+        ModelTurn(text=fence("load_tools", {"ids": ["builtin:new_tool"]})),
+        ModelTurn(text="done"),
+    ]
+    deps = make_deps(turns)
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        omitted_for_budget=("builtin:new_tool",)
+    )
+    invoked = []
+    deps.invoke_tool = lambda call: invoked.append(call.name) or ToolResult(
+        ok=True, content="42"
+    )
+    out = run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", "new_tool"),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        deps,
+    )
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "not loaded (request budget): builtin:new_tool"
+    assert invoked == []
+
+
+def test_load_tools_can_replace_set_with_same_tool():
+    """Selecting the current tool again is a valid idempotent replacement."""
+    turns = [
+        ModelTurn(text=fence("load_tools", {"ids": ["builtin:calculator"]})),
+        ModelTurn(text="done"),
+    ]
+    deps = make_deps(turns)
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        accepted=(CALC,)
+    )
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps[0].result == "loaded: calculator"
+
+
+# --- G4: an empty spawn task must be refused with no budget consumption
+# and no STEP_SPAWN. ---
+
+
+def test_spawn_empty_task_is_refused_without_budget_consumption():
+    calls = []
+    turns = [
+        ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "   "})),
+        ModelTurn(text="done"),
+    ]
+    out = run(
+        turns, spawn=lambda t: calls.append(t) or ToolResult(ok=True, content="x")
+    )
+    assert calls == []
+    assert out.subagents_spawned == 0
+    assert [s for s in out.steps if s.kind == STEP_SPAWN] == []
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert "Task description cannot be empty" in result_steps[0].result
+
+
+# --- Q6: spawn must be refused up front when not in allowed_tools, before
+# ever dispatching to deps.spawn. ---
+
+
+def test_spawn_not_in_allowed_tools_is_refused_before_dispatch():
+    calls = []
+    turns = [
+        ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "do it"})),
+        ModelTurn(text="done"),
+    ]
+    cfg = AgentConfig(
+        model="m", system_prompt="s", allowed_tools=("calculator",)
+    )  # no spawn permission
+    out = run(
+        turns,
+        config=cfg,
+        spawn=lambda t: calls.append(t) or ToolResult(ok=True, content="x"),
+    )
+    assert calls == []
+    assert out.subagents_spawned == 0
+    assert [s for s in out.steps if s.kind == STEP_SPAWN] == []
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert "Tool not permitted: spawn_subagent" in result_steps[0].result
+
+
+# --- task-243 Task 2: native history convention (assistant echo + role=tool
+# results), gated on call_id so the fence path stays byte-identical. ---
+
+
+def _native_turn(calls, text=""):
+    raw = [
+        {
+            "id": c.call_id,
+            "type": "function",
+            "function": {"name": c.name, "arguments": json.dumps(c.args)},
+        }
+        for c in calls
+    ]
+    return ModelTurn(
+        text=text,
+        tool_calls=tuple(calls),
+        assistant_message={"role": "assistant", "content": text, "tool_calls": raw},
+    )
+
+
+def test_native_multi_call_batch_dispatches_both_in_one_turn():
+    """AC #3: two native calls in one reply -> two tool invocations before
+    the next model turn, results paired to call ids as role='tool'."""
+    calls = [
+        ToolCall(name="echo", args={"v": "1"}, call_id="idA"),
+        ToolCall(name="echo", args={"v": "2"}, call_id="idB"),
+    ]
+    seen_messages = []
+    turns = iter([_native_turn(calls), ModelTurn(text="done")])
+
+    def call_model(messages, active_schemas):
+        seen_messages.append([dict(m) for m in messages])
+        return next(turns)
+
+    invoked = []
+
+    def invoke_tool(call):
+        invoked.append(call)
+        return ToolResult(ok=True, content=f"ok:{call.args['v']}")
+
+    deps = make_deps([], invoke=invoke_tool)
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert [c.call_id for c in invoked] == ["idA", "idB"]  # one turn, both dispatched
+    second_turn_history = seen_messages[1]
+    assistant = second_turn_history[1]
+    assert assistant["tool_calls"][0]["id"] == "idA"  # provider echo verbatim
+    tool_msgs = [m for m in second_turn_history if m.get("role") == "tool"]
+    assert [(m["tool_call_id"], m["content"]) for m in tool_msgs] == [
+        ("idA", "ok:1"),
+        ("idB", "ok:2"),
+    ]
+    assert not any(
+        m.get("role") == "user"
+        and str(m.get("content", "")).startswith("Tool result for")
+        for m in second_turn_history[1:]
+    )
+
+
+def test_fence_history_convention_unchanged():
+    """A fence-parsed call (call_id='') keeps the plain-text convention:
+    assistant text verbatim, user-role 'Tool result for ...' line, and NO
+    new keys leak into fence-mode history messages."""
+    seen = []
+    fence_text = fence("calculator", {"expression": "6*7"})
+
+    def call_model(messages, active_schemas):
+        seen.append([dict(m) for m in messages])
+        return (
+            ModelTurn(text=fence_text)
+            if len(seen) == 1
+            else ModelTurn(text="It is 42.")
+        )
+
+    deps = make_deps([])
+    deps.call_model = call_model
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+    assert out.status == RUN_DONE and out.final_text == "It is 42."
+    history = seen[1]
+    assert history[1] == {"role": "assistant", "content": fence_text}
+    assert set(history[1].keys()) == {"role", "content"}
+    assert history[2]["role"] == "user"
+    assert history[2]["content"].startswith("Tool result for")
+
+
+def test_token_budget_trips_to_stuck():
+    # Tool-calling turns that never finish; each carries 100 tokens so the
+    # cumulative spend crosses max_total_tokens before the (raised) step/turn caps.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)}), tokens=100)
+        for i in range(50)
+    ]
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator", SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=99, max_model_turns=99, max_total_tokens=250),
+    )
+    out = run(turns, config=cfg)
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].summary == "token budget exhausted"
+    assert out.total_tokens >= 250
+
+
+def test_token_budget_sentinel_zero_never_trips():
+    # Huge per-turn tokens but max_total_tokens=0 (default) -> completes normally.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": "1"}), tokens=10_000_000),
+        ModelTurn(text="all done", tokens=10_000_000),
+    ]
+    out = run(turns)  # default CFG budget has max_total_tokens=0
+    assert out.status == RUN_DONE
+    assert out.final_text == "all done"
+
+
+def test_token_budget_done_on_crossing_turn_completes():
+    # The final-answer turn itself crosses the budget -> still RUN_DONE
+    # (stop-the-loop, not fail-the-answer), and total_tokens is reported.
+    cfg = AgentConfig(model="m", system_prompt="s", budget=RunBudget(max_total_tokens=50))
+    out = run([ModelTurn(text="the answer", tokens=100)], config=cfg)
+    assert out.status == RUN_DONE
+    assert out.final_text == "the answer"
+    assert out.total_tokens == 100
+
+
+def test_run_outcome_reports_total_tokens_accounting():
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": "1"}), tokens=30),
+        ModelTurn(text="done", tokens=12),
+    ]
+    out = run(turns)
+    assert out.status == RUN_DONE
+    assert out.total_tokens == 42
+
+
+def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
+    """PR #655 review: the loop's own last line of defense must also dedupe
+    by name WITHIN one load batch (a caller can hand the same schema back
+    twice via name/id aliases), so ``active`` never gains a duplicate."""
+    deps = make_deps(
+        [
+            ModelTurn(
+                text=fence("load_tools", {"ids": ["calculator", "builtin:calculator"]})
+            ),
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        accepted=(CALC,)
+    )
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
+    assert out.status == RUN_DONE
+    load_result = [
+        s
+        for s in out.steps
+        if s.kind == STEP_TOOL_RESULT and s.tool_name == "load_tools"
+    ][0]
+    assert load_result.result == "loaded: calculator"  # once, not twice
+
+
+def test_truncate_tool_result_bounds_content_and_names_a_continuation():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    out = _truncate_tool_result("x" * 5000, 100, "grep_files")
+
+    assert len(out) < 5000
+    assert out.startswith("x" * 100)
+    assert "grep_files" in out
+    assert "5000" in out
+
+
+def test_truncate_tool_result_is_a_noop_under_the_cap():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("small", 100, "t") == "small"
+
+
+def test_truncate_tool_result_zero_means_unlimited():
+    """0 restores today's behaviour exactly, for an operator who wants it."""
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("x" * 5000, 0, "t") == "x" * 5000
+
+
+# --- integration: the truncation cap is actually wired at the append seam
+# (not just exercised as a pure helper). These drive run_agent_loop end to
+# end with a real RunBudget so deleting the `_truncate_tool_result(...)`
+# call site in the loop -- while leaving the helper itself intact -- fails
+# these tests even though the unit tests above would stay green.
+
+
+def test_run_agent_loop_truncates_oversized_tool_result_in_history():
+    """A tool that ignores pagination and returns far more than the cap
+    must still land in conversation history bounded, carrying the
+    continuation trailer, proving the call site (not just the helper) is
+    wired in."""
+    huge = "y" * 5000
+    seen_messages = []
+
+    def call_model(messages, active_schemas):
+        seen_messages.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "1"}))
+            if len(seen_messages) == 1
+            else ModelTurn(text="done")
+        )
+
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_result_chars=100),
+    )
+    deps = make_deps([], invoke=lambda c: ToolResult(ok=True, content=huge))
+    deps.call_model = call_model
+    out = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert len(seen_messages) == 2
+    tool_result_message = seen_messages[1][-1]
+    assert tool_result_message["role"] == "user"
+    content = tool_result_message["content"]
+    assert content.startswith("Tool result for calculator: " + "y" * 100)
+    assert len(content) < len(huge)
+    assert "truncated" in content and "calculator" in content
+
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps and "truncated" in result_steps[0].result
+
+
+def test_run_agent_loop_truncates_review_hook_refusal_in_history():
+    """The review-hook refusal path (verdict != "proceed") sets `content`
+    from the verdict string BEFORE the dispatch if/else, so it must pass
+    through the same cap as a dispatched tool result -- this was the
+    branch Finding 1 found silently uncapped."""
+    long_refusal = "Blocked: " + "z" * 5000
+    seen_messages = []
+    invoked = []
+
+    def call_model(messages, active_schemas):
+        seen_messages.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "1"}))
+            if len(seen_messages) == 1
+            else ModelTurn(text="done")
+        )
+
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_result_chars=100),
+    )
+    deps = make_deps(
+        [],
+        invoke=lambda c: invoked.append(c.name) or ToolResult(ok=True, content="42"),
+    )
+    deps.call_model = call_model
+    deps.review_tool_calls = lambda batch: {"calculator": long_refusal}
+    out = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert (
+        invoked == []
+    )  # dispatch was skipped -- the refusal never reaches invoke_tool
+    tool_result_message = seen_messages[1][-1]
+    content = tool_result_message["content"]
+    assert content.startswith(
+        "Tool result for calculator: Blocked: " + "z" * (100 - len("Blocked: "))
+    )
+    assert len(content) < len(long_refusal)
+    assert "truncated" in content and "calculator" in content
+
+
+def test_console_budget_bounds_spend_not_only_time():
+    """Sub-agents inherit the turn budget by an explicit operator decision.
+
+    Worst case is max_model_turns * (1 + max_subagents) provider turns for
+    one message -- 90 at 30/2. The wall clock bounds that in TIME but not
+    in SPEND, so the Console budget carries a token ceiling.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    # TASK-18600 raised this 30 -> 2000. It is now a BACKSTOP, not the
+    # primary limiter: max_total_tokens is what actually stops a long
+    # run (the whole history is re-sent every turn, so spend is
+    # quadratic in turn count). Asserted as a floor rather than an
+    # equality so a future raise does not need a test edit.
+    assert CONSOLE_RUN_BUDGET.max_model_turns >= 2000
+    assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
+
+
+def test_spawn_passes_agent_kwarg_only_when_present():
+    seen = []
+
+    def spawn(task, **kwargs):
+        seen.append((task, kwargs))
+        return ToolResult(ok=True, content="ok")
+
+    out = run(
+        [
+            ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "plain"})),
+            ModelTurn(
+                text=fence(
+                    SPAWN_TOOL_NAME, {"task": "named", "agent": "researcher"}
+                )
+            ),
+            ModelTurn(text="done"),
+        ],
+        spawn=spawn,
+    )
+    assert out.status == RUN_DONE
+    assert seen[0] == ("plain", {})
+    assert seen[1] == ("named", {"agent": "researcher"})
+    spawn_steps = [s for s in out.steps if s.kind == STEP_SPAWN]
+    assert len(spawn_steps) == 2
+    assert spawn_steps[0].summary == "plain"
+    assert spawn_steps[1].summary.startswith("[researcher] ")

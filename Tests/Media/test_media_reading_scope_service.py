@@ -1,12 +1,20 @@
+# ruff: noqa: F811
+import asyncio
+import sqlite3
+
 import pytest
 
+import tldw_chatbook.DB.Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
     ALLOWED_SERVER_CREATE_SOURCE_TYPES,
+    LIBRARY_BROWSE_SEARCH_FIELDS,
     MediaReadingBackend,
     MediaReadingScopeService,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Media.server_media_reading_service import ServerMediaReadingService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     AddMediaRequest,
@@ -98,10 +106,17 @@ class FakeLocalMediaService:
         return {"ok": True, "media_id": media_id, "metadata": metadata}
 
     def list_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_items", page, results_per_page, include_keywords))
+        self.calls.append(
+            ("list_media_items", page, results_per_page, include_keywords)
+        )
         return {
             "items": [{"id": 12, "title": "Local PDF", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     def list_media_keywords(self, *, query=None, limit=100):
@@ -109,15 +124,27 @@ class FakeLocalMediaService:
         return {"keywords": ["ai"]}
 
     def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
+        self.calls.append(
+            ("list_media_trash", page, results_per_page, include_keywords)
+        )
         return {
             "items": [{"id": 12, "title": "Trashed Local PDF", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     def empty_media_trash(self):
         self.calls.append(("empty_media_trash",))
-        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+        return {
+            "deleted_count": 1,
+            "failed_count": 0,
+            "failed_ids": [],
+            "remaining_count": 0,
+        }
 
     def get_media_item(
         self,
@@ -127,7 +154,15 @@ class FakeLocalMediaService:
         include_versions=True,
         include_version_content=False,
     ):
-        self.calls.append(("get_media_item", media_id, include_content, include_versions, include_version_content))
+        self.calls.append(
+            (
+                "get_media_item",
+                media_id,
+                include_content,
+                include_versions,
+                include_version_content,
+            )
+        )
         return {"id": media_id, "title": "Local Detail", "type": "pdf"}
 
     def update_media_item(self, media_id, **fields):
@@ -146,7 +181,15 @@ class FakeLocalMediaService:
         include_versions=True,
         include_version_content=False,
     ):
-        self.calls.append(("restore_media_item", media_id, include_content, include_versions, include_version_content))
+        self.calls.append(
+            (
+                "restore_media_item",
+                media_id,
+                include_content,
+                include_versions,
+                include_version_content,
+            )
+        )
         return {"id": media_id, "title": "Restored Local Detail", "type": "pdf"}
 
     def permanently_delete_media_item(self, media_id):
@@ -159,7 +202,10 @@ class FakeLocalMediaService:
 
     def search_media_metadata(self, **filters):
         self.calls.append(("search_media_metadata", filters))
-        return {"items": [{"id": 12, "title": "Local Search"}], "pagination": {"page": 1, "total_items": 1}}
+        return {
+            "items": [{"id": 12, "title": "Local Search"}],
+            "pagination": {"page": 1, "total_items": 1},
+        }
 
     def get_media_by_identifier(self, **identifiers):
         self.calls.append(("get_media_by_identifier", identifiers))
@@ -184,7 +230,12 @@ class FakeLocalMediaService:
 
     def check_media_file(self, media_id, *, file_type="original"):
         self.calls.append(("check_media_file", media_id, file_type))
-        return {"available": True, "media_id": media_id, "file_type": file_type, "source": "stored_content"}
+        return {
+            "available": True,
+            "media_id": media_id,
+            "file_type": file_type,
+            "source": "stored_content",
+        }
 
     def add_media(self, *, file_paths=None, **options):
         self.calls.append(("add_media", options, file_paths))
@@ -207,11 +258,22 @@ class FakeLocalMediaService:
 
     def list_reference_images(self):
         self.calls.append(("list_reference_images",))
-        return {"items": [{"file_id": 12, "title": "Local Figure", "mime_type": "image/png"}], "total": 1}
+        return {
+            "items": [
+                {"file_id": 12, "title": "Local Figure", "mime_type": "image/png"}
+            ],
+            "total": 1,
+        }
 
     def get_file_artifact(self, file_id):
         self.calls.append(("get_file_artifact", file_id))
-        return {"artifact": {"file_id": file_id, "file_type": "reference_image", "title": "Local Figure"}}
+        return {
+            "artifact": {
+                "file_id": file_id,
+                "file_type": "reference_image",
+                "title": "Local Figure",
+            }
+        }
 
     def export_file_artifact(self, file_id, *, format):
         self.calls.append(("export_file_artifact", file_id, format))
@@ -221,45 +283,98 @@ class FakeLocalMediaService:
         self.calls.append(("delete_file_artifact", file_id, hard, delete_file))
         return {"success": True, "file_deleted": delete_file}
 
-    def purge_file_artifacts(self, *, delete_files=False, soft_deleted_grace_days=30, include_retention=True):
-        self.calls.append(("purge_file_artifacts", delete_files, soft_deleted_grace_days, include_retention))
+    def purge_file_artifacts(
+        self, *, delete_files=False, soft_deleted_grace_days=30, include_retention=True
+    ):
+        self.calls.append(
+            (
+                "purge_file_artifacts",
+                delete_files,
+                soft_deleted_grace_days,
+                include_retention,
+            )
+        )
         return {"removed": 1, "files_deleted": 0}
 
     def process_video(self, **kwargs):
         self.calls.append(("process_video", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "video"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "video"}],
+        }
 
     def process_audio(self, **kwargs):
         self.calls.append(("process_audio", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "audio"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "audio"}],
+        }
 
     def process_plaintext(self, **kwargs):
         self.calls.append(("process_plaintext", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "plaintext"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "plaintext"}],
+        }
 
     def process_document(self, **kwargs):
         self.calls.append(("process_document", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "document"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "document"}],
+        }
 
     def process_pdf(self, **kwargs):
         self.calls.append(("process_pdf", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "pdf"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "pdf"}],
+        }
 
     def process_ebook(self, **kwargs):
         self.calls.append(("process_ebook", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "ebook"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "ebook"}],
+        }
 
     def process_emails(self, **kwargs):
         self.calls.append(("process_emails", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "email"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "email"}],
+        }
 
     def process_web_scraping(self, **kwargs):
         self.calls.append(("process_web_scraping", kwargs))
-        return {"status": "success", "count": 1, "results": [{"media_type": "web", "title": "Local Post"}]}
+        return {
+            "status": "success",
+            "count": 1,
+            "results": [{"media_type": "web", "title": "Local Post"}],
+        }
 
     def process_code(self, **kwargs):
         self.calls.append(("process_code", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"media_type": "code"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [{"media_type": "code"}],
+        }
 
     def delete_media(self, media_id):
         self.calls.append(("delete_media", media_id))
@@ -283,62 +398,22 @@ class FakeLocalMediaService:
 
     def update_reading_progress(self, media_id, progress_data):
         self.calls.append(("update_reading_progress", media_id, progress_data))
-        return {"media_id": media_id, **progress_data, "last_modified": "2026-01-06T00:00:00Z"}
+        return {
+            "media_id": media_id,
+            **progress_data,
+            "last_modified": "2026-01-06T00:00:00Z",
+        }
 
     def delete_reading_progress(self, media_id):
         self.calls.append(("delete_reading_progress", media_id))
         return True
 
-    def create_reading_highlight(self, item_id, **kwargs):
-        self.calls.append(("create_reading_highlight", item_id, kwargs))
-        return {
-            "id": 5,
-            "item_id": item_id,
-            "quote": kwargs["quote"],
-            "start_offset": kwargs.get("start_offset"),
-            "end_offset": kwargs.get("end_offset"),
-            "color": kwargs.get("color"),
-            "note": kwargs.get("note"),
-            "created_at": "2026-04-22T12:00:00Z",
-            "anchor_strategy": kwargs.get("anchor_strategy", "fuzzy_quote"),
-            "state": "active",
-        }
-
-    def list_reading_highlights(self, item_id):
-        self.calls.append(("list_reading_highlights", item_id))
-        return [
-            {
-                "id": 5,
-                "item_id": item_id,
-                "quote": "Important sentence",
-                "start_offset": 10,
-                "end_offset": 28,
-                "color": "yellow",
-                "note": "Check this",
-                "created_at": "2026-04-22T12:00:00Z",
-                "anchor_strategy": "fuzzy_quote",
-                "state": "active",
-            }
-        ]
-
-    def update_reading_highlight(self, highlight_id, **changes):
-        self.calls.append(("update_reading_highlight", highlight_id, changes))
-        return {
-            "id": highlight_id,
-            "item_id": 12,
-            "quote": "Important sentence",
-            "start_offset": 10,
-            "end_offset": 28,
-            "color": changes.get("color"),
-            "note": changes.get("note"),
-            "created_at": "2026-04-22T12:00:00Z",
-            "anchor_strategy": "fuzzy_quote",
-            "state": changes.get("state", "active"),
-        }
-
-    def delete_reading_highlight(self, highlight_id):
-        self.calls.append(("delete_reading_highlight", highlight_id))
-        return True
+    # task-15768: this fake deliberately implements ONLY the unprefixed
+    # highlight methods (create_highlight/list_highlights/update_highlight/
+    # delete_highlight, further down) -- the real LocalMediaReadingService has
+    # no reading_-prefixed highlight methods, and a fake that grows them hides
+    # exactly the AttributeError that broke every local-mode Media hub
+    # highlight operation.
 
     def create_reading_saved_search(self, **kwargs):
         self.calls.append(("create_reading_saved_search", kwargs))
@@ -386,13 +461,23 @@ class FakeLocalMediaService:
 
     def link_reading_item_note(self, item_id, *, note_id):
         self.calls.append(("link_reading_item_note", item_id, note_id))
-        return {"item_id": item_id, "note_id": note_id, "created_at": "2026-04-24T13:00:00Z"}
+        return {
+            "item_id": item_id,
+            "note_id": note_id,
+            "created_at": "2026-04-24T13:00:00Z",
+        }
 
     def list_reading_item_note_links(self, item_id):
         self.calls.append(("list_reading_item_note_links", item_id))
         return {
             "item_id": item_id,
-            "links": [{"item_id": item_id, "note_id": "note-uuid-1", "created_at": "2026-04-24T13:00:00Z"}],
+            "links": [
+                {
+                    "item_id": item_id,
+                    "note_id": "note-uuid-1",
+                    "created_at": "2026-04-24T13:00:00Z",
+                }
+            ],
         }
 
     def unlink_reading_item_note(self, item_id, note_id):
@@ -410,7 +495,9 @@ class FakeLocalMediaService:
             "summary": "Local extractive summary",
             "provider": "local",
             "model": "extractive",
-            "citations": [{"item_id": item_id, "title": "Local Detail", "source": "reading"}],
+            "citations": [
+                {"item_id": item_id, "title": "Local Detail", "source": "reading"}
+            ],
         }
 
     async def tts_reading_item(self, item_id, **kwargs):
@@ -527,7 +614,12 @@ class FakeLocalMediaService:
         }
 
     def save_reading_item(self, request_data):
-        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "save_reading_item",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "id": 31,
             "media_id": 31,
@@ -544,16 +636,26 @@ class FakeLocalMediaService:
             "total": len(kwargs["item_ids"]),
             "succeeded": len(kwargs["item_ids"]),
             "failed": 0,
-            "results": [{"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]],
+            "results": [
+                {"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]
+            ],
         }
 
     def bulk_update_unified_items(self, request_data):
-        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "bulk_update_unified_items",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "total": len(request_data.item_ids),
             "succeeded": len(request_data.item_ids),
             "failed": 0,
-            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
+            "results": [
+                {"item_id": item_id, "success": True}
+                for item_id in request_data.item_ids
+            ],
         }
 
     def ingest_web_content(self, **kwargs):
@@ -561,21 +663,38 @@ class FakeLocalMediaService:
         return {
             "status": "success",
             "count": len(kwargs["urls"]),
-            "results": [{"url": kwargs["urls"][0], "title": "Local Article", "content": "Body"}],
+            "results": [
+                {"url": kwargs["urls"][0], "title": "Local Article", "content": "Body"}
+            ],
             "media_ids": [31],
         }
 
     def process_web_scraping(self, request_data=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_web_scraping", request_data.model_dump(exclude_none=True, mode="json")))
+            self.calls.append(
+                (
+                    "process_web_scraping",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                )
+            )
             return {
                 "status": "success",
                 "count": 1,
-                "results": [{"url": "https://example.com/a", "title": "Local Scraped Article", "content": "Body"}],
+                "results": [
+                    {
+                        "url": "https://example.com/a",
+                        "title": "Local Scraped Article",
+                        "content": "Body",
+                    }
+                ],
                 "media_ids": [31],
             }
         self.calls.append(("process_web_scraping", kwargs))
-        return {"status": "success", "count": 1, "results": [{"media_type": "web", "title": "Local Post"}]}
+        return {
+            "status": "success",
+            "count": 1,
+            "results": [{"media_type": "web", "title": "Local Post"}],
+        }
 
     def list_ingestion_sources(self):
         self.calls.append(("list_ingestion_sources",))
@@ -657,7 +776,12 @@ class FakeLocalMediaService:
 
     def list_reading_import_jobs(self, *, status=None, limit=50, offset=0):
         self.calls.append(("list_reading_import_jobs", status, limit, offset))
-        return {"jobs": [{"job_id": 701, "job_uuid": "local-job-uuid", "status": "queued"}], "total": 1, "limit": limit, "offset": offset}
+        return {
+            "jobs": [{"job_id": 701, "job_uuid": "local-job-uuid", "status": "queued"}],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
 
     def get_reading_import_job(self, job_id):
         self.calls.append(("get_reading_import_job", job_id))
@@ -694,16 +818,33 @@ class FakeLocalMediaService:
 
     def run_due_reading_digest_schedules(self, **kwargs):
         self.calls.append(("run_due_reading_digest_schedules", kwargs))
-        return {"executed_count": 1, "skipped_count": 0, "failed_count": 0, "results": []}
+        return {
+            "executed_count": 1,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "results": [],
+        }
 
     def create_saved_search(self, **kwargs):
         self.calls.append(("create_saved_search", kwargs))
-        return {"id": 1, "created_at": "2026-04-21T12:00:00Z", "updated_at": "2026-04-21T12:00:00Z", **kwargs}
+        return {
+            "id": 1,
+            "created_at": "2026-04-21T12:00:00Z",
+            "updated_at": "2026-04-21T12:00:00Z",
+            **kwargs,
+        }
 
     def list_saved_searches(self, *, limit=50, offset=0):
         self.calls.append(("list_saved_searches", limit, offset))
         return {
-            "items": [{"id": 1, "name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}],
+            "items": [
+                {
+                    "id": 1,
+                    "name": "Morning",
+                    "query": {"q": "ai"},
+                    "sort": "updated_desc",
+                }
+            ],
             "total": 1,
             "limit": limit,
             "offset": offset,
@@ -711,7 +852,11 @@ class FakeLocalMediaService:
 
     def update_saved_search(self, search_id, **changes):
         self.calls.append(("update_saved_search", search_id, changes))
-        return {"id": search_id, "name": changes.get("name", "Morning"), "query": changes.get("query") or {}}
+        return {
+            "id": search_id,
+            "name": changes.get("name", "Morning"),
+            "query": changes.get("query") or {},
+        }
 
     def delete_saved_search(self, search_id):
         self.calls.append(("delete_saved_search", search_id))
@@ -723,18 +868,31 @@ class FakeLocalMediaService:
             "total": len(kwargs["item_ids"]),
             "succeeded": len(kwargs["item_ids"]),
             "failed": 0,
-            "results": [{"item_id": item_id, "success": True, "error": None} for item_id in kwargs["item_ids"]],
+            "results": [
+                {"item_id": item_id, "success": True, "error": None}
+                for item_id in kwargs["item_ids"]
+            ],
         }
 
     def link_note(self, item_id, note_id):
         self.calls.append(("link_note", item_id, note_id))
-        return {"item_id": item_id, "note_id": note_id, "created_at": "2026-04-21T12:00:00Z"}
+        return {
+            "item_id": item_id,
+            "note_id": note_id,
+            "created_at": "2026-04-21T12:00:00Z",
+        }
 
     def list_note_links(self, item_id):
         self.calls.append(("list_note_links", item_id))
         return {
             "item_id": item_id,
-            "links": [{"item_id": item_id, "note_id": "note-1", "created_at": "2026-04-21T12:00:00Z"}],
+            "links": [
+                {
+                    "item_id": item_id,
+                    "note_id": "note-1",
+                    "created_at": "2026-04-21T12:00:00Z",
+                }
+            ],
         }
 
     def unlink_note(self, item_id, note_id):
@@ -779,7 +937,12 @@ class FakeLocalMediaService:
 
     def upload_ingestion_source_archive(self, source_id, archive_path):
         self.calls.append(("upload_ingestion_source_archive", source_id, archive_path))
-        return {"status": "queued", "source_id": source_id, "job_id": 302, "snapshot_status": "staged"}
+        return {
+            "status": "queued",
+            "source_id": source_id,
+            "job_id": 302,
+            "snapshot_status": "staged",
+        }
 
     def reattach_ingestion_source_item(self, source_id, item_id):
         self.calls.append(("reattach_ingestion_source_item", source_id, item_id))
@@ -795,14 +958,24 @@ class FakeLocalMediaService:
 
     def list_document_versions(self, media_id, include_deleted=False):
         self.calls.append(("list_document_versions", media_id, include_deleted))
-        return [{"uuid": "version-1", "media_id": media_id, "analysis_content": "analysis"}]
+        return [
+            {"uuid": "version-1", "media_id": media_id, "analysis_content": "analysis"}
+        ]
 
-    def save_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        self.calls.append(("save_analysis_version", media_id, content, analysis_content, prompt))
+    def save_analysis_version(
+        self, media_id, *, content, analysis_content, prompt=None
+    ):
+        self.calls.append(
+            ("save_analysis_version", media_id, content, analysis_content, prompt)
+        )
         return {"uuid": "version-2", "media_id": media_id}
 
-    def overwrite_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        self.calls.append(("overwrite_analysis_version", media_id, content, analysis_content, prompt))
+    def overwrite_analysis_version(
+        self, media_id, *, content, analysis_content, prompt=None
+    ):
+        self.calls.append(
+            ("overwrite_analysis_version", media_id, content, analysis_content, prompt)
+        )
         return {"uuid": "version-3", "media_id": media_id}
 
     def delete_analysis_version(self, version_uuid):
@@ -843,15 +1016,29 @@ class FakeLocalMediaService:
 
     def sync_annotations(self, media_id, *, annotations, client_ids=None):
         self.calls.append(("sync_annotations", media_id, annotations, client_ids))
-        return {"media_id": media_id, "synced_count": len(annotations), "annotations": []}
+        return {
+            "media_id": media_id,
+            "synced_count": len(annotations),
+            "annotations": [],
+        }
 
     def get_document_outline(self, media_id):
         self.calls.append(("get_document_outline", media_id))
-        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 1}
+        return {
+            "media_id": media_id,
+            "has_outline": True,
+            "entries": [],
+            "total_pages": 1,
+        }
 
     def get_document_figures(self, media_id, **params):
         self.calls.append(("get_document_figures", media_id, params))
-        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+        return {
+            "media_id": media_id,
+            "has_figures": False,
+            "figures": [],
+            "total_count": 0,
+        }
 
     def get_document_references(self, media_id, **params):
         self.calls.append(("get_document_references", media_id, params))
@@ -859,7 +1046,12 @@ class FakeLocalMediaService:
 
     def generate_document_insights(self, media_id, **params):
         self.calls.append(("generate_document_insights", media_id, params))
-        return {"media_id": media_id, "insights": [], "model_used": "local-extractive", "cached": False}
+        return {
+            "media_id": media_id,
+            "insights": [],
+            "model_used": "local-extractive",
+            "cached": False,
+        }
 
     def get_media_navigation(self, media_id, **params):
         self.calls.append(("get_media_navigation", media_id, params))
@@ -869,7 +1061,12 @@ class FakeLocalMediaService:
             "navigation_version": "local-nav-v1",
             "source_order_used": ["local_markdown_headings"],
             "nodes": [{"id": "node-1", "title": "Chapter 1"}],
-            "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 0, "truncated": False},
+            "stats": {
+                "returned_node_count": 1,
+                "node_count": 1,
+                "max_depth": 0,
+                "truncated": False,
+            },
         }
 
     def get_media_navigation_content(self, media_id, node_id, **params):
@@ -880,12 +1077,20 @@ class FakeLocalMediaService:
             "title": "Chapter 1",
             "content_format": "markdown",
             "content": "# Chapter 1",
-            "target": {"target_type": "char_range", "target_start": 0, "target_end": 11},
+            "target": {
+                "target_type": "char_range",
+                "target_start": 0,
+                "target_end": 11,
+            },
         }
 
     def submit_ingest_jobs(self, **kwargs):
         self.calls.append(("submit_ingest_jobs", kwargs))
-        return {"batch_id": "local-batch-1", "jobs": [{"id": 301, "status": "queued"}], "errors": []}
+        return {
+            "batch_id": "local-batch-1",
+            "jobs": [{"id": 301, "status": "queued"}],
+            "errors": [],
+        }
 
     def get_ingest_job(self, job_id):
         self.calls.append(("get_ingest_job", job_id))
@@ -905,7 +1110,13 @@ class FakeLocalMediaService:
 
     def cancel_ingest_batch(self, *, batch_id=None, session_id=None, reason=None):
         self.calls.append(("cancel_ingest_batch", batch_id, session_id, reason))
-        return {"success": True, "batch_id": batch_id, "requested": 1, "cancelled": 1, "already_terminal": 0}
+        return {
+            "success": True,
+            "batch_id": batch_id,
+            "requested": 1,
+            "cancelled": 1,
+            "already_terminal": 0,
+        }
 
     def reprocess_media(self, media_id, **options):
         self.calls.append(("reprocess_media", media_id, options))
@@ -913,7 +1124,12 @@ class FakeLocalMediaService:
 
     def save_reading_item(self, request_data=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+            self.calls.append(
+                (
+                    "save_reading_item",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                )
+            )
             return {
                 "id": 31,
                 "media_id": 31,
@@ -968,30 +1184,83 @@ class FakeServerMediaService:
         self.calls.append(("list_media_keywords", query, limit))
         return {"keywords": ["ai", "testing"]}
 
-    async def list_backing_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_backing_media_items", page, results_per_page, include_keywords))
+    async def list_backing_media_items(
+        self, *, page=1, results_per_page=10, include_keywords=False
+    ):
+        self.calls.append(
+            ("list_backing_media_items", page, results_per_page, include_keywords)
+        )
         return {
-            "items": [{"id": 99, "title": "Backing Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Backing Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
-    async def search_backing_media_items(self, *, page=1, results_per_page=10, **filters):
-        self.calls.append(("search_backing_media_items", page, results_per_page, filters))
+    async def search_backing_media_items(
+        self, *, page=1, results_per_page=10, **filters
+    ):
+        self.calls.append(
+            ("search_backing_media_items", page, results_per_page, filters)
+        )
         return {
-            "items": [{"id": 99, "title": "Backing Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Backing Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
-    async def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
+    async def list_media_trash(
+        self, *, page=1, results_per_page=10, include_keywords=False
+    ):
+        self.calls.append(
+            ("list_media_trash", page, results_per_page, include_keywords)
+        )
         return {
-            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Trashed Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     async def empty_media_trash(self):
         self.calls.append(("empty_media_trash",))
-        return {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0}
+        return {
+            "deleted_count": 1,
+            "failed_count": 0,
+            "failed_ids": [],
+            "remaining_count": 0,
+        }
 
     async def search_media_metadata(self, **filters):
         self.calls.append(("search_media_metadata", filters))
@@ -1002,7 +1271,10 @@ class FakeServerMediaService:
 
     async def get_media_by_identifier(self, **identifiers):
         self.calls.append(("get_media_by_identifier", identifiers))
-        return {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1}
+        return {
+            "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+            "total": 1,
+        }
 
     async def get_media_transcription_models(self):
         self.calls.append(("get_media_transcription_models",))
@@ -1019,7 +1291,13 @@ class FakeServerMediaService:
         }
 
     async def add_media(self, request_data, *, file_paths=None):
-        self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "add_media",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {
             "processed_count": 1,
             "errors_count": 0,
@@ -1035,7 +1313,12 @@ class FakeServerMediaService:
         }
 
     async def save_reading_item(self, request_data):
-        self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "save_reading_item",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "id": 77,
             "media_id": 123,
@@ -1084,40 +1367,90 @@ class FakeServerMediaService:
         }
 
     async def bulk_update_unified_items(self, request_data):
-        self.calls.append(("bulk_update_unified_items", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "bulk_update_unified_items",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {
             "total": len(request_data.item_ids),
             "succeeded": len(request_data.item_ids),
             "failed": 0,
-            "results": [{"item_id": item_id, "success": True} for item_id in request_data.item_ids],
+            "results": [
+                {"item_id": item_id, "success": True}
+                for item_id in request_data.item_ids
+            ],
         }
 
     async def process_video(self, request_data, *, file_paths=None):
-        self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_video",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_audio(self, request_data, *, file_paths=None):
-        self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_audio",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_pdf(self, request_data, *, file_paths=None):
-        self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_pdf",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_ebook(self, request_data, *, file_paths=None):
-        self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_ebook",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_document(self, request_data, *, file_paths=None):
-        self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_document",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_code(self, request_data, *, file_paths=None):
-        self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_code",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def process_email(self, request_data, *, file_paths=None):
-        self.calls.append(("process_email", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+        self.calls.append(
+            (
+                "process_email",
+                request_data.model_dump(exclude_none=True, mode="json"),
+                file_paths,
+            )
+        )
         return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
 
     async def get_media_detail(self, media_id):
@@ -1146,8 +1479,7 @@ class FakeServerMediaService:
             "succeeded": len(kwargs["item_ids"]),
             "failed": 0,
             "results": [
-                {"item_id": item_id, "success": True}
-                for item_id in kwargs["item_ids"]
+                {"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]
             ],
         }
 
@@ -1159,7 +1491,12 @@ class FakeServerMediaService:
         self.calls.append(("undelete_media", media_id))
         return {
             "media_id": media_id,
-            "source": {"url": None, "title": "Restored", "duration": None, "type": "pdf"},
+            "source": {
+                "url": None,
+                "title": "Restored",
+                "duration": None,
+                "type": "pdf",
+            },
             "processing": {},
             "content": {"metadata": {}, "text": "Body", "word_count": 1},
             "keywords": ["ai"],
@@ -1171,7 +1508,12 @@ class FakeServerMediaService:
         self.calls.append(("get_media_item", media_id, kwargs))
         return {
             "media_id": media_id,
-            "source": {"url": None, "title": "Backing Media", "duration": None, "type": "pdf"},
+            "source": {
+                "url": None,
+                "title": "Backing Media",
+                "duration": None,
+                "type": "pdf",
+            },
             "processing": {},
             "content": {"metadata": {}, "text": "Body", "word_count": 1},
             "keywords": ["ai"],
@@ -1183,9 +1525,18 @@ class FakeServerMediaService:
         self.calls.append(("update_media_item", media_id, changes))
         return {
             "media_id": media_id,
-            "source": {"url": None, "title": changes.get("title", "Backing Media"), "duration": None, "type": "pdf"},
+            "source": {
+                "url": None,
+                "title": changes.get("title", "Backing Media"),
+                "duration": None,
+                "type": "pdf",
+            },
             "processing": {},
-            "content": {"metadata": {}, "text": changes.get("content", "Body"), "word_count": 1},
+            "content": {
+                "metadata": {},
+                "text": changes.get("content", "Body"),
+                "word_count": 1,
+            },
             "keywords": ["ai"],
             "timestamps": [],
             "versions": [],
@@ -1199,7 +1550,12 @@ class FakeServerMediaService:
         self.calls.append(("restore_media_item", media_id, kwargs))
         return {
             "media_id": media_id,
-            "source": {"url": None, "title": "Restored", "duration": None, "type": "pdf"},
+            "source": {
+                "url": None,
+                "title": "Restored",
+                "duration": None,
+                "type": "pdf",
+            },
             "processing": {},
             "content": {"metadata": {}, "text": "Body", "word_count": 1},
             "keywords": ["ai"],
@@ -1227,7 +1583,12 @@ class FakeServerMediaService:
             "navigation_version": "nav-v1",
             "source_order_used": ["pdf_outline"],
             "nodes": [],
-            "stats": {"returned_node_count": 0, "node_count": 0, "max_depth": 0, "truncated": False},
+            "stats": {
+                "returned_node_count": 0,
+                "node_count": 0,
+                "max_depth": 0,
+                "truncated": False,
+            },
         }
 
     async def get_media_navigation_content(self, media_id, node_id, **kwargs):
@@ -1242,19 +1603,42 @@ class FakeServerMediaService:
             "target": {"target_type": "page", "target_start": 1},
         }
 
-    async def list_media_items(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_items", page, results_per_page, include_keywords))
-        return {"items": [{"id": 41}], "pagination": {"page": page, "results_per_page": results_per_page}}
+    async def list_media_items(
+        self, *, page=1, results_per_page=10, include_keywords=False
+    ):
+        self.calls.append(
+            ("list_media_items", page, results_per_page, include_keywords)
+        )
+        return {
+            "items": [{"id": 41}],
+            "pagination": {"page": page, "results_per_page": results_per_page},
+        }
 
     async def list_media_keywords(self, *, query=None, limit=100):
         self.calls.append(("list_media_keywords", query, limit))
         return {"keywords": ["ai", "testing"]}
 
-    async def list_media_trash(self, *, page=1, results_per_page=10, include_keywords=False):
-        self.calls.append(("list_media_trash", page, results_per_page, include_keywords))
+    async def list_media_trash(
+        self, *, page=1, results_per_page=10, include_keywords=False
+    ):
+        self.calls.append(
+            ("list_media_trash", page, results_per_page, include_keywords)
+        )
         return {
-            "items": [{"id": 99, "title": "Trashed Media", "url": "/api/v1/media/99", "type": "pdf"}],
-            "pagination": {"page": page, "results_per_page": results_per_page, "total_pages": 1, "total_items": 1},
+            "items": [
+                {
+                    "id": 99,
+                    "title": "Trashed Media",
+                    "url": "/api/v1/media/99",
+                    "type": "pdf",
+                }
+            ],
+            "pagination": {
+                "page": page,
+                "results_per_page": results_per_page,
+                "total_pages": 1,
+                "total_items": 1,
+            },
         }
 
     async def empty_media_trash(self):
@@ -1269,16 +1653,39 @@ class FakeServerMediaService:
         include_versions=True,
         include_version_content=False,
     ):
-        self.calls.append(("get_media_item", media_id, include_content, include_versions, include_version_content))
-        return {"media_id": media_id, "source": {"title": "Server Media"}, "processing": {}, "content": {}, "keywords": []}
+        self.calls.append(
+            (
+                "get_media_item",
+                media_id,
+                include_content,
+                include_versions,
+                include_version_content,
+            )
+        )
+        return {
+            "media_id": media_id,
+            "source": {"title": "Server Media"},
+            "processing": {},
+            "content": {},
+            "keywords": [],
+        }
 
     async def update_media_item(self, media_id, **fields):
         self.calls.append(("update_media_item", media_id, fields))
         return {
             "media_id": media_id,
-            "source": {"url": None, "title": fields.get("title", "Server Media"), "duration": None, "type": "pdf"},
+            "source": {
+                "url": None,
+                "title": fields.get("title", "Server Media"),
+                "duration": None,
+                "type": "pdf",
+            },
             "processing": {},
-            "content": {"metadata": {}, "text": fields.get("content", "Body"), "word_count": 1},
+            "content": {
+                "metadata": {},
+                "text": fields.get("content", "Body"),
+                "word_count": 1,
+            },
             "keywords": fields.get("keywords", []),
         }
 
@@ -1294,7 +1701,15 @@ class FakeServerMediaService:
         include_versions=True,
         include_version_content=False,
     ):
-        self.calls.append(("restore_media_item", media_id, include_content, include_versions, include_version_content))
+        self.calls.append(
+            (
+                "restore_media_item",
+                media_id,
+                include_content,
+                include_versions,
+                include_version_content,
+            )
+        )
         return {"media_id": media_id, "restored": True}
 
     async def permanently_delete_media_item(self, media_id):
@@ -1334,7 +1749,13 @@ class FakeServerMediaService:
 
     async def add_media(self, request_data=None, *, file_paths=None, **options):
         if request_data is not None:
-            self.calls.append(("add_media", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
+            self.calls.append(
+                (
+                    "add_media",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
             return {
                 "processed_count": 1,
                 "errors_count": 0,
@@ -1365,7 +1786,11 @@ class FakeServerMediaService:
 
     async def update_reading_progress(self, media_id, progress_data):
         self.calls.append(("update_reading_progress", media_id, progress_data))
-        return {"media_id": media_id, **progress_data, "last_read_at": "2026-01-12T11:00:00Z"}
+        return {
+            "media_id": media_id,
+            **progress_data,
+            "last_read_at": "2026-01-12T11:00:00Z",
+        }
 
     async def delete_reading_progress(self, media_id):
         self.calls.append(("delete_reading_progress", media_id))
@@ -1470,7 +1895,9 @@ class FakeServerMediaService:
 
     async def delete_ingestion_source(self, source_id):
         self.calls.append(("delete_ingestion_source", source_id))
-        raise NotImplementedError("Server ingestion source deletion is not exposed by tldw_server.")
+        raise NotImplementedError(
+            "Server ingestion source deletion is not exposed by tldw_server."
+        )
 
     async def list_ingestion_source_items(self, source_id):
         self.calls.append(("list_ingestion_source_items", source_id))
@@ -1503,30 +1930,68 @@ class FakeServerMediaService:
 
     async def list_document_versions(self, media_id, include_deleted=False, **kwargs):
         self.calls.append(("list_document_versions", media_id, include_deleted, kwargs))
-        return [{"uuid": "server-version-1", "media_id": media_id, "analysis_content": "analysis"}]
+        return [
+            {
+                "uuid": "server-version-1",
+                "media_id": media_id,
+                "analysis_content": "analysis",
+            }
+        ]
 
-    async def save_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        self.calls.append(("save_analysis_version", media_id, content, analysis_content, prompt))
+    async def save_analysis_version(
+        self, media_id, *, content, analysis_content, prompt=None
+    ):
+        self.calls.append(
+            ("save_analysis_version", media_id, content, analysis_content, prompt)
+        )
         return {"uuid": "server-version-2", "media_id": media_id}
 
-    async def overwrite_analysis_version(self, media_id, *, content, analysis_content, prompt=None):
-        self.calls.append(("overwrite_analysis_version", media_id, content, analysis_content, prompt))
+    async def overwrite_analysis_version(
+        self, media_id, *, content, analysis_content, prompt=None
+    ):
+        self.calls.append(
+            ("overwrite_analysis_version", media_id, content, analysis_content, prompt)
+        )
         return {"uuid": "server-version-3", "media_id": media_id}
 
     async def delete_analysis_version(self, version_uuid):
-        raise ValueError("Server document version deletion requires media_id and version_number.")
+        raise ValueError(
+            "Server document version deletion requires media_id and version_number."
+        )
 
     async def rollback_document_version(self, media_id, *, version_number):
         self.calls.append(("rollback_document_version", media_id, version_number))
-        return {"media_id": media_id, "version_number": version_number, "rolled_back": True}
+        return {
+            "media_id": media_id,
+            "version_number": version_number,
+            "rolled_back": True,
+        }
 
-    async def patch_media_safe_metadata(self, media_id, *, safe_metadata, merge=True, new_version=False):
-        self.calls.append(("patch_media_safe_metadata", media_id, safe_metadata, merge, new_version))
+    async def patch_media_safe_metadata(
+        self, media_id, *, safe_metadata, merge=True, new_version=False
+    ):
+        self.calls.append(
+            ("patch_media_safe_metadata", media_id, safe_metadata, merge, new_version)
+        )
         return {"media_id": media_id, "safe_metadata": safe_metadata, "patched": True}
 
-    async def put_document_version_metadata(self, media_id, version_number, *, safe_metadata, merge=True):
-        self.calls.append(("put_document_version_metadata", media_id, version_number, safe_metadata, merge))
-        return {"media_id": media_id, "version_number": version_number, "safe_metadata": safe_metadata}
+    async def put_document_version_metadata(
+        self, media_id, version_number, *, safe_metadata, merge=True
+    ):
+        self.calls.append(
+            (
+                "put_document_version_metadata",
+                media_id,
+                version_number,
+                safe_metadata,
+                merge,
+            )
+        )
+        return {
+            "media_id": media_id,
+            "version_number": version_number,
+            "safe_metadata": safe_metadata,
+        }
 
     async def upsert_document_version_advanced(
         self,
@@ -1587,15 +2052,29 @@ class FakeServerMediaService:
 
     async def sync_annotations(self, media_id, *, annotations, client_ids=None):
         self.calls.append(("sync_annotations", media_id, annotations, client_ids))
-        return {"media_id": media_id, "synced_count": len(annotations), "annotations": []}
+        return {
+            "media_id": media_id,
+            "synced_count": len(annotations),
+            "annotations": [],
+        }
 
     async def get_document_outline(self, media_id):
         self.calls.append(("get_document_outline", media_id))
-        return {"media_id": media_id, "has_outline": True, "entries": [], "total_pages": 1}
+        return {
+            "media_id": media_id,
+            "has_outline": True,
+            "entries": [],
+            "total_pages": 1,
+        }
 
     async def get_document_figures(self, media_id, **params):
         self.calls.append(("get_document_figures", media_id, params))
-        return {"media_id": media_id, "has_figures": False, "figures": [], "total_count": 0}
+        return {
+            "media_id": media_id,
+            "has_figures": False,
+            "figures": [],
+            "total_count": 0,
+        }
 
     async def get_document_references(self, media_id, **params):
         self.calls.append(("get_document_references", media_id, params))
@@ -1603,7 +2082,11 @@ class FakeServerMediaService:
 
     async def generate_document_insights(self, media_id, **params):
         self.calls.append(("generate_document_insights", media_id, params))
-        return {"media_id": media_id, "insights": [], "model_used": params.get("model") or "default"}
+        return {
+            "media_id": media_id,
+            "insights": [],
+            "model_used": params.get("model") or "default",
+        }
 
     async def get_media_navigation(self, media_id, **params):
         self.calls.append(("get_media_navigation", media_id, params))
@@ -1613,7 +2096,12 @@ class FakeServerMediaService:
             "navigation_version": "nav-v1",
             "source_order_used": ["pdf_outline"],
             "nodes": [{"id": "node-1", "title": "Chapter 1"}],
-            "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 0, "truncated": False},
+            "stats": {
+                "returned_node_count": 1,
+                "node_count": 1,
+                "max_depth": 0,
+                "truncated": False,
+            },
         }
 
     async def get_media_navigation_content(self, media_id, node_id, **params):
@@ -1669,7 +2157,12 @@ class FakeServerMediaService:
 
     async def save_reading_item(self, request_data=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("save_reading_item", request_data.model_dump(exclude_none=True, mode="json")))
+            self.calls.append(
+                (
+                    "save_reading_item",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                )
+            )
             return {
                 "id": 77,
                 "media_id": 123,
@@ -1691,15 +2184,30 @@ class FakeServerMediaService:
 
     async def create_saved_search(self, **kwargs):
         self.calls.append(("create_saved_search", kwargs))
-        return {"id": 1, "name": kwargs["name"], "query": kwargs.get("query") or {}, "sort": kwargs.get("sort")}
+        return {
+            "id": 1,
+            "name": kwargs["name"],
+            "query": kwargs.get("query") or {},
+            "sort": kwargs.get("sort"),
+        }
 
     async def list_saved_searches(self, *, limit=50, offset=0):
         self.calls.append(("list_saved_searches", limit, offset))
-        return {"items": [{"id": 1, "name": "Morning", "query": {"q": "ai"}}], "total": 1, "limit": limit, "offset": offset}
+        return {
+            "items": [{"id": 1, "name": "Morning", "query": {"q": "ai"}}],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
 
     async def update_saved_search(self, search_id, **changes):
         self.calls.append(("update_saved_search", search_id, changes))
-        return {"id": search_id, "name": changes.get("name") or "Updated", "query": changes.get("query") or {}, "sort": changes.get("sort")}
+        return {
+            "id": search_id,
+            "name": changes.get("name") or "Updated",
+            "query": changes.get("query") or {},
+            "sort": changes.get("sort"),
+        }
 
     async def delete_saved_search(self, search_id):
         self.calls.append(("delete_saved_search", search_id))
@@ -1711,7 +2219,10 @@ class FakeServerMediaService:
 
     async def list_note_links(self, item_id):
         self.calls.append(("list_note_links", item_id))
-        return {"item_id": item_id, "links": [{"item_id": item_id, "note_id": "note-1"}]}
+        return {
+            "item_id": item_id,
+            "links": [{"item_id": item_id, "note_id": "note-1"}],
+        }
 
     async def unlink_note(self, item_id, note_id):
         self.calls.append(("unlink_note", item_id, note_id))
@@ -1723,7 +2234,9 @@ class FakeServerMediaService:
             "total": len(kwargs["item_ids"]),
             "succeeded": len(kwargs["item_ids"]),
             "failed": 0,
-            "results": [{"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]],
+            "results": [
+                {"item_id": item_id, "success": True} for item_id in kwargs["item_ids"]
+            ],
         }
 
     async def create_reading_archive(self, item_id, **kwargs):
@@ -1746,7 +2259,9 @@ class FakeServerMediaService:
             "citations": [{"item_id": item_id, "source": "reading"}],
         }
 
-    async def import_reading_items(self, import_path, *, source="auto", merge_tags=True):
+    async def import_reading_items(
+        self, import_path, *, source="auto", merge_tags=True
+    ):
         self.calls.append(("import_reading_items", import_path, source, merge_tags))
         return {"job_id": 701, "job_uuid": "job-uuid", "status": "queued"}
 
@@ -1777,7 +2292,13 @@ class FakeServerMediaService:
                     "job_id": 701,
                     "job_uuid": "job-uuid",
                     "status": "completed",
-                    "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                    "result": {
+                        "source": "pocket",
+                        "imported": 2,
+                        "updated": 1,
+                        "skipped": 0,
+                        "errors": [],
+                    },
                 }
             ],
             "total": 1,
@@ -1791,7 +2312,13 @@ class FakeServerMediaService:
             "job_id": job_id,
             "job_uuid": "job-uuid",
             "status": "completed",
-            "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+            "result": {
+                "source": "pocket",
+                "imported": 2,
+                "updated": 1,
+                "skipped": 0,
+                "errors": [],
+            },
         }
 
     async def create_reading_digest_schedule(self, **kwargs):
@@ -1840,7 +2367,9 @@ class FakeServerMediaService:
         self.calls.append(("delete_reading_digest_schedule", schedule_id))
         return {"ok": True}
 
-    async def list_reading_digest_outputs(self, *, schedule_id=None, limit=50, offset=0):
+    async def list_reading_digest_outputs(
+        self, *, schedule_id=None, limit=50, offset=0
+    ):
         self.calls.append(("list_reading_digest_outputs", schedule_id, limit, offset))
         return {
             "items": [
@@ -1863,58 +2392,174 @@ class FakeServerMediaService:
             "status": "success",
             "message": "Web content processed",
             "count": 1,
-            "results": [{"url": "https://example.com/article", "title": "Example Article"}],
+            "results": [
+                {"url": "https://example.com/article", "title": "Example Article"}
+            ],
         }
 
     async def process_video(self, request_data=None, *, file_paths=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_video", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-            return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+            self.calls.append(
+                (
+                    "process_video",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [],
+            }
         self.calls.append(("process_video", {"file_paths": file_paths, **kwargs}))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "video.mp4", "media_type": "video"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "video.mp4", "media_type": "video"}
+            ],
+        }
 
     async def process_audio(self, request_data=None, *, file_paths=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_audio", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-            return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+            self.calls.append(
+                (
+                    "process_audio",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [],
+            }
         self.calls.append(("process_audio", {"file_paths": file_paths, **kwargs}))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "audio.mp3", "media_type": "audio"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "audio.mp3", "media_type": "audio"}
+            ],
+        }
 
     async def process_pdf(self, request_data=None, *, file_paths=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_pdf", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-            return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+            self.calls.append(
+                (
+                    "process_pdf",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [],
+            }
         self.calls.append(("process_pdf", {"file_paths": file_paths, **kwargs}))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "paper.pdf", "media_type": "pdf"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "paper.pdf", "media_type": "pdf"}
+            ],
+        }
 
     async def process_ebook(self, request_data=None, *, file_paths=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_ebook", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-            return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+            self.calls.append(
+                (
+                    "process_ebook",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [],
+            }
         self.calls.append(("process_ebook", {"file_paths": file_paths, **kwargs}))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "book.epub", "media_type": "ebook"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "book.epub", "media_type": "ebook"}
+            ],
+        }
 
     async def process_document(self, request_data=None, *, file_paths=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_document", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-            return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+            self.calls.append(
+                (
+                    "process_document",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [],
+            }
         self.calls.append(("process_document", {"file_paths": file_paths, **kwargs}))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "doc.md", "media_type": "document"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {"status": "Success", "input_ref": "doc.md", "media_type": "document"}
+            ],
+        }
 
     async def process_plaintext(self, **kwargs):
         self.calls.append(("process_plaintext", kwargs))
-        return {"processed_count": 1, "errors_count": 0, "errors": [], "results": [{"status": "Success", "input_ref": "notes.txt", "media_type": "plaintext"}]}
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [
+                {
+                    "status": "Success",
+                    "input_ref": "notes.txt",
+                    "media_type": "plaintext",
+                }
+            ],
+        }
 
     async def process_code(self, request_data=None, *, file_paths=None, **kwargs):
         if request_data is not None:
-            self.calls.append(("process_code", request_data.model_dump(exclude_none=True, mode="json"), file_paths))
-            return {"processed_count": 1, "errors_count": 0, "errors": [], "results": []}
+            self.calls.append(
+                (
+                    "process_code",
+                    request_data.model_dump(exclude_none=True, mode="json"),
+                    file_paths,
+                )
+            )
+            return {
+                "processed_count": 1,
+                "errors_count": 0,
+                "errors": [],
+                "results": [],
+            }
         self.calls.append(("process_code", {"file_paths": file_paths, **kwargs}))
         return {
             "processed_count": 1,
             "errors_count": 0,
             "errors": [],
-            "results": [{"status": "Success", "input_ref": "main.py", "media_type": "code"}],
+            "results": [
+                {"status": "Success", "input_ref": "main.py", "media_type": "code"}
+            ],
         }
 
     async def process_emails(self, **kwargs):
@@ -1923,7 +2568,9 @@ class FakeServerMediaService:
             "processed_count": 1,
             "errors_count": 0,
             "errors": [],
-            "results": [{"status": "Success", "input_ref": "message.eml", "media_type": "email"}],
+            "results": [
+                {"status": "Success", "input_ref": "message.eml", "media_type": "email"}
+            ],
         }
 
     async def process_web_scraping(self, **kwargs):
@@ -2002,8 +2649,17 @@ class FakeServerMediaService:
         self.calls.append(("delete_file_artifact", file_id, hard, delete_file))
         return {"success": True, "file_deleted": delete_file}
 
-    async def purge_file_artifacts(self, *, delete_files=False, soft_deleted_grace_days=30, include_retention=True):
-        self.calls.append(("purge_file_artifacts", delete_files, soft_deleted_grace_days, include_retention))
+    async def purge_file_artifacts(
+        self, *, delete_files=False, soft_deleted_grace_days=30, include_retention=True
+    ):
+        self.calls.append(
+            (
+                "purge_file_artifacts",
+                delete_files,
+                soft_deleted_grace_days,
+                include_retention,
+            )
+        )
         return {"removed": 2, "files_deleted": 1}
 
 
@@ -2048,8 +2704,9 @@ class FakeSyncScopeService:
 
 @pytest.mark.asyncio
 async def test_scope_service_normalizes_local_media_search_results():
+    local = FakeLocalMediaService()
     scope_service = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
     )
 
@@ -2064,6 +2721,575 @@ async def test_scope_service_normalizes_local_media_search_results():
     assert result["items"][0]["id"] == "local:media:12"
     assert result["items"][0]["backing_media_id"] == 12
     assert result["items"][0]["reading_progress"] is None
+    assert local.calls == [("search_media", "pdf", 5, 0, {})]
+
+
+class LibrarySummaryLocalService:
+    def __init__(self, payload=None):
+        self.calls = []
+        self.payload = payload or {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    # SQLite EXISTS projects 1/0, not True/False.
+                    "has_analysis": 1,
+                    "content": "PRIVATE_BODY",
+                    "path": "/private/media/path",
+                }
+            ],
+            "total": 45,
+            "offset": 40,
+            "limit": 20,
+            "private_envelope": "PRIVATE_ENVELOPE_VALUE",
+        }
+
+    def search_media(self, *, query=None, limit=20, offset=0, **kwargs):
+        self.calls.append(("search_media", query, limit, offset, kwargs))
+        return self.payload
+
+    def list_library_media_types(self):
+        self.calls.append(("list_library_media_types",))
+        return [f"type-{index:02}" for index in range(61)]
+
+
+class LibraryTrashLocalService:
+    def __init__(self, payload=None):
+        self.calls = []
+        self.payload = payload or {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "",
+                    "type": "",
+                    "trash_date": "2026-08-30T12:00:00Z",
+                }
+            ],
+            "total": 45,
+            "limit": 20,
+            "offset": 40,
+            "types": ["pdf", "article"],
+            "private_envelope": "PRIVATE_ENVELOPE_SENTINEL",
+        }
+
+    def list_library_media_trash(
+        self, *, query="", media_type=None, limit=20, offset=0
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "media_type": media_type,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_is_local_only_and_canonical(monkeypatch, caplog):
+    local = LibraryTrashLocalService()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=server)
+    thread_calls = []
+
+    async def recording_to_thread(fn, *args, **kwargs):
+        thread_calls.append((fn.__name__, args, kwargs))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Media.media_reading_scope_service.asyncio.to_thread",
+        recording_to_thread,
+    )
+
+    payload = await scope_service.list_library_media_trash(
+        mode="local", query="doc", media_type="pdf", limit=20, offset=40
+    )
+
+    assert set(payload) == {"items", "total", "limit", "offset", "types"}
+    assert set(payload["items"][0]) == {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "trash_date",
+    }
+    assert payload["items"][0] == {
+        "id": "local:media:41",
+        "backing_media_id": 41,
+        "title": "Untitled",
+        "media_type": None,
+        "trash_date": "2026-08-30T12:00:00Z",
+    }
+    assert local.calls == [
+        {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40}
+    ]
+    assert thread_calls == [
+        (
+            "list_library_media_trash",
+            (),
+            {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40},
+        )
+    ]
+    assert server.calls == []
+    assert "PRIVATE_ENVELOPE_SENTINEL" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_preserves_missing_and_malformed_envelope_values():
+    payload = {"items": None, "total": "45", "limit": 21, "types": ("pdf",)}
+    local = LibraryTrashLocalService(payload)
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.list_library_media_trash(
+        mode="local", limit=20, offset=40
+    )
+
+    assert result == payload
+    assert "offset" not in result
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_enforces_existing_list_policy_before_local_call():
+    local = LibraryTrashLocalService()
+    policy_enforcer = FakePolicyEnforcer(denied_reason="policy_denied")
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=None,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        await scope_service.list_library_media_trash(mode="local")
+
+    assert policy_enforcer.calls == ["media.items.trash.list.local"]
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_rejects_server_before_touching_server_service():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.list_library_media_trash(mode="server")
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_library_media_summary_preserves_envelope_and_seven_keys():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.search_media(
+        mode="local",
+        query="summary query",
+        limit=20,
+        offset=40,
+        id_allowlist=[41],
+        library_summary=True,
+    )
+
+    assert local.calls == [
+        (
+            "search_media",
+            "summary query",
+            20,
+            40,
+            {
+                "media_ids_filter": [41],
+                "library_summary": True,
+                # task-31274: a queried browse names the searched fields, so
+                # the list and "Review these" cannot search different ones.
+                "fields": ["title", "content", "keywords"],
+            },
+        )
+    ]
+    assert result == {
+        "items": [
+            {
+                "id": "local:media:41",
+                "backing_media_id": 41,
+                "title": "Summary title",
+                "media_type": "article",
+                "updated_at": "2026-08-16T12:00:00Z",
+                "has_analysis": True,
+                # Not a media-DB fact: the screen decorates it from the
+                # active review set. None means "no active set".
+                "reviewed": None,
+            }
+        ],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+
+
+@pytest.mark.asyncio
+async def test_scope_service_normalizes_sql_analysis_presence_to_a_real_bool():
+    """SQLite EXISTS returns 1/0; the contract requires True/False."""
+    local = LibrarySummaryLocalService(
+        {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Absent",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    "has_analysis": 0,
+                },
+                {
+                    "id": 42,
+                    "title": "Present",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    "has_analysis": 1,
+                },
+            ],
+            "total": 2,
+            "offset": 0,
+            "limit": 20,
+        }
+    )
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=0, library_summary=True
+    )
+
+    assert [item["has_analysis"] for item in result["items"]] == [False, True]
+    assert all(item["reviewed"] is None for item in result["items"])
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_uses_active_complete_local_summary():
+    class LocalEvidenceService:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        def search_media(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.payload
+
+    local = LocalEvidenceService(
+        {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-20T00:00:00Z",
+                }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    evidence = await scope_service.get_library_user_content_evidence(mode="local")
+
+    assert type(evidence) is LibraryContentEvidence
+    assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
+    assert local.calls == [
+        {
+            "query": None,
+            "limit": 1,
+            "offset": 0,
+            "library_summary": True,
+            "include_deleted": False,
+            "include_trash": False,
+            "chunking_status": "completed",
+        }
+    ]
+
+    excluded = LocalEvidenceService({"items": [], "total": 0, "offset": 0, "limit": 1})
+    scope_service = MediaReadingScopeService(
+        local_service=excluded, server_service=None
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="local")
+        is LibraryContentEvidence.EMPTY
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_filters_completed_real_local_population():
+    db = Database(db_path=":memory:", client_id="library-evidence")
+    try:
+        completed_id, _, _ = db.add_media_with_keywords(
+            title="Older completed",
+            content="completed body",
+            media_type="article",
+            keywords=[],
+            chunks=[],
+        )
+        db.add_media_with_keywords(
+            title="Newer pending",
+            content="pending body",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+
+        assert db.soft_delete_media(completed_id)
+        assert (
+            await scope_service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.EMPTY
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_evidence_uses_bounded_summary_without_private_enrichment_or_logs(
+    tmp_path, monkeypatch
+):
+    db = Database(db_path=tmp_path / "media.db", client_id="private-client-sentinel")
+    private_title = "PRIVATE_TITLE_SENTINEL"
+    db.add_media_with_keywords(
+        title=private_title,
+        content="PRIVATE_BODY_SENTINEL",
+        media_type="article",
+        keywords=[],
+        chunks=[],
+    )
+    local = LocalMediaReadingService(db)
+    enriched = []
+    monkeypatch.setattr(
+        local,
+        "_enrich_rows_with_read_it_later_state",
+        lambda rows: (enriched.append(rows), rows)[1],
+    )
+    logs = []
+    monkeypatch.setattr(
+        media_db_module.logger,
+        "info",
+        lambda template, *args, **_kwargs: logs.append((template, args)),
+    )
+    service = MediaReadingScopeService(local_service=local, server_service=None)
+    try:
+        assert (
+            await service.get_library_user_content_evidence(mode="local")
+            is LibraryContentEvidence.HAS_USER_CONTENT
+        )
+        assert enriched == []
+        rendered_logs = repr(logs)
+        for private_value in (
+            private_title,
+            "PRIVATE_BODY_SENTINEL",
+            "private-client-sentinel",
+            str(tmp_path),
+            "result_count",
+            "total=",
+        ):
+            assert private_value not in rendered_logs
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_user_content_evidence_accepts_exact_server_summary_only():
+    class StrictReadingClient:
+        def __init__(self, payload):
+            self.payload = payload
+            self.calls = []
+
+        async def list_reading_items(
+            self,
+            *,
+            status=None,
+            tags=None,
+            q=None,
+            domain=None,
+            favorite=None,
+            date_from=None,
+            date_to=None,
+            page=1,
+            size=20,
+            offset=None,
+            limit=None,
+            sort=None,
+        ):
+            self.calls.append({"q": q, "limit": limit, "offset": offset})
+            return self.payload
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 41, "processing_status": "completed"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    server = ServerMediaReadingService(client=client)
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    assert client.calls == [{"q": None, "limit": 1, "offset": 0}]
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 42, "processing_status": "incomplete"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {
+            "items": [{"id": 43, "processing_status": "future-state"}],
+            "total": 1,
+            "offset": 0,
+            "limit": 1,
+        }
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    client = StrictReadingClient(
+        {"items": [{"id": 44}], "total": 1, "offset": 0, "limit": 1}
+    )
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=ServerMediaReadingService(client=client)
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+    class AmbiguousServer:
+        async def search_media(self, **kwargs):
+            return {"items": []}
+
+    scope_service = MediaReadingScopeService(
+        local_service=None, server_service=AmbiguousServer()
+    )
+    assert (
+        await scope_service.get_library_user_content_evidence(mode="server")
+        is LibraryContentEvidence.UNKNOWN
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_key", ["items", "total", "offset", "limit"])
+async def test_scope_service_library_media_summary_does_not_fill_missing_envelope_keys(
+    missing_key,
+):
+    payload = {
+        "items": [],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+    payload.pop(missing_key)
+    scope_service = MediaReadingScopeService(
+        local_service=LibrarySummaryLocalService(payload),
+        server_service=None,
+    )
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=40, library_summary=True
+    )
+
+    assert missing_key not in result
+
+
+@pytest.mark.asyncio
+async def test_scope_service_library_media_summary_preserves_malformed_envelope_values():
+    payload = {"items": None, "total": "45", "offset": 39, "limit": 21}
+    scope_service = MediaReadingScopeService(
+        local_service=LibrarySummaryLocalService(payload),
+        server_service=None,
+    )
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=40, library_summary=True
+    )
+
+    assert result == payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    [
+        (True, 0),
+        (0, 0),
+        (2**63, 0),
+        (20, True),
+        (20, -1),
+        (20, 2**63),
+    ],
+)
+async def test_scope_service_library_media_summary_rejects_invalid_coordinates(
+    limit, offset
+):
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    with pytest.raises(ValueError):
+        await scope_service.search_media(
+            mode="local",
+            limit=limit,
+            offset=offset,
+            library_summary=True,
+        )
+
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_library_media_summary_for_server():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.search_media(mode="server", library_summary=True)
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_lists_complete_local_library_media_types():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    media_types = await scope_service.list_library_media_types(mode="local")
+
+    assert len(media_types) == 61
+    assert media_types[-1] == "type-60"
+    assert local.calls == [("list_library_media_types",)]
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.list_library_media_types(mode="server")
 
 
 @pytest.mark.asyncio
@@ -2151,7 +3377,10 @@ def test_scope_service_read_it_later_context_capability_exposes_aggregate_metada
     assert server_all.reason is None
     assert server_article.available is False
     assert server_article.aggregate_only is True
-    assert server_article.reason == "Read-it-later is only available in server mode from All Media."
+    assert (
+        server_article.reason
+        == "Read-it-later is only available in server mode from All Media."
+    )
 
 
 def test_scope_service_reports_known_media_reading_capability_gaps():
@@ -2212,7 +3441,10 @@ async def test_scope_service_blocks_invalid_server_read_it_later_media_type_cont
         server_service=server,
     )
 
-    with pytest.raises(ValueError, match="Read-it-later is only available in server mode from All Media."):
+    with pytest.raises(
+        ValueError,
+        match="Read-it-later is only available in server mode from All Media.",
+    ):
         await scope_service.list_read_it_later(
             mode="server",
             media_type_context="article",
@@ -2296,8 +3528,12 @@ async def test_scope_service_routes_server_media_listing_search_and_trash_adjunc
         policy_enforcer=policy,
     )
 
-    keywords = await scope.list_backing_media_keywords(mode="server", query="ai", limit=5)
-    listed = await scope.list_backing_media_items(mode="server", page=2, results_per_page=25, include_keywords=True)
+    keywords = await scope.list_backing_media_keywords(
+        mode="server", query="ai", limit=5
+    )
+    listed = await scope.list_backing_media_items(
+        mode="server", page=2, results_per_page=25, include_keywords=True
+    )
     searched = await scope.search_backing_media_items(
         mode="server",
         query="paper",
@@ -2305,14 +3541,18 @@ async def test_scope_service_routes_server_media_listing_search_and_trash_adjunc
         page=2,
         results_per_page=25,
     )
-    trash = await scope.list_backing_media_trash(mode="server", page=1, results_per_page=10, include_keywords=True)
+    trash = await scope.list_backing_media_trash(
+        mode="server", page=1, results_per_page=10, include_keywords=True
+    )
     emptied = await scope.empty_backing_media_trash(mode="server")
     metadata = await scope.search_backing_media_metadata(
         mode="server",
         filters=[{"field": "doi", "op": "eq", "value": "10/example"}],
         q="paper",
     )
-    identifier = await scope.get_backing_media_by_identifier(mode="server", doi="10/example", group_by_media=False)
+    identifier = await scope.get_backing_media_by_identifier(
+        mode="server", doi="10/example", group_by_media=False
+    )
 
     assert policy.calls == [
         "media.items.keywords.list.server",
@@ -2333,7 +3573,12 @@ async def test_scope_service_routes_server_media_listing_search_and_trash_adjunc
     assert server.calls[:7] == [
         ("list_media_keywords", "ai", 5),
         ("list_backing_media_items", 2, 25, True),
-        ("search_backing_media_items", 2, 25, {"query": "paper", "media_types": ["pdf"]}),
+        (
+            "search_backing_media_items",
+            2,
+            25,
+            {"query": "paper", "media_types": ["pdf"]},
+        ),
         ("list_media_trash", 1, 10, True),
         ("empty_media_trash",),
         (
@@ -2356,19 +3601,33 @@ async def test_scope_service_rejects_local_server_media_listing_adjuncts_before_
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.list_backing_media_keywords(mode="local")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.list_backing_media_items(mode="local")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.search_backing_media_items(mode="local")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.list_backing_media_trash(mode="local")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.empty_backing_media_trash(mode="local")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.search_backing_media_metadata(mode="local")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.get_backing_media_by_identifier(mode="local", doi="10/example")
 
     assert policy.calls == []
@@ -2430,10 +3689,14 @@ async def test_scope_service_routes_persistent_add_media_with_create_policy():
         server_service=server,
         policy_enforcer=denied_policy,
     )
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await denied_scope.add_media(
             mode="local",
-            request_data=AddMediaRequest(media_type="video", urls=["https://example.com/clip"]),
+            request_data=AddMediaRequest(
+                media_type="video", urls=["https://example.com/clip"]
+            ),
         )
     assert denied_policy.calls == []
 
@@ -2533,11 +3796,15 @@ async def test_scope_service_routes_server_unified_items_with_distinct_policy_ac
         policy_enforcer=policy,
     )
 
-    listing = await scope.list_unified_items(mode="server", q="article", origin="reading", page=2, size=10)
+    listing = await scope.list_unified_items(
+        mode="server", q="article", origin="reading", page=2, size=10
+    )
     item = await scope.get_unified_item(mode="server", item_id=42)
     bulk_update = await scope.bulk_update_unified_items(
         mode="server",
-        request_data=ItemsBulkRequest(item_ids=[42, 43], action="set_favorite", favorite=True),
+        request_data=ItemsBulkRequest(
+            item_ids=[42, 43], action="set_favorite", favorite=True
+        ),
     )
     bulk_delete = await scope.bulk_update_unified_items(
         mode="server",
@@ -2555,7 +3822,10 @@ async def test_scope_service_routes_server_unified_items_with_distinct_policy_ac
     assert bulk_update["succeeded"] == 2
     assert bulk_delete["succeeded"] == 1
     assert server.calls == [
-        ("list_unified_items", {"q": "article", "origin": "reading", "page": 2, "size": 10}),
+        (
+            "list_unified_items",
+            {"q": "article", "origin": "reading", "page": 2, "size": 10},
+        ),
         ("get_unified_item", 42),
         (
             "bulk_update_unified_items",
@@ -2587,7 +3857,9 @@ async def test_scope_service_routes_local_unified_item_reads_with_distinct_polic
         policy_enforcer=policy,
     )
 
-    listing = await scope.list_unified_items(mode="local", q="article", origin="media", page=2, size=10)
+    listing = await scope.list_unified_items(
+        mode="local", q="article", origin="media", page=2, size=10
+    )
     item = await scope.get_unified_item(mode="local", item_id=31)
 
     assert listing["total"] == 1
@@ -2597,7 +3869,10 @@ async def test_scope_service_routes_local_unified_item_reads_with_distinct_polic
         "media.unified_items.detail.local",
     ]
     assert local.calls[-2:] == [
-        ("list_unified_items", {"q": "article", "origin": "media", "page": 2, "size": 10}),
+        (
+            "list_unified_items",
+            {"q": "article", "origin": "media", "page": 2, "size": 10},
+        ),
         ("get_unified_item", 31),
     ]
 
@@ -2614,7 +3889,9 @@ async def test_scope_service_routes_local_unified_item_bulk_update_with_policy()
 
     result = await local_scope.bulk_update_unified_items(
         mode="local",
-        request_data=ItemsBulkRequest(item_ids=[42], action="set_status", status="saved"),
+        request_data=ItemsBulkRequest(
+            item_ids=[42], action="set_status", status="saved"
+        ),
     )
 
     assert result["succeeded"] == 1
@@ -2647,13 +3924,41 @@ async def test_scope_service_routes_server_media_processing_controls_with_policy
         perform_chunking=True,
         generate_embeddings=True,
     )
-    video = await scope.process_media_video(mode="server", request_data=ProcessVideoRequest(title="Video"), file_paths=["video.mp4"])
-    audio = await scope.process_media_audio(mode="server", request_data=ProcessAudioRequest(title="Audio"), file_paths=["audio.mp3"])
-    pdf = await scope.process_media_pdf(mode="server", request_data=ProcessPDFRequest(title="PDF"), file_paths=["paper.pdf"])
-    ebook = await scope.process_media_ebook(mode="server", request_data=ProcessEbookRequest(title="Book"), file_paths=["book.epub"])
-    document = await scope.process_media_document(mode="server", request_data=ProcessDocumentRequest(title="Doc"), file_paths=["doc.docx"])
-    code = await scope.process_media_code(mode="server", request_data=ProcessCodeRequest(chunk_method="lines"), file_paths=["project.py"])
-    email = await scope.process_media_email(mode="server", request_data=ProcessEmailRequest(title="Inbox"), file_paths=["inbox.eml"])
+    video = await scope.process_media_video(
+        mode="server",
+        request_data=ProcessVideoRequest(title="Video"),
+        file_paths=["video.mp4"],
+    )
+    audio = await scope.process_media_audio(
+        mode="server",
+        request_data=ProcessAudioRequest(title="Audio"),
+        file_paths=["audio.mp3"],
+    )
+    pdf = await scope.process_media_pdf(
+        mode="server",
+        request_data=ProcessPDFRequest(title="PDF"),
+        file_paths=["paper.pdf"],
+    )
+    ebook = await scope.process_media_ebook(
+        mode="server",
+        request_data=ProcessEbookRequest(title="Book"),
+        file_paths=["book.epub"],
+    )
+    document = await scope.process_media_document(
+        mode="server",
+        request_data=ProcessDocumentRequest(title="Doc"),
+        file_paths=["doc.docx"],
+    )
+    code = await scope.process_media_code(
+        mode="server",
+        request_data=ProcessCodeRequest(chunk_method="lines"),
+        file_paths=["project.py"],
+    )
+    email = await scope.process_media_email(
+        mode="server",
+        request_data=ProcessEmailRequest(title="Inbox"),
+        file_paths=["inbox.eml"],
+    )
 
     assert policy.calls == [
         "media.processing_models.list.server",
@@ -2677,14 +3982,58 @@ async def test_scope_service_routes_server_media_processing_controls_with_policy
     assert email["processed_count"] == 1
     assert server.calls[:9] == [
         ("get_media_transcription_models",),
-        ("reprocess_media", 99, {"perform_chunking": True, "generate_embeddings": True}),
-        ("process_video", ProcessVideoRequest(title="Video").model_dump(exclude_none=True, mode="json"), ["video.mp4"]),
-        ("process_audio", ProcessAudioRequest(title="Audio").model_dump(exclude_none=True, mode="json"), ["audio.mp3"]),
-        ("process_pdf", ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"), ["paper.pdf"]),
-        ("process_ebook", ProcessEbookRequest(title="Book").model_dump(exclude_none=True, mode="json"), ["book.epub"]),
-        ("process_document", ProcessDocumentRequest(title="Doc").model_dump(exclude_none=True, mode="json"), ["doc.docx"]),
-        ("process_code", ProcessCodeRequest(chunk_method="lines").model_dump(exclude_none=True, mode="json"), ["project.py"]),
-        ("process_email", ProcessEmailRequest(title="Inbox").model_dump(exclude_none=True, mode="json"), ["inbox.eml"]),
+        (
+            "reprocess_media",
+            99,
+            {"perform_chunking": True, "generate_embeddings": True},
+        ),
+        (
+            "process_video",
+            ProcessVideoRequest(title="Video").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["video.mp4"],
+        ),
+        (
+            "process_audio",
+            ProcessAudioRequest(title="Audio").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["audio.mp3"],
+        ),
+        (
+            "process_pdf",
+            ProcessPDFRequest(title="PDF").model_dump(exclude_none=True, mode="json"),
+            ["paper.pdf"],
+        ),
+        (
+            "process_ebook",
+            ProcessEbookRequest(title="Book").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["book.epub"],
+        ),
+        (
+            "process_document",
+            ProcessDocumentRequest(title="Doc").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["doc.docx"],
+        ),
+        (
+            "process_code",
+            ProcessCodeRequest(chunk_method="lines").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["project.py"],
+        ),
+        (
+            "process_email",
+            ProcessEmailRequest(title="Inbox").model_dump(
+                exclude_none=True, mode="json"
+            ),
+            ["inbox.eml"],
+        ),
     ]
 
 
@@ -2697,24 +4046,52 @@ async def test_scope_service_rejects_local_server_media_processing_controls_befo
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
         await scope.get_media_transcription_models(mode="local")
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
         await scope.reprocess_backing_media_item(mode="local", media_id=12)
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
-        await scope.process_media_video(mode="local", request_data=ProcessVideoRequest())
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
-        await scope.process_media_audio(mode="local", request_data=ProcessAudioRequest())
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
+        await scope.process_media_video(
+            mode="local", request_data=ProcessVideoRequest()
+        )
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
+        await scope.process_media_audio(
+            mode="local", request_data=ProcessAudioRequest()
+        )
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
         await scope.process_media_pdf(mode="local", request_data=ProcessPDFRequest())
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
-        await scope.process_media_ebook(mode="local", request_data=ProcessEbookRequest())
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
-        await scope.process_media_document(mode="local", request_data=ProcessDocumentRequest())
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
+        await scope.process_media_ebook(
+            mode="local", request_data=ProcessEbookRequest()
+        )
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
+        await scope.process_media_document(
+            mode="local", request_data=ProcessDocumentRequest()
+        )
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
         await scope.process_media_code(mode="local", request_data=ProcessCodeRequest())
-    with pytest.raises(ValueError, match="Server media processing requires server mode."):
-        await scope.process_media_email(mode="local", request_data=ProcessEmailRequest())
+    with pytest.raises(
+        ValueError, match="Server media processing requires server mode."
+    ):
+        await scope.process_media_email(
+            mode="local", request_data=ProcessEmailRequest()
+        )
 
     assert policy.calls == []
 
@@ -2736,10 +4113,14 @@ async def test_scope_service_routes_server_backing_media_item_lifecycle_with_pol
         include_versions=False,
         include_version_content=True,
     )
-    updated = await scope.update_backing_media_item(mode="server", media_id=99, title="Renamed")
+    updated = await scope.update_backing_media_item(
+        mode="server", media_id=99, title="Renamed"
+    )
     trashed = await scope.trash_backing_media_item(mode="server", media_id=99)
     restored = await scope.restore_backing_media_item(mode="server", media_id=99)
-    purged = await scope.permanently_delete_backing_media_item(mode="server", media_id=99)
+    purged = await scope.permanently_delete_backing_media_item(
+        mode="server", media_id=99
+    )
     keywords = await scope.update_backing_media_keywords(
         mode="server",
         media_id=99,
@@ -2796,19 +4177,35 @@ async def test_scope_service_rejects_local_backing_media_item_lifecycle_before_p
         policy_enforcer=policy,
     )
 
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.get_backing_media_item(mode="local", media_id=12)
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.update_backing_media_item(mode="local", media_id=12, title="Nope")
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.trash_backing_media_item(mode="local", media_id=12)
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.restore_backing_media_item(mode="local", media_id=12)
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.permanently_delete_backing_media_item(mode="local", media_id=12)
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
-        await scope.update_backing_media_keywords(mode="local", media_id=12, keywords=["ai"])
-    with pytest.raises(ValueError, match="Server media item lifecycle requires server mode."):
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
+        await scope.update_backing_media_keywords(
+            mode="local", media_id=12, keywords=["ai"]
+        )
+    with pytest.raises(
+        ValueError, match="Server media item lifecycle requires server mode."
+    ):
         await scope.download_backing_media_file(mode="local", media_id=12)
 
     assert policy.calls == []
@@ -2879,7 +4276,9 @@ async def test_scope_service_routes_local_media_navigation_with_policy():
         policy_enforcer=policy,
     )
 
-    navigation = await scope.get_document_navigation(mode="local", media_id=12, max_depth=2)
+    navigation = await scope.get_document_navigation(
+        mode="local", media_id=12, max_depth=2
+    )
     content = await scope.get_document_navigation_content(
         mode="local",
         media_id=12,
@@ -2953,16 +4352,23 @@ async def test_scope_service_routes_reading_highlights_and_enforces_actions():
     ]
     assert created["id"] == "server:reading_highlight:5"
     assert created["item_id"] == "41"
-    assert listed[0]["quote"] == "Important sentence"
+    assert listed[0]["quote"] == "important"
     assert updated["color"] == "blue"
     assert deleted == {"success": True}
-    assert ("create_reading_highlight", 41, {
-        "quote": "Important sentence",
-        "start_offset": 10,
-        "end_offset": 28,
-        "color": "yellow",
-        "note": "Check this",
-    }) in server.calls
+    # task-15768: the scope service dispatches the unprefixed leaf contract
+    # (the server service's primary methods; its reading_-prefixed names are
+    # back-compat aliases the local service never had).
+    assert (
+        "create_highlight",
+        41,
+        {
+            "quote": "Important sentence",
+            "start_offset": 10,
+            "end_offset": 28,
+            "color": "yellow",
+            "note": "Check this",
+        },
+    ) in server.calls
 
 
 @pytest.mark.asyncio
@@ -2993,20 +4399,76 @@ async def test_scope_service_routes_local_edit_and_document_version_helpers():
         content="full content",
         analysis_content="analysis v2",
     )
-    deleted = await scope_service.delete_analysis_version(mode="local", version_uuid="version-3")
+    deleted = await scope_service.delete_analysis_version(
+        mode="local", version_uuid="version-3"
+    )
 
     assert update_result["ok"] is True
-    assert versions == [{"uuid": "version-1", "media_id": 12, "analysis_content": "analysis"}]
+    assert versions == [
+        {"uuid": "version-1", "media_id": 12, "analysis_content": "analysis"}
+    ]
     assert saved["uuid"] == "version-2"
     assert overwritten["uuid"] == "version-3"
     assert deleted is True
-    assert ("update_media_metadata", 12, {"title": "Renamed", "media_type": "pdf"}) in local.calls
+    assert (
+        "update_media_metadata",
+        12,
+        {"title": "Renamed", "media_type": "pdf"},
+    ) in local.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_orders_latest_metadata_writes_per_record():
+    release_first = asyncio.Event()
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    committed_titles: list[str] = []
+
+    class DelayedLocalMediaService(FakeLocalMediaService):
+        async def update_media_metadata(self, media_id, **metadata):
+            title = str(metadata["title"])
+            if title == "older":
+                first_started.set()
+                await release_first.wait()
+            else:
+                second_started.set()
+            committed_titles.append(title)
+            return {"ok": True, "media_id": media_id, "metadata": metadata}
+
+    scope_service = MediaReadingScopeService(
+        local_service=DelayedLocalMediaService(),
+        server_service=FakeServerMediaService(),
+    )
+
+    older = scope_service.update_media_metadata_latest(
+        mode=MediaReadingBackend.LOCAL,
+        media_id=12,
+        title="older",
+    )
+    older_task = asyncio.create_task(older)
+    await first_started.wait()
+
+    newer = scope_service.update_media_metadata_latest(
+        mode="local",
+        media_id="12",
+        title="newer",
+    )
+    newer_task = asyncio.create_task(newer)
+    await asyncio.sleep(0)
+
+    assert second_started.is_set() is False
+    release_first.set()
+    await asyncio.gather(older_task, newer_task)
+
+    assert committed_titles == ["older", "newer"]
 
 
 @pytest.mark.asyncio
 async def test_scope_service_local_save_and_remove_delegate_to_local_service():
     local = FakeLocalMediaService()
-    scope = MediaReadingScopeService(local_service=local, server_service=FakeServerMediaService())
+    scope = MediaReadingScopeService(
+        local_service=local, server_service=FakeServerMediaService()
+    )
 
     saved = await scope.save_to_read_it_later(mode="local", media_id=12)
     removed = await scope.remove_from_read_it_later(mode="local", media_id=12)
@@ -3028,15 +4490,21 @@ async def test_scope_service_routes_server_ingestion_source_operations_and_norma
 
     listed = await scope_service.list_ingestion_sources(mode="server")
     detail = await scope_service.get_ingestion_source(mode="server", source_id=7)
-    patched = await scope_service.patch_ingestion_source(mode="server", source_id=7, enabled=False)
+    patched = await scope_service.patch_ingestion_source(
+        mode="server", source_id=7, enabled=False
+    )
     items = await scope_service.list_ingestion_source_items(mode="server", source_id=7)
-    triggered = await scope_service.trigger_ingestion_source_sync(mode="server", source_id=7)
+    triggered = await scope_service.trigger_ingestion_source_sync(
+        mode="server", source_id=7
+    )
     uploaded = await scope_service.upload_ingestion_source_archive(
         mode="server",
         source_id=7,
         archive_path="/tmp/archive.zip",
     )
-    reattached = await scope_service.reattach_ingestion_source_item(mode="server", source_id=7, item_id=55)
+    reattached = await scope_service.reattach_ingestion_source_item(
+        mode="server", source_id=7, item_id=55
+    )
 
     assert listed[0]["id"] == "server:ingestion_source:7"
     assert detail["id"] == "server:ingestion_source:7"
@@ -3058,7 +4526,9 @@ async def test_scope_service_routes_server_ingestion_source_item_reattach_with_p
         policy_enforcer=policy,
     )
 
-    reattached = await scope.reattach_ingestion_source_item(mode="server", source_id=7, item_id=55)
+    reattached = await scope.reattach_ingestion_source_item(
+        mode="server", source_id=7, item_id=55
+    )
 
     assert reattached["id"] == "server:file_artifact:55"
     assert reattached["sync_status"] == "sync_managed"
@@ -3076,7 +4546,9 @@ async def test_scope_service_routes_local_ingestion_source_item_reattach_with_po
         policy_enforcer=policy,
     )
 
-    reattached = await scope.reattach_ingestion_source_item(mode="local", source_id=3, item_id=55)
+    reattached = await scope.reattach_ingestion_source_item(
+        mode="local", source_id=3, item_id=55
+    )
 
     assert reattached["id"] == "local:file_artifact:55"
     assert reattached["sync_status"] == "sync_managed"
@@ -3088,7 +4560,9 @@ async def test_scope_service_routes_local_ingestion_source_item_reattach_with_po
 async def test_scope_service_save_and_remove_use_explicit_reading_list_actions():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
-    scope = MediaReadingScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+    scope = MediaReadingScopeService(
+        local_service=None, server_service=server, policy_enforcer=policy
+    )
 
     await scope.save_to_read_it_later(mode="server", media_id=41)
     await scope.remove_from_read_it_later(mode="server", media_id=41)
@@ -3112,17 +4586,27 @@ async def test_scope_service_routes_direct_media_management_for_local_and_server
         policy_enforcer=policy,
     )
 
-    await scope.list_media_items(mode="server", page=2, results_per_page=25, include_keywords=True)
+    await scope.list_media_items(
+        mode="server", page=2, results_per_page=25, include_keywords=True
+    )
     await scope.list_media_keywords(mode="server", query="ai", limit=5)
-    await scope.list_media_trash(mode="server", page=2, results_per_page=25, include_keywords=True)
+    await scope.list_media_trash(
+        mode="server", page=2, results_per_page=25, include_keywords=True
+    )
     await scope.empty_media_trash(mode="server")
     await scope.get_media_item(mode="server", media_id=41, include_content=False)
-    await scope.update_media_item(mode="server", media_id=41, title="Renamed", keywords=["ai"])
+    await scope.update_media_item(
+        mode="server", media_id=41, title="Renamed", keywords=["ai"]
+    )
     await scope.delete_media_item(mode="server", media_id=41)
     await scope.restore_media_item(mode="server", media_id=41, include_content=False)
     await scope.permanently_delete_media_item(mode="server", media_id=41)
-    await scope.update_media_keywords(mode="server", media_id=41, keywords=["ai"], update_mode="set")
-    await scope.search_media_metadata(mode="server", field="doi", value="10.123/example", media_types=["pdf"])
+    await scope.update_media_keywords(
+        mode="server", media_id=41, keywords=["ai"], update_mode="set"
+    )
+    await scope.search_media_metadata(
+        mode="server", field="doi", value="10.123/example", media_types=["pdf"]
+    )
     await scope.get_media_by_identifier(mode="server", doi="10.123/example")
 
     assert policy.calls[-12:] == [
@@ -3150,22 +4634,43 @@ async def test_scope_service_routes_direct_media_management_for_local_and_server
         ("restore_media_item", 41, False, True, False),
         ("permanently_delete_media_item", 41),
         ("update_media_keywords", 41, ["ai"], "set"),
-        ("search_media_metadata", {"field": "doi", "value": "10.123/example", "media_types": ["pdf"]}),
+        (
+            "search_media_metadata",
+            {"field": "doi", "value": "10.123/example", "media_types": ["pdf"]},
+        ),
         ("get_media_by_identifier", {"doi": "10.123/example"}),
     ]
 
-    local_list = await scope.list_media_items(mode="local", page=1, results_per_page=5, include_keywords=True)
+    local_list = await scope.list_media_items(
+        mode="local", page=1, results_per_page=5, include_keywords=True
+    )
     local_keywords = await scope.list_media_keywords(mode="local", query="ai", limit=5)
-    local_trash = await scope.list_media_trash(mode="local", page=1, results_per_page=5, include_keywords=True)
+    local_trash = await scope.list_media_trash(
+        mode="local", page=1, results_per_page=5, include_keywords=True
+    )
     local_empty = await scope.empty_media_trash(mode="local")
-    local_detail = await scope.get_media_item(mode="local", media_id=12, include_content=False)
-    local_updated = await scope.update_media_item(mode="local", media_id=12, title="Renamed", keywords=["ai"])
+    local_detail = await scope.get_media_item(
+        mode="local", media_id=12, include_content=False
+    )
+    local_updated = await scope.update_media_item(
+        mode="local", media_id=12, title="Renamed", keywords=["ai"]
+    )
     local_deleted = await scope.delete_media_item(mode="local", media_id=12)
-    local_restored = await scope.restore_media_item(mode="local", media_id=12, include_content=False)
-    local_permanent = await scope.permanently_delete_media_item(mode="local", media_id=12)
-    local_keyword_update = await scope.update_media_keywords(mode="local", media_id=12, keywords=["ai"], update_mode="set")
-    local_metadata = await scope.search_media_metadata(mode="local", field="title", value="Local", media_types=["pdf"])
-    local_identifier = await scope.get_media_by_identifier(mode="local", url="https://example.com/local.pdf")
+    local_restored = await scope.restore_media_item(
+        mode="local", media_id=12, include_content=False
+    )
+    local_permanent = await scope.permanently_delete_media_item(
+        mode="local", media_id=12
+    )
+    local_keyword_update = await scope.update_media_keywords(
+        mode="local", media_id=12, keywords=["ai"], update_mode="set"
+    )
+    local_metadata = await scope.search_media_metadata(
+        mode="local", field="title", value="Local", media_types=["pdf"]
+    )
+    local_identifier = await scope.get_media_by_identifier(
+        mode="local", url="https://example.com/local.pdf"
+    )
 
     assert local_list["items"][0]["id"] == 12
     assert local_keywords == {"keywords": ["ai"]}
@@ -3204,7 +4709,10 @@ async def test_scope_service_routes_direct_media_management_for_local_and_server
         ("restore_media_item", 12, False, True, False),
         ("permanently_delete_media_item", 12),
         ("update_media_keywords", 12, ["ai"], "set"),
-        ("search_media_metadata", {"field": "title", "value": "Local", "media_types": ["pdf"]}),
+        (
+            "search_media_metadata",
+            {"field": "title", "value": "Local", "media_types": ["pdf"]},
+        ),
         ("get_media_by_identifier", {"url": "https://example.com/local.pdf"}),
     ]
 
@@ -3236,10 +4744,18 @@ async def test_scope_service_routes_mediawiki_process_and_import_for_both_source
             wiki_name="Demo",
         )
     ]
-    file_response = await scope.download_media_file(mode="server", media_id=41, file_type="original")
-    file_availability = await scope.check_media_file(mode="server", media_id=41, file_type="original")
-    local_file_response = await scope.download_media_file(mode="local", media_id=12, file_type="original")
-    local_file_availability = await scope.check_media_file(mode="local", media_id=12, file_type="original")
+    file_response = await scope.download_media_file(
+        mode="server", media_id=41, file_type="original"
+    )
+    file_availability = await scope.check_media_file(
+        mode="server", media_id=41, file_type="original"
+    )
+    local_file_response = await scope.download_media_file(
+        mode="local", media_id=12, file_type="original"
+    )
+    local_file_availability = await scope.check_media_file(
+        mode="local", media_id=12, file_type="original"
+    )
     local_pages = [
         page
         async for page in scope.process_mediawiki_dump(
@@ -3372,7 +4888,9 @@ async def test_scope_service_routes_file_artifacts_and_reference_images_for_loca
     reference_images = await scope.list_reference_images(mode="server")
     detail = await scope.get_file_artifact(mode="server", file_id=19)
     exported = await scope.export_file_artifact(mode="server", file_id=19, format="md")
-    deleted = await scope.delete_file_artifact(mode="server", file_id=19, hard=True, delete_file=True)
+    deleted = await scope.delete_file_artifact(
+        mode="server", file_id=19, hard=True, delete_file=True
+    )
     purged = await scope.purge_file_artifacts(
         mode="server",
         delete_files=True,
@@ -3387,8 +4905,12 @@ async def test_scope_service_routes_file_artifacts_and_reference_images_for_loca
     )
     local_reference_images = await scope.list_reference_images(mode="local")
     local_detail = await scope.get_file_artifact(mode="local", file_id=12)
-    local_exported = await scope.export_file_artifact(mode="local", file_id=12, format="md")
-    local_deleted = await scope.delete_file_artifact(mode="local", file_id=12, hard=False, delete_file=False)
+    local_exported = await scope.export_file_artifact(
+        mode="local", file_id=12, format="md"
+    )
+    local_deleted = await scope.delete_file_artifact(
+        mode="local", file_id=12, hard=False, delete_file=False
+    )
     local_purged = await scope.purge_file_artifacts(mode="local")
 
     assert created["id"] == "server:file_artifact:19"
@@ -3480,7 +5002,9 @@ async def test_scope_service_routes_server_reading_create_saved_searches_and_not
         sort="updated_desc",
     )
     listed = await scope.list_saved_searches(mode="server", limit=25, offset=5)
-    updated = await scope.update_saved_search(mode="server", search_id=1, name="Updated", query={"q": "ml"})
+    updated = await scope.update_saved_search(
+        mode="server", search_id=1, name="Updated", query={"q": "ml"}
+    )
     deleted = await scope.delete_saved_search(mode="server", search_id=1)
     linked = await scope.link_note(mode="server", item_id=60, note_id="note-1")
     links = await scope.list_note_links(mode="server", item_id=60)
@@ -3519,9 +5043,16 @@ async def test_scope_service_routes_server_reading_create_saved_searches_and_not
                 "content": None,
             },
         ),
-        ("create_saved_search", {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}),
+        (
+            "create_saved_search",
+            {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"},
+        ),
         ("list_saved_searches", 25, 5),
-        ("update_saved_search", 1, {"name": "Updated", "query": {"q": "ml"}, "sort": None}),
+        (
+            "update_saved_search",
+            1,
+            {"name": "Updated", "query": {"q": "ml"}, "sort": None},
+        ),
         ("delete_saved_search", 1),
         ("link_note", 60, "note-1"),
         ("list_note_links", 60),
@@ -3539,9 +5070,13 @@ async def test_scope_service_routes_local_saved_searches_and_note_links_with_pol
         policy_enforcer=policy,
     )
 
-    created = await scope.create_saved_search(mode="local", name="Morning", query={"q": "ai"}, sort="updated_desc")
+    created = await scope.create_saved_search(
+        mode="local", name="Morning", query={"q": "ai"}, sort="updated_desc"
+    )
     listed = await scope.list_saved_searches(mode="local", limit=25, offset=5)
-    updated = await scope.update_saved_search(mode="local", search_id=1, name="Updated", query={"q": "ml"})
+    updated = await scope.update_saved_search(
+        mode="local", search_id=1, name="Updated", query={"q": "ml"}
+    )
     deleted = await scope.delete_saved_search(mode="local", search_id=1)
     linked = await scope.link_note(mode="local", item_id=60, note_id="note-1")
     links = await scope.list_note_links(mode="local", item_id=60)
@@ -3564,9 +5099,16 @@ async def test_scope_service_routes_local_saved_searches_and_note_links_with_pol
         "media.reading.note_links.delete.local",
     ]
     assert local.calls[-7:] == [
-        ("create_saved_search", {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"}),
+        (
+            "create_saved_search",
+            {"name": "Morning", "query": {"q": "ai"}, "sort": "updated_desc"},
+        ),
         ("list_saved_searches", 25, 5),
-        ("update_saved_search", 1, {"name": "Updated", "query": {"q": "ml"}, "sort": None}),
+        (
+            "update_saved_search",
+            1,
+            {"name": "Updated", "query": {"q": "ml"}, "sort": None},
+        ),
         ("delete_saved_search", 1),
         ("link_note", 60, "note-1"),
         ("list_note_links", 60),
@@ -3752,15 +5294,15 @@ async def test_scope_service_routes_local_archive_and_summary_after_policy():
     ]
     assert local.calls[-2:] == [
         (
-        "create_reading_archive",
-        12,
-        {
-            "format": "md",
-            "source": "text",
-            "title": "Local Snapshot",
-            "retention_days": None,
-            "retention_until": None,
-        },
+            "create_reading_archive",
+            12,
+            {
+                "format": "md",
+                "source": "text",
+                "title": "Local Snapshot",
+                "retention_days": None,
+                "retention_until": None,
+            },
         ),
         (
             "summarize_reading_item",
@@ -3794,7 +5336,9 @@ async def test_scope_service_routes_server_reading_import_jobs_with_policy():
         source="pocket",
         merge_tags=False,
     )
-    listed = await scope.list_reading_import_jobs(mode="server", status="completed", limit=25, offset=5)
+    listed = await scope.list_reading_import_jobs(
+        mode="server", status="completed", limit=25, offset=5
+    )
     detail = await scope.get_reading_import_job(mode="server", job_id=701)
 
     assert submitted["job_id"] == 701
@@ -3828,7 +5372,9 @@ async def test_scope_service_routes_local_reading_import_jobs_with_policy():
         source="pocket",
         merge_tags=False,
     )
-    listed = await scope.list_reading_import_jobs(mode="local", status="queued", limit=25, offset=5)
+    listed = await scope.list_reading_import_jobs(
+        mode="local", status="queued", limit=25, offset=5
+    )
     detail = await scope.get_reading_import_job(mode="local", job_id=701)
 
     assert submitted["job_id"] == 701
@@ -4107,17 +5653,23 @@ async def test_scope_service_routes_local_ingestion_sources_and_jobs_with_policy
         config={"path": "/tmp/source"},
     )
     detail = await scope_service.get_ingestion_source(mode="local", source_id=3)
-    patched = await scope_service.patch_ingestion_source(mode="local", source_id=3, enabled=False)
+    patched = await scope_service.patch_ingestion_source(
+        mode="local", source_id=3, enabled=False
+    )
     deleted = await scope_service.delete_ingestion_source(mode="local", source_id=3)
     items = await scope_service.list_ingestion_source_items(mode="local", source_id=3)
-    triggered = await scope_service.trigger_ingestion_source_sync(mode="local", source_id=3)
+    triggered = await scope_service.trigger_ingestion_source_sync(
+        mode="local", source_id=3
+    )
     submitted = await scope_service.submit_ingest_jobs(
         mode="local",
         media_type="pdf",
         urls=["https://example.com/a.pdf"],
     )
     status = await scope_service.get_ingest_job(mode="local", job_id=301)
-    cancelled = await scope_service.cancel_ingest_job(mode="local", job_id=301, reason="user requested")
+    cancelled = await scope_service.cancel_ingest_job(
+        mode="local", job_id=301, reason="user requested"
+    )
 
     assert listed[0]["id"] == "local:ingestion_source:3"
     assert created["id"] == "local:ingestion_source:4"
@@ -4160,7 +5712,14 @@ async def test_scope_service_routes_local_ingestion_sources_and_jobs_with_policy
         ("delete_ingestion_source", 3),
         ("list_ingestion_source_items", 3),
         ("trigger_ingestion_source_sync", 3),
-        ("submit_ingest_jobs", {"media_type": "pdf", "urls": ["https://example.com/a.pdf"], "keywords": None}),
+        (
+            "submit_ingest_jobs",
+            {
+                "media_type": "pdf",
+                "urls": ["https://example.com/a.pdf"],
+                "keywords": None,
+            },
+        ),
         ("get_ingest_job", 301),
         ("cancel_ingest_job", 301, "user requested"),
     ]
@@ -4219,7 +5778,9 @@ async def test_scope_service_routes_server_document_versions():
         prompt="summarize",
     )
 
-    assert versions == [{"uuid": "server-version-1", "media_id": 99, "analysis_content": "analysis"}]
+    assert versions == [
+        {"uuid": "server-version-1", "media_id": 99, "analysis_content": "analysis"}
+    ]
     assert saved["uuid"] == "server-version-2"
 
 
@@ -4233,7 +5794,9 @@ async def test_scope_service_routes_server_advanced_document_version_helpers_wit
         policy_enforcer=policy,
     )
 
-    rollback = await scope_service.rollback_document_version(mode="server", media_id=99, version_number=2)
+    rollback = await scope_service.rollback_document_version(
+        mode="server", media_id=99, version_number=2
+    )
     patched = await scope_service.patch_media_safe_metadata(
         mode="server",
         media_id=99,
@@ -4295,10 +5858,14 @@ async def test_scope_service_reports_local_advanced_document_version_helpers_as_
     )
 
     with pytest.raises(NotImplementedError, match="server-owned"):
-        await scope_service.rollback_document_version(mode="local", media_id=99, version_number=2)
+        await scope_service.rollback_document_version(
+            mode="local", media_id=99, version_number=2
+        )
 
     with pytest.raises(NotImplementedError, match="server-owned"):
-        await scope_service.patch_media_safe_metadata(mode="local", media_id=99, safe_metadata={"source": "import"})
+        await scope_service.patch_media_safe_metadata(
+            mode="local", media_id=99, safe_metadata={"source": "import"}
+        )
 
     with pytest.raises(NotImplementedError, match="server-owned"):
         await scope_service.put_document_version_metadata(
@@ -4309,7 +5876,9 @@ async def test_scope_service_reports_local_advanced_document_version_helpers_as_
         )
 
     with pytest.raises(NotImplementedError, match="server-owned"):
-        await scope_service.upsert_document_version_advanced(mode="local", media_id=99, safe_metadata={"kind": "analysis"})
+        await scope_service.upsert_document_version_advanced(
+            mode="local", media_id=99, safe_metadata={"kind": "analysis"}
+        )
 
     assert policy.calls[-4:] == [
         "media.reading.update.local",
@@ -4336,7 +5905,9 @@ async def test_scope_service_routes_server_highlights_with_media_reading_actions
         color="yellow",
     )
     listed = await scope_service.list_highlights(mode="server", item_id=41)
-    updated = await scope_service.update_highlight(mode="server", highlight_id=5, note="recheck")
+    updated = await scope_service.update_highlight(
+        mode="server", highlight_id=5, note="recheck"
+    )
     deleted = await scope_service.delete_highlight(mode="server", highlight_id=5)
 
     assert created["id"] == 5
@@ -4368,7 +5939,9 @@ async def test_scope_service_routes_local_highlights_with_media_reading_actions(
         color="yellow",
     )
     listed = await scope_service.list_highlights(mode="local", item_id=41)
-    updated = await scope_service.update_highlight(mode="local", highlight_id=5, note="recheck")
+    updated = await scope_service.update_highlight(
+        mode="local", highlight_id=5, note="recheck"
+    )
     deleted = await scope_service.delete_highlight(mode="local", highlight_id=5)
 
     assert created["id"] == 5
@@ -4401,6 +5974,82 @@ async def test_scope_service_routes_local_highlights_with_media_reading_actions(
 
 
 @pytest.mark.asyncio
+async def test_scope_service_reading_highlight_crud_reaches_real_local_service():
+    """task-15768: the Media hub bridge must reach the REAL local leaf methods.
+
+    ``MediaWindow_v2`` drives highlights through the scope service's
+    ``*_reading_highlight*`` methods. Those must dispatch the leaf names the
+    real ``LocalMediaReadingService`` actually implements
+    (``create_highlight``/``list_highlights``/``update_highlight``/
+    ``delete_highlight``) -- the fakes in this file previously implemented the
+    ``reading_``-prefixed names the real local service never had, hiding an
+    ``AttributeError`` that every local-mode Media hub highlight operation hit
+    in production.
+    """
+    db = Database(db_path=":memory:", client_id="scope_hub_highlights")
+    try:
+        media_id, _, _ = db.add_media_with_keywords(
+            title="Hub Highlighted",
+            content="Important local content for the media hub.",
+            media_type="article",
+            keywords=[],
+        )
+        local_service = LocalMediaReadingService(db)
+        seeded = local_service.create_highlight(
+            media_id, quote="Important", start_offset=0, end_offset=9
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=local_service,
+            server_service=None,
+        )
+        record = {
+            "id": f"local:media:{media_id}",
+            "backend": "local",
+            "source_id": str(media_id),
+            "backing_media_id": media_id,
+        }
+
+        listed = await scope_service.list_reading_highlights(
+            mode="local", record=record
+        )
+        assert [h["source_id"] for h in listed] == [str(seeded["id"])]
+        assert listed[0]["quote"] == "Important"
+        assert listed[0]["backend"] == "local"
+
+        created = await scope_service.create_reading_highlight(
+            mode="local",
+            record=record,
+            quote="local content",
+            color="yellow",
+            note="revisit",
+        )
+        assert created["quote"] == "local content"
+        assert created["color"] == "yellow"
+        assert len(local_service.list_highlights(media_id)) == 2
+
+        updated = await scope_service.update_reading_highlight(
+            mode="local",
+            highlight_id=created["source_id"],
+            color="blue",
+            note="done",
+            state="stale",
+        )
+        assert updated["color"] == "blue"
+        assert updated["note"] == "done"
+        assert updated["state"] == "stale"
+
+        await scope_service.delete_reading_highlight(
+            mode="local", highlight_id=created["source_id"]
+        )
+        remaining = await scope_service.list_reading_highlights(
+            mode="local", record=record
+        )
+        assert [h["source_id"] for h in remaining] == [str(seeded["id"])]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_server_document_annotations_with_media_reading_actions():
     policy = FakePolicyEnforcer()
     server = FakeServerMediaService()
@@ -4424,7 +6073,9 @@ async def test_scope_service_routes_server_document_annotations_with_media_readi
         annotation_id="ann_1",
         note="recheck",
     )
-    deleted = await scope_service.delete_annotation(mode="server", media_id=99, annotation_id="ann_1")
+    deleted = await scope_service.delete_annotation(
+        mode="server", media_id=99, annotation_id="ann_1"
+    )
     synced = await scope_service.sync_annotations(
         mode="server",
         media_id=99,
@@ -4470,7 +6121,9 @@ async def test_scope_service_routes_local_document_annotations_with_media_readin
         annotation_id="local-ann-1",
         note="recheck",
     )
-    deleted = await scope_service.delete_annotation(mode="local", media_id=99, annotation_id="local-ann-1")
+    deleted = await scope_service.delete_annotation(
+        mode="local", media_id=99, annotation_id="local-ann-1"
+    )
     synced = await scope_service.sync_annotations(
         mode="local",
         media_id=99,
@@ -4505,9 +6158,19 @@ async def test_scope_service_routes_local_document_annotations_with_media_readin
                 "percentage": None,
             },
         ),
-        ("update_annotation", 99, "local-ann-1", {"text": None, "color": None, "note": "recheck"}),
+        (
+            "update_annotation",
+            99,
+            "local-ann-1",
+            {"text": None, "color": None, "note": "recheck"},
+        ),
         ("delete_annotation", 99, "local-ann-1"),
-        ("sync_annotations", 99, [{"location": "13", "text": "offline note"}], ["client-1"]),
+        (
+            "sync_annotations",
+            99,
+            [{"location": "13", "text": "offline note"}],
+            ["client-1"],
+        ),
     ]
 
 
@@ -4522,9 +6185,15 @@ async def test_scope_service_routes_server_document_intelligence_with_media_read
     )
 
     outline = await scope_service.get_document_outline(mode="server", media_id=99)
-    figures = await scope_service.get_document_figures(mode="server", media_id=99, min_size=80)
-    references = await scope_service.get_document_references(mode="server", media_id=99, enrich=True)
-    insights = await scope_service.generate_document_insights(mode="server", media_id=99, categories=["summary"])
+    figures = await scope_service.get_document_figures(
+        mode="server", media_id=99, min_size=80
+    )
+    references = await scope_service.get_document_references(
+        mode="server", media_id=99, enrich=True
+    )
+    insights = await scope_service.generate_document_insights(
+        mode="server", media_id=99, categories=["summary"]
+    )
 
     assert outline["has_outline"] is True
     assert figures["has_figures"] is False
@@ -4548,7 +6217,9 @@ async def test_scope_service_routes_server_media_navigation_with_navigation_acti
         policy_enforcer=policy,
     )
 
-    navigation = await scope_service.get_media_navigation(mode="server", media_id=99, max_depth=3)
+    navigation = await scope_service.get_media_navigation(
+        mode="server", media_id=99, max_depth=3
+    )
     content = await scope_service.get_media_navigation_content(
         mode="server",
         media_id=99,
@@ -4592,7 +6263,9 @@ async def test_scope_service_routes_local_media_navigation_with_navigation_actio
         policy_enforcer=policy,
     )
 
-    navigation = await scope_service.get_media_navigation(mode="local", media_id=12, max_depth=2)
+    navigation = await scope_service.get_media_navigation(
+        mode="local", media_id=12, max_depth=2
+    )
     content = await scope_service.get_media_navigation_content(
         mode="local",
         media_id=12,
@@ -4644,8 +6317,12 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
         timezone="UTC",
         filters={"status": ["saved"]},
     )
-    listed = await scope_service.list_reading_digest_schedules(mode="server", limit=25, offset=5)
-    detail = await scope_service.get_reading_digest_schedule(mode="server", schedule_id="digest-1")
+    listed = await scope_service.list_reading_digest_schedules(
+        mode="server", limit=25, offset=5
+    )
+    detail = await scope_service.get_reading_digest_schedule(
+        mode="server", schedule_id="digest-1"
+    )
     updated = await scope_service.update_reading_digest_schedule(
         mode="server",
         schedule_id="digest-1",
@@ -4655,8 +6332,12 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
         require_online=True,
         format="html",
     )
-    deleted = await scope_service.delete_reading_digest_schedule(mode="server", schedule_id="digest-1")
-    outputs = await scope_service.list_reading_digest_outputs(mode="server", schedule_id="digest-1", limit=25, offset=5)
+    deleted = await scope_service.delete_reading_digest_schedule(
+        mode="server", schedule_id="digest-1"
+    )
+    outputs = await scope_service.list_reading_digest_outputs(
+        mode="server", schedule_id="digest-1", limit=25, offset=5
+    )
 
     assert created == {"id": "digest-1"}
     assert listed[0]["id"] == "digest-1"
@@ -4685,7 +6366,13 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
         (
             "update_reading_digest_schedule",
             "digest-1",
-            {"name": "Updated", "cron": "0 9 * * *", "enabled": False, "require_online": True, "format": "html"},
+            {
+                "name": "Updated",
+                "cron": "0 9 * * *",
+                "enabled": False,
+                "require_online": True,
+                "format": "html",
+            },
         ),
         ("delete_reading_digest_schedule", "digest-1"),
         ("list_reading_digest_outputs", "digest-1", 25, 5),
@@ -4706,15 +6393,23 @@ async def test_scope_service_routes_reading_digests_for_local_and_server_modes()
         timezone="UTC",
         filters={"status": ["saved"]},
     )
-    local_listed = await scope_service.list_reading_digest_schedules(mode="local", limit=10, offset=2)
-    local_detail = await scope_service.get_reading_digest_schedule(mode="local", schedule_id="local-digest-1")
+    local_listed = await scope_service.list_reading_digest_schedules(
+        mode="local", limit=10, offset=2
+    )
+    local_detail = await scope_service.get_reading_digest_schedule(
+        mode="local", schedule_id="local-digest-1"
+    )
     local_updated = await scope_service.update_reading_digest_schedule(
         mode="local",
         schedule_id="local-digest-1",
         enabled=False,
     )
-    local_deleted = await scope_service.delete_reading_digest_schedule(mode="local", schedule_id="local-digest-1")
-    local_outputs = await scope_service.list_reading_digest_outputs(mode="local", schedule_id="local-digest-1")
+    local_deleted = await scope_service.delete_reading_digest_schedule(
+        mode="local", schedule_id="local-digest-1"
+    )
+    local_outputs = await scope_service.list_reading_digest_outputs(
+        mode="local", schedule_id="local-digest-1"
+    )
     local_run = await scope_service.run_due_reading_digest_schedules(
         mode="local",
         now="2026-04-25T08:00:00+00:00",
@@ -4824,7 +6519,9 @@ async def test_scope_service_routes_server_web_content_ingest_and_blocks_local_m
     assert policy.calls[-1:] == ["media.web_content_ingest.launch.server"]
 
     with pytest.raises(ValueError, match="direct web-content ingestion is server-only"):
-        await scope_service.ingest_web_content(mode="local", urls=["https://example.com/article"])
+        await scope_service.ingest_web_content(
+            mode="local", urls=["https://example.com/article"]
+        )
 
 
 @pytest.mark.asyncio
@@ -4899,10 +6596,14 @@ async def test_scope_service_routes_server_processing_and_transcription_models_a
         "media.transcription_models.list.server",
     ]
 
-    local_code = await scope_service.process_code(mode="local", file_paths=["/tmp/main.py"])
+    local_code = await scope_service.process_code(
+        mode="local", file_paths=["/tmp/main.py"]
+    )
     assert local_code["results"][0]["media_type"] == "code"
     assert policy.calls[-1] == "media.processing.code.process.local"
-    local_emails = await scope_service.process_emails(mode="local", file_paths=["/tmp/message.eml"], title="Inbox")
+    local_emails = await scope_service.process_emails(
+        mode="local", file_paths=["/tmp/message.eml"], title="Inbox"
+    )
     assert local_emails["results"][0]["media_type"] == "email"
     assert policy.calls[-1] == "media.processing.emails.process.local"
     local_web = await scope_service.process_web_scraping(
@@ -4927,14 +6628,27 @@ async def test_scope_service_routes_existing_server_no_db_processing_endpoints()
         policy_enforcer=policy,
     )
 
-    video = await scope_service.process_video(mode="server", urls=["https://example.com/video.mp4"])
-    audio = await scope_service.process_audio(mode="server", file_paths=["/tmp/audio.mp3"])
+    video = await scope_service.process_video(
+        mode="server", urls=["https://example.com/video.mp4"]
+    )
+    audio = await scope_service.process_audio(
+        mode="server", file_paths=["/tmp/audio.mp3"]
+    )
     pdf = await scope_service.process_pdf(mode="server", file_paths=["/tmp/paper.pdf"])
-    ebook = await scope_service.process_ebook(mode="server", file_paths=["/tmp/book.epub"])
-    document = await scope_service.process_document(mode="server", file_paths=["/tmp/doc.md"])
-    plaintext = await scope_service.process_plaintext(mode="server", file_paths=["/tmp/notes.txt"])
+    ebook = await scope_service.process_ebook(
+        mode="server", file_paths=["/tmp/book.epub"]
+    )
+    document = await scope_service.process_document(
+        mode="server", file_paths=["/tmp/doc.md"]
+    )
+    plaintext = await scope_service.process_plaintext(
+        mode="server", file_paths=["/tmp/notes.txt"]
+    )
 
-    assert [item["results"][0]["media_type"] for item in [video, audio, pdf, ebook, document, plaintext]] == [
+    assert [
+        item["results"][0]["media_type"]
+        for item in [video, audio, pdf, ebook, document, plaintext]
+    ] == [
         "video",
         "audio",
         "pdf",
@@ -4959,15 +6673,34 @@ async def test_scope_service_routes_existing_server_no_db_processing_endpoints()
         "media.processing.plaintext.process.server",
     ]
 
-    local_video = await scope_service.process_video(mode="local", file_paths=["/tmp/video.mp4"])
-    local_audio = await scope_service.process_audio(mode="local", file_paths=["/tmp/audio.mp3"])
-    local_pdf = await scope_service.process_pdf(mode="local", file_paths=["/tmp/paper.pdf"])
-    local_ebook = await scope_service.process_ebook(mode="local", file_paths=["/tmp/book.epub"])
-    local_document = await scope_service.process_document(mode="local", file_paths=["/tmp/doc.md"])
-    local_plaintext = await scope_service.process_plaintext(mode="local", file_paths=["/tmp/notes.txt"])
+    local_video = await scope_service.process_video(
+        mode="local", file_paths=["/tmp/video.mp4"]
+    )
+    local_audio = await scope_service.process_audio(
+        mode="local", file_paths=["/tmp/audio.mp3"]
+    )
+    local_pdf = await scope_service.process_pdf(
+        mode="local", file_paths=["/tmp/paper.pdf"]
+    )
+    local_ebook = await scope_service.process_ebook(
+        mode="local", file_paths=["/tmp/book.epub"]
+    )
+    local_document = await scope_service.process_document(
+        mode="local", file_paths=["/tmp/doc.md"]
+    )
+    local_plaintext = await scope_service.process_plaintext(
+        mode="local", file_paths=["/tmp/notes.txt"]
+    )
     assert [
         item["results"][0]["media_type"]
-        for item in [local_video, local_audio, local_pdf, local_ebook, local_document, local_plaintext]
+        for item in [
+            local_video,
+            local_audio,
+            local_pdf,
+            local_ebook,
+            local_document,
+            local_plaintext,
+        ]
     ] == [
         "video",
         "audio",
@@ -4997,9 +6730,15 @@ async def test_scope_service_routes_local_document_intelligence_with_media_readi
     )
 
     outline = await scope_service.get_document_outline(mode="local", media_id=99)
-    figures = await scope_service.get_document_figures(mode="local", media_id=99, min_size=80)
-    references = await scope_service.get_document_references(mode="local", media_id=99, enrich=True)
-    insights = await scope_service.generate_document_insights(mode="local", media_id=99, categories=["summary"])
+    figures = await scope_service.get_document_figures(
+        mode="local", media_id=99, min_size=80
+    )
+    references = await scope_service.get_document_references(
+        mode="local", media_id=99, enrich=True
+    )
+    insights = await scope_service.generate_document_insights(
+        mode="local", media_id=99, categories=["summary"]
+    )
 
     assert outline["has_outline"] is True
     assert figures["has_figures"] is False
@@ -5057,8 +6796,12 @@ async def test_scope_service_routes_server_ingest_jobs_and_reprocess_with_ingest
         chunk_size=600,
     )
     status = await scope_service.get_ingest_job(mode="server", job_id=11)
-    listed = await scope_service.list_ingest_jobs(mode="server", batch_id="batch-1", limit=50)
-    cancelled = await scope_service.cancel_ingest_job(mode="server", job_id=11, reason="user requested")
+    listed = await scope_service.list_ingest_jobs(
+        mode="server", batch_id="batch-1", limit=50
+    )
+    cancelled = await scope_service.cancel_ingest_job(
+        mode="server", job_id=11, reason="user requested"
+    )
     batch_cancelled = await scope_service.cancel_ingest_batch(
         mode="server",
         batch_id="batch-1",
@@ -5111,7 +6854,9 @@ def test_scope_service_streams_server_ingest_job_events_with_observe_policy():
         policy_enforcer=policy,
     )
 
-    events = scope_service.stream_ingest_job_events(mode="server", batch_id="batch-1", after_id=4)
+    events = scope_service.stream_ingest_job_events(
+        mode="server", batch_id="batch-1", after_id=4
+    )
 
     assert events == [{"event": "status", "data": {"id": 11, "status": "completed"}}]
     assert policy.calls[-1:] == ["media.ingestion_jobs.observe.server"]
@@ -5148,3 +6893,397 @@ def test_media_scope_service_routes_sync_mirror_report_to_sync_scope():
             "remote_records": [{"id": "remote-media-1"}],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_library_media_browse_filter_matches_keywords_not_only_titles():
+    """The Library browse filter finds a keyword that is in no title or body.
+
+    task-31274: typing a tag the user filed items under returned zero rows
+    because the browse filter searched title/content only. Seeded against a
+    real MediaDatabase so the FTS/keyword join is exercised, not a fake.
+    """
+    db = Database(db_path=":memory:", client_id="library-keyword-filter")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening remarks session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        db.add_media_with_keywords(
+            url=None,
+            title="Closing remarks",
+            content="Transcript of the closing remarks session.",
+            media_type="article",
+            keywords=["day3"],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
+        assert payload["total"] == 1
+        # The frozen summary shape is unchanged by the keyword leg.
+        assert set(payload["items"][0]) == {
+            "id",
+            "backing_media_id",
+            "title",
+            "media_type",
+            "updated_at",
+            "has_analysis",
+            "reviewed",
+        }
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_media_browse_filter_still_matches_titles_and_content():
+    """The keyword leg is additive: title and content matches still land."""
+    db = Database(db_path=":memory:", client_id="library-keyword-filter-additive")
+    try:
+        title_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Roadmap review",
+            content="Nothing notable.",
+            media_type="article",
+            keywords=[],
+        )
+        content_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Untagged note",
+            content="A body mentioning roadmap once.",
+            media_type="article",
+            keywords=[],
+        )
+        db.add_media_with_keywords(
+            url=None,
+            title="Unrelated",
+            content="Nothing to see.",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert {item["backing_media_id"] for item in payload["items"]} == {
+            title_id,
+            content_id,
+        }
+        assert payload["total"] == 2
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_media_browse_filter_keyword_leg_respects_type_facet():
+    """A keyword hit outside the active type facet stays filtered out."""
+    db = Database(db_path=":memory:", client_id="library-keyword-filter-facet")
+    try:
+        article_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="First body.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        db.add_media_with_keywords(
+            url=None,
+            title="Session two",
+            content="Second body.",
+            media_type="video",
+            keywords=["day2"],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            media_types=["article"],
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [article_id]
+        assert payload["total"] == 1
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_names_the_keyword_behind_an_otherwise_invisible_hit():
+    """task-28008: a keyword-only hit carries the keyword that matched it.
+
+    Critique #5 P2: a filtered row whose title and body hold nothing the
+    user typed reads as a mismatch. The reason is a per-QUERY side channel
+    beside the rows -- never an eighth summary key -- so the row whose
+    TITLE matched carries no reason at all.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        titled_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Day2 planning",
+            content="Nothing notable.",
+            media_type="article",
+            keywords=[],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert {item["backing_media_id"] for item in payload["items"]} == {
+            tagged_id,
+            titled_id,
+        }
+        assert payload["match_reasons"] == {f"local:media:{tagged_id}": "day2"}
+        # The seven-key contract is untouched by the side channel.
+        assert all(
+            set(item)
+            == {
+                "id",
+                "backing_media_id",
+                "title",
+                "media_type",
+                "updated_at",
+                "has_analysis",
+                "reviewed",
+            }
+            for item in payload["items"]
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_gives_no_reason_when_the_body_matched_too():
+    """Only an OTHERWISE invisible hit earns a reason.
+
+    A row whose content also holds the term already explains itself, so
+    labelling it would be noise; and a browse with no query asks no
+    question, so it carries no reasons at all.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason-visible")
+    try:
+        both_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Untagged note",
+            content="A body mentioning roadmap once.",
+            media_type="article",
+            keywords=["roadmap"],
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+        assert [item["backing_media_id"] for item in payload["items"]] == [both_id]
+        assert payload["match_reasons"] == {}
+
+        unfiltered = await scope_service.search_media(
+            mode="local",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+        assert "match_reasons" not in unfiltered
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_reasons_are_scoped_to_the_browse_field_set():
+    """Fix round 1 (2): a wider field set gets NO reasons, not wrong ones.
+
+    ``search_media_db``'s text branch ORs the author/type LIKE legs beside
+    title/content when those fields are asked for, while the probe only
+    re-evaluates title and content. A row the AUTHOR leg put on the page
+    would therefore look keyword-only. The channel is the Library browse's
+    own, so it is emitted for exactly its field triple and for nothing else.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason-fields")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="A body about nothing.",
+            media_type="article",
+            keywords=["roadmap"],
+            author="Roadmap Team",
+        )
+        service = LocalMediaReadingService(db)
+
+        widened = service.search_media(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=["title", "content", "author", "keywords"],
+        )
+        assert [row["id"] for row in widened["items"]] == [tagged_id]
+        assert "match_reasons" not in widened
+
+        browse = service.search_media(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
+        )
+        assert browse["match_reasons"] == {tagged_id: "roadmap"}
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_page_survives_a_failing_match_reason_probe():
+    """Fix round 1 (3): the reason is decoration, never a page failure."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-failure")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        db._library_browse_keyword_only_matches = _boom
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
+        assert payload["match_reasons"] == {}
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_page_survives_a_connect_failure_in_the_probe():
+    """Final review (3): the DB's own connect-failure wrapper is not a
+    ``sqlite3.Error``; the probe must fail open on it just the same."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-dberror")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+
+        def _boom(*args, **kwargs):
+            raise media_db_module.DatabaseError("Failed to connect to media database.")
+
+        db._library_browse_keyword_only_matches = _boom
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
+        assert payload["match_reasons"] == {}
+    finally:
+        db.close_connection()
+
+
+def test_library_browse_reasons_need_the_like_legs_a_preformatted_fts_query_drops():
+    """Final review (7): with ``fts_match_query`` the search drops the
+    title/content LIKE legs, so the probe's under-report argument no longer
+    holds -- no reasons rather than possibly wrong ones."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-fts")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="A body about nothing.",
+            media_type="article",
+            keywords=["roadmap"],
+        )
+        service = LocalMediaReadingService(db)
+
+        preformatted = service.search_media(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
+            fts_match_query="roadmap",
+        )
+        assert [row["id"] for row in preformatted["items"]] == [tagged_id]
+        assert "match_reasons" not in preformatted
+    finally:
+        db.close_connection()

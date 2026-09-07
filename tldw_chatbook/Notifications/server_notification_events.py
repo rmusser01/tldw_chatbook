@@ -16,7 +16,10 @@ from tldw_chatbook.Notifications.event_observer import (
     EventObserverResult,
     Handler,
 )
-from tldw_chatbook.runtime_policy.server_parity_models import EventCursor, NormalizedEventRecord
+from tldw_chatbook.runtime_policy.server_parity_models import (
+    EventCursor,
+    NormalizedEventRecord,
+)
 
 from .event_state_repository import EventStateRepository
 
@@ -74,7 +77,9 @@ class ServerNotificationEventTransport:
     received_at_factory: Callable[[], str] = lambda: _utc_now()
 
     async def stream(self, cursor: EventCursor) -> Any:
-        after = int(cursor.cursor) if cursor.cursor and str(cursor.cursor).isdigit() else 0
+        after = (
+            int(cursor.cursor) if cursor.cursor and str(cursor.cursor).isdigit() else 0
+        )
         async for raw_event in self.service.observe_feed(
             after=after,
             last_event_id=cursor.cursor,
@@ -139,7 +144,9 @@ class ServerNotificationEventObserver:
                 max_reconnects=max_reconnects,
             )
         except Exception as exc:
-            self._record_status("error", reason=type(exc).__name__, details={"message": str(exc)})
+            self._record_status(
+                "error", reason=type(exc).__name__, details={"message": str(exc)}
+            )
             raise
 
         self._record_status("cancelled" if result.cancelled else "idle")
@@ -183,10 +190,7 @@ def build_server_notification_feed(
         payload_kind="notification",
         limit=limit,
     )
-    items = [
-        _presentation_item_from_event_row(row, backend="server")
-        for row in rows
-    ]
+    items = [_presentation_item_from_event_row(row, backend="server") for row in rows]
     if mark_presented:
         for row in rows:
             event_state_repository.mark_event_presented_and_advance_high_water(
@@ -214,13 +218,20 @@ async def _ack_all(_: NormalizedEventRecord) -> bool:
     return True
 
 
-def _presentation_item_from_event_row(row: Mapping[str, Any], *, backend: str) -> dict[str, Any]:
+def _presentation_item_from_event_row(
+    row: Mapping[str, Any], *, backend: str
+) -> dict[str, Any]:
     payload = row.get("payload")
     if not isinstance(payload, Mapping):
         payload = {}
     data = payload.get("data")
     notification = dict(data) if isinstance(data, Mapping) else {}
-    source_id = notification.get("id") or row.get("event_id") or row.get("server_cursor") or row["event_key"]
+    source_id = (
+        notification.get("id")
+        or row.get("event_id")
+        or row.get("server_cursor")
+        or row["event_key"]
+    )
     notification.setdefault("backend", backend)
     notification.setdefault("record_id", f"{backend}:notification:{source_id}")
     notification["event_key"] = row["event_key"]

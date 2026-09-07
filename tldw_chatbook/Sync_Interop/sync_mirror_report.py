@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
-from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority, SyncIdentityMapEntry
+from tldw_chatbook.runtime_policy.server_parity_models import (
+    SourceAuthority,
+    SyncIdentityMapEntry,
+)
 
 
-def _record_by_id(records: Iterable[Mapping[str, Any]], key: str = "id") -> dict[str, Mapping[str, Any]]:
+def _record_by_id(
+    records: Iterable[Mapping[str, Any]], key: str = "id"
+) -> dict[str, Mapping[str, Any]]:
     return {str(record[key]): record for record in records if key in record}
 
 
@@ -55,7 +60,11 @@ def build_sync_mirror_report(
     actions: list[dict[str, Any]] = []
     for entry in scoped_entries:
         local_record = local_by_id.get(entry.local_entity_id)
-        remote_record = remote_by_id.get(str(entry.remote_entity_id)) if entry.remote_entity_id else None
+        remote_record = (
+            remote_by_id.get(str(entry.remote_entity_id))
+            if entry.remote_entity_id
+            else None
+        )
         actions.append(
             {
                 "action": "would_compare",
@@ -64,7 +73,9 @@ def build_sync_mirror_report(
                 "local_present": local_record is not None,
                 "remote_present": remote_record is not None,
                 "local_version": local_record.get("version") if local_record else None,
-                "remote_version": remote_record.get("version") if remote_record else entry.remote_version,
+                "remote_version": remote_record.get("version")
+                if remote_record
+                else entry.remote_version,
             }
         )
 

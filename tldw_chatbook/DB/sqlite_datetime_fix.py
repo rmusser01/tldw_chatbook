@@ -22,14 +22,14 @@ def adapt_datetime(dt):
 
 def convert_datetime(s):
     """Convert ISO 8601 string back to datetime object."""
-    if s is None or s == '':
+    if s is None or s == "":
         return None
     if isinstance(s, bytes):
-        s = s.decode('utf-8')
+        s = s.decode("utf-8")
     # The app stores UTC timestamps with a trailing Z, which older
     # fromisoformat variants do not consistently accept.
-    if s.endswith('Z'):
-        s = s[:-1] + '+00:00'
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
     return datetime.fromisoformat(s)
 
 
@@ -37,38 +37,38 @@ def setup_datetime_adapters():
     """Register datetime adapters and converters for SQLite."""
     # Register adapter for datetime -> string
     sqlite3.register_adapter(datetime, adapt_datetime)
-    
+
     # Register converter for string -> datetime
     sqlite3.register_converter("TIMESTAMP", convert_datetime)
     sqlite3.register_converter("DATETIME", convert_datetime)
-    
+
     # Also handle date and time if needed
     from datetime import date, time
-    
+
     def adapt_date(d):
         if d is None:
             return None
         return d.isoformat()
-    
+
     def adapt_time(t):
         if t is None:
             return None
         return t.isoformat()
-    
+
     def convert_date(s):
-        if s is None or s == '':
+        if s is None or s == "":
             return None
         if isinstance(s, bytes):
-            s = s.decode('utf-8')
+            s = s.decode("utf-8")
         return date.fromisoformat(s)
-    
+
     def convert_time(s):
-        if s is None or s == '':
+        if s is None or s == "":
             return None
         if isinstance(s, bytes):
-            s = s.decode('utf-8')
+            s = s.decode("utf-8")
         return time.fromisoformat(s)
-    
+
     sqlite3.register_adapter(date, adapt_date)
     sqlite3.register_adapter(time, adapt_time)
     sqlite3.register_converter("DATE", convert_date)

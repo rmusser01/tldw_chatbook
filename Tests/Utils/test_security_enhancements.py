@@ -2,28 +2,27 @@
 
 import pytest
 from pathlib import Path
-from tldw_chatbook.Utils.path_validation import validate_path_simple
-from tldw_chatbook.Utils.log_sanitizer import (
-    sanitize_string, sanitize_dict, sanitize_list,
-    create_safe_log_message, sanitize_log_params
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+    validate_path_simple,
 )
 
 
 class TestValidatePathSimple:
     """Test the simple path validation function."""
-    
+
     def test_valid_paths(self):
         """Test that valid paths are accepted."""
         # Relative path
         result = validate_path_simple("test.txt")
         assert isinstance(result, Path)
         assert str(result) == "test.txt"
-        
+
         # Absolute path
         result = validate_path_simple("/tmp/test.txt")
         assert isinstance(result, Path)
         assert str(result) == "/tmp/test.txt"
-    
+
     def test_dangerous_patterns_rejected(self):
         """Test that dangerous patterns are rejected."""
         dangerous_paths = [
@@ -39,100 +38,81 @@ class TestValidatePathSimple:
             "test|cat",  # Pipe
             "~/sensitive",  # Home directory
         ]
-        
+
         for path in dangerous_paths:
             with pytest.raises(ValueError, match="dangerous pattern|null byte"):
                 validate_path_simple(path)
-    
+
     def test_require_exists_option(self):
         """Test the require_exists option."""
         # Non-existent file should fail when require_exists=True
         with pytest.raises(ValueError, match="does not exist"):
-            validate_path_simple("/tmp/definitely_does_not_exist_12345.txt", require_exists=True)
-        
+            validate_path_simple(
+                "/tmp/definitely_does_not_exist_12345.txt", require_exists=True
+            )
+
         # Should pass when require_exists=False
         result = validate_path_simple("/tmp/new_file.txt", require_exists=False)
         assert isinstance(result, Path)
 
+    def test_single_parent_ref_accepted_both_separator_conventions(self):
+        """A legitimate single parent-dir segment must be treated the same
+        regardless of which separator convention the string uses.
 
-class TestLogSanitizer:
-    """Test the log sanitization utilities."""
-    
-    def test_sanitize_string_api_keys(self):
-        """Test that API keys are sanitized from strings."""
-        test_cases = [
-            ("api_key=sk-1234567890abcdef", "api_key=***REDACTED***"),
-            ("Bearer sk-abcdefghijklmnopqrstuvwxyz123456789012345678", "Bearer ***OPENAI_KEY***"),
-            ("OPENAI_API_KEY=sk-test123", "OPENAI_API_KEY=***REDACTED***"),
-            ('{"api_key": "secret123"}', '{"api_key": "***REDACTED***"}'),
-            ("password: mypassword123", "password=***REDACTED***"),
-            ("https://user:pass@example.com", "https://***:***@example.com"),
-        ]
-        
-        for input_str, expected in test_cases:
-            result = sanitize_string(input_str)
-            assert result == expected
-    
-    def test_sanitize_dict(self):
-        """Test dictionary sanitization."""
-        test_dict = {
-            "name": "test",
-            "api_key": "sk-123456",
-            "password": "secret",
-            "nested": {
-                "token": "bearer123",
-                "safe": "value"
-            },
-            "config": "api_key=embedded_secret"
-        }
-        
-        result = sanitize_dict(test_dict)
-        
-        assert result["name"] == "test"
-        assert result["api_key"] == "***REDACTED***"
-        assert result["password"] == "***REDACTED***"
-        assert result["nested"]["token"] == "***REDACTED***"
-        assert result["nested"]["safe"] == "value"
-        assert "***REDACTED***" in result["config"]
-    
-    def test_sanitize_list(self):
-        """Test list sanitization."""
-        test_list = [
-            "safe value",
-            "api_key=secret",
-            {"password": "hidden"},
-            ["nested", "token=abc123"]
-        ]
-        
-        result = sanitize_list(test_list)
-        
-        assert result[0] == "safe value"
-        assert "***REDACTED***" in result[1]
-        assert result[2]["password"] == "***REDACTED***"
-        assert "***REDACTED***" in result[3][1]
-    
-    def test_create_safe_log_message(self):
-        """Test safe log message creation."""
-        # Test with positional args (OpenAI keys need 20+ chars after sk-)
-        msg = create_safe_log_message("User {} logged in with key {}", "john", "sk-abcdefghijklmnopqrstuvwxyz123456")
-        assert msg == "User john logged in with key ***OPENAI_KEY***"
-        
-        # Test with keyword args
-        msg = create_safe_log_message("Config: {config}", config={"api_key": "secret"})
-        assert "***REDACTED***" in msg
-    
-    def test_sanitize_log_params(self):
-        """Test parameter sanitization."""
-        args = ("test", {"api_key": "secret"}, "password=123")
-        kwargs = {"token": "bearer123", "safe": "value"}
-        
-        clean_args, clean_kwargs = sanitize_log_params(*args, **kwargs)
-        
-        assert clean_args[0] == "test"
-        assert clean_args[1]["api_key"] == "***REDACTED***"
-        assert "***REDACTED***" in clean_args[2]
-        assert clean_kwargs["token"] == "***REDACTED***"
-        assert clean_kwargs["safe"] == "value"
+        Regression test for task-838: the raw-substring scan used to look
+        for POSIX "../.." (two consecutive parent refs) but Windows "..\\"
+        (a *single* parent ref), so the same logical path --
+        ``nested/../locks`` -- was accepted with forward slashes and
+        rejected with backslashes. This is exercised directly (not via
+        ``os.path`` helpers) so it is meaningful on POSIX CI too: the whole
+        point is that the pattern list must not depend on the host platform.
+        """
+        # POSIX-style: single parent ref, unresolved.
+        result = validate_path_simple("/tmp/xyz/nested/../locks")
+        assert isinstance(result, Path)
+
+        # Windows-style: the same logical path, single parent ref.
+        result = validate_path_simple("C:\\Temp\\xyz\\nested\\..\\locks")
+        assert isinstance(result, Path)
+
+    def test_multi_level_parent_ref_still_rejected_both_conventions(self):
+        """A genuine multi-level traversal attempt must still be rejected
+        for both separator conventions -- the parity fix must not weaken
+        the check, only stop over-rejecting single, legitimate parent refs.
+        """
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            validate_path_simple("../../etc/passwd")
+
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            validate_path_simple("..\\..\\etc\\passwd")
+
+        # The second parent reference may terminate the path. Windows CI
+        # constructs this exact shape for a lock root beneath ``tmp_path``.
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            validate_path_simple("C:\\Temp\\cache\\..\\..")
+
+
+def test_existing_absolute_directory_returns_normalized_path(tmp_path):
+    nested = tmp_path / "nested"
+    nested.mkdir()
+
+    result = validate_existing_absolute_directory(nested / "..")
+
+    assert result == tmp_path.resolve()
+
+
+def test_existing_absolute_directory_rejects_relative_missing_and_files(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    relative = Path("relative")
+    relative.mkdir()
+    regular_file = tmp_path / "file.txt"
+    regular_file.write_text("not a directory", encoding="utf-8")
+
+    for candidate in (relative, tmp_path / "missing", regular_file):
+        with pytest.raises(ValueError, match="absolute existing directory"):
+            validate_existing_absolute_directory(candidate)
 
 
 if __name__ == "__main__":

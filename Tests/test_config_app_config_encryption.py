@@ -26,7 +26,9 @@ def _write_encrypted_config(path):
     encrypted = cfg.encrypt_api_keys_in_config(plain, PASSWORD)
     path.write_text(toml.dumps(encrypted))
     on_disk = toml.load(path)["api_settings"]["openai"]["api_key"]
-    assert config_encryption.is_encrypted(on_disk), "precondition: on-disk key must be ciphertext"
+    assert config_encryption.is_encrypted(on_disk), (
+        "precondition: on-disk key must be ciphertext"
+    )
 
 
 @pytest.fixture
@@ -40,7 +42,9 @@ def reset_config_state():
     cfg._CONFIG_CACHE_SOURCE = None
 
 
-def test_load_settings_decrypts_api_settings_when_encrypted(tmp_path, monkeypatch, reset_config_state):
+def test_load_settings_decrypts_api_settings_when_encrypted(
+    tmp_path, monkeypatch, reset_config_state
+):
     cfg_path = tmp_path / "config.toml"
     _write_encrypted_config(cfg_path)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
@@ -53,7 +57,28 @@ def test_load_settings_decrypts_api_settings_when_encrypted(tmp_path, monkeypatc
     assert not config_encryption.is_encrypted(key)
 
 
-def test_set_encryption_password_invalidates_stale_ciphertext_cache(tmp_path, monkeypatch, reset_config_state):
+def test_check_encryption_needed_detects_real_plaintext_provider_key(
+    tmp_path, monkeypatch, reset_config_state
+):
+    """Regression test for task-852: check_encryption_needed() (the
+    should_encrypt_config() gate) must return True for a live config
+    holding a real, prefixed provider key name, not just the six literal
+    names detect_api_keys() used to match exactly."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[SearchEngines]\n'
+        'bing_search_api_key = "bing-real-plaintext-secret"\n'
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
+    cfg._CONFIG_CACHE = None
+    cfg._CONFIG_CACHE_SOURCE = None
+
+    assert cfg.check_encryption_needed() is True
+
+
+def test_set_encryption_password_invalidates_stale_ciphertext_cache(
+    tmp_path, monkeypatch, reset_config_state
+):
     """Mirrors app startup: config is cached (as ciphertext) before the unlock
     prompt, then the password is entered — the next load must decrypt."""
     cfg_path = tmp_path / "config.toml"

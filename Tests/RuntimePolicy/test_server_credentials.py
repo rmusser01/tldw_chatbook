@@ -11,6 +11,7 @@ from tldw_chatbook.runtime_policy import (
     InMemoryServerCredentialStore,
     KeyringServerCredentialStore,
     ServerCredentialRef,
+    ServerCredentialScope,
     redact_secret,
 )
 from tldw_chatbook.runtime_policy.server_credentials import (
@@ -95,7 +96,9 @@ def test_secure_keyring_classifier_recognizes_only_secure_backend_modules(
     module_name: str,
     expected_secure: bool,
 ):
-    assert is_secure_keyring_backend(_fake_keyring_backend(module_name)) is expected_secure
+    assert (
+        is_secure_keyring_backend(_fake_keyring_backend(module_name)) is expected_secure
+    )
 
 
 def test_default_credential_store_rejects_plaintext_or_fail_backends():
@@ -110,22 +113,30 @@ def test_unavailable_credential_store_disables_persistent_secret_operations():
     store = UnavailableServerCredentialStore("no secure store")
 
     with pytest.raises(CredentialStoreUnavailable) as exc:
-        store.get_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN)
+        store.get_secret(
+            "https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN
+        )
 
     assert exc.value.reason_code == "credential_store_unavailable"
 
 
 def test_default_credential_store_inspects_wrapped_backends():
     with pytest.raises(CredentialStoreUnavailable):
-        build_default_server_credential_store(keyring_backend=FakeChainerKeyring(FakePlaintextKeyring()))
+        build_default_server_credential_store(
+            keyring_backend=FakeChainerKeyring(FakePlaintextKeyring())
+        )
 
     with pytest.raises(CredentialStoreUnavailable):
         build_default_server_credential_store(
-            keyring_backend=FakeChainerKeyring(FakePlaintextKeyring(), FakeMacOSKeyring())
+            keyring_backend=FakeChainerKeyring(
+                FakePlaintextKeyring(), FakeMacOSKeyring()
+            )
         )
 
     secure_child = FakeMacOSKeyring()
-    store = build_default_server_credential_store(keyring_backend=FakeChainerKeyring(secure_child))
+    store = build_default_server_credential_store(
+        keyring_backend=FakeChainerKeyring(secure_child)
+    )
 
     assert isinstance(store, KeyringServerCredentialStore)
     assert store._keyring is secure_child
@@ -154,6 +165,38 @@ def test_in_memory_credentials_clear_one_server_without_touching_another():
     assert store.get_secret("server-b", SERVER_CREDENTIAL_ACCESS_TOKEN) == "access-b"
 
 
+def test_in_memory_clear_server_with_origin_scopes_to_one_server_in_shared_profile():
+    """task-31824: two servers sharing one `server_profile_id` (the
+    TLDW_CONFIG_PATH scoped-mode shape) must stay independently clearable.
+    `clear_server(profile)` alone clears every origin under that profile;
+    passing `normalized_origin` narrows the clear to one server."""
+    store = InMemoryServerCredentialStore()
+    scope_a = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-a",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    scope_a_bearer = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-a",
+        credential_type=SERVER_CREDENTIAL_BEARER_TOKEN,
+    )
+    scope_b = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-b",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    store.set_scoped_secret(scope_a, "a-secret")
+    store.set_scoped_secret(scope_a_bearer, "a-bearer")
+    store.set_scoped_secret(scope_b, "b-secret")
+
+    store.clear_server("shared-profile", normalized_origin="server-a")
+
+    assert store.get_scoped_secret(scope_a) is None
+    assert store.get_scoped_secret(scope_a_bearer) is None
+    assert store.get_scoped_secret(scope_b) == "b-secret"
+
+
 def test_in_memory_delete_one_purpose_leaves_other_purposes_for_server():
     store = InMemoryServerCredentialStore()
     store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-a")
@@ -163,6 +206,49 @@ def test_in_memory_delete_one_purpose_leaves_other_purposes_for_server():
 
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
     assert store.get_secret("server-a", SERVER_CREDENTIAL_REFRESH_TOKEN) == "refresh-a"
+
+
+def test_in_memory_plain_and_legacy_scoped_api_read_each_others_writes():
+    """The plain API and `ServerCredentialScope.legacy` scope the same slot
+    (task-31416): a caller using either sees what the other wrote."""
+    store = InMemoryServerCredentialStore()
+    store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-a")
+
+    scope = ServerCredentialScope.legacy("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN)
+    assert store.get_scoped_secret(scope) == "access-a"
+
+    store.set_scoped_secret(scope, "access-a-updated")
+    assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == (
+        "access-a-updated"
+    )
+
+
+def test_in_memory_scoped_secrets_isolate_two_profiles_at_the_same_origin():
+    """Two distinct `server_profile_id`s at the same `normalized_origin` do
+    not share a secret (task-31416 AC#1)."""
+    store = InMemoryServerCredentialStore()
+    origin = "https://server.example.com/api"
+    scope_a = ServerCredentialScope(
+        server_profile_id="profile-a",
+        normalized_origin=origin,
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    scope_b = ServerCredentialScope(
+        server_profile_id="profile-b",
+        normalized_origin=origin,
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+
+    store.set_scoped_secret(scope_a, "token-a")
+    store.set_scoped_secret(scope_b, "token-b")
+
+    assert store.get_scoped_secret(scope_a) == "token-a"
+    assert store.get_scoped_secret(scope_b) == "token-b"
+
+    store.delete_scoped_secret(scope_a)
+
+    assert store.get_scoped_secret(scope_a) is None
+    assert store.get_scoped_secret(scope_b) == "token-b"
 
 
 @pytest.mark.parametrize(
@@ -204,7 +290,13 @@ def test_redact_secret_never_returns_original_non_empty_secret_and_handles_empty
     assert redact_secret(None) == "<unset>"
     assert redact_secret("") == "<unset>"
 
-    for secret in ["short", "12345678", "abcdef123456", "ab...3456", "ab...<redacted>...3456"]:
+    for secret in [
+        "short",
+        "12345678",
+        "abcdef123456",
+        "ab...3456",
+        "ab...<redacted>...3456",
+    ]:
         redacted = redact_secret(secret)
         assert redacted != secret
 
@@ -222,7 +314,10 @@ def test_redact_secret_never_returns_original_non_empty_secret_and_handles_empty
 
 
 def test_server_credential_ref_username_uses_server_and_purpose():
-    assert ServerCredentialRef("server-a", SERVER_CREDENTIAL_API_KEY).username == "server-a:api_key"
+    assert (
+        ServerCredentialRef("server-a", SERVER_CREDENTIAL_API_KEY).username
+        == "server-a:api_key"
+    )
 
 
 def test_keyring_store_uses_namespaced_username_and_supports_get_delete():
@@ -231,8 +326,14 @@ def test_keyring_store_uses_namespaced_username_and_supports_get_delete():
 
     store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret")
 
-    stored_usernames = {username for service, username in fake.values if service == DEFAULT_KEYRING_SERVICE_NAME}
-    assert any("tldw_chatbook.server_credentials" in username for username in stored_usernames)
+    stored_usernames = {
+        username
+        for service, username in fake.values
+        if service == DEFAULT_KEYRING_SERVICE_NAME
+    }
+    assert any(
+        "tldw_chatbook.server_credentials" in username for username in stored_usernames
+    )
     assert any("profile=server-a" in username for username in stored_usernames)
     assert any("type=access_token" in username for username in stored_usernames)
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "secret"
@@ -246,12 +347,23 @@ def test_keyring_records_use_listable_chatbook_namespace():
     fake = FakeKeyring()
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
-    store.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret")
+    store.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "secret"
+    )
 
-    stored_usernames = {username for service, username in fake.values if service == DEFAULT_KEYRING_SERVICE_NAME}
+    stored_usernames = {
+        username
+        for service, username in fake.values
+        if service == DEFAULT_KEYRING_SERVICE_NAME
+    }
     assert "__credential_refs__" in stored_usernames
-    assert any("tldw_chatbook.server_credentials" in username for username in stored_usernames)
-    assert any("profile=https%3A%2F%2Fserver.example.com%2Fapi" in username for username in stored_usernames)
+    assert any(
+        "tldw_chatbook.server_credentials" in username for username in stored_usernames
+    )
+    assert any(
+        "profile=https%3A%2F%2Fserver.example.com%2Fapi" in username
+        for username in stored_usernames
+    )
     assert any("type=access_token" in username for username in stored_usernames)
 
 

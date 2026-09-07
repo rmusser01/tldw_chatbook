@@ -54,32 +54,53 @@ async def test_sharing_client_routes_workspace_share_and_token_calls(monkeypatch
             _token_payload(),
             {"tokens": [_token_payload()], "total": 1},
             {"detail": "Token revoked"},
-            {"resource_type": "workspace", "access_level": "view_chat", "is_password_protected": True},
+            {
+                "resource_type": "workspace",
+                "access_level": "view_chat",
+                "is_password_protected": True,
+            },
             {"verified": True, "session_token": "session-1"},
-            {"resource_type": "workspace", "resource_id": "ws-1", "access_level": "view_chat", "owner_user_id": 1},
+            {
+                "resource_type": "workspace",
+                "resource_id": "ws-1",
+                "access_level": "view_chat",
+                "owner_user_id": 1,
+            },
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    share = await client.share_workspace("ws-1", ShareWorkspaceRequest(share_scope_type="team", share_scope_id=3))
+    share = await client.share_workspace(
+        "ws-1", ShareWorkspaceRequest(share_scope_type="team", share_scope_id=3)
+    )
     shares = await client.list_workspace_shares("ws-1", include_revoked=True)
     updated = await client.update_share(7, UpdateShareRequest(allow_clone=False))
     revoked = await client.revoke_share(7)
-    token = await client.create_share_token(CreateTokenRequest(resource_type="workspace", resource_id="ws-1"))
+    token = await client.create_share_token(
+        CreateTokenRequest(resource_type="workspace", resource_id="ws-1")
+    )
     tokens = await client.list_share_tokens()
     token_revoked = await client.revoke_share_token(9)
     preview = await client.preview_public_share("secret-token")
-    verified = await client.verify_public_share_password("secret-token", VerifyPasswordRequest(password="pass"))
+    verified = await client.verify_public_share_password(
+        "secret-token", VerifyPasswordRequest(password="pass")
+    )
     imported = await client.import_public_share("secret-token")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/sharing/workspaces/ws-1/share")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/sharing/workspaces/ws-1/share",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "share_scope_type": "team",
         "share_scope_id": 3,
         "access_level": "view_chat",
         "allow_clone": True,
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/sharing/workspaces/ws-1/shares")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/sharing/workspaces/ws-1/shares",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"include_revoked": True}
     assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/sharing/shares/7")
     assert mocked.await_args_list[2].kwargs["json_data"] == {"allow_clone": False}
@@ -93,10 +114,19 @@ async def test_sharing_client_routes_workspace_share_and_token_calls(monkeypatch
     }
     assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/sharing/tokens")
     assert mocked.await_args_list[6].args[:2] == ("DELETE", "/api/v1/sharing/tokens/9")
-    assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/sharing/public/secret-token")
-    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/sharing/public/secret-token/verify")
+    assert mocked.await_args_list[7].args[:2] == (
+        "GET",
+        "/api/v1/sharing/public/secret-token",
+    )
+    assert mocked.await_args_list[8].args[:2] == (
+        "POST",
+        "/api/v1/sharing/public/secret-token/verify",
+    )
     assert mocked.await_args_list[8].kwargs["json_data"] == {"password": "pass"}
-    assert mocked.await_args_list[9].args[:2] == ("POST", "/api/v1/sharing/public/secret-token/import")
+    assert mocked.await_args_list[9].args[:2] == (
+        "POST",
+        "/api/v1/sharing/public/secret-token/import",
+    )
 
     assert share.id == 7
     assert shares.total == 1
@@ -115,7 +145,18 @@ async def test_sharing_client_routes_shared_with_me_proxy_calls(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"items": [{"share_id": 7, "workspace_id": "ws-1", "owner_user_id": 1, "access_level": "view_chat", "allow_clone": True}], "total": 1},
+            {
+                "items": [
+                    {
+                        "share_id": 7,
+                        "workspace_id": "ws-1",
+                        "owner_user_id": 1,
+                        "access_level": "view_chat",
+                        "allow_clone": True,
+                    }
+                ],
+                "total": 1,
+            },
             {"share": _share_payload()},
             {"job_id": "job-1", "status": "pending", "message": "Clone job created"},
             [{"id": "src-1", "workspace_id": "ws-1", "title": "Source"}],
@@ -127,18 +168,40 @@ async def test_sharing_client_routes_shared_with_me_proxy_calls(monkeypatch):
 
     shared = await client.list_shared_with_me()
     workspace = await client.get_shared_workspace(7)
-    clone = await client.clone_shared_workspace(7, CloneWorkspaceRequest(new_name="Clone"))
+    clone = await client.clone_shared_workspace(
+        7, CloneWorkspaceRequest(new_name="Clone")
+    )
     sources = await client.list_shared_workspace_sources(7)
     media = await client.get_shared_workspace_media(7, 12)
-    chat = await client.chat_with_shared_workspace(7, SharedChatRequest(query="Summarize"))
+    chat = await client.chat_with_shared_workspace(
+        7, SharedChatRequest(query="Summarize")
+    )
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/sharing/shared-with-me")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/sharing/shared-with-me/7/workspace")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/sharing/shared-with-me/7/clone")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/sharing/shared-with-me",
+    )
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/sharing/shared-with-me/7/workspace",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/sharing/shared-with-me/7/clone",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"new_name": "Clone"}
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/sharing/shared-with-me/7/sources")
-    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/sharing/shared-with-me/7/media/12")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/sharing/shared-with-me/7/chat")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/sharing/shared-with-me/7/sources",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/sharing/shared-with-me/7/media/12",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/sharing/shared-with-me/7/chat",
+    )
     assert mocked.await_args_list[5].kwargs["json_data"] == {"query": "Summarize"}
 
     assert shared.total == 1

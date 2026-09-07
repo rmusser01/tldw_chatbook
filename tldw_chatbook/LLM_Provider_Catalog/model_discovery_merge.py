@@ -82,14 +82,41 @@ def merge_saved_and_discovered_models(
     provider_list_key: str,
     capability_resolver: CapabilityResolver | None = None,
 ) -> tuple[MergedModelEntry, ...]:
-    """Merge saved model IDs first, followed by new runtime-discovered models."""
+    """Merge saved IDs first while preserving endpoint-confirmed provenance."""
     merged: list[MergedModelEntry] = []
     seen_model_ids: set[str] = set()
+    discovered_by_id = {
+        model_id: discovered_model
+        for discovered_model in discovered_models
+        if (model_id := _non_empty_model_id(discovered_model.model_id)) is not None
+    }
     for raw_model_id in saved_model_ids:
         model_id = _non_empty_model_id(raw_model_id)
         if model_id is None or model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
+        discovered_model = discovered_by_id.get(model_id)
+        if discovered_model is not None:
+            capability_status = discovered_model.capability_status
+            if capability_status == "unknown":
+                capability_status = resolve_discovered_model_capability_status(
+                    discovered_model.provider,
+                    model_id,
+                    discovered_model.metadata_raw_safe,
+                    capability_resolver=capability_resolver,
+                )
+            merged.append(
+                MergedModelEntry(
+                    provider=discovered_model.provider,
+                    provider_list_key=discovered_model.provider_list_key,
+                    model_id=model_id,
+                    display_name=discovered_model.display_name,
+                    source="persisted_discovered",
+                    capability_status=capability_status,
+                    persisted=True,
+                )
+            )
+            continue
         merged.append(
             MergedModelEntry(
                 provider=provider,

@@ -5,7 +5,6 @@ from tldw_chatbook.tldw_api import (
     QuizAttemptSubmitRequest,
     QuizCreateRequest,
     QuizListResponse,
-    QuizQuestionCreateRequest,
     QuizQuestionListResponse,
     QuizQuestionResponse,
     QuizResponse,
@@ -230,4 +229,7 @@ def test_quiz_list_and_attempt_list_responses_wrap_items():
 
     assert quizzes.items[0].name == "Renal Review"
     assert attempts.items[0].quiz_id == 7
-    assert update.model_dump(exclude_none=True) == {"name": "Renal Review v2", "expected_version": 1}
+    assert update.model_dump(exclude_none=True) == {
+        "name": "Renal Review v2",
+        "expected_version": 1,
+    }

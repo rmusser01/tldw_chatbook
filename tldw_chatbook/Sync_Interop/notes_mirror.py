@@ -4,12 +4,14 @@ Stores the last server-acknowledged revision/hash/cursor per object so the build
 can fill base_object_revision/base_object_hash on updates and tombstones, and the
 applier can recognise already-applied envelopes.
 """
+
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
@@ -22,8 +24,28 @@ class MirrorRecord:
 
 class NotesMirror:
     def __init__(self, db_path: str | Path = ":memory:") -> None:
-        self._conn = sqlite3.connect(str(self._validate_db_path(db_path)))
+        is_memory_db = str(db_path) == ":memory:"
+        self._conn = connect_private_sqlite(
+            "sync.notes_mirror",
+            self._validate_db_path(db_path),
+        )
         self._conn.row_factory = sqlite3.Row
+        if not is_memory_db:
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+        # can lose the last commit, acceptable for this local Sync v2
+        # per-object mirror -- it is rebuilt from server state, never
+        # authoritative) and avoids an fsync per commit. Held for the
+        # lifetime of this instance, so this is the only site that needs it
+        # (task-15465).
+        self._conn.execute("PRAGMA synchronous = NORMAL")
+        # task-22224: a HELD connection needs true autocommit (see
+        # Library_Ingest_Jobs_DB.py's module docstring, the store template).
+        # Safe here because every write in this class is a SINGLE statement
+        # (the ``with self._conn:`` blocks add commit-on-exit, which becomes
+        # a harmless no-op); under the legacy default a future bare DML would
+        # be silently rolled back when the held connection closes.
+        self._conn.isolation_level = None
         with self._conn:
             self._conn.execute(
                 """
@@ -44,7 +66,9 @@ class NotesMirror:
             return db_path
         path = Path(db_path)
         if any(part == ".." for part in path.parts):
-            raise ValueError("NotesMirror db_path cannot contain parent directory traversal")
+            raise ValueError(
+                "NotesMirror db_path cannot contain parent directory traversal"
+            )
         return validate_path_simple(path)
 
     def record(

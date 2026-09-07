@@ -7,6 +7,7 @@ import pytest
 
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity import (
+    _MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS,
     resolve_provider_list_key,
 )
 
@@ -18,6 +19,17 @@ def test_resolves_exact_top_level_provider_key_for_openrouter():
 
     assert result.status == "resolved"
     assert result.provider_list_key == "OpenRouter"
+
+
+def test_qwencloud_model_discovery_identity_uses_qwencloud():
+    providers = {"QwenCloud": ["qwen3.8-max"], "OpenAI": ["gpt-4.1"]}
+
+    result = resolve_provider_list_key(" QwenCloud ", providers)
+
+    assert result.status == "resolved"
+    assert result.normalized_provider == "qwencloud"
+    assert result.provider_list_key == "QwenCloud"
+    assert "qwencloud" in _MODEL_DISCOVERY_PROVIDER_HANDLER_KEYS
 
 
 def test_preserves_custom_2_key_spelling():
@@ -72,7 +84,8 @@ def test_resolves_direct_llama_key_without_synthesizing_alias():
 
 
 def test_resolving_non_direct_provider_does_not_import_chat_functions(monkeypatch):
-    sys.modules.pop("tldw_chatbook.Chat.Chat_Functions", None)
+    module_name = "tldw_chatbook.Chat.Chat_Functions"
+    original_module = sys.modules.pop(module_name, None)
     original_import = builtins.__import__
 
     def rejecting_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -82,14 +95,19 @@ def test_resolving_non_direct_provider_does_not_import_chat_functions(monkeypatc
 
     monkeypatch.setattr(builtins, "__import__", rejecting_import)
 
-    result = resolve_provider_list_key(
-        "custom-openai-api",
-        {"Custom": ["existing-model"]},
-    )
+    try:
+        result = resolve_provider_list_key(
+            "custom-openai-api",
+            {"Custom": ["existing-model"]},
+        )
 
-    assert result.status == "resolved"
-    assert result.provider_list_key == "Custom"
-    assert "tldw_chatbook.Chat.Chat_Functions" not in sys.modules
+        assert result.status == "resolved"
+        assert result.provider_list_key == "Custom"
+        assert module_name not in sys.modules
+    finally:
+        sys.modules.pop(module_name, None)
+        if original_module is not None:
+            sys.modules[module_name] = original_module
 
 
 def test_discovered_model_metadata_is_copied_from_caller_mapping():

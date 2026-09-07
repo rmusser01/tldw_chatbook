@@ -1,5 +1,7 @@
 # Chat Window Redux - Comprehensive Refactoring Plan
 
+> (Describes surfaces retired in task-577, 2026-07; kept as historical record.)
+
 ## Executive Summary
 Complete refactoring of the ChatWindowEnhanced to follow Textual best practices, addressing architectural anti-patterns, state management issues, and event handling complexity. This includes both the sidebar redesign and core chat window architecture improvements.
 

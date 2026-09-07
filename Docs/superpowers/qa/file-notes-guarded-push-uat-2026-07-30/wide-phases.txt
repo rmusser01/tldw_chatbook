@@ -1,0 +1,47 @@
+SANITIZED 120x40 PHASE CAPTURES
+
+[files]
+Linked File Notes root; folder tree and editor visible; frontmatter hidden from
+the body editor; save state reached Saved.
+
+[session-status]
+One session path shown as unstaged. Stage and Stage all were available.
+
+[staged]
+Promise/count shown: one session note staged; unrelated changes untouched.
+Commit staged (1) became available.
+
+[commit-review]
+Exact message, identity, one included note, hook/signing policy, and complete
+staged-file semantics shown before confirmation.
+
+[commit-result]
+One session note committed. Candidate button changed to Review push (1 commit).
+
+[authorization]
+Sanitized destination: ssh · fixture-user@127.0.0.1:PORT · [remote]
+Copy stated strict snapshotted host trust, existing agent only, identity files
+disabled, prompts disabled, and that authorization checks but does not push.
+
+[push-review]
+Exact candidate and parent transition, refs/heads/main, expected-parent lease,
+sanitized endpoint, and secure transport policy shown.
+
+[success]
+Succeeded; local and remote refs both matched the reviewed candidate.
+
+[divergent]
+Configured destination could not be proved ready; receive count unchanged and
+the divergent remote ref remained unchanged.
+
+[uncertain-before-remediation]
+Original Uncertain result warned not to push again automatically and offered
+Check remote again — no push.
+
+[dismissed-after-remediation]
+Back returned to the Session Git list. Ordinary polling kept the list visible;
+status remained Updating Index because recovery retained mutation authority.
+
+[explicit-reopen-after-remediation]
+Files -> Session Git restored the same Uncertain result and query-only action.
+Raw connection count before reopen: 14. Raw connection count after reopen: 14.

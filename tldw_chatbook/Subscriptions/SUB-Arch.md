@@ -1,5 +1,25 @@
 # Subscriptions Module Architecture
 
+> **STATUS (2026-07-28, TASK-1211): large parts of this document describe code that
+> no longer exists.** It is kept as the historical design record; do not read it as a
+> map of the shipped system.
+>
+> Removed as unreachable: `scheduler.py`, `textual_scheduler_worker.py`,
+> `website_monitor.py`, `briefing_generator.py`, `briefing_templates.py`,
+> `aggregation_engine.py`, `recursive_summarizer.py`, `rss_feed_generator.py`,
+> `export_manager.py`, `distribution_manager.py`, plus
+> `Event_Handlers/subscription_events.py` and
+> `Event_Handlers/subscription_ingest_worker.py`. Every "briefing generation",
+> "aggregation", "distribution" and "export" capability described below was never
+> reachable from the running application.
+>
+> **What actually runs today:** watchlist checks are scheduled by
+> `Scheduling/scheduler/loop.py` (`SchedulerLoop`), dispatched to
+> `Scheduling/scheduler/handlers/watchlist_check_handler.py`, which delegates to
+> `Subscriptions/monitoring_engine.py` (`FeedMonitor`, `URLMonitor`) and persists
+> through `SubscriptionsDB`. See ADR-019 and
+> `Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`.
+
 ## Table of Contents
 1. [Overview](#overview)
 2. [Architecture Decisions Records (ADRs)](#architecture-decisions-records-adrs)
@@ -17,7 +37,7 @@ The Subscriptions module provides a comprehensive content monitoring and ingesti
 
 ### Key Capabilities
 - **Multi-format Support**: RSS, Atom, JSON Feed, URL monitoring, Podcast feeds
-- **Security-First Design**: XXE prevention, SSRF protection, encrypted credentials
+- **Security-First Design**: Dependency-controlled XML parser hardening, SSRF protection, encrypted credentials
 - **Intelligent Processing**: LLM analysis, keyword extraction, content summarization
 - **Automated Workflows**: Scheduled checks, auto-ingestion, briefing generation
 - **Resilient Operations**: Circuit breakers, rate limiting, error recovery
@@ -158,7 +178,7 @@ graph TD
 - `InputValidator`: User input sanitization
 
 **Security Features**:
-- XXE prevention via defusedxml
+- Optional `defusedxml` parser hardening with module-specific standard-library fallbacks
 - SSRF protection with IP range blocking
 - Input sanitization and validation
 - Credential encryption at rest
@@ -285,7 +305,7 @@ graph LR
     C --> D[Rate Limiting]
     D --> E[HTTP Request]
     E --> F[Response Validation]
-    F --> G[XXE Prevention]
+    F --> G[XML Parsing]
     G --> H[Content Sanitization]
     H --> I[Safe Storage]
 ```
@@ -297,10 +317,16 @@ graph LR
    - Hostname resolution and IP checking
    - Private IP range blocking
 
-2. **XXE Prevention**:
-   - defusedxml for safe XML parsing
-   - DTD processing disabled
-   - External entity resolution blocked
+2. **XML Parsing**:
+   - Network feed monitor and scraper parser modules prefer optional `defusedxml`
+     when it is installed; their standard-library fallback behavior is
+     module-specific and does not provide an equivalent unconditional protection
+     guarantee.
+   - The active OPML import path, `WatchlistOpmlService`, uses
+     `xml.etree.ElementTree` directly.
+   - For those network-feed parsers, parser selection is dependency-controlled;
+     no configuration setting, including a legacy subscriptions security table,
+     controls it.
 
 3. **Rate Limiting**:
    - Per-domain token buckets
@@ -363,10 +389,26 @@ enabled = true
 default_check_interval = 3600
 max_concurrent_checks = 10
 
-[subscriptions.security]
-enable_xxe_protection = true
-enable_ssrf_protection = true
+[web_security]
+enabled = true
+allowed_hosts = []
 ```
+
+`[web_security]` controls shared egress/SSRF enforcement; `allowed_hosts` is
+the explicit override. `FeedMonitor` and `URLMonitor` read an optional
+`ssl_verify` value from the subscription mapping and default certificate
+verification on. The current persisted subscriptions schema and UI do not store
+or expose that value, and a legacy subscriptions security table does not control
+it. Redirect bounds are owned by the shared guarded-fetch helpers, not by a
+configuration setting.
+
+Network feed monitor and scraper parser modules prefer optional `defusedxml`;
+their existing, module-specific fallback behavior uses the standard-library XML
+parser when it is unavailable. The active OPML import path,
+`WatchlistOpmlService`, uses `xml.etree.ElementTree` directly.
+`SecurityValidator.validate_xml_content` is not on the active parsing path.
+Legacy subscriptions security tables in existing user configuration files are
+ignored and may be safely deleted.
 
 ## Performance Considerations
 

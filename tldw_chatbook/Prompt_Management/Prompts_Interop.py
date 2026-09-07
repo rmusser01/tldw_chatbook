@@ -20,15 +20,16 @@ Usage:
 3. (Optional) Clean up at application shutdown:
    `shutdown_interop()`
 """
+
 #
 # Imports
-import logging # Retained for example, but loguru is preferred
+import logging  # Retained for example, but loguru is preferred
 import json
 import re
 from typing import List, Tuple, Dict, Any, Optional, Union, Callable
 from pathlib import Path
-import tempfile # For example usage
-import os       # For example usage
+import tempfile  # For example usage
+import os  # For example usage
 
 #
 # 3rd-party Libraries
@@ -37,17 +38,21 @@ from loguru import logger
 # Conditional imports for new functionality
 try:
     import yaml
+
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
     logger.warning("PyYAML not installed. YAML import will not be available.")
 
 try:
-    import frontmatter # For Markdown
+    import frontmatter  # For Markdown  # noqa: F401
+
     FRONTMATTER_AVAILABLE = True
 except ImportError:
     FRONTMATTER_AVAILABLE = False
-    logger.warning("python-frontmatter not installed. Markdown import will not be available.")
+    logger.warning(
+        "python-frontmatter not installed. Markdown import will not be available."
+    )
 #
 # Local Imports
 from tldw_chatbook.DB.Prompts_DB import (
@@ -59,14 +64,16 @@ from tldw_chatbook.DB.Prompts_DB import (
     load_prompt_details_for_ui as db_load_prompt_details_for_ui,
     export_prompt_keywords_to_csv as db_export_prompt_keywords_to_csv,
     view_prompt_keywords_markdown as db_view_prompt_keywords_markdown,
-    export_prompts_formatted as db_export_prompts_formatted
+    export_prompts_formatted as db_export_prompts_formatted,
 )
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.config import get_cli_config_path
 from .server_prompt_adapter import (
     local_prompt_to_preview_payload,
     local_prompt_to_server_payload,
     server_prompt_to_local_update,
 )
+from .prompt_artifact_codec import decode_prompt_artifact
 #
 #######################################################################################################################
 #
@@ -76,7 +83,14 @@ _db_instance: Optional[PromptsDatabase] = None
 _db_path_global: Optional[Union[str, Path]] = None
 _client_id_global: Optional[str] = None
 
+
+def _default_prompt_import_directory() -> Path:
+    """Return the active profile's default directory for prompt imports."""
+    return get_cli_config_path().parent / "prompts"
+
+
 # --- Initialization and Management ---
+
 
 def initialize_interop(db_path: Union[str, Path], client_id: str) -> None:
     """
@@ -101,21 +115,26 @@ def initialize_interop(db_path: Union[str, Path], client_id: str) -> None:
         # might be complex if other threads are still using it.
         # The PromptsDatabase instance itself doesn't hold a global connection to close here.
 
-    if not db_path: # Pathlib('') is False-y, so this covers empty strings too
+    if not db_path:  # Pathlib('') is False-y, so this covers empty strings too
         raise ValueError("db_path is required for initialization.")
     if not client_id:
         raise ValueError("client_id is required for initialization.")
 
-    logger.info(f"Initializing Prompts Interop Library. DB Path: {db_path}, Client ID: {client_id}")
+    logger.info(
+        f"Initializing Prompts Interop Library. DB Path: {db_path}, Client ID: {client_id}"
+    )
     try:
         _db_instance = PromptsDatabase(db_path=db_path, client_id=client_id)
         _db_path_global = db_path
         _client_id_global = client_id
         logger.info("Prompts Interop Library initialized successfully.")
     except (DatabaseError, SchemaError, ValueError) as e:
-        logger.opt(exception=True).critical(f"Failed to initialize PromptsDatabase for interop: {e}")
-        _db_instance = None # Ensure it's None if init fails
+        logger.opt(exception=True).critical(
+            f"Failed to initialize PromptsDatabase for interop: {e}"
+        )
+        _db_instance = None  # Ensure it's None if init fails
         raise
+
 
 def get_db_instance() -> PromptsDatabase:
     """
@@ -128,14 +147,18 @@ def get_db_instance() -> PromptsDatabase:
         RuntimeError: If the library has not been initialized.
     """
     if _db_instance is None:
-        msg = "Prompts Interop Library not initialized. Call initialize_interop() first."
+        msg = (
+            "Prompts Interop Library not initialized. Call initialize_interop() first."
+        )
         logger.error(msg)
         raise RuntimeError(msg)
     return _db_instance
 
+
 def is_initialized() -> bool:
     """Checks if the interop library (and thus the DB instance) is initialized."""
     return _db_instance is not None
+
 
 def shutdown_interop() -> None:
     """
@@ -151,7 +174,9 @@ def shutdown_interop() -> None:
             # This will close the connection for the current thread
             _db_instance.close_connection()
         except Exception as e:
-            logger.opt(exception=True).error(f"Error during Prompts Interop Library shutdown (closing current thread's connection): {e}")
+            logger.opt(exception=True).error(
+                f"Error during Prompts Interop Library shutdown (closing current thread's connection): {e}"
+            )
         _db_instance = None
         _db_path_global = None
         _client_id_global = None
@@ -159,7 +184,9 @@ def shutdown_interop() -> None:
     else:
         logger.info("Prompts Interop Library was not initialized or already shut down.")
 
+
 # --- Wrapper Functions for PromptsDatabase methods ---
+
 
 # --- Mutating Methods ---
 def add_keyword(keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
@@ -167,13 +194,21 @@ def add_keyword(keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
     db = get_db_instance()
     return db.add_keyword(keyword_text)
 
-def add_prompt(name: str, author: Optional[str], details: Optional[str],
-               system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-               keywords: Optional[List[str]] = None, overwrite: bool = False,
-               prompt_format: Optional[str] = None,
-               prompt_schema_version: Optional[int] = None,
-               prompt_definition: Optional[Any] = None,
-               ) -> Tuple[Optional[int], Optional[str], str]:
+
+def add_prompt(
+    name: str,
+    author: Optional[str],
+    details: Optional[str],
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+    keywords: Optional[List[str]] = None,
+    overwrite: bool = False,
+    prompt_format: Optional[str] = None,
+    prompt_schema_version: Optional[int] = None,
+    prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
+    serialize_create: bool = False,
+) -> Tuple[Optional[int], Optional[str], str]:
     """Adds or updates a prompt. See PromptsDatabase.add_prompt for details."""
     db = get_db_instance()
     return db.add_prompt(
@@ -187,22 +222,48 @@ def add_prompt(name: str, author: Optional[str], details: Optional[str],
         prompt_format=prompt_format,
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
+        serialize_create=serialize_create,
     )
+
 
 def update_keywords_for_prompt(prompt_id: int, keywords_list: List[str]) -> None:
     """Updates keywords for a specific prompt. See PromptsDatabase.update_keywords_for_prompt for details."""
     db = get_db_instance()
     db.update_keywords_for_prompt(prompt_id, keywords_list)
 
-def soft_delete_prompt(prompt_id_or_name_or_uuid: Union[int, str]) -> bool:
-    """Soft deletes a prompt. See PromptsDatabase.soft_delete_prompt for details."""
+
+def soft_delete_prompt(
+    prompt_id_or_name_or_uuid: Union[int, str],
+    *,
+    expected_version: Optional[int] = None,
+) -> bool:
+    """Soft-delete a Prompt/Recipe through the shared database instance.
+
+    Args:
+        prompt_id_or_name_or_uuid: Numeric id, UUID, or name of the artifact.
+        expected_version: Optional active-row version required for deletion.
+
+    Returns:
+        ``True`` when the artifact is soft-deleted.
+
+    Raises:
+        InputError: If the identifier or expected version is invalid.
+        ConflictError: If no active artifact matches the identifier.
+        ExpectedVersionConflictError: If the expected version is stale.
+        DatabaseError: If persistence fails.
+    """
     db = get_db_instance()
-    return db.soft_delete_prompt(prompt_id_or_name_or_uuid)
+    return db.soft_delete_prompt(
+        prompt_id_or_name_or_uuid, expected_version=expected_version
+    )
+
 
 def soft_delete_keyword(keyword_text: str) -> bool:
     """Soft deletes a keyword. See PromptsDatabase.soft_delete_keyword for details."""
     db = get_db_instance()
     return db.soft_delete_keyword(keyword_text)
+
 
 # --- Read Methods ---
 def get_prompt_by_id(prompt_id: int, include_deleted: bool = False) -> Optional[Dict]:
@@ -210,30 +271,120 @@ def get_prompt_by_id(prompt_id: int, include_deleted: bool = False) -> Optional[
     db = get_db_instance()
     return db.get_prompt_by_id(prompt_id, include_deleted)
 
-def get_prompt_by_uuid(prompt_uuid: str, include_deleted: bool = False) -> Optional[Dict]:
+
+def get_prompt_by_uuid(
+    prompt_uuid: str, include_deleted: bool = False
+) -> Optional[Dict]:
     """Fetches a prompt by its UUID. See PromptsDatabase.get_prompt_by_uuid for details."""
     db = get_db_instance()
     return db.get_prompt_by_uuid(prompt_uuid, include_deleted)
+
 
 def get_prompt_by_name(name: str, include_deleted: bool = False) -> Optional[Dict]:
     """Fetches a prompt by its name. See PromptsDatabase.get_prompt_by_name for details."""
     db = get_db_instance()
     return db.get_prompt_by_name(name, include_deleted)
 
-def list_prompts(page: int = 1, per_page: int = 10, include_deleted: bool = False
-                 ) -> Tuple[List[Dict], int, int, int]:
+
+def list_prompts(
+    page: int = 1, per_page: int = 10, include_deleted: bool = False
+) -> Tuple[List[Dict], int, int, int]:
     """Lists prompts with pagination. See PromptsDatabase.list_prompts for details."""
     db = get_db_instance()
     return db.list_prompts(page, per_page, include_deleted)
 
-def fetch_prompt_details(prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False
-                         ) -> Optional[Dict]:
+
+def fetch_prompt_details(
+    prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False
+) -> Optional[Dict]:
     """Fetches detailed information for a prompt. See PromptsDatabase.fetch_prompt_details for details."""
     db = get_db_instance()
     return db.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
 
 
-def export_prompt_to_server_payload(prompt_id_or_name_or_uuid: Union[int, str]) -> Dict[str, Any]:
+# --- Library read seams (task-1337) ---
+
+
+def list_library_prompts_page(*, limit: int, offset: int) -> Dict[str, Any]:
+    """Page active library prompts with an exact total.
+
+    Args:
+        limit: Maximum number of prompts to return.
+        offset: Number of prompts to skip.
+
+    Returns:
+        A bounded page containing prompt items and exact total.
+
+    Raises:
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.list_library_prompts_page(limit=limit, offset=offset)
+
+
+def search_library_prompts_page(
+    *, query: str, limit: int, offset: int
+) -> Dict[str, Any]:
+    """Search active library prompts and forward match evidence.
+
+    Args:
+        query: Literal case-insensitive search text.
+        limit: Maximum number of prompts to return.
+        offset: Number of matching prompts to skip.
+
+    Returns:
+        A bounded page with exact total and match evidence.
+
+    Raises:
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.search_library_prompts_page(query=query, limit=limit, offset=offset)
+
+
+def get_library_prompt_overview(prompt_uuid: str) -> Optional[Dict[str, Any]]:
+    """Return a bounded overview of one active prompt.
+
+    Args:
+        prompt_uuid: Stable prompt UUID.
+
+    Returns:
+        Bounded prompt metadata and section previews, or None when absent.
+
+    Raises:
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.get_library_prompt_overview(prompt_uuid)
+
+
+def get_library_prompt_section(
+    prompt_uuid: str, *, section: str, start: int, max_chars: int
+) -> Optional[Dict[str, Any]]:
+    """Return a windowed section segment of one active prompt.
+
+    Args:
+        prompt_uuid: Stable prompt UUID.
+        section: Whitelisted prompt section name.
+        start: Zero-based character offset.
+        max_chars: Maximum characters to return.
+
+    Returns:
+        Bounded prompt section metadata and text, or None when absent.
+
+    Raises:
+        InputError: If the section name is not supported.
+        DatabaseError: If the prompts database cannot be read.
+    """
+    db = get_db_instance()
+    return db.get_library_prompt_section(
+        prompt_uuid, section=section, start=start, max_chars=max_chars
+    )
+
+
+def export_prompt_to_server_payload(
+    prompt_id_or_name_or_uuid: Union[int, str],
+) -> Dict[str, Any]:
     """Exports a local prompt row into a server-compatible payload."""
     prompt = fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted=True)
     if not prompt:
@@ -241,7 +392,9 @@ def export_prompt_to_server_payload(prompt_id_or_name_or_uuid: Union[int, str]) 
     return local_prompt_to_server_payload(prompt)
 
 
-def build_prompt_preview_payload(prompt_id_or_name_or_uuid: Union[int, str]) -> Dict[str, Any]:
+def build_prompt_preview_payload(
+    prompt_id_or_name_or_uuid: Union[int, str],
+) -> Dict[str, Any]:
     """Builds a server preview payload from a local prompt row."""
     prompt = fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted=True)
     if not prompt:
@@ -267,14 +420,19 @@ def import_prompt_from_server_payload(payload: Dict[str, Any]) -> Dict[str, Any]
         prompt_format=local_update.get("prompt_format"),
         prompt_schema_version=local_update.get("prompt_schema_version"),
         prompt_definition=local_update.get("prompt_definition"),
+        artifact_type=local_update.get("artifact_type"),
     )
     return {"prompt_id": prompt_id, "prompt_uuid": prompt_uuid, "message": message}
 
 
-def apply_server_prompt_version(prompt_id_or_name_or_uuid: Union[int, str], payload: Dict[str, Any]) -> Dict[str, Any]:
+def apply_server_prompt_version(
+    prompt_id_or_name_or_uuid: Union[int, str], payload: Dict[str, Any]
+) -> Dict[str, Any]:
     """Applies a server prompt version payload onto an existing local prompt."""
     db = get_db_instance()
-    existing_prompt = db.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted=True)
+    existing_prompt = db.fetch_prompt_details(
+        prompt_id_or_name_or_uuid, include_deleted=True
+    )
     if not existing_prompt:
         raise InputError(f"Prompt '{prompt_id_or_name_or_uuid}' not found.")
 
@@ -289,31 +447,49 @@ def apply_server_prompt_version(prompt_id_or_name_or_uuid: Union[int, str], payl
         "message": message,
     }
 
+
 def fetch_all_keywords(include_deleted: bool = False) -> List[str]:
     """Fetches all keywords. See PromptsDatabase.fetch_all_keywords for details."""
     db = get_db_instance()
     return db.fetch_all_keywords(include_deleted)
 
-def fetch_keywords_for_prompt(prompt_id: int, include_deleted: bool = False) -> List[str]:
+
+def fetch_keywords_for_prompt(
+    prompt_id: int, include_deleted: bool = False
+) -> List[str]:
     """Fetches keywords associated with a specific prompt. See PromptsDatabase.fetch_keywords_for_prompt for details."""
     db = get_db_instance()
     return db.fetch_keywords_for_prompt(prompt_id, include_deleted)
 
-def search_prompts(search_query: Optional[str],
-                   search_fields: Optional[List[str]] = None,
-                   page: int = 1,
-                   results_per_page: int = 20,
-                   include_deleted: bool = False
-                   ) -> Tuple[List[Dict[str, Any]], int]:
+
+def search_prompts(
+    search_query: Optional[str],
+    search_fields: Optional[List[str]] = None,
+    page: int = 1,
+    results_per_page: int = 20,
+    include_deleted: bool = False,
+    fts_match_query: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], int]:
     """Searches prompts using FTS. See PromptsDatabase.search_prompts for details."""
     db = get_db_instance()
-    return db.search_prompts(search_query, search_fields, page, results_per_page, include_deleted)
+    return db.search_prompts(
+        search_query,
+        search_fields,
+        page,
+        results_per_page,
+        include_deleted,
+        fts_match_query,
+    )
+
 
 # --- Sync Log Access Methods ---
-def get_sync_log_entries(since_change_id: int = 0, limit: Optional[int] = None) -> List[Dict]:
+def get_sync_log_entries(
+    since_change_id: int = 0, limit: Optional[int] = None
+) -> List[Dict]:
     """Retrieves entries from the sync log. See PromptsDatabase.get_sync_log_entries for details."""
     db = get_db_instance()
     return db.get_sync_log_entries(since_change_id, limit)
+
 
 def delete_sync_log_entries(change_ids: List[int]) -> int:
     """Deletes entries from the sync log. See PromptsDatabase.delete_sync_log_entries for details."""
@@ -325,13 +501,19 @@ def delete_sync_log_entries(change_ids: List[int]) -> int:
 # These functions from Prompts_DB_v2.py originally took a db_instance.
 # Here, they use the globally managed _db_instance.
 
-def add_or_update_prompt_interop(name: str, author: Optional[str], details: Optional[str],
-                                 system_prompt: Optional[str] = None, user_prompt: Optional[str] = None,
-                                 keywords: Optional[List[str]] = None,
-                                 prompt_format: Optional[str] = None,
-                                 prompt_schema_version: Optional[int] = None,
-                                 prompt_definition: Optional[Any] = None,
-                                 ) -> Tuple[Optional[int], Optional[str], str]:
+
+def add_or_update_prompt_interop(
+    name: str,
+    author: Optional[str],
+    details: Optional[str],
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+    keywords: Optional[List[str]] = None,
+    prompt_format: Optional[str] = None,
+    prompt_schema_version: Optional[int] = None,
+    prompt_definition: Optional[Any] = None,
+    artifact_type: Optional[str] = None,
+) -> Tuple[Optional[int], Optional[str], str]:
     """
     Adds a new prompt or updates an existing one (identified by name).
     If the prompt exists (even if soft-deleted), it will be updated/undeleted.
@@ -349,15 +531,20 @@ def add_or_update_prompt_interop(name: str, author: Optional[str], details: Opti
         prompt_format=prompt_format,
         prompt_schema_version=prompt_schema_version,
         prompt_definition=prompt_definition,
+        artifact_type=artifact_type,
     )
 
-def load_prompt_details_for_ui_interop(prompt_name: str) -> Tuple[str, str, str, str, str, str]:
+
+def load_prompt_details_for_ui_interop(
+    prompt_name: str,
+) -> Tuple[str, str, str, str, str, str]:
     """
     Loads prompt details formatted for UI display.
     This wraps the standalone load_prompt_details_for_ui function from Prompts_DB_v2.
     """
     db = get_db_instance()
     return db_load_prompt_details_for_ui(db, prompt_name)
+
 
 def export_prompt_keywords_to_csv_interop() -> Tuple[str, str]:
     """
@@ -367,6 +554,7 @@ def export_prompt_keywords_to_csv_interop() -> Tuple[str, str]:
     db = get_db_instance()
     return db_export_prompt_keywords_to_csv(db)
 
+
 def view_prompt_keywords_markdown_interop() -> str:
     """
     Generates a Markdown representation of prompt keywords.
@@ -375,24 +563,34 @@ def view_prompt_keywords_markdown_interop() -> str:
     db = get_db_instance()
     return db_view_prompt_keywords_markdown(db)
 
-def export_prompts_formatted_interop(export_format: str = 'csv',
-                                     filter_keywords: Optional[List[str]] = None,
-                                     include_system: bool = True,
-                                     include_user: bool = True,
-                                     include_details: bool = True,
-                                     include_author: bool = True,
-                                     include_associated_keywords: bool = True,
-                                     markdown_template_name: Optional[str] = "Basic Template"
-                                     ) -> Tuple[str, str]:
+
+def export_prompts_formatted_interop(
+    export_format: str = "csv",
+    filter_keywords: Optional[List[str]] = None,
+    include_system: bool = True,
+    include_user: bool = True,
+    include_details: bool = True,
+    include_author: bool = True,
+    include_associated_keywords: bool = True,
+    markdown_template_name: Optional[str] = "Basic Template",
+) -> Tuple[str, str]:
     """
     Exports prompts to a specified format (CSV or Markdown).
     This wraps the standalone export_prompts_formatted function from Prompts_DB_v2.
     """
     db = get_db_instance()
-    return db_export_prompts_formatted(db, export_format, filter_keywords,
-                                       include_system, include_user, include_details,
-                                       include_author, include_associated_keywords,
-                                       markdown_template_name)
+    return db_export_prompts_formatted(
+        db,
+        export_format,
+        filter_keywords,
+        include_system,
+        include_user,
+        include_details,
+        include_author,
+        include_associated_keywords,
+        markdown_template_name,
+    )
+
 
 # --- Mass Import Functionality ---
 
@@ -406,7 +604,9 @@ PROMPT_FIELDS = [
     "prompt_format",
     "prompt_schema_version",
     "prompt_definition",
+    "artifact_type",
 ]
+
 
 def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """Ensures prompt data has all expected fields, defaulting to None or empty list."""
@@ -414,17 +614,25 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
     if normalized["keywords"] is None:
         normalized["keywords"] = []
     if not isinstance(normalized["keywords"], list):
-        logger.warning(f"Keywords for prompt '{normalized.get('name', 'Unknown')}' was not a list, converting. Value: {normalized['keywords']}")
+        logger.warning(
+            f"Keywords for prompt '{normalized.get('name', 'Unknown')}' was not a list, converting. Value: {normalized['keywords']}"
+        )
         if isinstance(normalized["keywords"], str):
-             normalized["keywords"] = [kw.strip() for kw in normalized["keywords"].split(',') if kw.strip()]
-        else: # Attempt to cast to list, or empty if fails
+            normalized["keywords"] = [
+                kw.strip() for kw in normalized["keywords"].split(",") if kw.strip()
+            ]
+        else:  # Attempt to cast to list, or empty if fails
             try:
                 normalized["keywords"] = list(normalized["keywords"])
             except TypeError:
                 normalized["keywords"] = []
 
     if normalized["prompt_format"] is None:
-        normalized["prompt_format"] = "structured" if normalized.get("prompt_definition") is not None else "legacy"
+        normalized["prompt_format"] = (
+            "structured"
+            if normalized.get("prompt_definition") is not None
+            else "legacy"
+        )
     elif normalized["prompt_format"] not in {"legacy", "structured"}:
         logger.warning(
             f"Prompt format for '{normalized.get('name', 'Unknown')}' was invalid: {normalized['prompt_format']}. "
@@ -432,9 +640,22 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
         )
         normalized["prompt_format"] = "legacy"
 
-    if normalized["prompt_schema_version"] is not None and not isinstance(normalized["prompt_schema_version"], int):
+    artifact_type = normalized["artifact_type"]
+    if artifact_type is None:
+        normalized["artifact_type"] = "prompt"
+    elif not isinstance(artifact_type, str) or artifact_type not in {
+        "prompt",
+        "recipe",
+    }:
+        raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+
+    if normalized["prompt_schema_version"] is not None and not isinstance(
+        normalized["prompt_schema_version"], int
+    ):
         try:
-            normalized["prompt_schema_version"] = int(normalized["prompt_schema_version"])
+            normalized["prompt_schema_version"] = int(
+                normalized["prompt_schema_version"]
+            )
         except (TypeError, ValueError):
             logger.warning(
                 f"Prompt schema version for '{normalized.get('name', 'Unknown')}' was invalid: "
@@ -442,26 +663,32 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
             )
             normalized["prompt_schema_version"] = None
 
-
     # Ensure specific string fields are strings or None
     for field in ["name", "author", "details", "system_prompt", "user_prompt"]:
         if normalized[field] is not None and not isinstance(normalized[field], str):
-            logger.warning(f"Field '{field}' for prompt '{normalized.get('name', 'Unknown')}' was not a string, converting. Value: {normalized[field]}")
+            logger.warning(
+                f"Field '{field}' for prompt '{normalized.get('name', 'Unknown')}' was not a string, converting. Value: {normalized[field]}"
+            )
             try:
                 normalized[field] = str(normalized[field])
             except Exception:
-                logger.error(f"Could not convert field '{field}' to string for prompt '{normalized.get('name', 'Unknown')}'")
-                normalized[field] = None # Or raise error
+                logger.error(
+                    f"Could not convert field '{field}' to string for prompt '{normalized.get('name', 'Unknown')}'"
+                )
+                normalized[field] = None  # Or raise error
     return normalized
+
 
 def parse_json_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     """Parses JSON content into a list of prompt dictionaries."""
     try:
         data = json.loads(content)
-        if isinstance(data, dict): # Single prompt object
+        if isinstance(data, dict):  # Single prompt object
             return [_normalize_prompt_data(data)]
-        elif isinstance(data, list): # Array of prompt objects
-            return [_normalize_prompt_data(item) for item in data if isinstance(item, dict)]
+        elif isinstance(data, list):  # Array of prompt objects
+            return [
+                _normalize_prompt_data(item) for item in data if isinstance(item, dict)
+            ]
         else:
             raise ValueError("JSON content must be an object or an array of objects.")
     except json.JSONDecodeError as e:
@@ -476,15 +703,19 @@ def parse_yaml_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     if not YAML_AVAILABLE:
         raise RuntimeError("YAML parsing is not available. Please install PyYAML.")
     try:
-        data = list(yaml.safe_load_all(content)) # Handles multiple YAML documents in one file
+        data = list(
+            yaml.safe_load_all(content)
+        )  # Handles multiple YAML documents in one file
         prompts = []
-        if not data: # Handle empty yaml file
+        if not data:  # Handle empty yaml file
             return []
-        if len(data) == 1 and isinstance(data[0], list): # A single document that is a list of prompts
-             for item in data[0]:
+        if len(data) == 1 and isinstance(
+            data[0], list
+        ):  # A single document that is a list of prompts
+            for item in data[0]:
                 if isinstance(item, dict):
                     prompts.append(_normalize_prompt_data(item))
-        else: # Multiple documents, or a single document that is a prompt object
+        else:  # Multiple documents, or a single document that is a prompt object
             for item in data:
                 if isinstance(item, dict):
                     prompts.append(_normalize_prompt_data(item))
@@ -496,6 +727,63 @@ def parse_yaml_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         raise ValueError(f"Could not process YAML data: {e}")
 
 
+# A line that IS a "### WORD ###" section header, used as the per-section
+# capture's terminator below. Deliberately distinct from a body line that
+# merely CONTAINS "###" mid-line (which must NOT terminate a section's
+# capture): the leading `[ \t]*` (never `\s*`, which would also match
+# newlines and let this fragment span multiple lines) pins the "###" to
+# the start of the line the outer pattern's own `\r?\n` already stepped
+# onto, and the whole fragment must be followed by end-of-line/string, not
+# just appear somewhere later in the text.
+_MD_SECTION_HEADER_LINE_RE = r"[ \t]*###[ \t]*[A-Za-z][A-Za-z0-9_]*[ \t]*###[ \t]*"
+_MARKDOWN_FALLBACK_NAME_ATTEMPTS = 1000
+
+
+def _parse_fenced_structure(section_text: Any) -> Optional[Dict[str, Any]]:
+    """Decode exactly one JSON fence from a STRUCTURE section."""
+    if not isinstance(section_text, str):
+        return None
+    match = re.fullmatch(r"```json\r?\n(.*)\r?\n```", section_text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        definition = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return definition if isinstance(definition, dict) else None
+
+
+def _restore_structured_markdown_prompt(parsed_data: Dict[str, Any]) -> bool:
+    """Restore v2 structure, or report that foreign metadata needs a safe import."""
+    artifact_type = parsed_data.pop("artifact_type_raw", None)
+    structure_text = parsed_data.pop("structure_raw", None)
+    definition = _parse_fenced_structure(structure_text)
+    if definition is None or not isinstance(artifact_type, str):
+        return artifact_type is not None or structure_text is not None
+
+    record = {
+        **parsed_data,
+        "artifact_type": artifact_type,
+        "prompt_format": "structured",
+        "prompt_schema_version": definition.get("schema_version"),
+        "prompt_definition": definition,
+    }
+    try:
+        decoded = decode_prompt_artifact(record)
+    except ValueError:
+        return True
+    if decoded.state != "supported_v2":
+        return True
+
+    parsed_data.update(
+        artifact_type=decoded.artifact_type,
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=decoded.raw_definition,
+    )
+    return False
+
+
 def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     """
     Parses Markdown content with custom '### SECTION_NAME ###' headers
@@ -503,12 +791,21 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     """
     prompts_data = []
     parsed_data: Dict[str, Any] = {
-        "name": None, "author": None, "details": None,
-        "system_prompt": None, "user_prompt": None, "keywords": [],
+        "name": None,
+        "author": None,
+        "details": None,
+        "system_prompt": None,
+        "user_prompt": None,
+        "keywords": [],
     }
     section_map = {
-        "TITLE": "name", "AUTHOR": "author", "SYSTEM": "system_prompt",
-        "USER": "user_prompt", "KEYWORDS": "keywords_str",
+        "TITLE": "name",
+        "AUTHOR": "author",
+        "SYSTEM": "system_prompt",
+        "USER": "user_prompt",
+        "KEYWORDS": "keywords_str",
+        "ARTIFACT_TYPE": "artifact_type_raw",
+        "STRUCTURE": "structure_raw",
     }
 
     # Attempt to parse TITLE and DETAILS block first
@@ -518,12 +815,13 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     # Group 2: The ### AUTHOR ### section or end of string (used as a delimiter)
     title_block_match = re.search(
         r"^\s*###\s*TITLE\s*###\s*\n(.*?)(?=(\n\s*###\s*AUTHOR\s*###|\Z))",
-        content, re.MULTILINE | re.DOTALL | re.IGNORECASE
+        content,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
     )
 
     if title_block_match:
         title_and_details_content = title_block_match.group(1).strip()
-        lines = title_and_details_content.split('\n', 1)
+        lines = title_and_details_content.split("\n", 1)
         parsed_data["name"] = lines[0].strip()
         if len(lines) > 1:
             parsed_data["details"] = lines[1].strip()
@@ -533,7 +831,8 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         # Try to get just the TITLE content if available
         simple_title_match = re.search(
             r"^\s*###\s*TITLE\s*###\s*\n(.*?)(?=(\n\s*###|$))",
-            content, re.MULTILINE | re.DOTALL | re.IGNORECASE
+            content,
+            re.MULTILINE | re.DOTALL | re.IGNORECASE,
         )
         if simple_title_match:
             parsed_data["name"] = simple_title_match.group(1).strip()
@@ -543,7 +842,8 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     # If no name was found, we can't proceed for this prompt format
     if not parsed_data.get("name"):
         logger.warning(
-            f"Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: {content[:200]}")
+            f"Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: {content[:200]}"
+        )
         return []  # Return empty list if no title, as a valid prompt needs a name
 
     # Extract other sections
@@ -551,7 +851,25 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
         if section_header == "TITLE":  # Already handled
             continue
 
-        pattern = rf"^\s*###\s*{section_header}\s*###\s*\n(.*?)(?=(?:\n\s*###|$))"
+        # Fix wave 1 (Task 5 review): the terminator used to be a bare `$`
+        # under `re.MULTILINE`, which matches before EVERY newline in that
+        # mode (not just end-of-string) -- so a multi-line value was
+        # truncated after its first line, always. It also used a greedy
+        # `\s*\n` between the header's closing `###` and the captured
+        # value, which could backtrack-swallow a blank value line's own
+        # newline whenever another section followed, bleeding the blank
+        # value's capture into the *next* section's literal header text.
+        # Now: the header line itself only consumes horizontal whitespace
+        # (`[ \t]*`) before its own `\r?\n` (never eating the following
+        # line), and the capture's only valid stopping points are "right
+        # before the next actual `### WORD ###` header line" or true
+        # end-of-string (`\Z`) -- a body line that merely CONTAINS `###`
+        # mid-line does not match `_MD_SECTION_HEADER_LINE_RE` and so does
+        # not terminate the capture.
+        pattern = (
+            rf"^[ \t]*###[ \t]*{section_header}[ \t]*###[ \t]*\r?\n"
+            rf"(.*?)(?=\r?\n{_MD_SECTION_HEADER_LINE_RE}(?:\r?\n|\Z)|\Z)"
+        )
         match = re.search(pattern, content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
         if match:
             section_text = match.group(1).strip()
@@ -560,11 +878,18 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
 
     # Post-process keywords
     if "keywords_str" in parsed_data and parsed_data["keywords_str"]:
-        parsed_data["keywords"] = [kw.strip() for kw in parsed_data["keywords_str"].split(',') if kw.strip()]
+        parsed_data["keywords"] = [
+            kw.strip() for kw in parsed_data["keywords_str"].split(",") if kw.strip()
+        ]
     if "keywords_str" in parsed_data:  # Clean up temporary key
         del parsed_data["keywords_str"]
 
-    prompts_data.append(_normalize_prompt_data(parsed_data))
+    structured_fallback = _restore_structured_markdown_prompt(parsed_data)
+
+    normalized_data = _normalize_prompt_data(parsed_data)
+    if structured_fallback:
+        normalized_data["_markdown_structured_fallback"] = True
+    prompts_data.append(normalized_data)
     logger.debug(f"Parsed custom MD/TXT prompt: {parsed_data.get('name')}")
 
     return prompts_data
@@ -579,6 +904,7 @@ def parse_txt_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     # Simply call the markdown parser which now handles the ### SECTION ### format
     return parse_markdown_prompts_from_content(content)
 
+
 def _get_file_type(file_path: Path) -> Optional[str]:
     """Determines file type from extension."""
     suffix = file_path.suffix.lower()
@@ -592,15 +918,64 @@ def _get_file_type(file_path: Path) -> Optional[str]:
         return "txt"
     return None
 
+
+def _create_markdown_fallback_prompt(
+    prompt_data: Dict[str, Any],
+) -> Tuple[Optional[int], Optional[str], str]:
+    """Create a legacy fallback without ever updating a same-named artifact.
+
+    ``Prompts.name`` is exactly unique. Each insert therefore asks the database
+    to create, rather than pre-checking a name, so a competing importer cannot
+    turn a collision into an update. The deterministic `` (N)`` suffix mirrors
+    the repository's existing generated-name convention.
+    """
+    original_name = str(prompt_data["name"]).strip()
+    for suffix in range(1, _MARKDOWN_FALLBACK_NAME_ATTEMPTS + 1):
+        candidate_name = (
+            original_name if suffix == 1 else f"{original_name} ({suffix})"
+        )
+        try:
+            prompt_id, prompt_uuid, message = add_prompt(
+                name=candidate_name,
+                author=prompt_data.get("author"),
+                details=prompt_data.get("details"),
+                system_prompt=prompt_data.get("system_prompt"),
+                user_prompt=prompt_data.get("user_prompt"),
+                keywords=prompt_data.get("keywords"),
+                overwrite=False,
+                prompt_format="legacy",
+                prompt_schema_version=None,
+                prompt_definition=None,
+                artifact_type="prompt",
+                serialize_create=True,
+            )
+        except ConflictError:
+            continue
+
+        created = (
+            get_prompt_by_uuid(prompt_uuid, include_deleted=True)
+            if prompt_uuid is not None
+            else None
+        )
+        if created and not created.get("deleted"):
+            return prompt_id, prompt_uuid, message
+
+    raise ConflictError(
+        "Could not allocate a unique name for the structured Markdown fallback."
+    )
+
+
 def import_prompts_from_files(
     file_paths: Union[str, Path, List[Union[str, Path]]],
-    base_directory: Optional[str] = None
+    base_directory: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Imports prompts from one or more files (JSON, YAML, Markdown, TXT).
 
     Each file can contain one or multiple prompts according to its format's conventions.
-    Prompts are added or updated in the database based on their 'name'.
+    Prompts are added or updated in the database based on their 'name'. Foreign
+    structured Markdown falls back to a new legacy Prompt instead, so it cannot
+    overwrite an existing structured artifact with the same title.
 
     Args:
         file_paths: A single file path (str or Path) or a list of file paths.
@@ -618,11 +993,17 @@ def import_prompts_from_files(
         - "prompt_uuid": Optional[str], UUID of the prompt if successfully added/updated.
     """
     if not is_initialized():
-        msg = "Prompts Interop Library not initialized. Call initialize_interop() first."
+        msg = (
+            "Prompts Interop Library not initialized. Call initialize_interop() first."
+        )
         logger.error(msg)
         # Or raise RuntimeError(msg) if preferred to enforce initialization strictly before this call
-        return [{"file_path": str(fp), "status": "failure", "message": msg} for fp in ([file_paths] if isinstance(file_paths, (str, Path)) else file_paths)]
-
+        return [
+            {"file_path": str(fp), "status": "failure", "message": msg}
+            for fp in (
+                [file_paths] if isinstance(file_paths, (str, Path)) else file_paths
+            )
+        ]
 
     if isinstance(file_paths, (str, Path)):
         file_paths = [Path(file_paths)]
@@ -631,7 +1012,7 @@ def import_prompts_from_files(
 
     # Set default base directory for prompt files
     if base_directory is None:
-        base_directory = os.path.expanduser("~/.config/tldw_cli/prompts/")
+        base_directory = _default_prompt_import_directory()
 
     results: List[Dict[str, Any]] = []
     parser_map: Dict[str, Callable[[str], List[Dict[str, Any]]]] = {
@@ -644,7 +1025,7 @@ def import_prompts_from_files(
     for file_path in file_paths:
         file_path_str = str(file_path)
         logger.info(f"Processing import file: {file_path_str}")
-        
+
         # Validate the file path to prevent directory traversal
         try:
             validated_path = validate_path(file_path_str, base_directory)
@@ -652,44 +1033,70 @@ def import_prompts_from_files(
         except ValueError as e:
             msg = f"Invalid file path '{file_path_str}': {e}"
             logger.error(msg)
-            results.append({"file_path": file_path_str, "status": "failure", "message": msg})
+            results.append(
+                {"file_path": file_path_str, "status": "failure", "message": msg}
+            )
             continue
-        
+
         if not validated_path.exists() or not validated_path.is_file():
             msg = f"File not found or is not a regular file: {validated_path}"
             logger.error(msg)
-            results.append({"file_path": file_path_str, "status": "failure", "message": msg})
+            results.append(
+                {"file_path": file_path_str, "status": "failure", "message": msg}
+            )
             continue
 
         file_type = _get_file_type(validated_path)
         if not file_type:
             msg = f"Unsupported file type or unknown extension: {validated_path}"
             logger.warning(msg)
-            results.append({"file_path": file_path_str, "status": "failure", "message": msg})
+            results.append(
+                {"file_path": file_path_str, "status": "failure", "message": msg}
+            )
             continue
 
         parser = parser_map.get(file_type)
-        if not parser: # Should not happen if _get_file_type returns a valid key
+        if not parser:  # Should not happen if _get_file_type returns a valid key
             msg = f"No parser available for file type '{file_type}': {validated_path}"
-            logger.error(msg) # This would be an internal logic error
-            results.append({"file_path": file_path_str, "status": "failure", "message": msg})
+            logger.error(msg)  # This would be an internal logic error
+            results.append(
+                {"file_path": file_path_str, "status": "failure", "message": msg}
+            )
             continue
 
         try:
             with open(validated_path, "r", encoding="utf-8") as f:
                 content = f.read()
             parsed_prompts = parser(content)
-        except RuntimeError as e: # For unavailable parsers (PyYAML/python-frontmatter not installed)
-             logger.error(f"Parser runtime error for {file_path_str}: {e}")
-             results.append({"file_path": file_path_str, "status": "failure", "message": str(e)})
-             continue
-        except ValueError as e: # For parsing errors (invalid format)
+        except (
+            RuntimeError
+        ) as e:  # For unavailable parsers (PyYAML/python-frontmatter not installed)
+            logger.error(f"Parser runtime error for {file_path_str}: {e}")
+            results.append(
+                {"file_path": file_path_str, "status": "failure", "message": str(e)}
+            )
+            continue
+        except ValueError as e:  # For parsing errors (invalid format)
             logger.error(f"Failed to parse {file_path_str}: {e}")
-            results.append({"file_path": file_path_str, "status": "failure", "message": f"Parsing error: {e}"})
+            results.append(
+                {
+                    "file_path": file_path_str,
+                    "status": "failure",
+                    "message": f"Parsing error: {e}",
+                }
+            )
             continue
         except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error reading or parsing {file_path_str}: {e}")
-            results.append({"file_path": file_path_str, "status": "failure", "message": f"Read/Parse error: {e}"})
+            logger.opt(exception=True).error(
+                f"Unexpected error reading or parsing {file_path_str}: {e}"
+            )
+            results.append(
+                {
+                    "file_path": file_path_str,
+                    "status": "failure",
+                    "message": f"Read/Parse error: {e}",
+                }
+            )
             continue
 
         if not parsed_prompts:
@@ -699,56 +1106,85 @@ def import_prompts_from_files(
 
         for prompt_data in parsed_prompts:
             prompt_name = prompt_data.get("name")
-            if not prompt_name or not isinstance(prompt_name, str) or not prompt_name.strip():
+            if (
+                not prompt_name
+                or not isinstance(prompt_name, str)
+                or not prompt_name.strip()
+            ):
                 msg = "Prompt data is missing a valid 'name'."
-                logger.warning(f"{msg} File: {file_path_str}, Data: {str(prompt_data)[:100]}")
-                results.append({
-                    "file_path": file_path_str,
-                    "prompt_name": prompt_name,
-                    "status": "failure",
-                    "message": msg
-                })
+                logger.warning(
+                    f"{msg} File: {file_path_str}, Data: {str(prompt_data)[:100]}"
+                )
+                results.append(
+                    {
+                        "file_path": file_path_str,
+                        "prompt_name": prompt_name,
+                        "status": "failure",
+                        "message": msg,
+                    }
+                )
                 continue
 
             try:
+                structured_fallback = bool(
+                    prompt_data.pop("_markdown_structured_fallback", False)
+                )
                 # Ensure all expected fields are present, defaulting to None or []
                 # This is now handled by _normalize_prompt_data within each parser.
-                p_id, p_uuid, db_msg = add_or_update_prompt_interop(
-                    name=prompt_name,
-                    author=prompt_data.get("author"),
-                    details=prompt_data.get("details"),
-                    system_prompt=prompt_data.get("system_prompt"),
-                    user_prompt=prompt_data.get("user_prompt"),
-                    keywords=prompt_data.get("keywords"),
-                    prompt_format=prompt_data.get("prompt_format"),
-                    prompt_schema_version=prompt_data.get("prompt_schema_version"),
-                    prompt_definition=prompt_data.get("prompt_definition"),
+                if structured_fallback:
+                    p_id, p_uuid, db_msg = _create_markdown_fallback_prompt(
+                        prompt_data
+                    )
+                else:
+                    p_id, p_uuid, db_msg = add_or_update_prompt_interop(
+                        name=prompt_name,
+                        author=prompt_data.get("author"),
+                        details=prompt_data.get("details"),
+                        system_prompt=prompt_data.get("system_prompt"),
+                        user_prompt=prompt_data.get("user_prompt"),
+                        keywords=prompt_data.get("keywords"),
+                        prompt_format=prompt_data.get("prompt_format"),
+                        prompt_schema_version=prompt_data.get("prompt_schema_version"),
+                        prompt_definition=prompt_data.get("prompt_definition"),
+                        artifact_type=prompt_data.get("artifact_type"),
+                    )
+                logger.info(
+                    f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}"
                 )
-                logger.info(f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}")
-                results.append({
-                    "file_path": file_path_str,
-                    "prompt_name": prompt_name,
-                    "status": "success",
-                    "message": db_msg,
-                    "prompt_id": p_id,
-                    "prompt_uuid": p_uuid
-                })
+                results.append(
+                    {
+                        "file_path": file_path_str,
+                        "prompt_name": prompt_name,
+                        "status": "success",
+                        "message": db_msg,
+                        "prompt_id": p_id,
+                        "prompt_uuid": p_uuid,
+                    }
+                )
             except (InputError, ConflictError, DatabaseError, SchemaError) as e:
-                logger.error(f"Failed to add/update prompt '{prompt_name}' from {file_path_str}: {e}")
-                results.append({
-                    "file_path": file_path_str,
-                    "prompt_name": prompt_name,
-                    "status": "failure",
-                    "message": f"Database error: {type(e).__name__} - {e}"
-                })
+                logger.error(
+                    f"Failed to add/update prompt '{prompt_name}' from {file_path_str}: {e}"
+                )
+                results.append(
+                    {
+                        "file_path": file_path_str,
+                        "prompt_name": prompt_name,
+                        "status": "failure",
+                        "message": f"Database error: {type(e).__name__} - {e}",
+                    }
+                )
             except Exception as e:
-                logger.opt(exception=True).error(f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}")
-                results.append({
-                    "file_path": file_path_str,
-                    "prompt_name": prompt_name,
-                    "status": "failure",
-                    "message": f"Unexpected error: {type(e).__name__} - {e}"
-                })
+                logger.opt(exception=True).error(
+                    f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}"
+                )
+                results.append(
+                    {
+                        "file_path": file_path_str,
+                        "prompt_name": prompt_name,
+                        "status": "failure",
+                        "message": f"Unexpected error: {type(e).__name__} - {e}",
+                    }
+                )
     return results
 
 
@@ -765,12 +1201,12 @@ def import_prompts_from_files(
 #       # handle general DB error
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Example Usage (primarily for testing the interop layer)
     # Ensure Prompts_DB_v2.py is in the same directory or Python path
 
     # Setup basic logging for the example
-    #logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger.info("Running prompts_interop.py example usage...")
 
     # --- Configuration ---
@@ -788,7 +1224,7 @@ if __name__ == '__main__':
         details="This is a test prompt added via interop.",
         system_prompt="You are a helpful assistant.",
         user_prompt="Tell me a joke.",
-        keywords=["test", "funny"]  # "funny" will be newly created
+        keywords=["test", "funny"],  # "funny" will be newly created
     )
     sample_prompts_content = {
         "json_single": """
@@ -935,7 +1371,7 @@ Details: This prompt is missing a name.
 System for no name.
 ---USER---
 User for no name.
-        """
+        """,
     }
 
     # Create temporary files
@@ -948,7 +1384,9 @@ User for no name.
                 file_ext = v
                 break
         if not file_ext:
-            logger.warning(f"Could not determine extension for {name_key}, skipping temp file creation.")
+            logger.warning(
+                f"Could not determine extension for {name_key}, skipping temp file creation."
+            )
             continue
 
         temp_file_path = Path(temp_dir) / f"{name_key}{file_ext}"
@@ -960,9 +1398,9 @@ User for no name.
     # Add a non-existent file and an unsupported file type for error testing
     file_paths_to_import.append(Path(temp_dir) / "non_existent_file.json")
     unsupported_file_path = Path(temp_dir) / "unsupported.doc"
-    with open(unsupported_file_path, "w") as f: f.write("This is a doc file.")
+    with open(unsupported_file_path, "w") as f:
+        f.write("This is a doc file.")
     file_paths_to_import.append(unsupported_file_path)
-
 
     try:
         # 1. Initialize
@@ -983,7 +1421,7 @@ User for no name.
             details="This is a test prompt added via interop.",
             system_prompt="You are a helpful assistant.",
             user_prompt="Tell me a joke.",
-            keywords=["test", "funny"]  # "funny" will be newly created
+            keywords=["test", "funny"],  # "funny" will be newly created
         )
         logging.info(f"Added prompt: {msg1} (ID: {p_id1}, UUID: {p_uuid1})")
 
@@ -993,15 +1431,19 @@ User for no name.
             details="Another test prompt.",
             system_prompt="You are a creative writer.",
             user_prompt="Write a short story.",
-            keywords=["example", "story"]
+            keywords=["example", "story"],
         )
-        logging.info(f"Added/Updated prompt via interop wrapper: {msg2} (ID: {p_id2}, UUID: {p_uuid2})")
+        logging.info(
+            f"Added/Updated prompt via interop wrapper: {msg2} (ID: {p_id2}, UUID: {p_uuid2})"
+        )
 
         # 3. Read data
         logging.info("\n--- Reading Data ---")
         prompt1_details = fetch_prompt_details(p_id1)
         if prompt1_details:
-            logging.info(f"Details for Prompt ID {p_id1} ('{prompt1_details.get('name')}'):")
+            logging.info(
+                f"Details for Prompt ID {p_id1} ('{prompt1_details.get('name')}'):"
+            )
             logging.info(f"  Author: {prompt1_details.get('author')}")
             logging.info(f"  Keywords: {prompt1_details.get('keywords')}")
         else:
@@ -1012,7 +1454,9 @@ User for no name.
         if not YAML_AVAILABLE:
             logger.warning("YAML files will be skipped as PyYAML is not installed.")
         if not FRONTMATTER_AVAILABLE:
-            logger.warning("Markdown files will be skipped as python-frontmatter is not installed.")
+            logger.warning(
+                "Markdown files will be skipped as python-frontmatter is not installed."
+            )
 
         import_results = import_prompts_from_files(file_paths_to_import)
 
@@ -1024,8 +1468,10 @@ User for no name.
                 f"File: {res['file_path']}, Prompt: '{res.get('prompt_name', 'N/A')}', "
                 f"Status: {res['status']}"
             )
-            if res['status'] == 'success':
-                logger.info(f"  Msg: {res['message']}, ID: {res.get('prompt_id')}, UUID: {res.get('prompt_uuid')}")
+            if res["status"] == "success":
+                logger.info(
+                    f"  Msg: {res['message']}, ID: {res.get('prompt_id')}, UUID: {res.get('prompt_uuid')}"
+                )
                 successful_imports += 1
             else:
                 logger.error(f"  Error: {res['message']}")
@@ -1036,30 +1482,38 @@ User for no name.
 
         # Verify some imported prompts
         logger.info("\n--- Verifying Imported Prompts ---")
-        if is_initialized(): # Check again, in case init failed in a test setup
-            test_prompt_name = "JSON Single Prompt" # Should have been imported
+        if is_initialized():  # Check again, in case init failed in a test setup
+            test_prompt_name = "JSON Single Prompt"  # Should have been imported
             details = fetch_prompt_details(test_prompt_name)
             if details:
-                logger.info(f"Successfully fetched imported prompt '{test_prompt_name}': Author - {details.get('author')}, Keywords - {details.get('keywords')}")
+                logger.info(
+                    f"Successfully fetched imported prompt '{test_prompt_name}': Author - {details.get('author')}, Keywords - {details.get('keywords')}"
+                )
             else:
                 logger.error(f"Could not fetch imported prompt '{test_prompt_name}'.")
 
         all_prompts, total_pages, _, total_items = list_prompts()
-        logging.info(f"List Prompts (Page 1): {len(all_prompts)} items. Total items: {total_items}, Total pages: {total_pages}")
+        logging.info(
+            f"List Prompts (Page 1): {len(all_prompts)} items. Total items: {total_items}, Total pages: {total_pages}"
+        )
         for p in all_prompts:
             logging.info(f"  - {p.get('name')} (Author: {p.get('author')})")
 
         all_kws = fetch_all_keywords()
         logging.info(f"All active keywords: {all_kws}")
 
-
         # 4. Search
         logging.info("\n--- Searching Data ---")
-        search_results, total_matches = search_prompts(search_query="test", search_fields=["details", "keywords"])
-        logging.info(f"Search results for 'test': {len(search_results)} matches (Total found: {total_matches})")
+        search_results, total_matches = search_prompts(
+            search_query="test", search_fields=["details", "keywords"]
+        )
+        logging.info(
+            f"Search results for 'test': {len(search_results)} matches (Total found: {total_matches})"
+        )
         for res in search_results:
-            logging.info(f"  - Found: {res.get('name')} (Keywords: {res.get('keywords')})")
-
+            logging.info(
+                f"  - Found: {res.get('name')} (Keywords: {res.get('keywords')})"
+            )
 
         # 5. Using other interop-wrapped standalone functions
         logging.info("\n--- Using Other Interop Functions ---")
@@ -1067,11 +1521,14 @@ User for no name.
         logging.info("Keywords in Markdown:")
         logging.info(markdown_keywords)
 
-        csv_export_status, csv_file_path = export_prompts_formatted_interop(export_format='csv')
+        csv_export_status, csv_file_path = export_prompts_formatted_interop(
+            export_format="csv"
+        )
         logging.info(f"CSV Export: {csv_export_status} -> {csv_file_path}")
         if csv_file_path != "None" and EXAMPLE_DB_PATH == ":memory:":
-             logging.info(f" (Note: CSV file '{csv_file_path}' would exist if not using in-memory DB)")
-
+            logging.info(
+                f" (Note: CSV file '{csv_file_path}' would exist if not using in-memory DB)"
+            )
 
         # 6. Soft delete
         logging.info("\n--- Soft Deleting ---")
@@ -1079,26 +1536,43 @@ User for no name.
             deleted = soft_delete_prompt(p_id1)
             logging.info(f"Soft deleted prompt ID {p_id1}: {deleted}")
             prompt1_after_delete = get_prompt_by_id(p_id1)
-            logging.info(f"Prompt ID {p_id1} after delete (should be None): {prompt1_after_delete}")
+            logging.info(
+                f"Prompt ID {p_id1} after delete (should be None): {prompt1_after_delete}"
+            )
             prompt1_deleted_rec = get_prompt_by_id(p_id1, include_deleted=True)
-            logging.info(f"Prompt ID {p_id1} after delete (fetching deleted, should exist): {prompt1_deleted_rec is not None}")
-
+            logging.info(
+                f"Prompt ID {p_id1} after delete (fetching deleted, should exist): {prompt1_deleted_rec is not None}"
+            )
 
         # 7. Sync Log (Example)
         logging.info("\n--- Sync Log ---")
         sync_entries = get_sync_log_entries(limit=5)
-        logging.info(f"First 5 sync log entries:")
+        logging.info("First 5 sync log entries:")
         for entry in sync_entries:
-            logging.info(f"  ID: {entry['change_id']}, Entity: {entry['entity']}, Op: {entry['operation']}, UUID: {entry['entity_uuid']}")
+            logging.info(
+                f"  ID: {entry['change_id']}, Entity: {entry['entity']}, Op: {entry['operation']}, UUID: {entry['entity_uuid']}"
+            )
         if sync_entries:
-            deleted_count = delete_sync_log_entries([e['change_id'] for e in sync_entries])
+            deleted_count = delete_sync_log_entries(
+                [e["change_id"] for e in sync_entries]
+            )
             logging.info(f"Deleted {deleted_count} sync log entries.")
 
-
-    except (DatabaseError, SchemaError, InputError, ConflictError, RuntimeError, ValueError) as e:
-        logger.opt(exception=True).error(f"An error occurred during interop example: {type(e).__name__} - {e}")
+    except (
+        DatabaseError,
+        SchemaError,
+        InputError,
+        ConflictError,
+        RuntimeError,
+        ValueError,
+    ) as e:
+        logger.opt(exception=True).error(
+            f"An error occurred during interop example: {type(e).__name__} - {e}"
+        )
     except Exception as e:
-        logger.opt(exception=True).error(f"An unexpected error occurred: {type(e).__name__} - {e}")
+        logger.opt(exception=True).error(
+            f"An unexpected error occurred: {type(e).__name__} - {e}"
+        )
     finally:
         logger.info("\n--- Shutting Down Interop Library ---")
         shutdown_interop()
@@ -1118,7 +1592,6 @@ User for no name.
             logger.info(f"Successfully removed temporary directory: {temp_dir}")
         except OSError as e:
             logger.error(f"Error removing temporary directory {temp_dir}: {e}")
-
 
     logger.info("Prompts_interop.py example usage finished.")
 

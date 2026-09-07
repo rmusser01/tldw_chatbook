@@ -215,7 +215,13 @@ async def test_kanban_client_routes_labels_comments_checklists_and_items(monkeyp
             _comment_payload(content="Updated"),
             _checklist_payload(),
             {"checklists": [_checklist_payload()]},
-            {**_checklist_payload(), "items": [_checklist_item_payload()], "total_items": 1, "checked_items": 0, "progress_percent": 0},
+            {
+                **_checklist_payload(),
+                "items": [_checklist_item_payload()],
+                "total_items": 1,
+                "checked_items": 0,
+                "progress_percent": 0,
+            },
             _checklist_payload(name="Launch QA"),
             {"checklists": [_checklist_payload()]},
             _checklist_item_payload(),
@@ -225,7 +231,13 @@ async def test_kanban_client_routes_labels_comments_checklists_and_items(monkeyp
             {"items": [_checklist_item_payload()]},
             _checklist_item_payload(checked=True),
             _checklist_item_payload(checked=False),
-            {**_checklist_payload(), "items": [_checklist_item_payload(checked=True)], "total_items": 1, "checked_items": 1, "progress_percent": 100},
+            {
+                **_checklist_payload(),
+                "items": [_checklist_item_payload(checked=True)],
+                "total_items": 1,
+                "checked_items": 1,
+                "progress_percent": 100,
+            },
             {},
             {},
             {},
@@ -234,47 +246,98 @@ async def test_kanban_client_routes_labels_comments_checklists_and_items(monkeyp
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    created_label = await client.create_kanban_label(1, KanbanLabelCreate(name="Bug", color="red"))
+    created_label = await client.create_kanban_label(
+        1, KanbanLabelCreate(name="Bug", color="red")
+    )
     labels = await client.list_kanban_labels(1)
     fetched_label = await client.get_kanban_label(41)
     updated_label = await client.update_kanban_label(41, KanbanLabelUpdate(name="Docs"))
     assigned = await client.assign_kanban_label_to_card(31, 41)
     card_labels = await client.list_kanban_card_labels(31)
-    comment = await client.create_kanban_comment(31, KanbanCommentCreate(content="Looks good"))
+    comment = await client.create_kanban_comment(
+        31, KanbanCommentCreate(content="Looks good")
+    )
     comments = await client.list_kanban_comments(31, limit=25, include_deleted=True)
     fetched_comment = await client.get_kanban_comment(71, include_deleted=True)
-    updated_comment = await client.update_kanban_comment(71, KanbanCommentUpdate(content="Updated"))
-    checklist = await client.create_kanban_checklist(31, KanbanChecklistCreate(name="QA", position=0))
+    updated_comment = await client.update_kanban_comment(
+        71, KanbanCommentUpdate(content="Updated")
+    )
+    checklist = await client.create_kanban_checklist(
+        31, KanbanChecklistCreate(name="QA", position=0)
+    )
     checklists = await client.list_kanban_checklists(31)
     fetched_checklist = await client.get_kanban_checklist(51)
-    updated_checklist = await client.update_kanban_checklist(51, KanbanChecklistUpdate(name="Launch QA"))
-    reordered_checklists = await client.reorder_kanban_checklists(31, KanbanChecklistReorderRequest(checklist_ids=[51]))
-    item = await client.create_kanban_checklist_item(51, KanbanChecklistItemCreate(name="Regression test"))
+    updated_checklist = await client.update_kanban_checklist(
+        51, KanbanChecklistUpdate(name="Launch QA")
+    )
+    reordered_checklists = await client.reorder_kanban_checklists(
+        31, KanbanChecklistReorderRequest(checklist_ids=[51])
+    )
+    item = await client.create_kanban_checklist_item(
+        51, KanbanChecklistItemCreate(name="Regression test")
+    )
     items = await client.list_kanban_checklist_items(51)
     fetched_item = await client.get_kanban_checklist_item(61)
-    updated_item = await client.update_kanban_checklist_item(61, KanbanChecklistItemUpdate(checked=True))
-    reordered_items = await client.reorder_kanban_checklist_items(51, KanbanChecklistItemReorderRequest(item_ids=[61]))
+    updated_item = await client.update_kanban_checklist_item(
+        61, KanbanChecklistItemUpdate(checked=True)
+    )
+    reordered_items = await client.reorder_kanban_checklist_items(
+        51, KanbanChecklistItemReorderRequest(item_ids=[61])
+    )
     checked_item = await client.check_kanban_checklist_item(61)
     unchecked_item = await client.uncheck_kanban_checklist_item(61)
-    toggled = await client.toggle_all_kanban_checklist_items(51, KanbanToggleAllChecklistItemsRequest(checked=True))
+    toggled = await client.toggle_all_kanban_checklist_items(
+        51, KanbanToggleAllChecklistItemsRequest(checked=True)
+    )
     removed_label = await client.remove_kanban_label_from_card(31, 41)
     deleted_comment = await client.delete_kanban_comment(71, hard_delete=True)
     deleted_item = await client.delete_kanban_checklist_item(61)
     deleted_checklist = await client.delete_kanban_checklist(51)
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/kanban/boards/1/labels")
-    assert mocked.await_args_list[0].kwargs["json_data"] == {"name": "Bug", "color": "red"}
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/kanban/boards/1/labels")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/kanban/cards/31/labels/41")
-    assert mocked.await_args_list[7].kwargs["params"] == {"limit": 25, "offset": 0, "include_deleted": True}
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/kanban/boards/1/labels",
+    )
+    assert mocked.await_args_list[0].kwargs["json_data"] == {
+        "name": "Bug",
+        "color": "red",
+    }
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/kanban/boards/1/labels",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/kanban/cards/31/labels/41",
+    )
+    assert mocked.await_args_list[7].kwargs["params"] == {
+        "limit": 25,
+        "offset": 0,
+        "include_deleted": True,
+    }
     assert mocked.await_args_list[13].kwargs["json_data"] == {"name": "Launch QA"}
-    assert mocked.await_args_list[14].args[:2] == ("POST", "/api/v1/kanban/cards/31/checklists/reorder")
-    assert mocked.await_args_list[19].args[:2] == ("POST", "/api/v1/kanban/checklists/51/items/reorder")
+    assert mocked.await_args_list[14].args[:2] == (
+        "POST",
+        "/api/v1/kanban/cards/31/checklists/reorder",
+    )
+    assert mocked.await_args_list[19].args[:2] == (
+        "POST",
+        "/api/v1/kanban/checklists/51/items/reorder",
+    )
     assert mocked.await_args_list[22].kwargs["json_data"] == {"checked": True}
-    assert mocked.await_args_list[23].args[:2] == ("DELETE", "/api/v1/kanban/cards/31/labels/41")
+    assert mocked.await_args_list[23].args[:2] == (
+        "DELETE",
+        "/api/v1/kanban/cards/31/labels/41",
+    )
     assert mocked.await_args_list[24].kwargs["params"] == {"hard_delete": True}
-    assert mocked.await_args_list[25].args[:2] == ("DELETE", "/api/v1/kanban/checklist-items/61")
-    assert mocked.await_args_list[26].args[:2] == ("DELETE", "/api/v1/kanban/checklists/51")
+    assert mocked.await_args_list[25].args[:2] == (
+        "DELETE",
+        "/api/v1/kanban/checklist-items/61",
+    )
+    assert mocked.await_args_list[26].args[:2] == (
+        "DELETE",
+        "/api/v1/kanban/checklists/51",
+    )
 
     assert isinstance(created_label, KanbanLabelResponse)
     assert isinstance(labels, KanbanLabelsListResponse)
@@ -306,7 +369,9 @@ async def test_kanban_client_routes_labels_comments_checklists_and_items(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_kanban_client_routes_activity_search_bulk_import_export_and_links(monkeypatch):
+async def test_kanban_client_routes_activity_search_bulk_import_export_and_links(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     search_payload = {
         "query": "ship",
@@ -364,7 +429,18 @@ async def test_kanban_client_routes_activity_search_bulk_import_export_and_links
             {"activities": [_activity_payload()], "pagination": _pagination(limit=10)},
             export_payload,
             export_payload,
-            {"board": _board_payload(), "import_stats": {"board_id": 1, "lists_imported": 1, "cards_imported": 1, "labels_imported": 1, "checklists_imported": 0, "checklist_items_imported": 0, "comments_imported": 0}},
+            {
+                "board": _board_payload(),
+                "import_stats": {
+                    "board_id": 1,
+                    "lists_imported": 1,
+                    "cards_imported": 1,
+                    "labels_imported": 1,
+                    "checklists_imported": 0,
+                    "checklist_items_imported": 0,
+                    "comments_imported": 0,
+                },
+            },
             {"cards": [_card_payload()], "pagination": _pagination(limit=50)},
             {"cards": [_card_payload()], "pagination": _pagination(limit=25)},
             search_payload,
@@ -389,26 +465,59 @@ async def test_kanban_client_routes_activity_search_bulk_import_export_and_links
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    board_activities = await client.list_kanban_board_activities(1, card_id=31, limit=20)
-    card_activities = await client.list_kanban_card_activities(31, action_type="update", limit=10)
+    board_activities = await client.list_kanban_board_activities(
+        1, card_id=31, limit=20
+    )
+    card_activities = await client.list_kanban_card_activities(
+        31, action_type="update", limit=10
+    )
     export_get = await client.get_kanban_board_export(1, include_archived=True)
-    export_post = await client.export_kanban_board(1, KanbanBoardExportRequest(include_deleted=True))
-    imported = await client.import_kanban_board(KanbanBoardImportRequest(data={"format": "tldw_kanban_v1"}))
-    filtered = await client.filter_kanban_board_cards(1, label_ids=[41, 42], priority="high")
-    basic_search = await client.search_kanban_cards_basic(KanbanCardSearchRequest(query="ship", board_id=1, limit=25))
-    search_get = await client.search_kanban_cards_get("ship", label_ids=[41], search_mode="fts", limit=10)
-    search_post = await client.search_kanban_cards(KanbanSearchRequest(query="ship", label_ids=[41], limit=10))
+    export_post = await client.export_kanban_board(
+        1, KanbanBoardExportRequest(include_deleted=True)
+    )
+    imported = await client.import_kanban_board(
+        KanbanBoardImportRequest(data={"format": "tldw_kanban_v1"})
+    )
+    filtered = await client.filter_kanban_board_cards(
+        1, label_ids=[41, 42], priority="high"
+    )
+    basic_search = await client.search_kanban_cards_basic(
+        KanbanCardSearchRequest(query="ship", board_id=1, limit=25)
+    )
+    search_get = await client.search_kanban_cards_get(
+        "ship", label_ids=[41], search_mode="fts", limit=10
+    )
+    search_post = await client.search_kanban_cards(
+        KanbanSearchRequest(query="ship", label_ids=[41], limit=10)
+    )
     search_status = await client.get_kanban_search_status()
     copied = await client.copy_kanban_card_with_checklists(
         31,
-        KanbanCardCopyWithChecklistsRequest(target_list_id=22, new_client_id="copy-1", copy_checklists=True, copy_labels=False),
+        KanbanCardCopyWithChecklistsRequest(
+            target_list_id=22,
+            new_client_id="copy-1",
+            copy_checklists=True,
+            copy_labels=False,
+        ),
     )
-    bulk_moved = await client.bulk_move_kanban_cards(KanbanBulkMoveCardsRequest(card_ids=[31], target_list_id=22))
-    bulk_archived = await client.bulk_archive_kanban_cards(KanbanBulkArchiveCardsRequest(card_ids=[31]))
-    bulk_unarchived = await client.bulk_unarchive_kanban_cards(KanbanBulkArchiveCardsRequest(card_ids=[31]))
-    bulk_deleted = await client.bulk_delete_kanban_cards(KanbanBulkDeleteCardsRequest(card_ids=[31]))
-    bulk_labeled = await client.bulk_label_kanban_cards(KanbanBulkLabelCardsRequest(card_ids=[31], add_label_ids=[41]))
-    link = await client.add_kanban_card_link(31, KanbanCardLinkCreate(linked_type="note", linked_id="note-1"))
+    bulk_moved = await client.bulk_move_kanban_cards(
+        KanbanBulkMoveCardsRequest(card_ids=[31], target_list_id=22)
+    )
+    bulk_archived = await client.bulk_archive_kanban_cards(
+        KanbanBulkArchiveCardsRequest(card_ids=[31])
+    )
+    bulk_unarchived = await client.bulk_unarchive_kanban_cards(
+        KanbanBulkArchiveCardsRequest(card_ids=[31])
+    )
+    bulk_deleted = await client.bulk_delete_kanban_cards(
+        KanbanBulkDeleteCardsRequest(card_ids=[31])
+    )
+    bulk_labeled = await client.bulk_label_kanban_cards(
+        KanbanBulkLabelCardsRequest(card_ids=[31], add_label_ids=[41])
+    )
+    link = await client.add_kanban_card_link(
+        31, KanbanCardLinkCreate(linked_type="note", linked_id="note-1")
+    )
     links = await client.list_kanban_card_links(31, linked_type="note")
     counts = await client.get_kanban_card_link_counts(31)
     removed = await client.remove_kanban_card_link(31, "note", "note-1")
@@ -416,31 +525,62 @@ async def test_kanban_client_routes_activity_search_bulk_import_export_and_links
     removed_by_id = await client.remove_kanban_card_link_by_id(91)
     bulk_added_links = await client.bulk_add_kanban_card_links(
         31,
-        KanbanBulkCardLinksRequest(links=[KanbanCardLinkCreate(linked_type="note", linked_id="note-1")]),
+        KanbanBulkCardLinksRequest(
+            links=[KanbanCardLinkCreate(linked_type="note", linked_id="note-1")]
+        ),
     )
     bulk_removed_links = await client.bulk_remove_kanban_card_links(
         31,
-        KanbanBulkCardLinksRequest(links=[KanbanCardLinkCreate(linked_type="note", linked_id="note-1")]),
+        KanbanBulkCardLinksRequest(
+            links=[KanbanCardLinkCreate(linked_type="note", linked_id="note-1")]
+        ),
     )
-    linked_cards = await client.list_kanban_cards_by_linked_content("note", "note-1", include_archived=True)
+    linked_cards = await client.list_kanban_cards_by_linked_content(
+        "note", "note-1", include_archived=True
+    )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/kanban/1/activities")
-    assert mocked.await_args_list[0].kwargs["params"] == {"card_id": 31, "limit": 20, "offset": 0}
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "card_id": 31,
+        "limit": 20,
+        "offset": 0,
+    }
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/kanban/1/export")
-    assert mocked.await_args_list[2].kwargs["params"] == {"include_archived": True, "include_deleted": False}
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "include_archived": True,
+        "include_deleted": False,
+    }
     assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/kanban/1/export")
-    assert mocked.await_args_list[3].kwargs["json_data"] == {"include_archived": False, "include_deleted": True}
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "include_archived": False,
+        "include_deleted": True,
+    }
     assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/kanban/import")
     assert mocked.await_args_list[5].kwargs["params"]["label_ids"] == "41,42"
     assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/kanban/cards/search")
     assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/kanban/search")
     assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/kanban/search")
-    assert mocked.await_args_list[10].args[:2] == ("POST", "/api/v1/kanban/cards/31/copy-with-checklists")
-    assert mocked.await_args_list[11].args[:2] == ("POST", "/api/v1/kanban/cards/bulk-move")
-    assert mocked.await_args_list[16].args[:2] == ("POST", "/api/v1/kanban/cards/31/links")
+    assert mocked.await_args_list[10].args[:2] == (
+        "POST",
+        "/api/v1/kanban/cards/31/copy-with-checklists",
+    )
+    assert mocked.await_args_list[11].args[:2] == (
+        "POST",
+        "/api/v1/kanban/cards/bulk-move",
+    )
+    assert mocked.await_args_list[16].args[:2] == (
+        "POST",
+        "/api/v1/kanban/cards/31/links",
+    )
     assert mocked.await_args_list[17].kwargs["params"] == {"linked_type": "note"}
-    assert mocked.await_args_list[19].args[:2] == ("DELETE", "/api/v1/kanban/cards/31/links/note/note-1")
-    assert mocked.await_args_list[24].kwargs["params"] == {"include_archived": True, "include_deleted": False}
+    assert mocked.await_args_list[19].args[:2] == (
+        "DELETE",
+        "/api/v1/kanban/cards/31/links/note/note-1",
+    )
+    assert mocked.await_args_list[24].kwargs["params"] == {
+        "include_archived": True,
+        "include_deleted": False,
+    }
 
     assert isinstance(board_activities, KanbanActivitiesListResponse)
     assert isinstance(card_activities, KanbanActivitiesListResponse)

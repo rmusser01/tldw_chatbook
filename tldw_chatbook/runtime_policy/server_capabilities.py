@@ -23,7 +23,7 @@ class ActiveServerCapabilityService:
         self.target_store = target_store
 
     async def refresh(self) -> dict[str, Any]:
-        state = self._current_state()
+        state, revision = self.runtime_context.snapshot()
         now = datetime.now(timezone.utc)
         if not state.server_configured or not state.active_server_id:
             updated_state = replace(
@@ -34,10 +34,16 @@ class ActiveServerCapabilityService:
                 server_auth_checked_at=None,
             )
             if updated_state != state:
-                self.runtime_context.state = updated_state
-                persist = getattr(self.runtime_context, "persist", None)
-                if callable(persist):
-                    persist()
+                if not self.runtime_context.commit_state(
+                    updated_state,
+                    expected_revision=revision,
+                ):
+                    fresh_state, _ = self.runtime_context.snapshot()
+                    return self._superseded_snapshot(fresh_state, now=now)
+            else:
+                fresh_state, fresh_revision = self.runtime_context.snapshot()
+                if fresh_revision != revision or fresh_state != state:
+                    return self._superseded_snapshot(fresh_state, now=now)
             return self._snapshot(
                 state=updated_state,
                 now=now,
@@ -60,17 +66,32 @@ class ActiveServerCapabilityService:
 
         try:
             health = await self._call_discovery_method("probe_health", "get_health")
-            readiness = await self._call_discovery_method("probe_readiness", "get_readiness")
-            docs_info = await self._call_discovery_method("probe_docs_info", "get_docs_info")
+            readiness = await self._call_discovery_method(
+                "probe_readiness", "get_readiness"
+            )
+            docs_info = await self._call_discovery_method(
+                "probe_docs_info", "get_docs_info"
+            )
         except Exception as exc:  # noqa: BLE001 - discovery must convert backend failures into state.
-            reason_code = classify_backend_exception(exc) or "capability_discovery_failed"
-            errors.append({"reason_code": reason_code, "message": str(exc)})
+            reason_code = (
+                classify_backend_exception(exc) or "capability_discovery_failed"
+            )
+            errors.append(
+                {
+                    "reason_code": reason_code,
+                    "message": self._capability_error_message(reason_code),
+                }
+            )
             if reason_code == "server_unreachable":
                 reachability = "unreachable"
                 auth_state = "unknown"
             elif reason_code in {"server_auth_required", "server_session_invalid"}:
                 reachability = "reachable"
-                auth_state = "session_invalid" if reason_code == "server_session_invalid" else "auth_required"
+                auth_state = (
+                    "session_invalid"
+                    if reason_code == "server_session_invalid"
+                    else "auth_required"
+                )
             else:
                 reachability = "reachable"
                 auth_state = "unknown"
@@ -82,10 +103,12 @@ class ActiveServerCapabilityService:
             server_auth_state=auth_state,
             server_auth_checked_at=now,
         )
-        self.runtime_context.state = updated_state
-        persist = getattr(self.runtime_context, "persist", None)
-        if callable(persist):
-            persist()
+        if not self.runtime_context.commit_state(
+            updated_state,
+            expected_revision=revision,
+        ):
+            fresh_state, _ = self.runtime_context.snapshot()
+            return self._superseded_snapshot(fresh_state, now=now)
         self._persist_target_status(
             state=updated_state,
             checked_at=now,
@@ -136,14 +159,46 @@ class ActiveServerCapabilityService:
             "errors": list(errors or []),
         }
 
-    def _current_state(self) -> RuntimeSourceState:
-        state = getattr(self.runtime_context, "state", None)
-        if isinstance(state, RuntimeSourceState):
-            return state
-        return RuntimeSourceState()
+    @classmethod
+    def _superseded_snapshot(
+        cls,
+        state: RuntimeSourceState,
+        *,
+        now: datetime,
+    ) -> dict[str, Any]:
+        return cls._snapshot(
+            state=state,
+            now=now,
+            reachability=state.server_reachability,
+            auth_state=state.server_auth_state,
+            errors=[
+                {
+                    "reason_code": "capability_result_superseded",
+                    "message": (
+                        "Capability refresh was superseded by a newer "
+                        "runtime selection."
+                    ),
+                }
+            ],
+        )
 
-    async def _call_discovery_method(self, probe_name: str, scope_method_name: str) -> dict[str, Any]:
-        server_service = getattr(self.server_runtime_scope_service, "server_service", None)
+    @staticmethod
+    def _capability_error_message(reason_code: str) -> str:
+        return {
+            "server_unreachable": "The active server could not be reached.",
+            "server_auth_required": "The active server requires authentication.",
+            "server_session_invalid": "The active server session is no longer valid.",
+        }.get(
+            reason_code,
+            "Capability discovery failed.",
+        )
+
+    async def _call_discovery_method(
+        self, probe_name: str, scope_method_name: str
+    ) -> dict[str, Any]:
+        server_service = getattr(
+            self.server_runtime_scope_service, "server_service", None
+        )
         probe = getattr(server_service, probe_name, None)
         if callable(probe):
             result = await probe()

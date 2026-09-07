@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from inspect import signature
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -16,19 +16,15 @@ from typing import Protocol
 
 from packaging.version import InvalidVersion, Version
 from pydantic import (
+    AnyUrl,
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     ValidationError,
     field_validator,
 )
 
-from tldw_chatbook.Utils.input_validation import (
-    validate_github_actions_output_name as shared_validate_github_actions_output_name,
-    validate_pypi_package_name as shared_validate_pypi_package_name,
-    validate_python_package_version as shared_validate_python_package_version,
-    validate_url as shared_validate_url,
-)
 from tldw_chatbook.Utils.path_validation import validate_path
 
 
@@ -37,7 +33,10 @@ PYPI_REQUEST_TIMEOUT_SECONDS = 30
 DEFAULT_PACKAGE_NAME = "tldw-chatbook"
 DEFAULT_OUTPUT_NAME = "publish_release"
 FIXED_OUTPUT_NAMES = frozenset(("release_exists", "latest_version"))
-VALIDATE_PATH_PARAMETERS = signature(validate_path).parameters
+PACKAGE_NAME_PATTERN = re.compile(
+    r"^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9])$"
+)
+URL_ADAPTER = TypeAdapter(AnyUrl)
 
 
 @dataclass(frozen=True)
@@ -101,122 +100,48 @@ class ReleaseCheckInput(BaseModel):
 
 
 def validate_package_name(package_name: str) -> str:
-    """Return a validated PyPI package name.
-
-    Args:
-        package_name: Candidate PyPI project name.
-
-    Returns:
-        The original package name when it satisfies the shared input policy.
-
-    Raises:
-        ValueError: If the package name is empty or invalid.
-    """
+    """Return a validated PyPI package name."""
     if not package_name:
         raise ValueError("package name cannot be empty")
-    if not shared_validate_pypi_package_name(package_name):
+    if not PACKAGE_NAME_PATTERN.fullmatch(package_name):
         raise ValueError("package name is invalid")
     return package_name
 
 
 def validate_version(version: str) -> str:
-    """Return a validated PEP 440 package version.
-
-    Args:
-        version: Candidate package version.
-
-    Returns:
-        The original version string when it satisfies the shared input policy.
-
-    Raises:
-        ValueError: If the version is empty or invalid.
-    """
+    """Return a validated PEP 440 package version."""
     if not version:
         raise ValueError("version cannot be empty")
-    if not shared_validate_python_package_version(version):
-        raise ValueError("version is invalid")
+    try:
+        Version(version)
+    except InvalidVersion as exc:
+        raise ValueError("version is invalid") from exc
     return version
 
 
 def validate_base_url(base_url: str) -> str:
-    """Return a validated HTTP(S) PyPI JSON API base URL.
-
-    Args:
-        base_url: Candidate PyPI-compatible JSON API base URL.
-
-    Returns:
-        The URL without trailing slashes.
-
-    Raises:
-        ValueError: If the URL is empty, malformed, or not HTTP(S).
-    """
+    """Return a validated HTTP(S) PyPI JSON API base URL."""
     if not base_url:
         raise ValueError("base URL cannot be empty")
-    if not shared_validate_url(base_url):
-        raise ValueError("base URL is invalid")
-    parsed = urllib.parse.urlsplit(base_url)
+    parsed = URL_ADAPTER.validate_python(base_url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("base URL must use http or https")
-    return base_url.rstrip("/")
+    return str(parsed).rstrip("/")
 
 
 def validate_github_output_name(name: str) -> str:
-    """Return a GitHub Actions output name that is safe to write.
-
-    Args:
-        name: Candidate GitHub Actions output name.
-
-    Returns:
-        The original output name when it satisfies the shared input policy.
-
-    Raises:
-        ValueError: If the output name is empty or can inject an assignment.
-    """
-    if not shared_validate_github_actions_output_name(name):
+    """Return a GitHub Actions output name that is safe to write."""
+    if not name or any(char in name for char in "=\r\n"):
         raise ValueError("GitHub output name is invalid")
     return name
 
 
 def validate_custom_output_name(name: str) -> str:
-    """Return a custom output name that cannot overwrite fixed metadata.
-
-    Args:
-        name: Candidate caller-controlled output name.
-
-    Returns:
-        The original output name when it is safe and not reserved.
-
-    Raises:
-        ValueError: If the output name is unsafe or reserved by this script.
-    """
+    """Return a custom output name that cannot overwrite fixed metadata."""
     validate_github_output_name(name)
     if name in FIXED_OUTPUT_NAMES:
         raise ValueError("custom output name cannot overwrite fixed release metadata")
     return name
-
-
-def validate_action_output_path(
-    output_path: str | os.PathLike[str],
-    runner_temp: str | os.PathLike[str],
-) -> Path:
-    """Return a validated GitHub output path across supported release branches.
-
-    Args:
-        output_path: Candidate ``GITHUB_OUTPUT`` file path.
-        runner_temp: Current GitHub Actions ``RUNNER_TEMP`` directory.
-
-    Returns:
-        The validated path.
-
-    Raises:
-        ValueError: If the output path escapes ``runner_temp``.
-    """
-    kwargs: dict[str, bool] = {}
-    if "redact_paths" in VALIDATE_PATH_PARAMETERS:
-        kwargs["redact_paths"] = True
-    if "allow_hidden" in VALIDATE_PATH_PARAMETERS:
-        kwargs["allow_hidden"] = True
-    return validate_path(output_path, runner_temp, **kwargs)
 
 
 def release_exists(
@@ -226,21 +151,7 @@ def release_exists(
     base_url: str = PYPI_JSON_BASE_URL,
     urlopen: UrlOpen = urllib.request.urlopen,
 ) -> bool:
-    """Return whether the package version already exists in the PyPI JSON API.
-
-    Args:
-        package_name: PyPI project name to query.
-        version: Exact version to check.
-        base_url: Base URL for the PyPI-compatible JSON API.
-        urlopen: URL opener compatible with ``urllib.request.urlopen``.
-
-    Returns:
-        True when the exact release version exists, otherwise False.
-
-    Raises:
-        ValueError: If any input value is invalid.
-        urllib.error.HTTPError: If the API returns a non-404 HTTP error.
-    """
+    """Return whether the package version already exists in the PyPI JSON API."""
     package_name = validate_package_name(package_name)
     version = validate_version(version)
     base_url = validate_base_url(base_url)
@@ -371,19 +282,7 @@ def resolve_github_output_path(
     *,
     runner_temp: str | os.PathLike[str] | None = None,
 ) -> Path | None:
-    """Return a validated GitHub output file path, or ``None`` outside Actions.
-
-    Args:
-        output_path: Explicit output path override. Defaults to ``GITHUB_OUTPUT``.
-        runner_temp: Explicit runner-temp override. Defaults to ``RUNNER_TEMP``.
-
-    Returns:
-        A validated output path, or ``None`` when no output file is configured.
-
-    Raises:
-        ValueError: If an output path is configured without a runner-temp root
-            or if the output path escapes that root.
-    """
+    """Return a validated GitHub output file path, or ``None`` outside Actions."""
     raw_output_path = output_path or os.environ.get("GITHUB_OUTPUT")
     if not raw_output_path:
         return None
@@ -392,7 +291,12 @@ def resolve_github_output_path(
     if not raw_runner_temp:
         raise ValueError("RUNNER_TEMP is required when GITHUB_OUTPUT is set")
 
-    return validate_action_output_path(raw_output_path, raw_runner_temp)
+    return validate_path(
+        raw_output_path,
+        raw_runner_temp,
+        redact_paths=True,
+        allow_hidden=True,
+    )
 
 
 def write_github_output(
@@ -402,17 +306,7 @@ def write_github_output(
     output_path: str | os.PathLike[str] | None = None,
     runner_temp: str | os.PathLike[str] | None = None,
 ) -> None:
-    """Append a single GitHub Actions output assignment after path validation.
-
-    Args:
-        name: GitHub Actions output name.
-        value: Single-line output value.
-        output_path: Explicit output path override. Defaults to ``GITHUB_OUTPUT``.
-        runner_temp: Explicit runner-temp override. Defaults to ``RUNNER_TEMP``.
-
-    Raises:
-        ValueError: If the output name, value, or output path is unsafe.
-    """
+    """Append a single GitHub Actions output assignment after path validation."""
     validate_github_output_name(name)
     if any(char in value for char in "\r\n"):
         raise ValueError("GitHub output value cannot contain newlines")
@@ -430,19 +324,7 @@ def main(
     *,
     urlopen: UrlOpen = urllib.request.urlopen,
 ) -> int:
-    """Run the PyPI version-existence check for GitHub Actions.
-
-    Args:
-        argv: Command-line arguments without the program name.
-        urlopen: URL opener compatible with ``urllib.request.urlopen``.
-
-    Returns:
-        Process exit code.
-
-    Raises:
-        urllib.error.HTTPError: If the PyPI-compatible API returns a non-404
-            HTTP error.
-    """
+    """Run the PyPI version-existence check for GitHub Actions."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", help="Project version to check on PyPI.")
     parser.add_argument(

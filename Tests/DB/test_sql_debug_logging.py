@@ -1,0 +1,286 @@
+# test_sql_debug_logging.py
+# Description: RED-first regression coverage for task-246 (lazy DB debug logging).
+"""
+Task-246: the debug-log line in the DB layer's ``execute_query`` methods used
+to build an eager f-string -- including ``str(params)`` -- on *every* query,
+regardless of whether debug logging was actually enabled. For a BLOB param
+(e.g. an image message insert) this could cost double-digit milliseconds per
+query for a string that is thrown away unread.
+
+These tests prove:
+  * a BLOB-like param is never stringified in full at the default log level;
+  * it is *still* never stringified in full even with a DEBUG sink attached
+    (lazy logging only defers the *decision*; once made, the preview helper
+    must summarize bytes rather than repr() them);
+  * message INSERT parameters are replaced by one fixed redaction marker;
+  * the shared ``preview_params`` helper produces the documented shapes.
+"""
+
+import sys
+
+import pytest
+from loguru import logger
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.sql_logging import preview_params
+
+
+class CountingBytes(bytes):
+    """A bytes subclass that counts how many times __repr__ is called.
+
+    Stringifying a large ``bytes`` value (via ``str()``/``repr()``/an
+    f-string) is the exact cost this task eliminates, so the counter is the
+    ground truth for "was this BLOB ever stringified".
+    """
+
+    repr_calls = 0
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        CountingBytes.repr_calls += 1
+        return super().__repr__()
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        CountingBytes.repr_calls += 1
+        return super().__str__()
+
+
+@pytest.fixture
+def db(tmp_path):
+    database = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+    yield database
+    database.close_connection()
+
+
+@pytest.fixture(autouse=True)
+def _reset_counter():
+    CountingBytes.repr_calls = 0
+    yield
+    CountingBytes.repr_calls = 0
+
+
+def _make_blob_param(size: int = 1024) -> CountingBytes:
+    return CountingBytes(b"x" * size)
+
+
+class TestNoStringifyAtDefaultLevel:
+    def test_blob_param_not_stringified_at_default_log_level(self, db):
+        """No debug sink attached -> the BLOB must never be repr()'d/str()'d."""
+        blob = _make_blob_param()
+        db.execute_query(
+            "CREATE TABLE IF NOT EXISTS scratch_blob (id INTEGER PRIMARY KEY, data BLOB)"
+        )
+        db.execute_query(
+            "INSERT INTO scratch_blob (id, data) VALUES (1, ?)",
+            (blob,),
+            commit=True,
+        )
+        assert CountingBytes.repr_calls == 0
+
+    def test_blob_param_not_stringified_even_with_debug_sink_attached(self, db, capsys):
+        """A DEBUG sink IS attached -- the log line fires, but the preview
+        helper must summarize the BLOB by length, never repr()/str() it."""
+        blob = _make_blob_param()
+        sink_id = logger.add(sys.stderr, level="DEBUG")
+        try:
+            db.execute_query(
+                "CREATE TABLE IF NOT EXISTS scratch_blob2 (id INTEGER PRIMARY KEY, data BLOB)"
+            )
+            db.execute_query(
+                "INSERT INTO scratch_blob2 (id, data) VALUES (1, ?)",
+                (blob,),
+                commit=True,
+            )
+        finally:
+            logger.remove(sink_id)
+        assert CountingBytes.repr_calls == 0
+
+    def test_debug_log_line_is_actually_emitted_when_enabled(self, db, capsys):
+        """Sanity check that the lazy form still logs something at DEBUG,
+        so the "never emits" case above isn't passing by accident (e.g. the
+        debug call was deleted rather than made lazy)."""
+        sink_id = logger.add(sys.stderr, level="DEBUG")
+        try:
+            db.execute_query(
+                "CREATE TABLE IF NOT EXISTS scratch_plain (id INTEGER PRIMARY KEY, val TEXT)"
+            )
+            db.execute_query(
+                "INSERT INTO scratch_plain (id, val) VALUES (1, ?)",
+                ("hello",),
+                commit=True,
+            )
+        finally:
+            logger.remove(sink_id)
+        captured = capsys.readouterr()
+        assert "Executing SQL" in captured.err
+
+
+class TestCharacterCardUpdateNoEagerBlobLogging:
+    """task-15474: ``update_character_card``'s debug log used to build an
+    eager ``f"Params: {final_params}"`` string on every call. ``image`` is in
+    ``updatable_direct_fields``, so a character-card save with an embedded
+    avatar built a multi-MB repr on every single update regardless of log
+    level -- exactly the cost ``DB/sql_logging.py`` (and this file's own
+    ``execute_query`` coverage above) exists to eliminate.
+    """
+
+    def test_image_blob_not_stringified_at_default_log_level(self, db):
+        blob = _make_blob_param(size=2_000_000)
+        char_id = db.add_character_card({"name": "Blob Carrier"})
+        assert CountingBytes.repr_calls == 0  # sanity: add didn't touch it
+
+        result = db.update_character_card(char_id, {"image": blob}, expected_version=1)
+        assert result is True
+        assert CountingBytes.repr_calls == 0
+
+    def test_image_blob_not_stringified_even_with_debug_sink_attached(self, db, capsys):
+        blob = _make_blob_param(size=2_000_000)
+        char_id = db.add_character_card({"name": "Blob Carrier 2"})
+        sink_id = logger.add(sys.stderr, level="DEBUG")
+        try:
+            result = db.update_character_card(
+                char_id, {"image": blob}, expected_version=1
+            )
+        finally:
+            logger.remove(sink_id)
+        assert result is True
+        assert CountingBytes.repr_calls == 0
+
+    def test_update_debug_log_line_is_actually_emitted_when_enabled(self, db, capsys):
+        """Sanity check the lazy conversion didn't silently delete the log
+        line -- it must still fire (with a length-only preview) at DEBUG."""
+        char_id = db.add_character_card({"name": "Blob Carrier 3"})
+        sink_id = logger.add(sys.stderr, level="DEBUG")
+        try:
+            db.update_character_card(
+                char_id, {"image": b"x" * 1024}, expected_version=1
+            )
+        finally:
+            logger.remove(sink_id)
+        captured = capsys.readouterr()
+        assert "Executing SINGLE character update query" in captured.err
+        assert "<1024 bytes>" in captured.err
+
+    def test_no_eager_params_fstring_remains_in_source(self):
+        """Structural regression coverage (task-15474): reads live source via
+        ``inspect.getsource`` so a refactor that reintroduces
+        ``f"Params: {final_params}"`` fails this test even if it moves the
+        code -- durable, environment-independent evidence alongside the
+        functional BLOB-safety tests above."""
+        import inspect
+
+        source = inspect.getsource(CharactersRAGDB.update_character_card)
+        assert '{final_params}")' not in source, (
+            "Eager params f-string literal reintroduced into "
+            "update_character_card -- route it through preview_params "
+            "under logger.opt(lazy=True) instead (task-15474)."
+        )
+        assert "preview_params(final_params)" in source
+        assert "logger.opt(lazy=True)" in source
+
+
+def test_add_message_debug_log_redacts_sensitive_insert_params(db):
+    conversation_id = db.add_conversation(
+        {
+            "title": "SQL logging privacy",
+            "character_id": None,
+        }
+    )
+    body_sentinel = "PRIVATE_MESSAGE_BODY_SENTINEL"
+    message_id_sentinel = "private-message-id-sentinel"
+    sender_sentinel = "private-sender-identity-sentinel"
+    client_id_sentinel = "private-client-identity-sentinel"
+    captured_messages = []
+    sink_id = logger.add(
+        captured_messages.append,
+        level="DEBUG",
+        format="{message}",
+        filter=lambda record: record["level"].name == "DEBUG",
+    )
+    try:
+        db.add_message(
+            {
+                "id": message_id_sentinel,
+                "conversation_id": conversation_id,
+                "sender": sender_sentinel,
+                "content": body_sentinel,
+                "client_id": client_id_sentinel,
+            }
+        )
+    finally:
+        logger.remove(sink_id)
+
+    insert_logs = [
+        str(message)
+        for message in captured_messages
+        if "INSERT INTO messages" in str(message)
+    ]
+    assert len(insert_logs) == 1
+    insert_log = insert_logs[0]
+    assert "Params: <redacted>" in insert_log
+    for sentinel in (
+        body_sentinel,
+        message_id_sentinel,
+        sender_sentinel,
+        client_id_sentinel,
+    ):
+        assert sentinel not in insert_log
+
+
+class TestPreviewParamsHelperShapes:
+    def test_none_params(self):
+        assert preview_params(None) == "None"
+
+    def test_tuple_of_scalars(self):
+        assert preview_params((1, "abc", None, True)) == "(1, abc, None, True)"
+
+    def test_bytes_param_summarized_by_length_never_repr(self):
+        preview = preview_params((b"x" * 5_000_000,))
+        assert "5000000 bytes" in preview
+        assert "x" not in preview  # never contains the actual byte content
+
+    def test_bytearray_and_memoryview_summarized(self):
+        assert "<3 bytes>" in preview_params((bytearray(b"abc"),))
+        assert "<3 bytes>" in preview_params((memoryview(b"abc"),))
+
+    def test_long_string_truncated(self):
+        long_str = "y" * 500
+        preview = preview_params((long_str,))
+        assert "500 chars" in preview
+        assert len(preview) < 250
+
+    def test_dict_params(self):
+        preview = preview_params({"a": 1, "b": "x"})
+        assert preview.startswith("{")
+        assert "a=1" in preview
+        assert "b=x" in preview
+
+    def test_whole_preview_capped_even_with_many_small_params(self):
+        many_params = tuple(str(i) for i in range(500))
+        preview = preview_params(many_params)
+        assert len(preview) <= 210  # _MAX_PREVIEW_CHARS + "..." slack
+
+    def test_unreprable_params_do_not_raise(self):
+        class Explodes:
+            def __repr__(self):
+                raise RuntimeError("boom")
+
+        # Must not raise -- a broken repr() on a param must never break the
+        # query/logging path.
+        preview_params((Explodes(),))
+
+    def test_generator_params_are_not_consumed(self):
+        """PR #651 review: iterating a generator in the preview would consume
+        it before cursor.execute — a heisenbug firing only with DEBUG on."""
+
+        def gen():
+            yield 1
+            yield 2
+
+        generator = gen()
+        preview_params(generator)  # must NOT iterate it
+        assert list(generator) == [1, 2], "preview consumed the generator"
+
+    def test_string_params_not_split_char_by_char(self):
+        preview = preview_params("abc")
+        assert preview == "abc"
+        assert "a, b, c" not in preview

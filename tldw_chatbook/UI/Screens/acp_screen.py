@@ -9,11 +9,20 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Rule, Static
 
 from ...ACP_Interop.runtime_process import ACPRuntimeProcessResult
-from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
+from ...ACP_Interop.runtime_session import (
+    ACPRuntimeSessionState,
+    is_current_acp_session_record,
+)
+from ..Navigation.pending_handoff_store import HandoffChannel
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState
 
+
+ACP_CURRENT_SESSION_TARGET_UNAVAILABLE = (
+    "Only the current ACP runtime session is available. "
+    "Return to Console and choose it again."
+)
 
 ACP_RUNTIME_NOT_CONFIGURED = DestinationRecoveryState(
     status_label="Runtime not configured",
@@ -55,6 +64,38 @@ class ACPScreen(BaseAppScreen):
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "acp", **kwargs)
 
+    def on_mount(self) -> None:
+        """Consume an owned current-session target after the real pane mounts."""
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
+        self.call_after_refresh(self._consume_pending_session_target)
+
+    def _consume_pending_session_target(self) -> None:
+        """Focus an exact current ACP target and settle the claimed revision."""
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.ACP_SESSION_TARGET)
+        if claim is None:
+            return
+
+        message = ACP_CURRENT_SESSION_TARGET_UNAVAILABLE
+        severity = "warning"
+        try:
+            state = self._runtime_session_state()
+            if is_current_acp_session_record(claim.value, state.session_id):
+                row = self.query_one("#acp-session-list-row")
+                detail = self.query_one("#acp-detail-pane")
+                row.add_class("acp-selected-session-row")
+                detail.scroll_visible(animate=False)
+                message = "Opened the current ACP session details."
+                severity = "information"
+        except Exception:
+            pass
+
+        try:
+            self.notify(message, severity=severity)
+        finally:
+            store.acknowledge(claim)
+
     @staticmethod
     def _display_status(value: str) -> str:
         status = (value or "unknown").replace("_", " ").strip()
@@ -73,7 +114,9 @@ class ACPScreen(BaseAppScreen):
         else:
             raw_state = getattr(self.app_instance, "acp_runtime_session_state", None)
             if raw_state is None:
-                manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
+                manager = getattr(
+                    self.app_instance, "acp_runtime_process_manager", None
+                )
                 snapshot = getattr(manager, "snapshot", None)
                 raw_state = snapshot() if callable(snapshot) else None
         return ACPRuntimeSessionState.from_any(raw_state)
@@ -88,7 +131,10 @@ class ACPScreen(BaseAppScreen):
             raw_snapshot = snapshot()
             if isinstance(raw_snapshot, dict):
                 manager_status = str(raw_snapshot.get("status") or "not_configured")
-                if explicit_state.runtime_configured and manager_status == "not_configured":
+                if (
+                    explicit_state.runtime_configured
+                    and manager_status == "not_configured"
+                ):
                     return {
                         "status": "running"
                         if explicit_state.has_console_session_payload
@@ -99,9 +145,15 @@ class ACPScreen(BaseAppScreen):
                         "command_display": explicit_state.runtime_display_name,
                     }
                 return dict(raw_snapshot)
-        state = explicit_state if explicit_state.runtime_configured else self._runtime_session_state()
+        state = (
+            explicit_state
+            if explicit_state.runtime_configured
+            else self._runtime_session_state()
+        )
         return {
-            "status": "running" if state.has_console_session_payload else "configured"
+            "status": "running"
+            if state.has_console_session_payload
+            else "configured"
             if state.runtime_configured
             else "not_configured",
             "launch_available": False,
@@ -142,7 +194,9 @@ class ACPScreen(BaseAppScreen):
             if runtime_configured
             else "  No sessions"
         )
-        list_row_label = session_display_name if has_session_payload else runtime_display_name
+        list_row_label = (
+            session_display_name if has_session_payload else runtime_display_name
+        )
         list_row_badges = (
             f"({escape_markup(str(state.session_status or process_status))}) (console-ready)"
             if has_session_payload
@@ -189,14 +243,21 @@ class ACPScreen(BaseAppScreen):
                 id="acp-purpose",
                 classes="destination-purpose",
             )
-            with DestinationModeStrip(id="acp-mode-strip", classes="destination-mode-strip"):
+            with DestinationModeStrip(
+                id="acp-mode-strip", classes="destination-mode-strip"
+            ):
                 yield Static(
                     "View: Agents / Sessions / Runtimes / Compatibility | Scope: Ready + Blocked",
                     id="acp-mode-label",
                     classes="destination-section",
                 )
-            with Horizontal(id="acp-workbench", classes="ds-panel destination-workbench"):
-                with Vertical(id="acp-list-pane", classes="destination-workbench-pane acp-framed-pane"):
+            with Horizontal(
+                id="acp-workbench", classes="ds-panel destination-workbench"
+            ):
+                with Vertical(
+                    id="acp-list-pane",
+                    classes="destination-workbench-pane acp-framed-pane",
+                ):
                     yield Static(
                         "Agents / Sessions",
                         classes="destination-section acp-column-title",
@@ -206,7 +267,9 @@ class ACPScreen(BaseAppScreen):
                         id="acp-session-list-row",
                         classes="acp-selected-session-row",
                     )
-                    yield Static(f"  Runtime: {runtime_display_name}", id="acp-runtime-display")
+                    yield Static(
+                        f"  Runtime: {runtime_display_name}", id="acp-runtime-display"
+                    )
                     yield Static(session_line, id="acp-session-status")
                     yield Static(runtime_line, id="acp-runtime-status")
                     yield Static(
@@ -218,7 +281,10 @@ class ACPScreen(BaseAppScreen):
                         id="acp-terminal-unavailable",
                     )
                 yield self._column_divider("acp-list-detail-divider")
-                with Vertical(id="acp-detail-pane", classes="destination-workbench-pane acp-framed-pane"):
+                with Vertical(
+                    id="acp-detail-pane",
+                    classes="destination-workbench-pane acp-framed-pane",
+                ):
                     yield Static(
                         session_detail_title,
                         classes="destination-section acp-column-title",
@@ -226,8 +292,12 @@ class ACPScreen(BaseAppScreen):
                     if runtime_configured:
                         yield Static(state_summary, id="acp-state-summary")
                         yield Static("Runtime configured", id="acp-runtime-ready-state")
-                        yield Static(f"Runtime: {runtime_display_name}", id="acp-runtime-summary")
-                        yield Static(f"Session: {session_display_name}", id="acp-session-summary")
+                        yield Static(
+                            f"Runtime: {runtime_display_name}", id="acp-runtime-summary"
+                        )
+                        yield Static(
+                            f"Session: {session_display_name}", id="acp-session-summary"
+                        )
                         if has_session_payload:
                             yield Static(
                                 f"Session ready: {session_display_name}",
@@ -314,7 +384,9 @@ class ACPScreen(BaseAppScreen):
                             id="acp-primary-action-group-title",
                             classes="destination-section acp-inspector-group-title",
                         )
-                    yield Static(follow_disabled_reason, id="acp-follow-disabled-reason")
+                    yield Static(
+                        follow_disabled_reason, id="acp-follow-disabled-reason"
+                    )
                     yield Button(
                         follow_label,
                         id="acp-follow-in-console",
@@ -376,7 +448,7 @@ class ACPScreen(BaseAppScreen):
         event.stop()
         self._launch_acp_runtime_worker("ACP agent session")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="acp-launch-runtime", thread=True)
     def _launch_acp_runtime_worker(self, title: str) -> None:
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         launcher = getattr(manager, "start_session", None)
@@ -417,7 +489,7 @@ class ACPScreen(BaseAppScreen):
         event.stop()
         self._stop_acp_runtime_worker()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="acp-stop-runtime", thread=True)
     def _stop_acp_runtime_worker(self) -> None:
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         stopper = getattr(manager, "stop", None)

@@ -10,17 +10,10 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_unified_shell_phase6_first_time_replay import (
-    PHASE_6_PARENT_TASK,
-    PHASE_6_README,
-    ROADMAP,
-    _phase_evidence_row,
-    _phase_overview_row,
     _screen_text,
-    _status_line,
     _test_cli_setting,
-    _text,
     _wait_until,
 )
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput
@@ -61,25 +54,39 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
             )
             assert "Start in Console" in _screen_text(app)
 
             app.screen.query_one("#home-primary-action", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
-            assert "Watchlists: Connected" in console_text
-            assert "More: Ctrl+P" in console_text
+            assert "Watchlists: Available" in console_text
+            # NV-01 (TASK-2154.21): at 180 cols every destination fits, so
+            # the overflow affordance hides instead of docking over the strip.
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one("#nav-overflow-hint").display is False,
+            )
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)
 
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             await _wait_until(
                 pilot,
@@ -91,7 +98,7 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             # The placeholder Import/Export row itself is retired outright
             # (see the inventory verdict); Import media absorbed its slot.
             library_text = _screen_text(app)
-            assert "Import media" in library_text
+            assert "Import…" in library_text
             assert "Search / RAG" in library_text
             assert not app.screen.query("#library-row-ingest-import-export")
 
@@ -102,19 +109,27 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library"
-                and bool(app.screen.query("#library-ingest-canvas")),
+                lambda: (
+                    app.current_tab == "library"
+                    and bool(app.screen.query("#library-ingest-canvas"))
+                ),
             )
 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             app.screen.query_one("#nav-library", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
+                lambda: (
+                    app.current_tab == "library"
+                    and app.screen.__class__.__name__ == "LibraryScreen"
+                ),
             )
             # Search/RAG is likewise an in-Library mode, reached via its
             # rail row rather than the retired #library-open-search chip.
@@ -138,7 +153,10 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
             live_work_text = _screen_text(app)
             assert "Source: Watchlists" in live_work_text
@@ -151,15 +169,24 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             from tldw_chatbook.UI.Navigation import screen_registry
 
             subscriptions_route = screen_registry._SCREEN_ROUTES.get("subscriptions")
-            if subscriptions_route is not None and subscriptions_route.dependencies_available():
-                app.screen.query_one("#console-live-work-primary-action", Button).press()
+            if (
+                subscriptions_route is not None
+                and subscriptions_route.dependencies_available()
+            ):
+                app.screen.query_one(
+                    "#console-live-work-primary-action", Button
+                ).press()
                 await _wait_until(
                     pilot,
-                    lambda: app.current_tab == "subscriptions"
-                    and app.screen.__class__.__name__ == "SubscriptionScreen",
+                    lambda: (
+                        app.current_tab == "subscriptions"
+                        and app.screen.__class__.__name__ == "SubscriptionScreen"
+                    ),
                 )
                 subscription_window = app.screen.subscription_window
                 assert subscription_window is not None
                 assert subscription_window.initial_tab == "watchlist-runs"
-                assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
-
+                assert (
+                    subscription_window._selected_watchlist_run_id
+                    == "local:watchlist_run:91"
+                )

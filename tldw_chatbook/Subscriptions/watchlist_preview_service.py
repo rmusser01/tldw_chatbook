@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from typing import Any, Callable, Mapping
+
+from ..DB.Subscriptions_DB import SubscriptionsDB
+from .local_watchlists_service import LocalWatchlistsService
+
+
+class WatchlistPreviewService:
+    """Dry-run fetch for a watchlist source without persisting anything."""
+
+    def __init__(
+        self,
+        *,
+        run_executor: Callable[[Mapping[str, Any]], Any] | None = None,
+    ) -> None:
+        self.run_executor = run_executor
+
+    async def preview(self, source_config: Mapping[str, Any]) -> dict[str, Any]:
+        """Fetch candidate items for a source without creating a run or storing items.
+
+        Args:
+            source_config: A mapping describing the source. Expected keys include
+                ``source_type`` (rss, atom, url, url_list, sitemap, api), ``url``
+                or ``source``, and optional ``extraction_rules``,
+                ``processing_options``, ``custom_headers``.
+
+        Returns:
+            A dict with ``items`` (list of candidate items) and ``log_text``.
+        """
+        # Use a throw-away in-memory DB so URL snapshots are not persisted.
+        # Since task-689, this is a real, functional connection (not the
+        # inert schema-less object it used to be), so it must be closed
+        # deterministically -- otherwise every preview call leaks a
+        # thread-local sqlite3 connection and its in-memory database until
+        # GC happens to collect this object.
+        preview_db = SubscriptionsDB(":memory:", client_id="preview")
+        try:
+            service = LocalWatchlistsService(
+                db_factory=lambda: preview_db,
+                run_executor=self.run_executor,
+            )
+
+            subscription = self._build_subscription(source_config)
+            # Foreign-key enforcement is on for every SubscriptionsDB connection
+            # (task-1a), so url_snapshots.subscription_id -- written by the
+            # execute path below for url/url_list/sitemap sources -- must
+            # reference a real row in `subscriptions`, not the synthetic id
+            # placeholder `_build_subscription` fills in. Seed one here, in this
+            # same throwaway in-memory DB, so the write succeeds without ever
+            # touching the caller's real database: preview still persists
+            # nothing outside `preview_db`, which is discarded when this call
+            # returns.
+            subscription["id"] = preview_db.add_subscription(
+                name=subscription["name"],
+                type=subscription["type"],
+                source=subscription["source"],
+            )
+            result = await service._execute_subscription(subscription, preview_db)
+            items = list(result.get("items") or [])
+            return {
+                "items": items,
+                "log_text": f"Preview completed with {len(items)} candidate item(s).",
+            }
+        finally:
+            preview_db.close()
+
+    @staticmethod
+    def _build_subscription(source_config: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalize a source config into a subscription-shaped dict."""
+        source_type = str(source_config.get("source_type") or "rss").strip()
+        source = str(
+            source_config.get("url")
+            or source_config.get("source")
+            or ""
+        )
+        subscription: dict[str, Any] = {
+            # Placeholder -- preview() overwrites this with a real row id
+            # seeded into the throwaway in-memory DB before executing, so
+            # any FK-bearing write (e.g. url_snapshots) has a valid parent.
+            "id": -1,
+            "name": str(source_config.get("name") or "Preview"),
+            "type": source_type,
+            "source": source,
+            "extraction_method": source_config.get("extraction_method", "auto"),
+        }
+
+        for field in (
+            "extraction_rules",
+            "processing_options",
+            "custom_headers",
+            "rate_limit_config",
+            "notification_config",
+            "ignore_selectors",
+            "change_threshold",
+        ):
+            if field in source_config:
+                subscription[field] = source_config[field]
+
+        return subscription

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
 
 import pytest
 
+import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
+import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
 from tldw_chatbook.MCP.unified_control_models import (
@@ -12,6 +14,156 @@ from tldw_chatbook.MCP.unified_control_models import (
     ServerAccessContext,
     UnifiedMCPContext,
 )
+
+
+def _projection_tool(name: str, marker: str) -> HubTool:
+    return HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace, web, and Watchlists",
+        source="local",
+        name=name,
+        description=f"{name}-{marker}",
+        input_schema={"type": "object", "properties": {marker: {"type": "string"}}},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+
+
+def test_local_hub_tools_requires_exact_definition_identity_and_closes_handles(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    exact = _projection_tool("exact", "same")
+    changed = _projection_tool("changed", "inspection")
+    console_only = _projection_tool("console_only", "inspection")
+    handles = []
+
+    class Provider:
+        def __init__(self, tools):
+            self._tools = tools
+
+        def hub_tools(self):
+            return list(self._tools)
+
+    class Handle:
+        def __init__(self, tools):
+            self.provider = Provider(tools)
+            self.close_calls = 0
+            handles.append(self)
+
+        def close(self):
+            self.close_calls += 1
+
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "build_hub_local_inspection_provider",
+        lambda *_args, **_kwargs: Handle([exact, changed, console_only]),
+    )
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "build_hub_local_provider",
+        lambda *_args, **_kwargs: Handle(
+            [exact, _projection_tool("changed", "executable")]
+        ),
+    )
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "resolve_server_workspace_root",
+        lambda: tmp_path,
+    )
+    requested_settings = []
+
+    def setting(section, key, default=None):
+        requested_settings.append((section, key))
+        if (section, key) == ("console", "local_tools_enabled"):
+            return True
+        if (section, key) == ("mcp", "expose_local_tools"):
+            raise AssertionError("external publication gate is irrelevant")
+        return default
+
+    monkeypatch.setattr(control_plane_module, "get_cli_setting", setting)
+    service = UnifiedMCPControlPlaneService(
+        target_store=None,
+        context_store=None,
+        local_service=None,
+        server_service=None,
+    )
+
+    projected = {tool.name: tool for tool in service.local_hub_tools()}
+
+    assert projected["exact"].executable is True
+    assert projected["changed"].executable is False
+    assert projected["console_only"].executable is False
+    assert requested_settings == [("console", "local_tools_enabled")]
+    assert [handle.close_calls for handle in handles] == [1, 1]
+
+
+# Fix Round H (PR-T3 review), Item 2c -- POLICY on pinning hand-mirrored
+# fakes against the real class they stand in for (the same question that
+# produced the get_runtime_health() pin in test_local_control_service.py
+# and the run_runtime_batch() coercion fix in
+# test_control_plane_tool_execute.py). NOT every fake gets one: a pin on
+# every fake is unmaintainable, and the point is catching SILENT drift, not
+# maximizing assertion count. The line drawn here:
+#
+#   PIN a fake when its return value is a HAND-ROLLED DICT LITERAL standing
+#   in for a real method that ALSO builds its own hand-rolled dict, AND
+#   something downstream treats that shape as meaningful -- rendering
+#   specific keys, or (as with the Advanced hatch's raw-JSON dump) showing
+#   the payload to the user verbatim. Two independently-authored literals
+#   claiming to describe the same shape drift silently: nothing raises,
+#   nothing warns, the suite just stops meaning what it appears to mean.
+#   `FakeLocalRuntimeDelegate` (test_local_control_service.py) is the
+#   textbook case -- proven by this round's own mutation (a bogus key
+#   added to the real `get_runtime_health()` left every other test green).
+#
+#   DO NOT pin a fake whose divergence would surface as a loud, immediate
+#   failure some other way, or whose return shape carries no meaning the
+#   tests actually lean on:
+#
+#   - `FakeLocalMCPControlService` (this file): ~20 methods, each
+#     returning synthetic fixture data (literal strings like "local-a",
+#     "docs::fetch") that were never intended to resemble real DB-derived
+#     content. The tests in this file exercise `UnifiedMCPControlPlaneService.
+#     run_action()`'s DISPATCH logic -- does it route to the right local_
+#     service method, forward the right arguments, pass the result through
+#     unchanged -- not the internal shape of what the local service
+#     returns. `run_action()` never inspects these payloads' keys (see
+#     e.g. the `runtime.health.get` branch: a bare `return await self.
+#     _maybe_await(self.local_service.get_runtime_health())`), so a field
+#     rename here would not silently invalidate anything this file asserts;
+#     it would just make the echoed-back dict spell its keys differently,
+#     and the pass-through assertions would still pass or fail on their own
+#     terms.
+#   - `FakeLocalStore` (test_local_control_service.py): stores/returns REAL
+#     domain dataclasses already imported from `local_store.py`
+#     (`LocalExternalMCPProfile`, `LocalGovernanceRule`, ...), not
+#     independently-invented shapes -- a signature or field drift in the
+#     real `LocalMCPStore` raises a loud `TypeError`/`AttributeError` at
+#     the first call, the opposite of the silent-drift failure mode a pin
+#     exists to catch.
+#   - `FakeExecutionLog` (test_mcp_workbench.py): implements exactly ONE
+#     method (`read_recent`) that hands back whatever the test seeded,
+#     verbatim -- there is no real-side computation for it to drift from.
+#     Its companion fixture `_audit_record()` DOES hand-roll a dict
+#     mirroring `ExecutionRecord`'s dataclass fields; that risk is real but
+#     orthogonal to this fake (a dataclass-vs-dict field pin, not a
+#     fake-vs-real METHOD pin) and is left as a candidate for future work,
+#     not silently dropped.
+#   - `FakeHubService` (test_mcp_workbench.py): the highest-traffic fake in
+#     this surface (a 7,000+ line file) and DOES return hand-rolled,
+#     UI-rendered dict shapes from `load_section()` per source/section
+#     combination -- a genuine candidate by the same logic as
+#     `FakeLocalRuntimeDelegate` above. Not pinned in this round: doing it
+#     properly means comparing against `UnifiedMCPControlPlaneService.
+#     load_section()`'s several distinct per-section/per-source shapes,
+#     which is a task-sized effort on its own, not a fix-round-sized one.
+#     Flagged explicitly rather than silently skipped -- see this round's
+#     own report.
 
 
 class FakeLocalMCPControlService:
@@ -29,7 +181,11 @@ class FakeLocalMCPControlService:
 
     def get_external_servers(self) -> dict:
         self.calls.append("external_servers")
-        return {"source": "local", "section": "external_servers", "profiles": [{"profile_id": "local-a"}]}
+        return {
+            "source": "local",
+            "section": "external_servers",
+            "profiles": [{"profile_id": "local-a"}],
+        }
 
     def get_governance(self) -> list[dict]:
         self.calls.append("governance")
@@ -71,7 +227,9 @@ class FakeLocalMCPControlService:
         return True
 
     def preview_governance_decision(self, capability_id: str) -> dict:
-        self.action_calls.append(("governance_rule.preview", {"capability_id": capability_id}))
+        self.action_calls.append(
+            ("governance_rule.preview", {"capability_id": capability_id})
+        )
         return {
             "source": "local",
             "capability_id": capability_id,
@@ -83,12 +241,20 @@ class FakeLocalMCPControlService:
     async def execute_tool(self, tool_name: str, arguments: dict | None = None) -> dict:
         payload = {"tool_name": tool_name, "arguments": dict(arguments or {})}
         self.action_calls.append(("tool.execute", payload))
-        return {"source": "local", "tool_name": tool_name, "result": dict(arguments or {})}
+        return {
+            "source": "local",
+            "tool_name": tool_name,
+            "result": dict(arguments or {}),
+        }
 
     async def read_resource(self, resource_uri: str) -> dict:
         payload = {"resource_uri": resource_uri}
         self.action_calls.append(("resource.read", payload))
-        return {"source": "local", "resource_uri": resource_uri, "result": {"content": "resource-body"}}
+        return {
+            "source": "local",
+            "resource_uri": resource_uri,
+            "result": {"content": "resource-body"},
+        }
 
     async def get_prompt(self, prompt_name: str, arguments: dict | None = None) -> dict:
         payload = {"prompt_name": prompt_name, "arguments": dict(arguments or {})}
@@ -147,7 +313,9 @@ class FakeLocalMCPControlService:
             },
         }
 
-    def list_approval_requests(self, status: str | None = None, resolved_action_id: str | None = None) -> list[dict]:
+    def list_approval_requests(
+        self, status: str | None = None, resolved_action_id: str | None = None
+    ) -> list[dict]:
         payload = {}
         if status is not None:
             payload["status"] = status
@@ -163,7 +331,9 @@ class FakeLocalMCPControlService:
         ]
 
     def approve_approval_request(self, request_id: str) -> dict:
-        self.action_calls.append(("approval_request.approve", {"request_id": request_id}))
+        self.action_calls.append(
+            ("approval_request.approve", {"request_id": request_id})
+        )
         return {"request_id": request_id, "status": "approved"}
 
     def deny_approval_request(self, request_id: str) -> dict:
@@ -171,10 +341,14 @@ class FakeLocalMCPControlService:
         return {"request_id": request_id, "status": "denied"}
 
     def delete_approval_request(self, request_id: str) -> bool:
-        self.action_calls.append(("approval_request.delete", {"request_id": request_id}))
+        self.action_calls.append(
+            ("approval_request.delete", {"request_id": request_id})
+        )
         return True
 
-    def preview_runtime_access(self, action_name: str, payload: dict | None = None) -> dict:
+    def preview_runtime_access(
+        self, action_name: str, payload: dict | None = None
+    ) -> dict:
         entry = {"action_name": action_name, "payload": dict(payload or {})}
         self.action_calls.append(("runtime.access.preview", entry))
         return {
@@ -189,7 +363,9 @@ class FakeLocalMCPControlService:
             "approval_status": None,
         }
 
-    async def run_runtime_request(self, method: str, params: dict | None = None) -> dict:
+    async def run_runtime_request(
+        self, method: str, params: dict | None = None
+    ) -> dict:
         payload = {"method": method, "params": dict(params or {})}
         self.action_calls.append(("runtime.request", payload))
         return {
@@ -230,9 +406,13 @@ class FakeServerUnifiedMCPService:
         selected_scope_ref=None,
         selected_section=None,
     ) -> ServerAccessContext:
-        self.resolve_calls.append((target.server_id, selected_scope, selected_scope_ref, selected_section))
+        self.resolve_calls.append(
+            (target.server_id, selected_scope, selected_scope_ref, selected_section)
+        )
         effective_scope = selected_scope or "personal"
-        effective_scope_ref = selected_scope_ref if effective_scope in {"team", "org"} else None
+        effective_scope_ref = (
+            selected_scope_ref if effective_scope in {"team", "org"} else None
+        )
         effective_section = selected_section or "overview"
         return ServerAccessContext(
             server_id=target.server_id,
@@ -253,7 +433,13 @@ class FakeServerUnifiedMCPService:
         )
 
     async def get_overview(self, *, target, access_context):
-        self.overview_calls.append((target.server_id, access_context.selected_scope, access_context.selected_scope_ref))
+        self.overview_calls.append(
+            (
+                target.server_id,
+                access_context.selected_scope,
+                access_context.selected_scope_ref,
+            )
+        )
         return {
             "source": "server",
             "section": "overview",
@@ -263,7 +449,13 @@ class FakeServerUnifiedMCPService:
         }
 
     async def get_inventory(self, *, target, access_context):
-        self.inventory_calls.append((target.server_id, access_context.selected_scope, access_context.selected_scope_ref))
+        self.inventory_calls.append(
+            (
+                target.server_id,
+                access_context.selected_scope,
+                access_context.selected_scope_ref,
+            )
+        )
         return {
             "source": "server",
             "section": "inventory",
@@ -273,7 +465,13 @@ class FakeServerUnifiedMCPService:
         }
 
     async def get_catalogs(self, *, target, access_context):
-        self.catalog_calls.append((target.server_id, access_context.selected_scope, access_context.selected_scope_ref))
+        self.catalog_calls.append(
+            (
+                target.server_id,
+                access_context.selected_scope,
+                access_context.selected_scope_ref,
+            )
+        )
         return {
             "source": "server",
             "section": "catalogs",
@@ -284,7 +482,13 @@ class FakeServerUnifiedMCPService:
         }
 
     async def get_external_servers(self, *, target, access_context):
-        self.external_calls.append((target.server_id, access_context.selected_scope, access_context.selected_scope_ref))
+        self.external_calls.append(
+            (
+                target.server_id,
+                access_context.selected_scope,
+                access_context.selected_scope_ref,
+            )
+        )
         return {
             "source": "server",
             "section": "external_servers",
@@ -295,7 +499,13 @@ class FakeServerUnifiedMCPService:
         }
 
     async def get_governance(self, *, target, access_context):
-        self.governance_calls.append((target.server_id, access_context.selected_scope, access_context.selected_scope_ref))
+        self.governance_calls.append(
+            (
+                target.server_id,
+                access_context.selected_scope,
+                access_context.selected_scope_ref,
+            )
+        )
         return {
             "source": "server",
             "section": "governance",
@@ -310,24 +520,47 @@ class FakeServerUnifiedMCPService:
         }
 
     async def create_catalog(self, *, target, access_context, payload):
-        self.action_calls.append(("catalog.create", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "catalog.create",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         return {"id": 9, **dict(payload)}
 
-    async def update_approval_policy(self, *, target, access_context, approval_policy_id, payload):
+    async def update_approval_policy(
+        self, *, target, access_context, approval_policy_id, payload
+    ):
         self.action_calls.append(
-            ("approval_policy.update", target.server_id, access_context.selected_scope_ref, {"approval_policy_id": approval_policy_id, **dict(payload)})
+            (
+                "approval_policy.update",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"approval_policy_id": approval_policy_id, **dict(payload)},
+            )
         )
         return {"id": approval_policy_id, **dict(payload)}
 
     async def get_advanced(self, *, target, access_context):
-        self.advanced_calls.append((target.server_id, access_context.selected_scope, access_context.selected_scope_ref))
+        self.advanced_calls.append(
+            (
+                target.server_id,
+                access_context.selected_scope,
+                access_context.selected_scope_ref,
+            )
+        )
         return {
             "source": "server",
             "section": "advanced",
             "server_id": target.server_id,
             "scope": access_context.selected_scope,
             "scope_ref": access_context.selected_scope_ref,
-            "tool_registry_summary": {"modules": [{"module": "search"}], "entries": [{"tool_name": "docs.search"}]},
+            "tool_registry_summary": {
+                "modules": [{"module": "search"}],
+                "entries": [{"tool_name": "docs.search"}],
+            },
             "tool_registry_entries": [{"tool_name": "docs.search"}],
             "tool_registry_modules": [{"module": "search"}],
             "governance_packs": [{"id": 4, "name": "Baseline"}],
@@ -335,11 +568,25 @@ class FakeServerUnifiedMCPService:
         }
 
     async def create_path_scope_object(self, *, target, access_context, payload):
-        self.action_calls.append(("path_scope_object.create", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "path_scope_object.create",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         return {"id": 11, **dict(payload)}
 
     async def preview_capability_mapping(self, *, target, access_context, payload):
-        self.action_calls.append(("capability_mapping.preview", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "capability_mapping.preview",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         merged = dict(payload)
         merged.setdefault("owner_scope_type", access_context.selected_scope)
         if access_context.selected_scope_ref is not None:
@@ -347,101 +594,341 @@ class FakeServerUnifiedMCPService:
         return {"normalized_mapping": merged}
 
     async def create_workspace_set_object(self, *, target, access_context, payload):
-        self.action_calls.append(("workspace_set_object.create", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "workspace_set_object.create",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         return {"id": 12, **dict(payload)}
 
-    async def list_workspace_set_members(self, *, target, access_context, workspace_set_object_id):
-        self.action_calls.append(("workspace_set_object.members.list", target.server_id, access_context.selected_scope_ref, {"workspace_set_object_id": workspace_set_object_id}))
+    async def list_workspace_set_members(
+        self, *, target, access_context, workspace_set_object_id
+    ):
+        self.action_calls.append(
+            (
+                "workspace_set_object.members.list",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"workspace_set_object_id": workspace_set_object_id},
+            )
+        )
         return [{"workspace_id": "ws-1"}]
 
     async def create_shared_workspace(self, *, target, access_context, payload):
-        self.action_calls.append(("shared_workspace.create", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "shared_workspace.create",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         return {"id": 13, **dict(payload)}
 
-    async def list_policy_assignment_workspaces(self, *, target, access_context, assignment_id):
-        self.action_calls.append(("policy_assignment.workspaces.list", target.server_id, access_context.selected_scope_ref, {"assignment_id": assignment_id}))
+    async def list_policy_assignment_workspaces(
+        self, *, target, access_context, assignment_id
+    ):
+        self.action_calls.append(
+            (
+                "policy_assignment.workspaces.list",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"assignment_id": assignment_id},
+            )
+        )
         return [{"workspace_id": "ws-1"}]
 
-    async def add_policy_assignment_workspace(self, *, target, access_context, assignment_id, workspace_id):
-        self.action_calls.append(("policy_assignment.workspace.add", target.server_id, access_context.selected_scope_ref, {"assignment_id": assignment_id, "workspace_id": workspace_id}))
+    async def add_policy_assignment_workspace(
+        self, *, target, access_context, assignment_id, workspace_id
+    ):
+        self.action_calls.append(
+            (
+                "policy_assignment.workspace.add",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"assignment_id": assignment_id, "workspace_id": workspace_id},
+            )
+        )
         return {"workspace_id": workspace_id}
 
-    async def delete_policy_assignment_workspace(self, *, target, access_context, assignment_id, workspace_id):
-        self.action_calls.append(("policy_assignment.workspace.delete", target.server_id, access_context.selected_scope_ref, {"assignment_id": assignment_id, "workspace_id": workspace_id}))
+    async def delete_policy_assignment_workspace(
+        self, *, target, access_context, assignment_id, workspace_id
+    ):
+        self.action_calls.append(
+            (
+                "policy_assignment.workspace.delete",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"assignment_id": assignment_id, "workspace_id": workspace_id},
+            )
+        )
         return {"ok": True}
 
-    async def list_profile_credential_bindings(self, *, target, access_context, profile_id):
-        self.action_calls.append(("permission_profile.bindings.list", target.server_id, access_context.selected_scope_ref, {"profile_id": profile_id}))
+    async def list_profile_credential_bindings(
+        self, *, target, access_context, profile_id
+    ):
+        self.action_calls.append(
+            (
+                "permission_profile.bindings.list",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"profile_id": profile_id},
+            )
+        )
         return [{"external_server_id": "docs"}]
 
-    async def upsert_profile_credential_binding(self, *, target, access_context, profile_id, server_id, slot_name=None, payload=None):
-        action_name = "permission_profile.slot_binding.upsert" if slot_name else "permission_profile.binding.upsert"
-        entry = {"profile_id": profile_id, "server_id": server_id, "slot_name": slot_name, **dict(payload or {})}
-        self.action_calls.append((action_name, target.server_id, access_context.selected_scope_ref, entry))
-        return {"external_server_id": server_id, "slot_name": slot_name, **dict(payload or {})}
+    async def upsert_profile_credential_binding(
+        self,
+        *,
+        target,
+        access_context,
+        profile_id,
+        server_id,
+        slot_name=None,
+        payload=None,
+    ):
+        action_name = (
+            "permission_profile.slot_binding.upsert"
+            if slot_name
+            else "permission_profile.binding.upsert"
+        )
+        entry = {
+            "profile_id": profile_id,
+            "server_id": server_id,
+            "slot_name": slot_name,
+            **dict(payload or {}),
+        }
+        self.action_calls.append(
+            (action_name, target.server_id, access_context.selected_scope_ref, entry)
+        )
+        return {
+            "external_server_id": server_id,
+            "slot_name": slot_name,
+            **dict(payload or {}),
+        }
 
-    async def delete_profile_credential_binding(self, *, target, access_context, profile_id, server_id, slot_name=None):
-        action_name = "permission_profile.slot_binding.delete" if slot_name else "permission_profile.binding.delete"
-        self.action_calls.append((action_name, target.server_id, access_context.selected_scope_ref, {"profile_id": profile_id, "server_id": server_id, "slot_name": slot_name}))
+    async def delete_profile_credential_binding(
+        self, *, target, access_context, profile_id, server_id, slot_name=None
+    ):
+        action_name = (
+            "permission_profile.slot_binding.delete"
+            if slot_name
+            else "permission_profile.binding.delete"
+        )
+        self.action_calls.append(
+            (
+                action_name,
+                target.server_id,
+                access_context.selected_scope_ref,
+                {
+                    "profile_id": profile_id,
+                    "server_id": server_id,
+                    "slot_name": slot_name,
+                },
+            )
+        )
         return {"ok": True}
 
-    async def get_profile_slot_credential_status(self, *, target, access_context, profile_id, server_id, slot_name):
-        self.action_calls.append(("permission_profile.slot_status.get", target.server_id, access_context.selected_scope_ref, {"profile_id": profile_id, "server_id": server_id, "slot_name": slot_name}))
+    async def get_profile_slot_credential_status(
+        self, *, target, access_context, profile_id, server_id, slot_name
+    ):
+        self.action_calls.append(
+            (
+                "permission_profile.slot_status.get",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {
+                    "profile_id": profile_id,
+                    "server_id": server_id,
+                    "slot_name": slot_name,
+                },
+            )
+        )
         return {"status": "configured"}
 
-    async def list_assignment_credential_bindings(self, *, target, access_context, assignment_id):
-        self.action_calls.append(("policy_assignment.bindings.list", target.server_id, access_context.selected_scope_ref, {"assignment_id": assignment_id}))
+    async def list_assignment_credential_bindings(
+        self, *, target, access_context, assignment_id
+    ):
+        self.action_calls.append(
+            (
+                "policy_assignment.bindings.list",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"assignment_id": assignment_id},
+            )
+        )
         return [{"external_server_id": "docs"}]
 
-    async def upsert_assignment_credential_binding(self, *, target, access_context, assignment_id, server_id, slot_name=None, payload=None):
-        action_name = "policy_assignment.slot_binding.upsert" if slot_name else "policy_assignment.binding.upsert"
-        entry = {"assignment_id": assignment_id, "server_id": server_id, "slot_name": slot_name, **dict(payload or {})}
-        self.action_calls.append((action_name, target.server_id, access_context.selected_scope_ref, entry))
-        return {"external_server_id": server_id, "slot_name": slot_name, **dict(payload or {})}
+    async def upsert_assignment_credential_binding(
+        self,
+        *,
+        target,
+        access_context,
+        assignment_id,
+        server_id,
+        slot_name=None,
+        payload=None,
+    ):
+        action_name = (
+            "policy_assignment.slot_binding.upsert"
+            if slot_name
+            else "policy_assignment.binding.upsert"
+        )
+        entry = {
+            "assignment_id": assignment_id,
+            "server_id": server_id,
+            "slot_name": slot_name,
+            **dict(payload or {}),
+        }
+        self.action_calls.append(
+            (action_name, target.server_id, access_context.selected_scope_ref, entry)
+        )
+        return {
+            "external_server_id": server_id,
+            "slot_name": slot_name,
+            **dict(payload or {}),
+        }
 
-    async def delete_assignment_credential_binding(self, *, target, access_context, assignment_id, server_id, slot_name=None):
-        action_name = "policy_assignment.slot_binding.delete" if slot_name else "policy_assignment.binding.delete"
-        self.action_calls.append((action_name, target.server_id, access_context.selected_scope_ref, {"assignment_id": assignment_id, "server_id": server_id, "slot_name": slot_name}))
+    async def delete_assignment_credential_binding(
+        self, *, target, access_context, assignment_id, server_id, slot_name=None
+    ):
+        action_name = (
+            "policy_assignment.slot_binding.delete"
+            if slot_name
+            else "policy_assignment.binding.delete"
+        )
+        self.action_calls.append(
+            (
+                action_name,
+                target.server_id,
+                access_context.selected_scope_ref,
+                {
+                    "assignment_id": assignment_id,
+                    "server_id": server_id,
+                    "slot_name": slot_name,
+                },
+            )
+        )
         return {"ok": True}
 
-    async def get_assignment_slot_credential_status(self, *, target, access_context, assignment_id, server_id, slot_name):
-        self.action_calls.append(("policy_assignment.slot_status.get", target.server_id, access_context.selected_scope_ref, {"assignment_id": assignment_id, "server_id": server_id, "slot_name": slot_name}))
+    async def get_assignment_slot_credential_status(
+        self, *, target, access_context, assignment_id, server_id, slot_name
+    ):
+        self.action_calls.append(
+            (
+                "policy_assignment.slot_status.get",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {
+                    "assignment_id": assignment_id,
+                    "server_id": server_id,
+                    "slot_name": slot_name,
+                },
+            )
+        )
         return {"status": "configured"}
 
-    async def set_external_server_secret(self, *, target, access_context, server_id, secret):
-        self.action_calls.append(("external_server.secret.set", target.server_id, access_context.selected_scope_ref, {"server_id": server_id, "secret": secret}))
+    async def set_external_server_secret(
+        self, *, target, access_context, server_id, secret
+    ):
+        self.action_calls.append(
+            (
+                "external_server.secret.set",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"server_id": server_id, "secret": secret},
+            )
+        )
         return {"secret_ref_id": "secret-1"}
 
     async def dry_run_governance_pack(self, *, target, access_context, payload):
-        self.action_calls.append(("governance_pack.dry_run", target.server_id, access_context.selected_scope_ref, dict(payload)))
-        return {"report": {"owner_scope_type": access_context.selected_scope, **dict(payload)}}
+        self.action_calls.append(
+            (
+                "governance_pack.dry_run",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
+        return {
+            "report": {
+                "owner_scope_type": access_context.selected_scope,
+                **dict(payload),
+            }
+        }
 
     async def prepare_governance_pack_source(self, *, target, access_context, payload):
-        self.action_calls.append(("governance_pack.source.prepare", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "governance_pack.source.prepare",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         return {"candidate_id": "cand-1", **dict(payload)}
 
-    async def check_governance_pack_updates(self, *, target, access_context, governance_pack_id):
-        self.action_calls.append(("governance_pack.check_updates", target.server_id, access_context.selected_scope_ref, {"governance_pack_id": governance_pack_id}))
+    async def check_governance_pack_updates(
+        self, *, target, access_context, governance_pack_id
+    ):
+        self.action_calls.append(
+            (
+                "governance_pack.check_updates",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"governance_pack_id": governance_pack_id},
+            )
+        )
         return {"governance_pack_id": governance_pack_id, "has_update": True}
 
     async def import_governance_pack(self, *, target, access_context, payload):
-        self.action_calls.append(("governance_pack.import", target.server_id, access_context.selected_scope_ref, dict(payload)))
+        self.action_calls.append(
+            (
+                "governance_pack.import",
+                target.server_id,
+                access_context.selected_scope_ref,
+                dict(payload),
+            )
+        )
         return {"governance_pack_id": 81, **dict(payload)}
 
-    async def get_governance_pack_detail(self, *, target, access_context, governance_pack_id):
-        self.action_calls.append(("governance_pack.detail.get", target.server_id, access_context.selected_scope_ref, {"governance_pack_id": governance_pack_id}))
+    async def get_governance_pack_detail(
+        self, *, target, access_context, governance_pack_id
+    ):
+        self.action_calls.append(
+            (
+                "governance_pack.detail.get",
+                target.server_id,
+                access_context.selected_scope_ref,
+                {"governance_pack_id": governance_pack_id},
+            )
+        )
         return {"id": governance_pack_id, "pack_id": "baseline"}
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_restores_per_server_context_without_touching_global_runtime_source(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_restores_per_server_context_without_touching_global_runtime_source(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
         [
-            ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True),
-            ConfiguredServerTarget(server_id="server-b", label="Server B", base_url="https://b.example/api"),
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            ),
+            ConfiguredServerTarget(
+                server_id="server-b", label="Server B", base_url="https://b.example/api"
+            ),
         ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
@@ -494,12 +981,23 @@ async def test_control_plane_service_restores_per_server_context_without_touchin
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_routes_overview_and_inventory_by_selected_source(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_routes_overview_and_inventory_by_selected_source(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     local_service = FakeLocalMCPControlService()
@@ -530,12 +1028,23 @@ async def test_control_plane_service_routes_overview_and_inventory_by_selected_s
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_routes_slice2_sections_by_selected_source(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_routes_slice2_sections_by_selected_source(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     local_service = FakeLocalMCPControlService()
@@ -570,8 +1079,12 @@ async def test_control_plane_service_routes_slice2_sections_by_selected_source(t
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_routes_local_governance_section_and_actions(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_routes_local_governance_section_and_actions(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
@@ -585,7 +1098,9 @@ async def test_control_plane_service_routes_local_governance_section_and_actions
 
     await orchestrator.select_source("local")
     local_governance = await orchestrator.load_section("governance")
-    action_names = [descriptor["name"] for descriptor in orchestrator.available_actions()]
+    action_names = [
+        descriptor["name"] for descriptor in orchestrator.available_actions()
+    ]
     saved = await orchestrator.run_action(
         "governance_rule.save",
         {
@@ -598,7 +1113,9 @@ async def test_control_plane_service_routes_local_governance_section_and_actions
         "governance_rule.preview",
         {"capability_id": "mcp.inventory.list.local"},
     )
-    deleted = await orchestrator.run_action("governance_rule.delete", {"rule_id": "rule-b"})
+    deleted = await orchestrator.run_action(
+        "governance_rule.delete", {"rule_id": "rule-b"}
+    )
 
     assert local_governance == {
         "source": "local",
@@ -634,7 +1151,9 @@ async def test_control_plane_service_routes_local_governance_section_and_actions
 
 @pytest.mark.asyncio
 async def test_control_plane_service_routes_local_inventory_runtime_actions(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
@@ -648,7 +1167,9 @@ async def test_control_plane_service_routes_local_inventory_runtime_actions(tmp_
 
     await orchestrator.select_source("local")
     await orchestrator.select_section("inventory")
-    action_names = [descriptor["name"] for descriptor in orchestrator.available_actions()]
+    action_names = [
+        descriptor["name"] for descriptor in orchestrator.available_actions()
+    ]
     tool_result = await orchestrator.run_action(
         "tool.execute",
         {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
@@ -669,19 +1190,37 @@ async def test_control_plane_service_routes_local_inventory_runtime_actions(tmp_
     assert resource_result["resource_uri"] == "note://123"
     assert prompt_result["prompt_name"] == "summarize_conversation"
     assert local_service.action_calls == [
-        ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}),
+        (
+            "tool.execute",
+            {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+        ),
         ("resource.read", {"resource_uri": "note://123"}),
-        ("prompt.get", {"prompt_name": "summarize_conversation", "arguments": {"conversation_id": 4}}),
+        (
+            "prompt.get",
+            {
+                "prompt_name": "summarize_conversation",
+                "arguments": {"conversation_id": 4},
+            },
+        ),
     ]
 
 
 @pytest.mark.asyncio
 async def test_control_plane_service_dispatches_slice2_actions(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     local_service = FakeLocalMCPControlService()
@@ -711,20 +1250,43 @@ async def test_control_plane_service_dispatches_slice2_actions(tmp_path):
     assert local_result["profile_id"] == "local-b"
     assert server_result["name"] == "Team Catalog"
     assert local_service.action_calls == [
-        ("profile.save", {"profile_id": "local-b", "command": "python", "args": ["-m", "demo.server"]})
+        (
+            "profile.save",
+            {
+                "profile_id": "local-b",
+                "command": "python",
+                "args": ["-m", "demo.server"],
+            },
+        )
     ]
     assert server_service.action_calls == [
-        ("catalog.create", "server-a", "21", {"name": "Team Catalog", "description": "Scoped"})
+        (
+            "catalog.create",
+            "server-a",
+            "21",
+            {"name": "Team Catalog", "description": "Scoped"},
+        )
     ]
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_hides_server_mutation_actions_for_personal_scope(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_hides_server_mutation_actions_for_personal_scope(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     orchestrator = UnifiedMCPControlPlaneService(
@@ -747,11 +1309,20 @@ async def test_control_plane_service_hides_server_mutation_actions_for_personal_
 
 @pytest.mark.asyncio
 async def test_control_plane_service_routes_governance_section_and_action(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     orchestrator = UnifiedMCPControlPlaneService(
@@ -772,16 +1343,28 @@ async def test_control_plane_service_routes_governance_section_and_action(tmp_pa
     assert governance["section"] == "governance"
     assert governance["permission_profiles"][0]["name"] == "Default"
     assert update_result["name"] == "Updated Approval"
-    assert any(action["name"] == "approval_policy.update" for action in orchestrator.available_actions())
+    assert any(
+        action["name"] == "approval_policy.update"
+        for action in orchestrator.available_actions()
+    )
 
 
 @pytest.mark.asyncio
 async def test_control_plane_service_routes_advanced_section_and_action(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     orchestrator = UnifiedMCPControlPlaneService(
@@ -796,7 +1379,10 @@ async def test_control_plane_service_routes_advanced_section_and_action(tmp_path
     advanced = await orchestrator.load_section("advanced")
     create_result = await orchestrator.run_action(
         "path_scope_object.create",
-        {"name": "Workspace Root", "path_scope_document": {"path_scope_mode": "workspace_root"}},
+        {
+            "name": "Workspace Root",
+            "path_scope_document": {"path_scope_mode": "workspace_root"},
+        },
     )
 
     assert advanced["section"] == "advanced"
@@ -804,16 +1390,30 @@ async def test_control_plane_service_routes_advanced_section_and_action(tmp_path
     assert advanced["tool_registry_entries"][0]["tool_name"] == "docs.search"
     assert advanced["tool_registry_modules"][0]["module"] == "search"
     assert create_result["name"] == "Workspace Root"
-    assert any(action["name"] == "path_scope_object.create" for action in orchestrator.available_actions())
+    assert any(
+        action["name"] == "path_scope_object.create"
+        for action in orchestrator.available_actions()
+    )
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_routes_local_advanced_section_and_runtime_actions(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_routes_local_advanced_section_and_runtime_actions(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     local_service = FakeLocalMCPControlService()
@@ -825,23 +1425,38 @@ async def test_control_plane_service_routes_local_advanced_section_and_runtime_a
     )
 
     advanced = await orchestrator.load_section("advanced")
-    action_names = [descriptor["name"] for descriptor in orchestrator.available_actions()]
+    action_names = [
+        descriptor["name"] for descriptor in orchestrator.available_actions()
+    ]
     preview_result = await orchestrator.run_action(
         "runtime.access.preview",
-        {"action_name": "tool.execute", "payload": {"tool_name": "search_notes", "arguments": {"query": "roadmap"}}},
+        {
+            "action_name": "tool.execute",
+            "payload": {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+        },
     )
-    activity_result = await orchestrator.run_action("runtime.activity.list", {"limit": 5})
+    activity_result = await orchestrator.run_action(
+        "runtime.activity.list", {"limit": 5}
+    )
     protocol_result = await orchestrator.run_action("runtime.protocol.inspect", {})
     health_result = await orchestrator.run_action("runtime.health.get", {})
     approvals_result = await orchestrator.run_action(
         "approval_requests.list",
         {"status": "pending", "resolved_action_id": "notes.list.local"},
     )
-    approve_result = await orchestrator.run_action("approval_request.approve", {"request_id": "approval-a"})
-    deny_result = await orchestrator.run_action("approval_request.deny", {"request_id": "approval-b"})
-    delete_result = await orchestrator.run_action("approval_request.delete", {"request_id": "approval-c"})
+    approve_result = await orchestrator.run_action(
+        "approval_request.approve", {"request_id": "approval-a"}
+    )
+    deny_result = await orchestrator.run_action(
+        "approval_request.deny", {"request_id": "approval-b"}
+    )
+    delete_result = await orchestrator.run_action(
+        "approval_request.delete", {"request_id": "approval-c"}
+    )
     status_result = await orchestrator.run_action("runtime.status.get", {})
-    request_result = await orchestrator.run_action("runtime.request", {"method": "tools/list", "params": {}})
+    request_result = await orchestrator.run_action(
+        "runtime.request", {"method": "tools/list", "params": {}}
+    )
     batch_result = await orchestrator.run_action(
         "runtime.batch",
         {"requests": [{"method": "tools/list"}, {"method": "prompts/list"}]},
@@ -878,13 +1493,19 @@ async def test_control_plane_service_routes_local_advanced_section_and_runtime_a
             "runtime.access.preview",
             {
                 "action_name": "tool.execute",
-                "payload": {"tool_name": "search_notes", "arguments": {"query": "roadmap"}},
+                "payload": {
+                    "tool_name": "search_notes",
+                    "arguments": {"query": "roadmap"},
+                },
             },
         ),
         ("runtime.activity.list", {"limit": 5}),
         ("runtime.protocol.inspect", {}),
         ("runtime.health.get", {}),
-        ("approval_requests.list", {"status": "pending", "resolved_action_id": "notes.list.local"}),
+        (
+            "approval_requests.list",
+            {"status": "pending", "resolved_action_id": "notes.list.local"},
+        ),
         ("approval_request.approve", {"request_id": "approval-a"}),
         ("approval_request.deny", {"request_id": "approval-b"}),
         ("approval_request.delete", {"request_id": "approval-c"}),
@@ -903,12 +1524,23 @@ async def test_control_plane_service_routes_local_advanced_section_and_runtime_a
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_exposes_remaining_advanced_actions_by_scope_and_routes_them(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_exposes_remaining_advanced_actions_by_scope_and_routes_them(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     server_service = FakeServerUnifiedMCPService()
@@ -938,7 +1570,11 @@ async def test_control_plane_service_exposes_remaining_advanced_actions_by_scope
     )
     shared_workspace = await orchestrator.run_action(
         "shared_workspace.create",
-        {"workspace_id": "shared-ws", "display_name": "Shared Workspace", "absolute_root": "/srv/shared"},
+        {
+            "workspace_id": "shared-ws",
+            "display_name": "Shared Workspace",
+            "absolute_root": "/srv/shared",
+        },
     )
 
     assert "capability_mapping.preview" in actions
@@ -956,12 +1592,23 @@ async def test_control_plane_service_exposes_remaining_advanced_actions_by_scope
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_exposes_governance_pack_advanced_actions_and_routes_them(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_exposes_governance_pack_advanced_actions_and_routes_them(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     server_service = FakeServerUnifiedMCPService()
@@ -982,7 +1629,13 @@ async def test_control_plane_service_exposes_governance_pack_advanced_actions_an
     )
     prepared = await orchestrator.run_action(
         "governance_pack.source.prepare",
-        {"source": {"kind": "git", "url": "git@example.com:trusted/repo.git", "ref": "main"}},
+        {
+            "source": {
+                "kind": "git",
+                "url": "git@example.com:trusted/repo.git",
+                "ref": "main",
+            }
+        },
     )
     checked = await orchestrator.run_action(
         "governance_pack.check_updates",
@@ -1009,12 +1662,23 @@ async def test_control_plane_service_exposes_governance_pack_advanced_actions_an
 
 
 @pytest.mark.asyncio
-async def test_control_plane_service_exposes_remaining_governance_and_external_admin_tail_actions_and_routes_them(tmp_path):
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+async def test_control_plane_service_exposes_remaining_governance_and_external_admin_tail_actions_and_routes_them(
+    tmp_path,
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     context_store = UnifiedMCPContextStore(tmp_path / "context.json")
     server_service = FakeServerUnifiedMCPService()
@@ -1048,7 +1712,12 @@ async def test_control_plane_service_exposes_remaining_governance_and_external_a
     )
     assignment_binding = await orchestrator.run_action(
         "policy_assignment.binding.upsert",
-        {"assignment_id": 2, "server_id": "docs", "binding_mode": "grant", "managed_secret_ref_id": "secret-1"},
+        {
+            "assignment_id": 2,
+            "server_id": "docs",
+            "binding_mode": "grant",
+            "managed_secret_ref_id": "secret-1",
+        },
     )
     assignment_status = await orchestrator.run_action(
         "policy_assignment.slot_status.get",

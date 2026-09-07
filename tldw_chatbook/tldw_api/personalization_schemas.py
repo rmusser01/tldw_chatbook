@@ -9,7 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PersonalizationOptInRequest(BaseModel):
-    enabled: bool = Field(..., description="Enable or disable personalization for the active server user.")
+    enabled: bool = Field(
+        ..., description="Enable or disable personalization for the active server user."
+    )
 
     model_config = ConfigDict(extra="forbid")
 

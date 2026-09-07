@@ -8,12 +8,16 @@ from tldw_chatbook.tldw_api.client import TLDWAPIClient
 
 
 @pytest.mark.asyncio
-async def test_chat_runtime_gateways_route_namespace_scoped_server_surfaces(monkeypatch):
+async def test_chat_runtime_gateways_route_namespace_scoped_server_surfaces(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
 
-    await client.call_server_chats_endpoint("GET", "conversations/tree", params={"limit": 25})
+    await client.call_server_chats_endpoint(
+        "GET", "conversations/tree", params={"limit": 25}
+    )
     await client.call_server_chat_endpoint(
         "POST",
         "/api/v1/chat/loop/start",
@@ -27,11 +31,19 @@ async def test_chat_runtime_gateways_route_namespace_scoped_server_surfaces(monk
     )
     await client.call_server_llamacpp_endpoint("GET", "models")
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/chats/conversations/tree")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/chats/conversations/tree",
+    )
     assert mocked.await_args_list[0].kwargs["params"] == {"limit": 25}
     assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/chat/loop/start")
-    assert mocked.await_args_list[1].kwargs["json_data"] == {"conversation_id": "chat-1"}
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/evaluations/datasets/import")
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "conversation_id": "chat-1"
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/datasets/import",
+    )
     assert mocked.await_args_list[2].kwargs["data"] == {"name": "golden"}
     assert mocked.await_args_list[2].kwargs["files"] == [
         ("file", ("golden.jsonl", b"{}", "application/jsonl"))
@@ -40,7 +52,9 @@ async def test_chat_runtime_gateways_route_namespace_scoped_server_surfaces(monk
 
 
 @pytest.mark.asyncio
-async def test_chat_runtime_gateways_reject_cross_namespace_and_unsafe_routes(monkeypatch):
+async def test_chat_runtime_gateways_reject_cross_namespace_and_unsafe_routes(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)

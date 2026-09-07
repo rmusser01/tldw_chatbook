@@ -145,7 +145,9 @@ def _shared_path_validation_error(label: str, text: str) -> str | None:
     return None
 
 
-def _validate_path_text(field_name: str, value: str, *, database_file: bool) -> str | None:
+def _validate_path_text(
+    field_name: str, value: str, *, database_file: bool
+) -> str | None:
     """Return a validation error for one editable Storage path."""
     label = STORAGE_FIELD_LABELS[field_name]
     text = str(value or "").strip()

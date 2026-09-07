@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.Web_Clipper_Interop.web_clipper_scope_service import WebClipperScopeService
+from tldw_chatbook.Web_Clipper_Interop.web_clipper_scope_service import (
+    WebClipperScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -18,7 +20,11 @@ class FakeWebClipperService:
 
     async def persist_enrichment(self, **kwargs):
         self.calls.append(("persist_enrichment", kwargs))
-        return {"clip_id": kwargs["clip_id"], "enrichment_type": kwargs["enrichment_type"], "status": "complete"}
+        return {
+            "clip_id": kwargs["clip_id"],
+            "enrichment_type": kwargs["enrichment_type"],
+            "status": "complete",
+        }
 
 
 class FakePolicyEnforcer:
@@ -97,7 +103,9 @@ async def test_web_clipper_scope_service_routes_server_capture_status_and_enrich
 @pytest.mark.asyncio
 async def test_web_clipper_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeWebClipperService()
-    scope = WebClipperScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = WebClipperScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Web clipper is a server-only capability"):
         await scope.get_status(mode="local", clip_id="clip-1")

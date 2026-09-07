@@ -98,7 +98,9 @@ def _seed_cross_workspace_library(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff() -> None:
+async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff() -> (
+    None
+):
     app = _build_test_app()
     _seed_cross_workspace_library(app)
     host = DestinationHarness(app, "library")
@@ -111,7 +113,9 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         # body now (LibraryRail.workspaces_body_factory), independent of the
         # selected canvas mode.
         use_button = screen.query_one("#library-use-in-console", Button)
-        assert use_button.disabled is True
+        # TASK-716: blocked-but-pressable so the press explains the block.
+        assert use_button.disabled is False
+        assert use_button.has_class("library-source-action-blocked")
         assert "Copy or link" in str(use_button.tooltip)
 
         await _open_library_details(screen, pilot)
@@ -122,11 +126,18 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         # and the policy-prose lines it used to sit above (global browse
         # rule, staging-scope rule, per-source visibility label) are gone —
         # the Handoff row below carries that signal on its own now.
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Workspace A"
-        assert "Stage only active-workspace sources into Console, RAG, or agents." not in visible
+        assert (
+            "Stage only active-workspace sources into Console, RAG, or agents."
+            not in visible
+        )
         assert "Workspace: Workspace A" not in visible
-        assert "Browse/search: all Library and Notes items remain visible" not in visible
+        assert (
+            "Browse/search: all Library and Notes items remain visible" not in visible
+        )
         # The Details body intentionally no longer renders a per-source
         # visibility/assignment table (it duplicated Browse ▸ Conversations).
         # Only the workspace summary + handoff count remain here.
@@ -142,14 +153,20 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert handoff_row.renderable.plain == "Handoff · 2 eligible, ● 2 blocked"
         assert "Collections: browse and organize; staging is read-only" not in visible
         assert "Import/Export: copy or reference sources" not in visible
-        assert "Workspace selection changes staging, not what you can browse or search" not in visible
+        assert (
+            "Workspace selection changes staging, not what you can browse or search"
+            not in visible
+        )
         # The retired blocked-state callout + "Next:" line are gone; the
         # Handoff row above is now the single source of that signal.
         assert not screen.query("#library-workspace-action-blocked")
         assert not screen.query("#library-workspace-action-next-step")
         assert not screen.query("#library-workspace-action-ready")
         assert "Study Dashboard actions" not in visible
-        assert screen.query_one("#library-use-in-console", Button).disabled is True
+        blocked_button = screen.query_one("#library-use-in-console", Button)
+        # TASK-716: blocked-but-pressable so the press explains the block.
+        assert blocked_button.disabled is False
+        assert blocked_button.has_class("library-source-action-blocked")
         assert screen.query_one("#library-create-local-workspace", Button)
 
         screen.query_one("#library-row-browse-search", Button).press()
@@ -177,30 +194,46 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
         # are gone; the Active + Handoff rows below carry the same facts.
         assert "No workspace sources yet." not in visible
         assert "Browse/search still shows every Library and Notes item." not in visible
-        assert "Handoff unavailable until sources exist or are assigned here." not in visible
+        assert (
+            "Handoff unavailable until sources exist or are assigned here."
+            not in visible
+        )
         assert not screen.query("#library-workspaces-empty-title")
         assert not screen.query("#library-workspaces-empty-browse")
         assert not screen.query("#library-workspaces-empty-handoff")
         assert not screen.query("#library-workspaces-visibility")
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Local Default"
-        assert "Browse/search: all Library and Notes items remain visible" not in visible
+        assert (
+            "Browse/search: all Library and Notes items remain visible" not in visible
+        )
         handoff_row = screen.query_one("#library-workspaces-handoff", Static)
-        assert handoff_row.renderable.plain == "Handoff · unavailable until sources exist"
+        assert (
+            handoff_row.renderable.plain == "Handoff · unavailable until sources exist"
+        )
         # The retired blocked/fix callout is gone; the Handoff row above is
         # the only place this state renders now.
         assert not screen.query("#library-workspace-action-blocked")
         assert not screen.query("#library-workspace-action-next-step")
         assert "Blocked: no workspace sources" not in visible
         assert "Fix: import or assign sources to Local Default" not in visible
-        assert "No Library sources are available for workspace authority preview." not in visible
+        assert (
+            "No Library sources are available for workspace authority preview."
+            not in visible
+        )
         assert "Console/RAG handoff: local default source snapshot" not in visible
         assert "Source Workspace Visible Console/RAG" not in visible
         assert "Recovery" not in visible
-        assert "Fix: add Library sources or assign sources to Local Default" not in visible
+        assert (
+            "Fix: add Library sources or assign sources to Local Default" not in visible
+        )
         # The Import sources action is a real action and survives when there
         # are no workspace sources yet.
-        import_sources_button = screen.query_one("#library-workspace-import-sources", Button)
+        import_sources_button = screen.query_one(
+            "#library-workspace-import-sources", Button
+        )
         assert import_sources_button.disabled is False
 
 
@@ -218,6 +251,12 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -226,7 +265,9 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         assert active_workspace.name == "Workspace 1"
 
         visible = _visible_text(screen)
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
         assert "Create local workspace" in visible
         assert "Server sync WIP · local only" in visible
@@ -245,7 +286,9 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         # Collapse the other rail sections first so the Details body has the
         # most headroom at this terminal height.
         for section in ("browse", "create", "ingest"):
-            screen.query_one(f"#console-rail-section-toggle-library-{section}", Button).press()
+            screen.query_one(
+                f"#console-rail-section-toggle-library-{section}", Button
+            ).press()
             await pilot.pause()
         await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
@@ -264,6 +307,12 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         await pilot.pause()
 
         await pilot.click("#library-create-local-workspace")
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -271,12 +320,16 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         assert active_workspace.workspace_id == "workspace-local-1"
         assert active_workspace.name == "Workspace 1"
 
-        active_workspace_row = screen.query_one("#library-workspaces-active-workspace", Static)
+        active_workspace_row = screen.query_one(
+            "#library-workspaces-active-workspace", Static
+        )
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> None:
+async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> (
+    None
+):
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(
@@ -302,6 +355,12 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = service.get_active_workspace()
@@ -380,7 +439,9 @@ async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actio
 
 
 @pytest.mark.asyncio
-async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose() -> None:
+async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose() -> (
+    None
+):
     """The Details section groups content under three bold headers and no
     longer restates the blocked-handoff state three different ways (a line +
     two bordered callouts + a "Next:" line)."""
@@ -456,3 +517,251 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
         handoff_text = handoff_row.renderable.plain
         assert "2 eligible" in handoff_text
         assert "2 blocked" in handoff_text
+
+
+@pytest.mark.asyncio
+async def test_library_create_workspace_notification_names_console_retarget() -> None:
+    """TASK-713: the Library create toast must say the new workspace became
+    active and that Console now targets it - the cross-screen side effect was
+    previously unstated."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause(0.3)
+
+        assert any(
+            "made it active" in message and "Console" in message
+            for message in notifications
+        ), f"expected an activation-aware creation toast, got {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_create_workspace_recomposes_after_activation_failure() -> None:
+    """Finding 2: activation failure must not skip the depth-state
+    invalidation, rail-scroll preservation, or recompose seam -- the
+    workspace WAS created (it just could not be switched to), so the rail
+    must still be rebuilt to show it exists.
+
+    Pinned by monkeypatching the real registry service's
+    set_active_workspace to raise, then spying on
+    LibraryScreen._invalidate_library_workspace_depth_state to prove the
+    seam is (or is not) reached.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        def _boom(workspace_id: str) -> None:
+            raise RuntimeError("simulated activation failure")
+
+        app.workspace_registry_service.set_active_workspace = _boom
+
+        invalidate_calls: list[bool] = []
+        original_invalidate = screen._invalidate_library_workspace_depth_state
+
+        def _tracking_invalidate() -> None:
+            invalidate_calls.append(True)
+            original_invalidate()
+
+        screen._invalidate_library_workspace_depth_state = _tracking_invalidate
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause(0.3)
+
+        # The workspace was created despite the activation failure.
+        created = [
+            workspace
+            for workspace in app.workspace_registry_service.list_workspaces()
+            if workspace.name == "Workspace 1"
+        ]
+        assert created, "workspace creation itself must have succeeded"
+
+        assert invalidate_calls, (
+            "activation failure must not skip the depth-state invalidation "
+            "and recompose seam -- the created workspace must still show "
+            "up in the rail"
+        )
+        assert any(
+            "could not be activated" in message for message in notifications
+        ), f"expected an activation-failure notice, got {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_blocked_use_in_console_press_explains_inline() -> None:
+    """TASK-716: pressing the blocked action must surface the reason as a
+    warning toast - previously the button was disabled, Pressed never fired,
+    and the only explanation lived in a hover tooltip."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-use-in-console")
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        screen.query_one("#library-use-in-console", Button).press()
+        await pilot.pause(0.3)
+
+        assert notifications, "expected the blocked press to explain itself"
+
+
+@pytest.mark.asyncio
+async def test_create_workspace_preserves_rail_scroll() -> None:
+    """TASK-716: the create-workspace recompose must not reset the rail
+    scroll - the user is acting at the bottom-of-rail Workspace group and
+    loses their place (and the updated Active row) when it snaps to top."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(120, 18)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+        await pilot.pause(0.3)
+
+        rail = screen.query_one("#library-rail")
+        assert rail.max_scroll_y > 0, "harness rail did not overflow; shrink the size"
+        rail.scroll_to(y=rail.max_scroll_y, animate=False, force=True)
+        await pilot.pause(0.2)
+        scrolled_to = float(rail.scroll_y)
+        assert scrolled_to > 0
+
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause(0.6)
+
+        rail = screen.query_one("#library-rail")
+        assert float(rail.scroll_y) > 0, (
+            "rail scroll reset to top after the create-workspace recompose"
+        )
+
+
+@pytest.mark.asyncio
+async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate() -> (
+    None
+):
+    """TASK-15423: an eligible conversation hands off despite a blocked row.
+
+    The single-item actions used the aggregate `context_handoff_enabled`
+    (`blocked_count == 0` across ALL visible rows), so one
+    foreign-workspace item anywhere in the Library blocked "Open in
+    Console" for every conversation — including fully eligible ones the
+    same session had handed off before the foreign item appeared.
+    """
+    from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+    from tldw_chatbook.Library.library_conversation_reader_state import (
+        ConversationReaderState,
+    )
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "Workspace B research note", "id": "note-cross"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"title": "Workspace A chat", "id": "chat-local"}]
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-a", name="Workspace A"
+    )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="workspace-b", name="Workspace B"
+    )
+    app.workspace_registry_service.set_active_workspace("workspace-a")
+    app.workspace_registry_service.link_membership(
+        "workspace-b",
+        item_type="note",
+        item_id="note-cross",
+        title="Workspace B research note",
+    )
+    app.workspace_registry_service.link_membership(
+        "workspace-a",
+        item_type="conversation",
+        item_id="chat-local",
+        title="Workspace A chat",
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        state = screen._library_workspace_depth_state(refresh=True)
+        for _ in range(100):
+            if state.source_rows:
+                break
+            await pilot.pause(0.05)
+            state = screen._library_workspace_depth_state(refresh=True)
+        assert state.source_rows, "library sources never loaded into the depth state"
+        assert state.context_handoff_enabled is False, (
+            "the seed must keep the aggregate gate closed for this test "
+            "to prove per-item gating"
+        )
+
+        payload = ChatHandoffPayload(
+            source="library",
+            item_type="conversation",
+            title="Workspace A chat",
+            body="Conversation: Workspace A chat",
+            source_id="chat-local",
+        )
+        screen._selected_conversation_handoff_payload = lambda: payload
+        screen._conversations_state.freshness = "fresh"
+        screen._conversations_state.reader_state = ConversationReaderState(
+            selected_id="chat-local",
+            selected_version=1,
+            loaded_id="chat-local",
+            loaded_version=1,
+            loaded_generation=0,
+            generation=0,
+            complete=True,
+        )
+        staged: list = []
+        app.open_chat_with_handoff = (
+            lambda p, action_label="": staged.append((p, action_label))
+        )
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        screen._open_selected_conversation_handoff()
+
+        assert staged, (
+            "the eligible conversation must hand off; it was blocked by "
+            f"the aggregate gate instead: {notifications}"
+        )
+        assert staged[0][0] is payload

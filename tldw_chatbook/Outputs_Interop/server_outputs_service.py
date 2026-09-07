@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    OutputCreateRequest,
-    OutputTemplateCreate,
-    OutputTemplateUpdate,
-    OutputUpdateRequest,
-    TemplatePreviewRequest,
-    TLDWAPIClient,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerOutputsService:
@@ -67,7 +62,9 @@ class ServerOutputsService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -76,10 +73,14 @@ class ServerOutputsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server output action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server output action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -96,7 +97,11 @@ class ServerOutputsService:
         offset: int = 0,
     ) -> dict[str, Any]:
         self._enforce("outputs.templates.list.server")
-        return self._dump(await self._require_client().list_output_templates(q=q, limit=limit, offset=offset))
+        return self._dump(
+            await self._require_client().list_output_templates(
+                q=q, limit=limit, offset=offset
+            )
+        )
 
     async def get_template(self, template_id: int) -> dict[str, Any]:
         self._enforce("outputs.templates.detail.server")
@@ -113,6 +118,9 @@ class ServerOutputsService:
         is_default: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputTemplateCreate
+
         self._enforce("outputs.templates.create.server")
         request = OutputTemplateCreate(
             name=name,
@@ -126,13 +134,22 @@ class ServerOutputsService:
         return self._dump(await self._require_client().create_output_template(request))
 
     async def update_template(self, template_id: int, **payload: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputTemplateUpdate
+
         self._enforce("outputs.templates.update.server")
-        request = OutputTemplateUpdate(**{key: value for key, value in payload.items() if value is not None})
-        return self._dump(await self._require_client().update_output_template(template_id, request))
+        request = OutputTemplateUpdate(
+            **{key: value for key, value in payload.items() if value is not None}
+        )
+        return self._dump(
+            await self._require_client().update_output_template(template_id, request)
+        )
 
     async def delete_template(self, template_id: int) -> dict[str, Any]:
         self._enforce("outputs.templates.delete.server")
-        return self._dump(await self._require_client().delete_output_template(template_id))
+        return self._dump(
+            await self._require_client().delete_output_template(template_id)
+        )
 
     async def preview_template(
         self,
@@ -143,6 +160,9 @@ class ServerOutputsService:
         limit: int = 50,
         data: dict[str, object] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import TemplatePreviewRequest
+
         self._enforce("outputs.render_jobs.launch.server")
         request = TemplatePreviewRequest(
             template_id=template_id,
@@ -151,7 +171,9 @@ class ServerOutputsService:
             limit=limit,
             data=data,
         )
-        return self._dump(await self._require_client().preview_output_template(template_id, request))
+        return self._dump(
+            await self._require_client().preview_output_template(template_id, request)
+        )
 
     async def list_artifacts(
         self,
@@ -177,9 +199,13 @@ class ServerOutputsService:
             )
         )
 
-    async def list_deleted_artifacts(self, *, page: int = 1, size: int = 50) -> dict[str, Any]:
+    async def list_deleted_artifacts(
+        self, *, page: int = 1, size: int = 50
+    ) -> dict[str, Any]:
         self._enforce("outputs.artifacts.list.server")
-        return self._dump(await self._require_client().list_deleted_outputs(page=page, size=size))
+        return self._dump(
+            await self._require_client().list_deleted_outputs(page=page, size=size)
+        )
 
     async def get_artifact(self, output_id: int) -> dict[str, Any]:
         self._enforce("outputs.artifacts.detail.server")
@@ -203,6 +229,9 @@ class ServerOutputsService:
         tts_voice: str | None = None,
         tts_speed: float | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputCreateRequest
+
         self._enforce("outputs.artifacts.create.server")
         request = OutputCreateRequest(
             template_id=template_id,
@@ -223,9 +252,16 @@ class ServerOutputsService:
         return self._dump(await self._require_client().create_output(request))
 
     async def update_artifact(self, output_id: int, **payload: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import OutputUpdateRequest
+
         self._enforce("outputs.artifacts.update.server")
-        request = OutputUpdateRequest(**{key: value for key, value in payload.items() if value is not None})
-        return self._dump(await self._require_client().update_output(output_id, request))
+        request = OutputUpdateRequest(
+            **{key: value for key, value in payload.items() if value is not None}
+        )
+        return self._dump(
+            await self._require_client().update_output(output_id, request)
+        )
 
     async def delete_artifact(
         self,
@@ -236,7 +272,9 @@ class ServerOutputsService:
     ) -> dict[str, Any]:
         self._enforce("outputs.artifacts.delete.server")
         return self._dump(
-            await self._require_client().delete_output(output_id, hard=hard, delete_file=delete_file)
+            await self._require_client().delete_output(
+                output_id, hard=hard, delete_file=delete_file
+            )
         )
 
     async def purge_artifacts(

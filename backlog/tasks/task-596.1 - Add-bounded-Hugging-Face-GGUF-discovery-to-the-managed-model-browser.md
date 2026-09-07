@@ -1,0 +1,93 @@
+---
+id: TASK-596.1
+title: Add bounded Hugging Face GGUF discovery to the managed model browser
+status: Done
+assignee:
+  - '@codex'
+created_date: '2026-08-01 21:51'
+updated_date: '2026-08-02 02:57'
+labels:
+  - stt
+  - artifacts
+  - ui
+  - security
+dependencies:
+  - TASK-595
+references:
+  - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+documentation:
+  - Docs/superpowers/specs/2026-08-01-task-596-model-artifact-browser-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-01-task-596-1-remote-model-discovery-design.md
+  - Docs/superpowers/plans/2026-08-01-task-596-1-remote-model-discovery.md
+parent_task_id: TASK-596
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Let users explicitly find and download remote GGUF models through the shared managed-model flow without implying that arbitrary models are runtime-compatible or independently verified.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Opening Remote performs no network request; explicit search or exact repository submission runs off the Textual event loop with bounded, generation-fenced results.
+- [x] #2 A selected repository resolves to an immutable commit and offers only LFS-backed single GGUF files or complete bounded GGUF shard sets with recorded sizes and SHA-256 digests.
+- [x] #3 A selected candidate reaches the existing managed preflight, consent, download, verification, and installation flow; configured Hugging Face credentials support gated or private repositories without being persisted or forwarded across origins.
+- [x] #4 Known license metadata is shown; missing license metadata is recorded as NOASSERTION with a pinned source-review page and requires explicit acknowledgment before download.
+- [x] #5 Focused adapter, GGUF grouping, Textual, redirect-security, and managed-acquisition tests cover the flow without adding native or platform-specific dependencies; Windows and Linux gates remain required when runners are available.
+- [x] #6 Remote installation labels the model Local integrity recorded and does not activate it; its descriptor uses consumer=unassigned, Installed offers no activation action for that consumer, and no UI presents it as runtime-compatible, transcription-ready, or eligible for automatic routing.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Rebase onto the latest origin/dev, confirm no TASK-596.1 documentation collision, and rerun the affected baseline.
+2. Add the bounded Hugging Face metadata adapter, exact repository resolution with blobs=true, GGUF grouping, and managed artifact mapping using test-first steps.
+3. Add install-without-activation and reject HTTPS-to-HTTP download redirects while preserving existing defaults.
+4. Update shared inventory, activation, plan, and consent widgets to represent unassigned downloads honestly.
+5. Add the explicit, lazy Remote view with generation fencing, credential-safe metadata requests, and the existing managed preflight/provision flow.
+6. Run focused regression/static gates, collect mocked-payload macOS evidence, request code review, and close TASK-596.1 only after all acceptance criteria pass.
+
+ADR required: no
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+Reason: ADR-025 already owns remote artifact provenance, managed acquisition, activation, and runtime boundaries; this slice is additive within that boundary.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented bounded Hugging Face GGUF discovery through the shared managed-artifact flow.
+
+- Added explicit fixed-origin search and exact-repository resolution with streamed metadata limits, immutable commit pinning, LFS size/SHA-256 validation, complete bounded shard grouping, deterministic artifact identity, pinned source maps, license handling, and sanitized recovery errors.
+- Added additive install-without-activation support and HTTPS-to-HTTP redirect rejection while preserving existing callers and credential stripping.
+- Added a lazy Remote Textual view with generation and identity fencing, worker-local configured credentials, frozen preflight/consent/provision state, unknown-license acknowledgment, exact selected-file integrity/source review, and Installed refresh. Remote artifacts remain LOCAL_INTEGRITY_RECORDED, consumer=unassigned, inactive, and explicitly compatibility-unverified.
+- Updated shared inventory, activation, plan, and consent controls through backward-compatible optional/default inputs; Delete remains available and Activate is absent for unassigned models.
+- Added focused adapter/grouping/security/UI tests plus a real mocked-payload resolve-to-managed-install integration test.
+- Final whole-branch review and scoped fix re-review are clean. After rebasing onto current dev, 576 affected tests passed with one existing Requests dependency warning; 12 credential-boundary and 8 deterministic macOS evidence tests passed. Branch-edited scope passes Ruff, mypy, py_compile, and diff checks. The known fetch.py F401 and acquisition.py:1823 mypy mismatch were verified on dev and remain out of scope. Windows/Linux gates remain required when runners are available.
+
+ADR required: no. ADR-025 remains authoritative for managed acquisition, provenance, activation, and runtime boundaries. No new dependency, provider framework, cache, compatibility detector, or alternate downloader was introduced.
+
+Post-closeout rebase: rebased the 20-commit branch cleanly onto `origin/dev` at `6792b3390`, after TASK-1822/PR #1189 restored the shared diagnostic baseline. Regenerated and reviewed exactly three branch-specific inventory deltas: digest-only line movement in `LLM_Management_Window.py` and `model_installed_view.py`, plus the new `model_remote_view.py` owner with two fixed artifact-identity error diagnostics. The persistent sink topology remains four files; the inventory now records 436 owners, 1,073 TASK-492 calls, and 6,702 TASK-494 calls.
+
+Fresh post-rebase verification: the complete affected matrix passed 576/576 with the required loopback permission; the diagnostic inventory, sentinel matrix, and persistent-boundary gate passed 18/18; JSON validation, py_compile, and both diff checks passed. The first sandboxed affected run passed 522 tests and produced 54 identical loopback-bind denials, all of which disappeared on the exact permitted rerun. Ruff passed every branch-edited Python file except the pre-existing `fetch.py:17` unused Loguru import, verified unchanged on `origin/dev`; excluding that baseline file, all checks passed. No new ADR is required; ADR-025 and ADR-029 remain authoritative.
+
+Latest-dev superseding rebase: while PR #1190 was opening, `dev` advanced to `333ab264a` via Briefings phase 4 (PR #1187). The 21-commit branch rebased cleanly again. That upstream merge contributed nine reviewed inventory deltas: one new four-call briefing-handler owner, one additional fixed watchlist warning, seven digest-only source shifts, and two unchanged `app.py` sink calls moving by 16 lines. TASK-596.1 still contributes only its prior three Model Browser deltas. The combined current inventory records 437 owners, 1,073 TASK-492 calls, 6,707 TASK-494 calls, and the same four sink files with identical sink digests. Ordinary Briefings diagnostics remain excluded by the persistent metadata filter.
+
+Fresh verification on `333ab264a`: 576/576 affected tests passed with loopback fixture permission and the 18/18 diagnostic/privacy matrix passed; no code fix was required by the rebase.
+
+PR review follow-up: addressed all three Qodo findings by completing the two public API docstrings and adding privacy-safe preflight/install failure classification (`error_type` and retryable posture only). A test-first regression check proves exception details remain absent from diagnostics and UI handoff. The focused Remote adapter/UI suite passes 92/92, the diagnostic/privacy matrix passes 18/18, and Ruff passes the changed Python files. The regenerated inventory changes only the existing `model_remote_view.py` diagnostic digest; call count and persistent sink topology are unchanged.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Users can explicitly discover and securely download pinned Hugging Face GGUF artifacts through the managed model browser without automatic activation or unsupported runtime-compatibility claims.
+
+Rebased cleanly onto dev after the reviewed shared inventory repair. The branch-specific inventory is current, all 576 affected tests and 18 diagnostic/privacy tests pass, and no new Critical or Important review issue remains.
+
+Final PR head is rebased onto `333ab264a`; its reviewed inventory includes the intervening Briefings drift while preserving the unchanged four-file sink topology. The affected and diagnostic gates remain green.
+
+All Qodo findings are addressed with regression coverage and privacy-safe logging; no raw exception text is recorded.
+<!-- SECTION:FINAL_SUMMARY:END -->

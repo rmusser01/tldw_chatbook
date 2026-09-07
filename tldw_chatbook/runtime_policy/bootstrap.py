@@ -2,26 +2,176 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+import threading
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-from tldw_chatbook.config import DEFAULT_CONFIG_PATH, resolve_tldw_api_config
-from tldw_chatbook.tldw_api import TLDWAPIClient
+from loguru import logger
+
+from tldw_chatbook.Utils.private_paths import lexical_path
+from tldw_chatbook.Utils.tls_trust import httpx_verify
+from tldw_chatbook.config import (
+    DEFAULT_CONFIG_PATH,
+    application_owned_config_directory,
+    get_cli_config_path,
+    resolve_tldw_api_config,
+)
 
 from .source_state import RuntimeSourceStateStore
 from .types import RuntimeSourceState
 
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import TLDWAPIClient
+
+#: Where the runtime-policy state lands when no config override is set. Kept as
+#: a module constant for callers that reference it, but prefer
+#: :func:`default_runtime_policy_path`, which follows the *active* profile.
 DEFAULT_RUNTIME_POLICY_PATH = DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
 _VALID_RUNTIME_SOURCES = {"local", "server"}
 
 
-@dataclass(slots=True)
-class RuntimePolicyContext:
-    state: RuntimeSourceState
-    store: RuntimeSourceStateStore
+def default_runtime_policy_path() -> Path:
+    """Return the runtime-policy state file for the config profile in effect.
 
-    def persist(self) -> None:
-        self.store.save(self.state)
+    This file records whether the app runs local or server. It used to be
+    derived from ``DEFAULT_CONFIG_PATH`` -- a hardcoded home directory -- so a
+    profile launched with ``TLDW_CONFIG_PATH`` still read and wrote the real
+    user's file: putting a scratch profile into server mode left the default
+    profile in server mode afterwards (task-701).
+
+    Resolved on each call rather than captured at import, because the override
+    is an environment variable that a test or a launcher can set after this
+    module is first imported; a module-level constant would freeze whichever
+    value happened to be present at import time.
+
+    Returns:
+        The path to ``runtime_policy.json`` beside the active config file.
+    """
+    from tldw_chatbook.config import _get_effective_config_path
+
+    try:
+        return _get_effective_config_path().parent / "runtime_policy.json"
+    except (ValueError, OSError):
+        # A rejected or unreadable override must not stop the app booting, but
+        # falling back means this profile's local/server mode is read from and
+        # written to the DEFAULT profile -- exactly the cross-profile leak this
+        # function exists to prevent. So it is a warning, not a debug line: the
+        # earlier version logged at debug and would have hidden the misrouting
+        # in a normal run.
+        #
+        # Only the two failure modes the resolver actually raises are caught.
+        # Anything else is a defect rather than a bad path, and swallowing it
+        # here would silently route state to the wrong profile; letting it
+        # surface is the safer direction.
+        logger.opt(exception=True).warning(
+            f"Could not resolve the active config path; runtime-policy state "
+            f"will use the default profile at {DEFAULT_RUNTIME_POLICY_PATH}. "
+            "A local/server mode change made now will affect that profile."
+        )
+        return DEFAULT_RUNTIME_POLICY_PATH
+
+
+def load_default_runtime_source_state() -> RuntimeSourceState:
+    """Load the default profile's runtime source state, as the owner module.
+
+    TASK-18609: two non-owner call sites (console_chat_controller,
+    MCP/local_server_tools -- both added with the watchlists local-tool
+    exposure) had begun constructing ``RuntimeSourceStateStore`` directly,
+    which the runtime-policy ownership boundary
+    (``test_runtime_source_state_store_references_are_confined_to_owner_
+    modules``) forbids: outside this package the store is an implementation
+    detail, and each new direct construction is a second place that must
+    learn how application-owned directories are resolved. This loader is
+    the sanctioned read path -- same construction rules as the app boot
+    path in ``_prepare_runtime_policy_context`` (default path +
+    application-owned directory), minus the config synchronization, which
+    only the boot path may perform.
+
+    Never raises for a malformed ``TLDW_CONFIG_PATH``: a path the resolver
+    rejects means there is no application-owned directory to honor, so the
+    store is built with the default-profile path alone -- the same
+    degradation ``default_runtime_policy_path`` already performs for the
+    path itself, applied to the directory half. (Qodo #2, PR #1828: the
+    call sites this replaced never crashed on a bad override, and this
+    loader runs before any database work in both of them.)
+
+    Returns:
+        The loaded ``RuntimeSourceState`` for the active profile.
+    """
+    try:
+        owned_directory: Path | None = application_owned_config_directory(
+            get_cli_config_path()
+        )
+    except (ValueError, OSError):
+        logger.opt(exception=True).warning(
+            "Could not resolve the active config path for the runtime-policy "
+            "application-owned directory; loading with the default profile "
+            "path alone."
+        )
+        owned_directory = None
+    return RuntimeSourceStateStore(
+        lexical_path(default_runtime_policy_path()),
+        application_owned_directory=owned_directory,
+    ).load()
+
+
+_VALID_RUNTIME_SOURCES = {"local", "server"}
+
+
+class RuntimePolicyContext:
+    __slots__ = (
+        "_owner_thread_id",
+        "_snapshot",
+        "__runtime_policy_projection_callback",
+        "__runtime_policy_state_store",
+    )
+
+    def __init__(
+        self,
+        state: RuntimeSourceState,
+        store: RuntimeSourceStateStore,
+        *,
+        publish: Callable[[RuntimeSourceState], None] | None = None,
+    ) -> None:
+        self._snapshot = (state, 0)
+        self._owner_thread_id = threading.get_ident()
+        self.__runtime_policy_projection_callback = publish
+        self.__runtime_policy_state_store = store
+
+    @property
+    def state(self) -> RuntimeSourceState:
+        return self._snapshot[0]
+
+    def snapshot(self) -> tuple[RuntimeSourceState, int]:
+        return self._snapshot
+
+    def commit_state(
+        self,
+        candidate: RuntimeSourceState,
+        *,
+        expected_revision: int,
+    ) -> bool:
+        self._assert_owner_thread()
+        _, current_revision = self._snapshot
+        if expected_revision != current_revision:
+            return False
+
+        self.__runtime_policy_state_store.save(candidate)
+        self._snapshot = (candidate, current_revision + 1)
+        if self.__runtime_policy_projection_callback is not None:
+            try:
+                self.__runtime_policy_projection_callback(candidate)
+            except Exception as exc:
+                logger.warning(
+                    "Runtime policy projection failed after durable commit "
+                    "(exception_category={}).",
+                    type(exc).__name__,
+                )
+        return True
+
+    def _assert_owner_thread(self) -> None:
+        if threading.get_ident() != self._owner_thread_id:
+            raise RuntimeError("runtime policy mutation requires the owner thread")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +188,12 @@ def build_runtime_api_client(
     auth_token: str | None = None,
     auth_method: str | None = None,
 ) -> TLDWAPIClient:
+    # Deferred import: TLDWAPIClient's home module (tldw_api/client.py) eagerly
+    # imports the full ~54-submodule schema surface (~450ms). Importing it here,
+    # at actual client-construction time, keeps `import tldw_chatbook.app` from
+    # paying that cost in local-only sessions (task-285).
+    from tldw_chatbook.tldw_api import TLDWAPIClient
+
     api_config: dict[str, Any] = resolve_tldw_api_config(app_config)
 
     resolved_endpoint = str(
@@ -50,7 +206,9 @@ def build_runtime_api_client(
     if not resolved_endpoint:
         raise ValueError("TLDW API base URL is not configured.")
 
-    resolved_auth_method = str(auth_method or api_config.get("auth_mode") or "").strip().lower()
+    resolved_auth_method = (
+        str(auth_method or api_config.get("auth_mode") or "").strip().lower()
+    )
     resolved_auth_token = auth_token
     if resolved_auth_token is None:
         resolved_auth_token = (
@@ -60,17 +218,25 @@ def build_runtime_api_client(
         )
 
     if not resolved_auth_method:
-        resolved_auth_method = "bearer" if api_config.get("bearer_token") and not api_config.get("api_key") else "api_key"
+        resolved_auth_method = (
+            "bearer"
+            if api_config.get("bearer_token") and not api_config.get("api_key")
+            else "api_key"
+        )
 
     if resolved_auth_method in {"bearer", "custom_token"}:
-        client = TLDWAPIClient(base_url=resolved_endpoint)
+        client = TLDWAPIClient(base_url=resolved_endpoint, ssl_verify=httpx_verify())
         client.bearer_token = resolved_auth_token
         return client
 
-    return TLDWAPIClient(base_url=resolved_endpoint, token=resolved_auth_token)
+    return TLDWAPIClient(
+        base_url=resolved_endpoint, token=resolved_auth_token, ssl_verify=httpx_verify()
+    )
 
 
-def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -> TLDWAPIClient:
+def build_runtime_api_client_from_config(
+    app_config: Mapping[str, Any] | None,
+) -> TLDWAPIClient:
     return build_runtime_api_client(app_config=app_config)
 
 
@@ -117,26 +283,63 @@ def build_server_chatbook_service(
     return ServerChatbookService(client, policy_enforcer=policy_enforcer)
 
 
+def _prepare_runtime_policy_context(
+    *,
+    app_config: Mapping[str, Any] | None,
+    publish: Callable[[RuntimeSourceState], None],
+    store: RuntimeSourceStateStore | None = None,
+    path: str | Path | None = None,
+) -> RuntimePolicyContext:
+    if store is None:
+        effective_config_path = get_cli_config_path()
+        selected_path = (
+            lexical_path(path)
+            if path is not None
+            else lexical_path(default_runtime_policy_path())
+        )
+        runtime_store = RuntimeSourceStateStore(
+            selected_path,
+            application_owned_directory=(
+                application_owned_config_directory(effective_config_path)
+                if path is None
+                else None
+            ),
+        )
+    else:
+        runtime_store = store
+    loaded_state = runtime_store.load()
+    synchronized_state = synchronize_runtime_source_state_with_app_config(
+        loaded_state,
+        app_config,
+    )
+    context = RuntimePolicyContext(
+        state=loaded_state,
+        store=runtime_store,
+        publish=publish,
+    )
+    if synchronized_state != loaded_state:
+        context.commit_state(synchronized_state, expected_revision=0)
+    else:
+        publish(loaded_state)
+    return context
+
+
 def load_runtime_policy_for_app(
     app: Any,
     *,
     store: RuntimeSourceStateStore | None = None,
     path: str | Path | None = None,
 ) -> RuntimePolicyContext:
-    runtime_store = store or RuntimeSourceStateStore(path or DEFAULT_RUNTIME_POLICY_PATH)
-    loaded_state = runtime_store.load()
-    synchronized_state = synchronize_runtime_source_state_with_app_config(
-        loaded_state,
-        getattr(app, "app_config", None),
+    if isinstance(getattr(app, "runtime_policy", None), RuntimePolicyContext):
+        raise RuntimeError("runtime policy context is already installed")
+
+    context = _prepare_runtime_policy_context(
+        app_config=getattr(app, "app_config", None),
+        publish=lambda state: _apply_runtime_policy_to_app(app, state),
+        store=store,
+        path=path,
     )
-    context = RuntimePolicyContext(
-        state=synchronized_state,
-        store=runtime_store,
-    )
-    if synchronized_state != loaded_state:
-        context.persist()
-    setattr(app, "runtime_policy", context)
-    _apply_runtime_policy_to_app(app, context.state)
+    app.runtime_policy = context
     return context
 
 
@@ -152,18 +355,23 @@ def ensure_runtime_policy_for_app(
     return load_runtime_policy_for_app(app, store=store, path=path)
 
 
-def set_authoritative_runtime_source(app: Any, active_source: str) -> RuntimeSourceState:
+def set_authoritative_runtime_source(
+    context: RuntimePolicyContext,
+    active_source: str,
+    *,
+    app_config: Mapping[str, Any] | None,
+) -> RuntimeSourceState:
     normalized_source = str(active_source or "").strip().lower()
-    context = ensure_runtime_policy_for_app(app)
+    state, revision = context.snapshot()
     if normalized_source not in _VALID_RUNTIME_SOURCES:
-        return context.state
+        return state
 
-    configured_binding = derive_configured_server_binding(getattr(app, "app_config", None))
+    configured_binding = derive_configured_server_binding(app_config)
     resolved_source = normalized_source
     if resolved_source == "server" and not configured_binding.server_configured:
         resolved_source = "local"
 
-    base_state = _clear_server_probe_state_if_binding_changed(context.state, configured_binding)
+    base_state = _clear_server_probe_state_if_binding_changed(state, configured_binding)
     updated_state = replace(
         base_state,
         active_source=resolved_source,
@@ -171,53 +379,14 @@ def set_authoritative_runtime_source(app: Any, active_source: str) -> RuntimeSou
         server_configured=configured_binding.server_configured,
         last_known_server_label=configured_binding.last_known_server_label,
     )
-    context.state = updated_state
-    context.persist()
-    _apply_runtime_policy_to_app(app, updated_state)
+    if not context.commit_state(updated_state, expected_revision=revision):
+        raise RuntimeError("runtime policy commit was rejected")
     return updated_state
 
 
-def add_runtime_policy_snapshot(saved_screen_state: dict[str, Any], state: RuntimeSourceState) -> dict[str, Any]:
-    snapshot_state = dict(saved_screen_state)
-    snapshot_state["runtime_policy_snapshot"] = runtime_policy_snapshot_from_state(state)
-    return snapshot_state
-
-
-def reconcile_saved_screen_state(
-    saved_screen_state: dict[str, Any] | None,
-    authoritative_state: RuntimeSourceState,
-) -> dict[str, Any] | None:
-    if not isinstance(saved_screen_state, dict):
-        return None
-
-    restored_state = dict(saved_screen_state)
-    snapshot = restored_state.pop("runtime_policy_snapshot", None)
-    if not isinstance(snapshot, dict):
-        return restored_state
-
-    snapshot_source = snapshot.get("active_source")
-    if snapshot_source in _VALID_RUNTIME_SOURCES and snapshot_source != authoritative_state.active_source:
-        return None
-
-    if authoritative_state.active_source != "server":
-        return restored_state
-
-    authoritative_server_id = authoritative_state.active_server_id
-    snapshot_server_id = snapshot.get("active_server_id")
-    if authoritative_server_id and snapshot_server_id != authoritative_server_id:
-        return None
-
-    return restored_state
-
-
-def runtime_policy_snapshot_from_state(state: RuntimeSourceState) -> dict[str, Any]:
-    return {
-        "active_source": state.active_source,
-        "active_server_id": state.active_server_id,
-    }
-
-
-def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> ConfiguredServerBinding:
+def derive_configured_server_binding(
+    app_config: Mapping[str, Any] | None,
+) -> ConfiguredServerBinding:
     if not isinstance(app_config, Mapping):
         return ConfiguredServerBinding(
             active_server_id=None,
@@ -227,7 +396,12 @@ def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> Co
 
     api_config = resolve_tldw_api_config(app_config)
 
-    raw_url = str(api_config.get("base_url") or api_config.get("api_url") or api_config.get("url") or "").strip()
+    raw_url = str(
+        api_config.get("base_url")
+        or api_config.get("api_url")
+        or api_config.get("url")
+        or ""
+    ).strip()
     if not raw_url:
         return ConfiguredServerBinding(
             active_server_id=None,
@@ -282,13 +456,10 @@ def _clear_server_probe_state_if_binding_changed(
 
 
 def _apply_runtime_policy_to_app(app: Any, state: RuntimeSourceState) -> None:
-    setattr(app, "current_runtime_backend", state.active_source)
-    setattr(app, "runtime_backend", state.active_source)
-    setattr(app, "active_server_id", state.active_server_id)
-
-    app_state = getattr(app, "app_state", None)
-    if app_state is not None:
-        app_state.runtime_source = state
+    publisher = getattr(app, "_publish_runtime_policy_projection")
+    if not callable(publisher):
+        raise TypeError("runtime policy projection publisher is not callable")
+    publisher(state)
 
 
 def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:
@@ -300,7 +471,9 @@ def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:
     scheme = parsed.scheme.lower()
     hostname = parsed.hostname.lower()
     port = parsed.port
-    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    default_port = (scheme == "http" and port == 80) or (
+        scheme == "https" and port == 443
+    )
 
     netloc = hostname
     if port and not default_port:

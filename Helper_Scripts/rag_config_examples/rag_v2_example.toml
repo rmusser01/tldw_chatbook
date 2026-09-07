@@ -30,7 +30,22 @@ profile = "hybrid_basic"  # Default profile
 # enable_reranking = true
 # enable_parallel_processing = true
 # parent_size_multiplier = 3
-# reranking_strategy = "cross_encoder"
+#
+# There is NO "reranking_strategy" key. One was listed here and it read
+# nothing -- setting it selected nothing at all (TASK-17600 F3). The
+# strategy belongs to a RAG PROFILE: `reranking_config.strategy` in the
+# profile's saved JSON under <user data dir>/rag_profiles/, which survives
+# a restart because the profile serialises and rebuilds the whole
+# RerankingConfig. Clone a built-in profile, set it there.
+#
+# Reranking strategies: "pointwise" | "pairwise" | "listwise" bill an LLM
+# provider per call; "cross_encoder" runs a local model (no provider, no
+# credential, no network). "cross_encoder" is selectable but NOT
+# recommended -- it is the only strategy anyone has measured on the gated
+# eval instrument (TASK-16965) and it came out net HARMFUL on the averaged
+# row (semantic MRR 0.808 -> 0.762, hybrid 0.812 -> 0.787), while producing
+# large gains on the weak-retrieval categories (hybrid "scoped" MRR
+# 0.163 -> 0.929). Numbers: Docs/superpowers/qa/2026-08-17-cross-encoder/report.md
 
 # Example configurations:
 
@@ -55,4 +70,5 @@ profile = "hybrid_basic"  # Default profile
 # profile = "hybrid_enhanced"
 # [rag_search.service.custom_overrides]
 # enable_reranking = true
-# reranking_strategy = "llm"
+# (the strategy is a profile field -- see the note above; there is no
+#  reranking_strategy key, and "llm" was never one of the four values)

@@ -13,7 +13,9 @@ class NotificationDispatchService:
 
     def __init__(self, store: Any = None, *, policy_enforcer: Any | None = None):
         if store is None:
-            raise ValueError("NotificationDispatchService requires a notification store.")
+            raise ValueError(
+                "NotificationDispatchService requires a notification store."
+            )
         self.store = store
         self.policy_enforcer = policy_enforcer
 
@@ -123,7 +125,9 @@ class NotificationDispatchService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id="notifications.dispatch.launch.local")
         elif callable(require_ui_action_allowed):
@@ -133,10 +137,14 @@ class NotificationDispatchService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id="notifications.dispatch.launch.local",
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Notification dispatch is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "local",
-                    authority_owner=getattr(decision, "authority_owner", None) or "local",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Notification dispatch is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "local",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "local",
                 )
 
     @staticmethod

@@ -1,6 +1,10 @@
 """Legacy NewIngest compatibility exports."""
 
-from .BackendIntegration import MediaProcessingService, ProcessingJobResult, get_processing_service
+from .BackendIntegration import (
+    MediaProcessingService,
+    ProcessingJobResult,
+    get_processing_service,
+)
 from .ProcessingDashboard import (
     JobStatusWidget,
     ProcessingCancelled,
@@ -11,7 +15,12 @@ from .ProcessingDashboard import (
     ProcessingResumed,
     ProcessingState,
 )
-from .SmartFileDropZone import FilePreviewItem, FileRemoved, FilesSelected, SmartFileDropZone
+from .SmartFileDropZone import (
+    FilePreviewItem,
+    FileRemoved,
+    FilesSelected,
+    SmartFileDropZone,
+)
 from .UnifiedProcessor import (
     AudioConfig,
     DocumentConfig,

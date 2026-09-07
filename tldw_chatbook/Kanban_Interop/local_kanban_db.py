@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
 
 SCHEMA_VERSION = 1
 
@@ -28,12 +30,27 @@ _FTS5_PROBE_TABLE = "__tldw_kanban_fts5_probe"
 
 
 def open_connection(db_path: str | Path) -> sqlite3.Connection:
-    if str(db_path) != ":memory:":
-        Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = connect_private_sqlite("kanban.local", db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    if str(db_path) != ":memory:":
+        conn.execute("PRAGMA journal_mode = WAL")
+    # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+    # lose the last commit, acceptable for this local Kanban-parity cache)
+    # and avoids an fsync per commit. This DB opens a fresh connection per
+    # operation (`LocalKanbanService.connect`/`transaction`), so synchronous
+    # must be re-applied on every open, not just the first (task-15465).
+    conn.execute("PRAGMA synchronous = NORMAL")
+    # task-22224: true autocommit (see Library_Ingest_Jobs_DB.py's module
+    # docstring, the store template). The explicit BEGIN in `transaction()`
+    # below is the only transaction owner; without this, one bare DML before
+    # it would auto-BEGIN a DEFERRED transaction and make that BEGIN raise
+    # "cannot start a transaction within a transaction". `initialize_schema`
+    # is unaffected: `executescript` commits as it goes in both isolation
+    # modes, its two single-statement meta upserts self-commit, and a retry
+    # (`_ensure_schema` leaves `_schema_ready` False on failure) repairs any
+    # partially-written pair.
+    conn.isolation_level = None
     return conn
 
 
@@ -233,7 +250,8 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         """,
         ("1" if fts_available else "0",),
     )
-    conn.commit()
+    # No commit(): the connection is autocommit (task-22224); both upserts
+    # above are durable at execute() and the script committed as it went.
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> bool:

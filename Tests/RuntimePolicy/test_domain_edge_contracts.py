@@ -11,7 +11,9 @@ from tldw_chatbook.runtime_policy.domain_edge_contracts import (
     list_domain_edge_contracts,
 )
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
-from tldw_chatbook.runtime_policy.unsupported_capabilities import validate_unsupported_capability_report
+from tldw_chatbook.runtime_policy.unsupported_capabilities import (
+    validate_unsupported_capability_report,
+)
 
 
 def test_domain_edge_matrix_covers_priority_server_parity_domains():
@@ -82,8 +84,12 @@ def test_remote_utility_local_parity_registry_tracks_translation_pilot():
 
 
 def test_server_skills_alias_returns_canonical_skills_contract():
-    assert get_domain_edge_contract("server_skills") is get_domain_edge_contract("skills")
-    assert get_remote_utility_local_parity("server_skills") is get_remote_utility_local_parity("skills")
+    assert get_domain_edge_contract("server_skills") is get_domain_edge_contract(
+        "skills"
+    )
+    assert get_remote_utility_local_parity(
+        "server_skills"
+    ) is get_remote_utility_local_parity("skills")
 
 
 def test_skills_and_kanban_have_local_policy_actions():
@@ -134,4 +140,6 @@ def test_domain_contracts_expose_view_model_and_workspace_rules():
     assert writing.view_model_contract == "writing_source_honest_view_v1"
     assert writing.unsupported_local_reason_codes == ("not_implemented_locally",)
     assert any(contract.domain_id == "research" for contract in contracts)
-    assert get_domain_edge_contract("notes_workspaces").workspace_isolation == "required"
+    assert (
+        get_domain_edge_contract("notes_workspaces").workspace_isolation == "required"
+    )

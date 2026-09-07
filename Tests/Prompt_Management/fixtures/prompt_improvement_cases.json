@@ -1,0 +1,74 @@
+{
+  "preserves": [
+    {
+      "name": "supported_templates",
+      "source": "Ask {{user}} to compare {{$QUESTION}} with {$DOCUMENT}, then greet <CHAR>.",
+      "result": "Greet <CHAR>, then ask {{user}} to compare {{$QUESTION}} with {$DOCUMENT}."
+    },
+    {
+      "name": "fenced_code",
+      "source": "Run this:\n```python linenums=1\nprint(\"snow: 雪\")\n```",
+      "result": "Execute exactly this block:\n```python linenums=1\nprint(\"snow: 雪\")\n```\nThen explain it."
+    },
+    {
+      "name": "urls_and_uuid",
+      "source": "Use https://example.test/a?q=1 and ID 123e4567-e89b-12d3-a456-426614174000.",
+      "result": "For 123e4567-e89b-12d3-a456-426614174000, consult https://example.test/a?q=1."
+    },
+    {
+      "name": "xml_wrappers",
+      "source": "Keep <policy mode=\"strict\">No writes</policy> intact.",
+      "result": "Preserve <policy mode=\"strict\">No writes</policy> exactly."
+    },
+    {
+      "name": "opaque_placeholders",
+      "source": "Before [[TLDW_PROTECTED:0123456789abcdef0123:0:0123456789abcdef01234567]] after.",
+      "result": "Improved before [[TLDW_PROTECTED:0123456789abcdef0123:0:0123456789abcdef01234567]] and after."
+    }
+  ],
+  "vetoes": [
+    {
+      "name": "template_renamed",
+      "category": "template_placeholder",
+      "source": "Hello {{user}} and {{user}}.",
+      "result": "Hello {{customer}} and {{user}}."
+    },
+    {
+      "name": "fence_body_changed",
+      "category": "fenced_code",
+      "source": "```python\nprint(1)\n```",
+      "result": "```python\nprint(2)\n```"
+    },
+    {
+      "name": "url_removed",
+      "category": "url",
+      "source": "Read https://example.test/safe.",
+      "result": "Read the safe page."
+    },
+    {
+      "name": "uuid_duplicated",
+      "category": "uuid",
+      "source": "Trace 123e4567-e89b-12d3-a456-426614174000.",
+      "result": "Trace 123e4567-e89b-12d3-a456-426614174000 twice: 123e4567-e89b-12d3-a456-426614174000."
+    },
+    {
+      "name": "xml_name_changed",
+      "category": "xml_wrapper",
+      "source": "<rules>Keep facts</rules>",
+      "result": "<policy>Keep facts</policy>"
+    },
+    {
+      "name": "opaque_reordered",
+      "category": "opaque_placeholder",
+      "source": "[[TLDW_PROTECTED:0123456789abcdef0123:0:0123456789abcdef01234567]] then [[TLDW_PROTECTED:0123456789abcdef0123:1:89abcdef0123456789abcdef]]",
+      "result": "[[TLDW_PROTECTED:0123456789abcdef0123:1:89abcdef0123456789abcdef]] then [[TLDW_PROTECTED:0123456789abcdef0123:0:0123456789abcdef01234567]]"
+    }
+  ],
+  "safe_changes": [
+    {
+      "name": "ordinary_braces_email_angle_inline_unicode_and_near_token",
+      "source": "Use {ordinary: braces}, email a@example.test, write x < y > z, keep `inline`, 雪, and [[TLDW_PROTECTED：near]].",
+      "result": "Rewrite freely: {different braces}; contact b@example.test; x < y > z; `changed inline`; 雪花; [[TLDW_PROTECTED：different-near]]."
+    }
+  ]
+}

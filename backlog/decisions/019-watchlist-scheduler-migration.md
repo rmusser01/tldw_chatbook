@@ -1,0 +1,115 @@
+# ADR-019: Migrate watchlist checks to the unified Scheduling scheduler
+
+Status: Accepted — **amended; the dual-run below was never implemented. Read the amendment first.**
+Date: 2026-07-19
+Related Task: TASK-299
+Supersedes: N/A
+
+## Amendment (2026-07-27, TASK-1210)
+
+**The promotion gate this ADR defines was unsatisfiable, so the migration is promoted directly.**
+
+The ADR gates promotion on dual-run parity metrics between the old and new schedulers. Those metrics
+can never be produced: the old scheduler is unreachable, so there is no second path to compare
+against. Waiting for the gate meant waiting forever, with the flag off and nothing checking
+watchlists at all.
+
+What changed:
+
+- `watchlist_checks_enabled` now defaults **true** and `watchlist_checks_shadow` defaults **false**,
+  in the shipped TOML and in `app.py`'s in-code fallbacks. `WatchlistCheckHandler` is the sole and
+  authoritative executor of watchlist checks.
+- Shadow mode remains as an explicit diagnostics opt-in. It fetches and discards, and because it
+  never writes `last_checked` it also ignores each source's cadence — do not leave it on.
+- The rollback lever described below does not exist. Setting `watchlist_checks_enabled = false`
+  disables watchlist checking entirely rather than reverting to the old scheduler.
+
+Removal of the old scheduler — deferred by this ADR — is **complete (TASK-1211)**. About 7,750 LOC
+across 13 files were deleted: `scheduler.py`, `textual_scheduler_worker.py`, `website_monitor.py`,
+the seven briefing/aggregation/distribution modules, `subscription_backend_controller.py`, and
+`Event_Handlers/subscription_events.py` + `subscription_ingest_worker.py` (orphaned by the
+scheduler's removal). `monitoring_engine.py` is retained — it is what `WatchlistCheckHandler` calls.
+
+`Tests/Subscriptions/test_retired_modules_stay_retired.py` asserts the modules are gone and that no
+import path back to them reappears at app startup.
+
+## Status note (2026-07-27)
+
+A runtime import-trace audit found that the dual-run safety net described below **does not exist in
+the shipped app**. Two clauses of this ADR are not true of the code:
+
+- *"Old scheduler remains the execution authority by default"* — the old `SubscriptionScheduler`
+  and `SubscriptionSchedulerWorker` are **unreachable**. Their only construction site is
+  `UI/Subscription_Modules/subscription_backend_controller.py`, which serves a `SubscriptionWindow`
+  class that no longer exists; neither module is in `sys.modules` after a full app import.
+- *"Rollback plan: set `watchlist_checks_enabled = false` and the old `SubscriptionScheduler`
+  resumes authoritative execution"* — setting that flag false leaves **no** executor at all, since
+  the new handler is then never constructed and the old one cannot run.
+
+Because the flag ships `false` (and `watchlist_checks_shadow` ships `true`, which fetches and
+discards results), the practical effect is that **nothing checks watchlists on a schedule**. Manual
+"Check now" works; automatic checking is unimplemented end to end.
+
+Tracked by TASK-1210 (make scheduled checks run — landed, see the amendment above) and TASK-1211
+(retire the unreachable scheduler, the removal this ADR deferred).
+
+Full analysis and reproduction:
+`Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`
+
+## Decision
+
+Migrate watchlist/subscription check execution from `Subscriptions/scheduler.py` (`SubscriptionScheduler`) to the unified `Scheduling` module, running as a `watchlist` handler under `SchedulerLoop`.
+
+- A new `WatchlistCheckHandler` executes watchlist checks by delegating to the existing `FeedMonitor`, `URLMonitor`, and `SubscriptionsDB` infrastructure.
+- `WatchlistProjection` continues to provide a read-only view of `Subscriptions_DB` rows into `ScheduledTask` objects for the workbench UI.
+- The migration proceeds behind a feature flag (`scheduling.watchlist_checks_enabled`) with a **dual-run** validation phase:
+  - Old scheduler remains the execution authority by default.
+  - New handler runs side-by-side in "shadow" mode, executing the same checks but not mutating subscription state.
+  - Metrics and logs from both paths are compared before promoting the new handler to authoritative mode.
+- Once validated, the new handler becomes authoritative and the old `SubscriptionScheduler` is deprecated.
+- Removal of the old scheduler is deferred to a follow-up release after dual-run validation has completed and parity metrics meet the promotion threshold.
+- A runtime toggle allows instant rollback to the old scheduler without a code deploy.
+
+## Context
+
+`tldw_chatbook` currently has two scheduling systems:
+
+1. **`Subscriptions/scheduler.py`** — A dedicated scheduler for RSS/URL watchlist checks. It owns its own priority queue, concurrency limit, rate limiting, feed monitoring, and subscription state updates. It is tightly coupled to `Subscriptions_DB` and does not participate in the new server-side scheduled-tasks control plane.
+2. **`Scheduling/scheduler/loop.py`** — A generic scheduler introduced in ADR-018 for reminders and (eventually) automation definitions. It polls `ScheduledTasksDB` and dispatches due tasks to typed handlers.
+
+ADR-018 already decided that watchlist jobs would remain read-only projections from `Subscriptions_DB` until Phase 5. Phase 5 is now beginning. The workbench UI already displays watchlist jobs via `WatchlistProjection`; the missing piece is moving their *execution* into the unified scheduler so that:
+
+- A single loop owns all scheduled work.
+- Server-side and local scheduling concepts align.
+- Future server-side watchlist control-plane integration can plug into one surface.
+
+## Alternatives Considered
+
+| Option | Why rejected |
+| --- | --- |
+| Keep `SubscriptionScheduler` indefinitely | Perpetuates two scheduling systems, duplicate queue logic, and divergent failure/recovery semantics. |
+| Big-bang cutover to `WatchlistCheckHandler` | Too risky for user-facing background checks; a regression in check reliability would silently break watchlist updates. |
+| Run both schedulers concurrently with mutation | Risk of double-checking and race conditions on `Subscriptions_DB` state. |
+| Shadow-mode dual-run (chosen) | Validates correctness and performance against the proven old scheduler before any authoritative switch, with a runtime rollback lever. |
+
+## Consequences
+
+- `SchedulerLoop` will load watchlist jobs from `WatchlistProjection` (or a new `ScheduledTasksDB` mirror populated by sync) and dispatch them to `WatchlistCheckHandler`.
+- `WatchlistCheckHandler` must be stateless with respect to the new scheduler; all persistent state remains in `Subscriptions_DB`.
+- The feature flag lives in config (`[scheduling] watchlist_checks_enabled = false`) and is read at scheduler startup. Changing it requires an app restart.
+- Dual-run metrics must include: checks executed, successes, failures, latency, and result parity (old vs new) per subscription.
+- Old scheduler code is retained during validation but marked deprecated. Removal is gated on dual-run parity metrics and a minimum bake time.
+- The old scheduler is now deprecated in code (`Subscriptions/scheduler.py`, `Subscriptions/textual_scheduler_worker.py`) with `DeprecationWarning`s and docstring notices, but it remains functional for the dual-run validation period.
+- Console-follow and screenshot QA behavior for watchlists must continue to work unchanged; only the execution backend moves.
+
+## Rollback plan
+
+1. Set `[scheduling] watchlist_checks_enabled = false` and restart the app.
+2. The old `SubscriptionScheduler` resumes authoritative execution.
+3. New-handler shadow metrics are still collected if `watchlist_checks_shadow = true`, enabling safe debugging.
+
+## Links
+
+- ADR-018: Local/server hybrid scheduled-tasks storage and sync
+- [Implementation plan](../../Docs/superpowers/plans/2026-07-18-scheduling-module-screen-implementation-plan.md)
+- [Design spec](../../Docs/superpowers/specs/2026-07-18-scheduling-module-screen-design.md)

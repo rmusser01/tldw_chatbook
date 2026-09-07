@@ -1,0 +1,294 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "1e3631fa2cd6fd366136f92ec9b35d07",
+        "chunk_index": 1,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.058823529411764705,
+        "total_chunks": 17
+      },
+      "text": "{\"data\": [{\"item\": 0, \"text\": \"value 0\"}, {\"item\":"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "66194e1a2183a2a495f72ce498af60cd",
+        "chunk_index": 2,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.11764705882352941,
+        "total_chunks": 17
+      },
+      "text": ", {\"item\": 1, \"text\": \"value 1\"}, {\"item\": 2, \"tex"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "232fdf1d1f72fbc6798c07c1d0356064",
+        "chunk_index": 3,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.17647058823529413,
+        "total_chunks": 17
+      },
+      "text": "\": 2, \"text\": \"value 2\"}, {\"item\": 3, \"text\": \"val"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "86129b344d9e8ef16721daf0191912ba",
+        "chunk_index": 4,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.23529411764705882,
+        "total_chunks": 17
+      },
+      "text": "ext\": \"value 3\"}, {\"item\": 4, \"text\": \"value 4\"}, "
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "ed6018baa398a34b352bd6c3a5659beb",
+        "chunk_index": 5,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.29411764705882354,
+        "total_chunks": 17
+      },
+      "text": "alue 4\"}, {\"item\": 5, \"text\": \"value 5\"}, {\"item\":"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "98c4e985eab7f8d22632134371514e2e",
+        "chunk_index": 6,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.35294117647058826,
+        "total_chunks": 17
+      },
+      "text": ", {\"item\": 6, \"text\": \"value 6\"}, {\"item\": 7, \"tex"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "7675abfd0ae2f4ec464382f9666f5d7b",
+        "chunk_index": 7,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.4117647058823529,
+        "total_chunks": 17
+      },
+      "text": "\": 7, \"text\": \"value 7\"}, {\"item\": 8, \"text\": \"val"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "32c2194a6d79675c5a2b9a672384f575",
+        "chunk_index": 8,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.47058823529411764,
+        "total_chunks": 17
+      },
+      "text": "ext\": \"value 8\"}, {\"item\": 9, \"text\": \"value 9\"}, "
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "ab6759541c16e7159994adc5f93c3bf1",
+        "chunk_index": 9,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5294117647058824,
+        "total_chunks": 17
+      },
+      "text": "alue 9\"}, {\"item\": 10, \"text\": \"value 10\"}, {\"item"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "aa285fca02f705477e9c5f7bb6f94abc",
+        "chunk_index": 10,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5882352941176471,
+        "total_chunks": 17
+      },
+      "text": "\"}, {\"item\": 11, \"text\": \"value 11\"}, {\"item\": 12,"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "c4ec346ac19898bfcd2d06bc774548e5",
+        "chunk_index": 11,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.6470588235294118,
+        "total_chunks": 17
+      },
+      "text": "item\": 12, \"text\": \"value 12\"}, {\"item\": 13, \"text"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "ff2c5bd50c30dd592b2492db164fe16c",
+        "chunk_index": 12,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.7058823529411765,
+        "total_chunks": 17
+      },
+      "text": " 13, \"text\": \"value 13\"}, {\"item\": 14, \"text\": \"va"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "0f0f12e48a7026344473649318527ce3",
+        "chunk_index": 13,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.7647058823529411,
+        "total_chunks": 17
+      },
+      "text": "text\": \"value 14\"}, {\"item\": 15, \"text\": \"value 15"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "0238f7f87f06d7a547a02e7f971291fd",
+        "chunk_index": 14,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.8235294117647058,
+        "total_chunks": 17
+      },
+      "text": " \"value 15\"}, {\"item\": 16, \"text\": \"value 16\"}, {\""
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "d50dcbfbcd1ebe6a025d8dc017a4086c",
+        "chunk_index": 15,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.8823529411764706,
+        "total_chunks": 17
+      },
+      "text": "e 16\"}, {\"item\": 17, \"text\": \"value 17\"}, {\"item\":"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "ad45b92e152d1141f09a3ebe3064b309",
+        "chunk_index": 16,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.9411764705882353,
+        "total_chunks": 17
+      },
+      "text": ", {\"item\": 18, \"text\": \"value 18\"}, {\"item\": 19, \""
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "c9629eed8fa277493fc1ca6b8514cdc9",
+        "chunk_index": 17,
+        "chunk_method": "fixed_size",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 17
+      },
+      "text": "em\": 19, \"text\": \"value 19\"}]}"
+    }
+  ],
+  "outcome": "ok"
+}

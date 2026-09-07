@@ -39,7 +39,9 @@ class ClaimsSettingsUpdate(BaseModel):
     claims_embed: bool | None = None
     claims_embed_model_id: str | None = None
     claims_cluster_method: str | None = None
-    claims_cluster_similarity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    claims_cluster_similarity_threshold: float | None = Field(
+        default=None, ge=0.0, le=1.0
+    )
     claims_cluster_batch_size: int | None = Field(default=None, ge=1, le=10000)
     claims_llm_provider: str | None = None
     claims_llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -506,7 +508,9 @@ class ClaimsAnalyticsDashboardResponse(BaseModel):
     avg_review_latency_sec: float | None = None
     p95_review_latency_sec: float | None = None
     review_backlog: int
-    claims_per_media_top: list[ClaimsAnalyticsPerMediaCount] = Field(default_factory=list)
+    claims_per_media_top: list[ClaimsAnalyticsPerMediaCount] = Field(
+        default_factory=list
+    )
     claims_per_media_stats: ClaimsAnalyticsPerMediaStats
     review_throughput: ClaimsAnalyticsReviewThroughput
     review_status_trends: ClaimsAnalyticsReviewStatusTrends

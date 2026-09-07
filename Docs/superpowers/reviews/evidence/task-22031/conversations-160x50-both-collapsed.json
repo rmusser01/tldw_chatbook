@@ -1,0 +1,20 @@
+{
+  "items_open": false,
+  "library_open": false,
+  "restore_focusable": [
+    true,
+    true
+  ],
+  "restore_names": [
+    "Expand Library pane",
+    "Expand Items pane"
+  ],
+  "svg": "conversations-160x50-both-collapsed.svg",
+  "work_mounted": true,
+  "work_region": {
+    "height": 43,
+    "width": 146,
+    "x": 12,
+    "y": 5
+  }
+}

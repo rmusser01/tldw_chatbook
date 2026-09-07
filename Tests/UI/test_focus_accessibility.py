@@ -5,15 +5,25 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, TextArea, Select, Checkbox, RadioButton, Label
+from textual.widgets import (
+    Button,
+    Input,
+    TextArea,
+    Select,
+    Checkbox,
+    RadioButton,
+    Label,
+)
 from textual.containers import Container
+
+from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 
 class FocusTestApp(App):
     """Test app with various focusable widgets."""
-    
+
     CSS_PATH = "../../tldw_chatbook/css/tldw_cli_modular.tcss"
-    
+
     def compose(self) -> ComposeResult:
         """Create test UI with all focusable widget types."""
         with Container(id="test-container"):
@@ -26,7 +36,49 @@ class FocusTestApp(App):
             yield RadioButton("Test Radio", id="test-radio")
 
 
-CSS_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+class NotesEditorFocusApp(App):
+    """Production-CSS harness for the two long-form Notes editors."""
+
+    CSS_PATH = "../../tldw_chatbook/css/tldw_cli_modular.tcss"
+    CSS = """
+    #notes-focus-sentinel {
+        height: 1;
+    }
+
+    .notes-editor-adjacent {
+        width: 100%;
+        height: 8;
+        background: $panel;
+    }
+
+    #library-note-body,
+    #file-notes-editor,
+    #notes-unrelated-textarea {
+        height: 6;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        for theme in ALL_THEMES:
+            self.register_theme(theme)
+
+    def compose(self) -> ComposeResult:
+        yield Button("Focus sentinel", id="notes-focus-sentinel", compact=True)
+        with Container(classes="notes-editor-adjacent"):
+            yield TextArea("Database note body", id="library-note-body")
+        with Container(classes="notes-editor-adjacent"):
+            yield TextArea("Folder file body", id="file-notes-editor")
+        yield TextArea("Unrelated editor", id="notes-unrelated-textarea")
+        yield Input("Compact field", id="notes-compact-input", compact=True)
+
+
+CSS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
+)
 
 
 def css_block(text: str, selector: str) -> str:
@@ -42,24 +94,42 @@ def css_block(text: str, selector: str) -> str:
     raise AssertionError(f"Missing CSS block for {selector}")
 
 
+def _relative_luminance(color) -> float:
+    """Return WCAG relative luminance for a Textual color."""
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = color.rgb
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def _contrast_ratio(first, second) -> float:
+    """Return WCAG contrast for two Textual colors."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 @pytest.mark.asyncio
 async def test_button_has_visible_non_obscuring_focus():
     """Test that buttons retain a visible focus cue without heavy outline."""
     app = FocusTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         # Focus the button
         button = app.query_one("#test-button", Button)
         button.focus()
-        
+
         # Get computed styles
-        styles = button.styles
-        
+
         # Verify outline is not 'none'
         # Note: Textual doesn't expose outline directly, but we can verify
         # the widget has focus and the CSS is loaded
         assert button.has_focus
         assert app.CSS_PATH  # Verify CSS is loaded
-        
+
         assert CSS_PATH.exists()
 
         with CSS_PATH.open("r", encoding="utf-8") as f:
@@ -79,7 +149,7 @@ async def test_input_has_visible_non_obscuring_focus():
         input_widget = app.query_one("#test-input", Input)
         input_widget.focus()
         await pilot.pause()
-        
+
         # Verify focus
         assert input_widget.has_focus
 
@@ -93,7 +163,7 @@ async def test_textarea_has_visible_non_obscuring_focus():
         textarea = app.query_one("#test-textarea", TextArea)
         textarea.focus()
         await pilot.pause()
-        
+
         # Verify focus
         assert textarea.has_focus
 
@@ -104,26 +174,144 @@ async def test_no_global_outline_suppression_in_css():
     # Check the main CSS file
     with CSS_PATH.open("r", encoding="utf-8") as f:
         css_content = f.read()
-        
+
         # These anti-patterns should NOT be present
         assert "outline: none !important" not in css_content
         assert "outline:none!important" not in css_content
-        
+
         assert "*:focus" in css_content
         global_focus = css_block(css_content, "*:focus")
         assert "outline: solid" in global_focus
         assert "outline: heavy" not in global_focus
 
 
-def test_generated_input_focus_uses_thin_border_and_bottom_emphasis():
-    """Test generated input focus styles use the non-obscuring input pattern."""
+def test_generated_text_entry_focus_uses_thin_border_and_bottom_emphasis():
+    """Input and TextArea use the shared non-obscuring focus pattern."""
     css_content = CSS_PATH.read_text(encoding="utf-8")
 
-    for selector in ("Input:focus", "TextArea:focus", "Select:focus"):
+    for selector in ("Input:focus", "TextArea:focus"):
         block = css_block(css_content, selector)
         assert "outline: heavy" not in block
         assert "border: solid $ds-input-focus-border;" in block
         assert "border-bottom: solid $ds-input-focus-accent;" in block
+
+
+def test_generated_notes_body_focus_is_exact_boundary_only_exception():
+    """Only the two long-form note bodies trade focused fill for an outline."""
+    css_content = CSS_PATH.read_text(encoding="utf-8")
+
+    for selector in ("#library-note-body:focus", "#file-notes-editor:focus"):
+        block = css_block(css_content, selector)
+        assert "outline: heavy $ds-action-focus;" in block
+        assert "background: $ds-surface-raised;" in block
+        assert not any(
+            property_name in block
+            for property_name in ("height:", "width:", "padding:", "margin:")
+        )
+
+        dark_block = css_block(css_content, f".-dark-mode {selector}")
+        light_block = css_block(css_content, f".-light-mode {selector}")
+        assert "border: solid white;" in dark_block
+        assert "border: solid black;" in light_block
+
+
+@pytest.mark.asyncio
+async def test_notes_body_focus_preserves_fill_and_geometry_in_every_shipped_theme():
+    """Boundary focus remains visible without flashing either editor body."""
+    theme_names = tuple(
+        dict.fromkeys(
+            ("textual-dark", "textual-light", *(theme.name for theme in ALL_THEMES))
+        )
+    )
+    app = NotesEditorFocusApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        sentinel = app.query_one("#notes-focus-sentinel", Button)
+        for theme_name in theme_names:
+            app.theme = theme_name
+            await pilot.pause()
+            await pilot.pause()
+            for selector in ("#library-note-body", "#file-notes-editor"):
+                editor = app.query_one(selector, TextArea)
+                sentinel.focus()
+                await pilot.pause()
+                resting_background = editor.styles.background
+                resting_region = editor.region
+
+                editor.focus()
+                await pilot.pause()
+
+                assert editor.styles.background == resting_background, theme_name
+                assert editor.region == resting_region, theme_name
+                adjacent_background = editor.parent.styles.background
+                for outline_edge, border_edge in zip(
+                    (
+                        editor.styles.outline_top,
+                        editor.styles.outline_right,
+                        editor.styles.outline_bottom,
+                        editor.styles.outline_left,
+                    ),
+                    (
+                        editor.styles.border_top,
+                        editor.styles.border_right,
+                        editor.styles.border_bottom,
+                        editor.styles.border_left,
+                    ),
+                    strict=True,
+                ):
+                    line_style, outline_color = outline_edge
+                    assert line_style == "heavy", (
+                        theme_name,
+                        selector,
+                        outline_edge,
+                    )
+                    border_style, border_color = border_edge
+                    assert border_style == "solid", (
+                        theme_name,
+                        selector,
+                        border_edge,
+                    )
+                    ratio = max(
+                        _contrast_ratio(outline_color, adjacent_background),
+                        _contrast_ratio(border_color, adjacent_background),
+                    )
+                    assert ratio >= 3.0, (
+                        f"{theme_name} {selector} boundary paints at "
+                        f"{ratio:.2f}:1 against its adjacent surface"
+                    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_text_entries_keep_focused_fill_behavior():
+    """The note-body exception does not weaken compact or unrelated fields."""
+    app = NotesEditorFocusApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        sentinel = app.query_one("#notes-focus-sentinel", Button)
+        for selector, widget_type in (
+            ("#notes-unrelated-textarea", TextArea),
+            ("#notes-compact-input", Input),
+        ):
+            widget = app.query_one(selector, widget_type)
+            sentinel.focus()
+            await pilot.pause()
+            resting_background = widget.styles.background
+            widget.focus()
+            await pilot.pause()
+            assert widget.styles.background != resting_background
+
+
+def test_generated_select_focus_preserves_shape_specific_geometry():
+    """Select focus cues do not impose a global parent-border geometry."""
+    css_content = CSS_PATH.read_text(encoding="utf-8")
+
+    parent_block = css_block(css_content, "Select:focus")
+    assert "border:" not in parent_block
+    assert "background: $ds-input-focus-bg;" in parent_block
+    assert "color: $ds-text-primary;" in parent_block
+
+    compact_current = css_block(
+        css_content, "Select.-textual-compact:focus > SelectCurrent"
+    )
+    assert "background: $ds-input-focus-bg;" in compact_current
 
 
 def test_console_settings_input_focus_does_not_outline_single_row_value():
@@ -147,42 +335,46 @@ async def test_keyboard_navigation_visible():
     async with app.run_test() as pilot:
         # Tab through widgets
         await pilot.press("tab")  # Focus first widget
-        
+
         # Find which widget has focus
         focused_widget = None
-        for widget in app.query("Button, Input, TextArea, Select, Checkbox, RadioButton"):
+        for widget in app.query(
+            "Button, Input, TextArea, Select, Checkbox, RadioButton"
+        ):
             if widget.has_focus:
                 focused_widget = widget
                 break
-        
+
         assert focused_widget is not None, "No widget has focus after pressing Tab"
-        
+
         # Tab to next widget
         await pilot.press("tab")
-        
+
         # Verify focus moved
         new_focused = None
-        for widget in app.query("Button, Input, TextArea, Select, Checkbox, RadioButton"):
+        for widget in app.query(
+            "Button, Input, TextArea, Select, Checkbox, RadioButton"
+        ):
             if widget.has_focus:
                 new_focused = widget
                 break
-        
+
         assert new_focused is not None
         assert new_focused != focused_widget, "Focus didn't move to next widget"
 
 
-@pytest.mark.asyncio 
+@pytest.mark.asyncio
 async def test_focus_within_containers():
     """Test that containers show focus-within styles."""
     app = FocusTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         # Focus a widget inside the container
         button = app.query_one("#test-button", Button)
         button.focus()
-        
+
         # Get the container
         container = app.query_one("#test-container", Container)
-        
+
         # The container should be the parent of the focused element
         assert button.parent == container
         assert button.has_focus

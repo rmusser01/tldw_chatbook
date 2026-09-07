@@ -8,7 +8,9 @@ from tldw_chatbook.tldw_api.client import TLDWAPIClient
 
 
 @pytest.mark.asyncio
-async def test_embeddings_rag_and_vector_store_gateways_route_server_data_plane_surfaces(monkeypatch):
+async def test_embeddings_rag_and_vector_store_gateways_route_server_data_plane_surfaces(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
@@ -29,13 +31,19 @@ async def test_embeddings_rag_and_vector_store_gateways_route_server_data_plane_
         params={"include_errors": "true"},
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/embeddings/models/download")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/embeddings/models/download",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "provider": "sentence-transformers",
         "model": "all-MiniLM-L6-v2",
     }
     assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/rag/search")
-    assert mocked.await_args_list[1].kwargs["json_data"] == {"query": "offline sync", "top_k": 5}
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "query": "offline sync",
+        "top_k": 5,
+    }
     assert mocked.await_args_list[2].args[:2] == (
         "GET",
         "/api/v1/vector_stores/store-1/vectors/batches/batch-1",
@@ -44,7 +52,9 @@ async def test_embeddings_rag_and_vector_store_gateways_route_server_data_plane_
 
 
 @pytest.mark.asyncio
-async def test_rag_data_plane_gateways_reject_cross_namespace_and_unsafe_routes(monkeypatch):
+async def test_rag_data_plane_gateways_reject_cross_namespace_and_unsafe_routes(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)

@@ -1,0 +1,95 @@
+{
+  "decode_cases": [
+    {
+      "name": "legacy",
+      "record": {"artifact_type": "prompt", "prompt_format": "legacy", "system_prompt": "legacy system", "user_prompt": "legacy user"},
+      "state": "legacy"
+    },
+    {
+      "name": "valid_block_prompt",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "supported_v2"
+    },
+    {
+      "name": "valid_block_recipe",
+      "record": {"artifact_type": "recipe", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_recipe", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "supported_v2"
+    },
+    {
+      "name": "malformed_json",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": "{not json"},
+      "state": "malformed"
+    },
+    {
+      "name": "foreign_v1",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 1, "prompt_definition": {"schema_version": 1, "messages": []}},
+      "state": "foreign_v1"
+    },
+    {
+      "name": "future_version",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 99, "prompt_definition": {"schema_version": 99, "kind": "future"}},
+      "state": "unsupported"
+    },
+    {
+      "name": "foreign_single_text_recipe_v2",
+      "record": {"artifact_type": "recipe", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "definition_kind": "single_text_recipe", "blocks": []}},
+      "state": "unsupported"
+    },
+    {
+      "name": "missing_lanes",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt"}},
+      "state": "malformed"
+    },
+    {
+      "name": "duplicate_block_id",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": [{"id": "same", "title": "One", "syntax": "freeform", "content": "a"}]}, {"id": "user", "blocks": [{"id": "same", "title": "Two", "syntax": "freeform", "content": "b"}]}]}},
+      "state": "malformed"
+    },
+    {
+      "name": "duplicate_lane_id",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "system", "blocks": []}]}},
+      "state": "malformed"
+    },
+    {
+      "name": "non_mapping_lane",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": ["not-a-lane", {"id": "user", "blocks": []}]}},
+      "state": "malformed"
+    },
+    {
+      "name": "kind_artifact_mismatch",
+      "record": {"artifact_type": "recipe", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "mismatched"
+    },
+    {
+      "name": "column_definition_version_mismatch",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 3, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "mismatched"
+    },
+    {
+      "name": "record_float_version",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2.0, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "unsupported"
+    },
+    {
+      "name": "record_bool_version",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": true, "prompt_definition": {"schema_version": 2, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "unsupported"
+    },
+    {
+      "name": "definition_float_version",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": 2.0, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "mismatched"
+    },
+    {
+      "name": "definition_bool_version",
+      "record": {"artifact_type": "prompt", "prompt_format": "structured", "prompt_schema_version": 2, "prompt_definition": {"schema_version": true, "kind": "block_prompt", "lanes": [{"id": "system", "blocks": []}, {"id": "user", "blocks": []}]}},
+      "state": "mismatched"
+    }
+  ],
+  "xml": [
+    {"xml_tag": "", "content": "body", "input": ""},
+    {"xml_tag": "1bad", "content": "body", "input": "1bad"},
+    {"xml_tag": "context", "content": "<context>body</context>", "input": "<context>body</context>"},
+    {"xml_tag": "context", "content": "<context />", "input": "<context />"}
+  ]
+}

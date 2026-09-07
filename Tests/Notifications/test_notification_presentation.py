@@ -1,4 +1,6 @@
-from tldw_chatbook.Notifications.notification_presentation import NotificationPresentationStore
+from tldw_chatbook.Notifications.notification_presentation import (
+    NotificationPresentationStore,
+)
 
 
 def test_presentation_updates_local_delivery_without_changing_server_owned_state():

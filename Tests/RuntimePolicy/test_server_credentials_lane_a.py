@@ -50,8 +50,7 @@ def test_keyring_clear_all_removes_indexed_entries():
     index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
     indexed = json.loads(fake.values[index_key])
     assert [
-        [entry["server_profile_id"], entry["credential_type"]]
-        for entry in indexed
+        [entry["server_profile_id"], entry["credential_type"]] for entry in indexed
     ] == index_entries
     assert all(entry["version"] == 1 for entry in indexed)
     assert all(
@@ -70,7 +69,9 @@ def test_keyring_clear_all_removes_legacy_list_index_entries():
     fake = FakeKeyring()
     index_key = (DEFAULT_KEYRING_SERVICE_NAME, "__credential_refs__")
     fake.values[index_key] = json.dumps([["server-a", SERVER_CREDENTIAL_ACCESS_TOKEN]])
-    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = "legacy-secret"
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = (
+        "legacy-secret"
+    )
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
     store.clear_all()
@@ -108,7 +109,9 @@ def test_keyring_scoped_principal_none_and_dash_do_not_collide():
 
 def test_keyring_non_legacy_scoped_lookup_does_not_read_legacy_secret():
     fake = FakeKeyring()
-    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = "legacy-secret"
+    fake.values[(DEFAULT_KEYRING_SERVICE_NAME, "server-a:access_token")] = (
+        "legacy-secret"
+    )
     store = KeyringServerCredentialStore(keyring_backend=fake)
     non_legacy_scope = ServerCredentialScope(
         server_profile_id="server-a",
@@ -188,9 +191,44 @@ def test_keyring_clear_server_removes_unindexed_legacy_entries_for_profile():
     fake.values[legacy_key] = "legacy-secret"
     store = KeyringServerCredentialStore(keyring_backend=fake)
 
-    assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "legacy-secret"
+    assert (
+        store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) == "legacy-secret"
+    )
 
     store.clear_server("server-a")
 
     assert store.get_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN) is None
     assert legacy_key not in fake.values
+
+
+def test_keyring_clear_server_with_origin_scopes_to_one_server_in_shared_profile():
+    """task-31824: two servers sharing one `server_profile_id` (the
+    TLDW_CONFIG_PATH scoped-mode shape) must stay independently clearable.
+    `clear_server(profile)` alone clears every origin under that profile;
+    passing `normalized_origin` narrows the clear to one server."""
+    fake = FakeKeyring()
+    store = KeyringServerCredentialStore(keyring_backend=fake)
+    scope_a = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-a",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    scope_a_bearer = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-a",
+        credential_type="bearer_token",
+    )
+    scope_b = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-b",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    store.set_scoped_secret(scope_a, "a-secret")
+    store.set_scoped_secret(scope_a_bearer, "a-bearer")
+    store.set_scoped_secret(scope_b, "b-secret")
+
+    store.clear_server("shared-profile", normalized_origin="server-a")
+
+    assert store.get_scoped_secret(scope_a) is None
+    assert store.get_scoped_secret(scope_a_bearer) is None
+    assert store.get_scoped_secret(scope_b) == "b-secret"

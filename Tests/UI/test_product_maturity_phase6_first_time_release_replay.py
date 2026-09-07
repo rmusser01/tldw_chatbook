@@ -12,8 +12,9 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +23,12 @@ EVIDENCE = Path(
 )
 QA_README = Path("Docs/superpowers/qa/product-maturity/phase-6/README.md")
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
-TASK = Path("backlog/tasks/task-13.2 - Phase-6.2-Full-first-time-user-release-replay.md")
+TASK = Path(
+    "backlog/tasks/task-13.2 - Phase-6.2-Full-first-time-user-release-replay.md"
+)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 LOCAL_PATH_PREFIXES = (
     "/Users/",
     "/home/",
@@ -39,7 +45,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _screen_text(app) -> str:
@@ -94,6 +102,26 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
+async def _press_nav_destination(pilot, app, button_id: str) -> None:
+    """Press a destination through the visible strip or overflow menu."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        button = app.screen.query_one(f"#{button_id}", Button)
+        if not button.disabled:
+            button.press()
+            return
+        overflow = app.query_one("#nav-overflow-hint", Button)
+        if overflow.display:
+            overflow.press()
+            await pilot.pause(0.05)
+            if app.screen.__class__.__name__ == "NavOverflowMenu":
+                destination_id = button_id.removeprefix("nav-")
+                app.screen.query_one(f"#nav-overflow-{destination_id}", Button).press()
+                return
+        await pilot.pause(0.05)
+    raise AssertionError(f"#{button_id} never became keyboard/mouse reachable")
+
+
 def _phase_overview_row(markdown: str, phase_title: str) -> list[str]:
     for line in markdown.splitlines():
         if not line.startswith("|"):
@@ -126,16 +154,26 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
         async with app.run_test(size=(140, 42)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
+            nav_buttons = list(
+                app.screen.query(MainNavigationBar).first().query(Button)
+            )
             nav = [(button.id, str(button.label).strip()) for button in nav_buttons]
             for expected_nav in (
-                ("nav-home", "Home"),
-                ("nav-console", "Console"),
-                ("nav-library", "Library"),
-                ("nav-settings", "Settings"),
+                ("nav-home", "⌃1 Home"),
+                ("nav-console", "⌃2 Console"),
+                ("nav-library", "⌃3 Library"),
+                ("nav-settings", "F9 Settings"),
             ):
                 assert expected_nav in nav
 
@@ -143,20 +181,28 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
             assert "Console needs a working model before live AI tasks." in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "Ctrl+P" in home_text
+            # NV-01 (TASK-2154.21): at 140 cols every destination fits, so
+            # the overflow affordance hides instead of docking over the strip.
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one("#nav-overflow-hint").display is False,
+            )
 
             for button_id, current_tab, screen_name, required_copy in (
                 (
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Console", "Live work sources", "Model: not selected"),
+                    ("Console", "Live work sources", "Set up provider"),
                 ),
                 (
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    # The shell rail carries the orientation cues now: the
+                    # "Import / Export" section and the "Search / RAG" row
+                    # (spaced slash form per the library shell design copy).
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-settings",
@@ -165,11 +211,12 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                     ("Settings", "Global preferences", "Appearance"),
                 ),
             ):
-                app.screen.query_one(f"#{button_id}", Button).press()
+                await _press_nav_destination(pilot, app, button_id)
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
-                        app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                        app.current_tab == current_tab
+                        and app.screen.__class__.__name__ == screen_name
                     ),
                 )
                 # Some destinations (Settings categories) populate a beat
@@ -183,4 +230,3 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 screen_text = _screen_text(app)
                 for copy in required_copy:
                     assert copy in screen_text
-

@@ -1,0 +1,594 @@
+"""Production-app lifecycle proof for the File Notes process owner."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from os import fsdecode
+from pathlib import Path
+
+import pytest
+from textual.app import App
+
+from tldw_chatbook.Notes.file_notes_git_service import (
+    AsyncGitProcessRunner,
+    FileNotesGitService,
+)
+from tldw_chatbook.Notes.file_notes_session_owner import FileNotesSessionOwner
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    LibraryFileNotesWorkspace,
+)
+from Tests.Notes.test_file_notes_git_service import (
+    _StubbornProcess,
+    _change,
+    _entry,
+    _ownership,
+    _repository_at,
+    _single_group,
+)
+from Tests.Notes.test_file_notes_git_commit_integration import (
+    _ControlledCommitRunner,
+    _init_repository,
+    _prepare_owned_review,
+    _prepare_uncertain_commit_recovery,
+)
+from Tests.Notes.test_file_notes_git_push_service import (
+    _BlockingExactPushRunner,
+    _BlockingPushPreflightRunner,
+    _ControlledExactPushRunner,
+    _accepted_push_result,
+    _authorize_current_push,
+    _candidate_owner,
+    _current_push_operation,
+    _network_factory,
+    _prepare_exact_push_review,
+    _remote_observation,
+)
+from Tests.UI.app_factory import _build_test_app
+
+
+_ASYNC_SETTLE_TIMEOUT = 10.0
+
+
+@dataclass
+class _OwnerProbe:
+    events: list[str]
+    shutdown_calls: int = 0
+
+    async def shutdown_async(self) -> None:
+        self.shutdown_calls += 1
+        self.events.append("git-owner-settled")
+
+
+@dataclass
+class _ReplicaWorkspaceProbe:
+    events: list[str]
+    shutdown_calls: int = 0
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        self.events.append("replica-closed")
+
+
+class _FailingOwnerProbe:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def shutdown_async(self) -> None:
+        self.events.append("git-owner-failed")
+        raise RuntimeError("forced owner shutdown failure")
+
+
+class _BlockingOwnerProbe:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        failure: BaseException | None = None,
+    ) -> None:
+        self.events = events
+        self.failure = failure
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def shutdown_async(self) -> None:
+        self.events.append("git-owner-started")
+        self.started.set()
+        await self.release.wait()
+        if self.failure is not None:
+            self.events.append("git-owner-failed")
+            raise self.failure
+        self.events.append("git-owner-settled")
+
+
+class _ShutdownSettledPushRunner(_BlockingExactPushRunner):
+    """Let owner-first shutdown settle an already-started exact push."""
+
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+
+    async def run(self, argv, **kwargs):
+        command = tuple(fsdecode(argument) for argument in argv)
+        try:
+            return await super().run(argv, **kwargs)
+        finally:
+            if "push" in command:
+                self.events.append("push-settled")
+
+    def shutdown(self) -> None:
+        self.events.append("runner-shutdown")
+        self.release_push.set()
+
+
+class _ShutdownSettledPreflightRunner(_BlockingPushPreflightRunner):
+    """Let owner-first shutdown settle one retained preflight query."""
+
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+
+    async def run(self, argv, **kwargs):
+        command = tuple(fsdecode(argument) for argument in argv)
+        try:
+            return await super().run(argv, **kwargs)
+        finally:
+            if "ls-remote" in command:
+                self.events.append("preflight-settled")
+
+    def shutdown(self) -> None:
+        self.events.append("runner-shutdown")
+        self.release_query.set()
+
+
+class _ShutdownSettledRecoveryRunner(_ControlledExactPushRunner):
+    """Pause only the manual query after an uncertain push has settled."""
+
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+        self.query_count = 0
+        self.recovery_started = asyncio.Event()
+        self.release_recovery = asyncio.Event()
+
+    async def run(self, argv, **kwargs):
+        command = tuple(fsdecode(argument) for argument in argv)
+        if "ls-remote" in command:
+            self.query_count += 1
+            if self.query_count == 4:
+                self.recovery_started.set()
+                await self.release_recovery.wait()
+                result = await super().run(argv, **kwargs)
+                self.events.append("recovery-settled")
+                return result
+        return await super().run(argv, **kwargs)
+
+    def shutdown(self) -> None:
+        self.events.append("runner-shutdown")
+        self.release_recovery.set()
+
+
+async def _wait_for_library(app, pilot) -> LibraryScreen:
+    for _ in range(300):
+        if isinstance(app.screen, LibraryScreen):
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError("production TldwCli did not mount LibraryScreen")
+
+
+@pytest.mark.asyncio
+async def test_file_notes_owner_settles_before_mounted_library_replica() -> None:
+    """The private Textual shutdown hook must run before screen teardown."""
+    events: list[str] = []
+    owner = _OwnerProbe(events)
+    workspace = _ReplicaWorkspaceProbe(events)
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.file_notes_session_owner = owner
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for_library(app, pilot)
+        screen._library_file_notes_workspace = workspace
+
+    assert owner.shutdown_calls == 1
+    assert workspace.shutdown_calls == 1
+    assert events.index("git-owner-settled") < events.index("replica-closed")
+
+
+@pytest.mark.asyncio
+async def test_file_notes_owner_settles_when_library_never_mounted() -> None:
+    """App ownership is independent of whether a Library screen existed."""
+    events: list[str] = []
+    owner = _OwnerProbe(events)
+    app = _build_test_app(configured_default="chat")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.file_notes_session_owner = owner
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        assert not isinstance(app.screen, LibraryScreen)
+
+    assert owner.shutdown_calls == 1
+    assert events == ["git-owner-settled"]
+
+
+@pytest.mark.asyncio
+async def test_file_notes_owner_failure_still_runs_textual_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner failure is preserved only after superclass shutdown is attempted."""
+    events: list[str] = []
+    app = _build_test_app(configured_default="chat")
+    app.file_notes_session_owner = _FailingOwnerProbe(events)
+
+    async def shutdown_textual(_app) -> None:
+        events.append("textual-shutdown")
+
+    monkeypatch.setattr(App, "_shutdown", shutdown_textual)
+
+    with pytest.raises(RuntimeError, match="forced owner shutdown failure"):
+        await app._shutdown()
+
+    assert events == ["git-owner-failed", "textual-shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_cancellation_waits_for_owner_before_textual_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller cancellation is delayed until the retained owner has settled."""
+    events: list[str] = []
+    owner = _BlockingOwnerProbe(events)
+    app = _build_test_app(configured_default="chat")
+    app.file_notes_session_owner = owner
+
+    async def shutdown_textual(_app) -> None:
+        assert events[-1] == "git-owner-settled"
+        events.extend(("textual-shutdown", "screen-closed", "replica-closed"))
+
+    monkeypatch.setattr(App, "_shutdown", shutdown_textual)
+    shutdown = asyncio.create_task(app._shutdown())
+    await owner.started.wait()
+
+    shutdown.cancel("first shutdown cancellation")
+    await asyncio.sleep(0)
+    shutdown.cancel("second shutdown cancellation")
+    await asyncio.sleep(0)
+    events_before_release = tuple(events)
+    shutdown_done_before_release = shutdown.done()
+
+    owner.release.set()
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await shutdown
+
+    assert events_before_release == ("git-owner-started",)
+    assert not shutdown_done_before_release
+    assert cancellation.value.args == ("first shutdown cancellation",)
+    assert events == [
+        "git-owner-started",
+        "git-owner-settled",
+        "textual-shutdown",
+        "screen-closed",
+        "replica-closed",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["owner", "textual"])
+async def test_app_shutdown_cancellation_preserves_non_cancellation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
+) -> None:
+    """Owner and superclass failures remain primary over caller cancellation."""
+    events: list[str] = []
+    owner = _BlockingOwnerProbe(
+        events,
+        failure=(
+            RuntimeError("forced owner failure") if failure_phase == "owner" else None
+        ),
+    )
+    app = _build_test_app(configured_default="chat")
+    app.file_notes_session_owner = owner
+
+    async def shutdown_textual(_app) -> None:
+        events.append("textual-shutdown")
+        if failure_phase == "textual":
+            raise ValueError("forced Textual failure")
+
+    monkeypatch.setattr(App, "_shutdown", shutdown_textual)
+    shutdown = asyncio.create_task(app._shutdown())
+    await owner.started.wait()
+    shutdown.cancel("shutdown cancellation")
+    await asyncio.sleep(0)
+    owner.release.set()
+
+    expected_error = RuntimeError if failure_phase == "owner" else ValueError
+    with pytest.raises(expected_error) as failure:
+        await shutdown
+
+    terminal_event = (
+        "git-owner-failed" if failure_phase == "owner" else "git-owner-settled"
+    )
+    assert events.index(terminal_event) < events.index("textual-shutdown")
+    assert any(
+        "cancellation" in note.lower()
+        for note in getattr(failure.value, "__notes__", ())
+    )
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_settles_retained_child_after_forced_workspace_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The app owner, never the workspace, settles one uncertain Git child."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / ".git").mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    child = _StubbornProcess()
+    subprocess_calls = 0
+
+    async def create_subprocess_exec(*_argv, **_kwargs):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        return child
+
+    monkeypatch.setattr(
+        "asyncio.create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    unlinked_index_locks: list[Path] = []
+    real_unlink = Path.unlink
+
+    def unlink(path: Path, *args, **kwargs) -> None:
+        if path.name == "index.lock":
+            unlinked_index_locks.append(path)
+            return
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    owner = FileNotesSessionOwner()
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    owner.attach_git_service(service)
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    group = _single_group("note.md")
+    assert owner.record_change(binding, _change(1, "modified", "note.md").change)
+    assert owner.publish_trust(binding, repository)
+    assert owner.publish_ownership(
+        binding,
+        {1: _ownership(group, {"note.md": _entry("note.md")})},
+    )
+
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=None,
+        session_owner=owner,
+    )
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.file_notes_session_owner = owner
+    status_waiter = None
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for_library(app, pilot)
+        screen._library_file_notes_workspace = workspace
+        status_waiter = service.start_status(
+            binding,
+            (_change(1, "modified", "note.md"),),
+        )
+        await child.communicate_started.wait()
+
+        await workspace.shutdown()
+        assert subprocess_calls == 1
+        assert child.terminate_calls == 0
+        assert child.kill_calls == 0
+
+    assert status_waiter is not None
+    status = await status_waiter
+    assert status.state in {"stale", "unavailable", "error"}
+    assert subprocess_calls == 1
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 1
+    assert child.wait_calls == 2
+    assert not owner.snapshot(binding).staging_ownership
+    assert unlinked_index_locks == []
+
+
+@pytest.mark.asyncio
+async def test_app_owner_first_retained_commit_shutdown_precedes_replica_teardown(
+    tmp_path: Path,
+) -> None:
+    """A mounted panel cannot outlive exact commit publication and settlement."""
+    repository = _init_repository(tmp_path)
+    runner = _ControlledCommitRunner("shutdown_stop")
+    service, binding, review = await _prepare_owned_review(
+        repository,
+        runner=runner,
+    )
+    assert review.handle is not None
+    owner = service._owner
+    owner.attach_git_service(service)
+    events: list[str] = []
+    workspace = _ReplicaWorkspaceProbe(events)
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.file_notes_session_owner = owner
+    waiter = None
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for_library(app, pilot)
+        screen._library_file_notes_workspace = workspace
+        waiter = service.start_commit(binding, review.handle)
+        await asyncio.wait_for(
+            runner.commit_started.wait(),
+            _ASYNC_SETTLE_TIMEOUT,
+        )
+
+    assert waiter is not None
+    outcome = await asyncio.wait_for(waiter, _ASYNC_SETTLE_TIMEOUT)
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert runner.shutdown_called is True
+    assert runner.released is True
+    assert not owner.mutation_active(binding)
+    assert workspace.shutdown_calls == 1
+    assert events == ["replica-closed"]
+    assert runner.hooks_directory is not None
+    assert not runner.hooks_directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_retained_commit_shutdown_joins_cancelled_recovery_before_owner_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Owner-first shutdown joins recovery after its mounted waiter disappears."""
+    repository = _init_repository(tmp_path)
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="zero_without_commit",
+    )
+    owner = service._owner
+    owner.attach_git_service(service)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_postflight = service._read_commit_postflight
+
+    async def delayed_postflight(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await original_postflight(*args, **kwargs)
+
+    monkeypatch.setattr(
+        service,
+        "_read_commit_postflight",
+        delayed_postflight,
+    )
+    waiter = service.check_commit_again(binding)
+    await asyncio.wait_for(started.wait(), _ASYNC_SETTLE_TIMEOUT)
+    cycle = service._commit_recovery_cycle
+    assert cycle is not None
+
+    waiter.cancel("panel unmounted")
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    shutdown = asyncio.create_task(owner.shutdown_async())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+
+    release.set()
+    await asyncio.wait_for(shutdown, _ASYNC_SETTLE_TIMEOUT)
+    outcome = await asyncio.wait_for(
+        asyncio.shield(cycle),
+        _ASYNC_SETTLE_TIMEOUT,
+    )
+
+    assert outcome.state == "uncertain"
+    assert runner.commit_calls == 1
+    assert not owner.mutation_active(binding)
+    assert owner.snapshot(binding).commit_recovery is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ("preflight", "push", "recovery"))
+async def test_push_shutdown_settles_owner_before_replica_teardown(
+    tmp_path: Path,
+    phase: str,
+) -> None:
+    """Active guarded-push work must settle before mounted replica teardown."""
+    events: list[str] = []
+    owner, binding, repository = _candidate_owner(tmp_path)
+    if phase == "preflight":
+        runner = _ShutdownSettledPreflightRunner(
+            repository,
+            _remote_observation("b" * 40),
+            events=events,
+        )
+    elif phase == "push":
+        runner = _ShutdownSettledPushRunner(
+            repository,
+            observations=(
+                _remote_observation("b" * 40),
+                _remote_observation("b" * 40),
+                _remote_observation("d" * 40),
+            ),
+            push_result=_accepted_push_result(),
+            events=events,
+        )
+    else:
+        runner = _ShutdownSettledRecoveryRunner(
+            repository,
+            observations=(
+                _remote_observation("b" * 40),
+                _remote_observation("b" * 40),
+                _remote_observation("b" * 40),
+                _remote_observation("d" * 40),
+            ),
+            push_result=_accepted_push_result(),
+            events=events,
+        )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+        network_context_factory=_network_factory(tmp_path),
+    )
+    owner.attach_git_service(service)
+    workspace = _ReplicaWorkspaceProbe(events)
+    app = _build_test_app(configured_default="library")
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.file_notes_session_owner = owner
+    waiter = None
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        screen = await _wait_for_library(app, pilot)
+        screen._library_file_notes_workspace = workspace
+        if phase == "preflight":
+            assert (await service.start_push_review(binding)).state == "ready"
+            waiter = _authorize_current_push(service, binding)
+            await asyncio.wait_for(runner.started.wait(), 1.0)
+        elif phase == "push":
+            reviewed = await _prepare_exact_push_review(service, binding)
+            waiter = service.start_push(binding, reviewed.handle)
+            await asyncio.wait_for(runner.push_started.wait(), 1.0)
+        else:
+            reviewed = await _prepare_exact_push_review(service, binding)
+            pushed = await service.start_push(binding, reviewed.handle)
+            assert pushed.state == "uncertain"
+            waiter = service.check_push_again(
+                binding,
+                _current_push_operation(service, binding),
+            )
+            await asyncio.wait_for(runner.recovery_started.wait(), 1.0)
+
+    assert waiter is not None
+    await asyncio.wait_for(waiter, 1.0)
+    settled_event = f"{phase}-settled"
+    assert events.index("runner-shutdown") < events.index(settled_event)
+    assert events.index(settled_event) < events.index("replica-closed")
+    assert workspace.shutdown_calls == 1
+    assert not owner.mutation_active(binding)
+    snapshot = owner.snapshot(binding)
+    assert snapshot.push_candidate is None
+    assert snapshot.push_recovery is None
+    context_parent = tmp_path / "network-contexts"
+    assert not context_parent.exists() or not any(context_parent.iterdir())

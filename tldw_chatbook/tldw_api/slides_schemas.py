@@ -26,7 +26,9 @@ def _validate_visual_style_selection_pair(
     visual_style_scope: str | None,
 ) -> None:
     if (visual_style_id is None) != (visual_style_scope is None):
-        raise ValueError("visual_style_id and visual_style_scope must be provided together")
+        raise ValueError(
+            "visual_style_id and visual_style_scope must be provided together"
+        )
 
 
 class VisualStyleSelectionMixin(BaseModel):

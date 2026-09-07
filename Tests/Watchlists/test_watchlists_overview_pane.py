@@ -1,0 +1,258 @@
+"""Tests for the Watchlists overview pane."""
+
+import pytest
+from textual.app import App, ComposeResult
+
+from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
+    WatchlistsBackendController,
+)
+
+
+class OverviewPaneHarness(App):
+    def compose(self) -> ComposeResult:
+        yield OverviewPane()
+
+
+@pytest.mark.asyncio
+async def test_overview_pane_renders_summary_cards():
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        pane.data = {
+            "total_sources": 3,
+            "active_sources": 2,
+            "sources_in_error": 1,
+            "total_items": 12,
+            "new_items": 5,
+            "latest_run_status": "completed",
+            "active_alert_rules": 2,
+            "failed_runs": [],
+        }
+        await pilot.pause()
+
+        assert pane.query_one("#watchlists-overview-grid")
+        assert "Total sources\n3" in str(pane.query_one("#overview-total-sources").renderable)
+        assert "Active sources\n2" in str(pane.query_one("#overview-active-sources").renderable)
+        assert "Sources in error\n1" in str(pane.query_one("#overview-sources-in-error").renderable)
+        assert "Total items\n12" in str(pane.query_one("#overview-total-items").renderable)
+        assert "New items\n5" in str(pane.query_one("#overview-new-items").renderable)
+        assert "Latest run status\ncompleted" in str(
+            pane.query_one("#overview-latest-run-status").renderable
+        )
+        assert "Active alert rules\n2" in str(
+            pane.query_one("#overview-active-alert-rules").renderable
+        )
+        table = pane.query_one("#overview-failed-runs")
+        assert table.row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_none_card_value_falls_back_to_the_dash_not_the_literal_word_none():
+    """TASK-2313, AC#2: `latest_run_status` is `None` (not the string
+    "unavailable", which read as a fault -- UAT) when nothing has run yet.
+    `_card_value` must treat a PRESENT `None` value the same as a missing
+    key (falling back to "-"), not print the literal text "None". A
+    present numeric `0` (every other card) must be untouched."""
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        # A populated profile (>0 sources) that simply has not been
+        # checked yet -- a real, reachable state, and the one that must
+        # render the summary-cards grid rather than first-run guidance.
+        pane.data = {
+            "total_sources": 1,
+            "active_sources": 1,
+            "sources_in_error": 0,
+            "total_items": 0,
+            "new_items": 0,
+            "latest_run_status": None,
+            "active_alert_rules": 0,
+            "failed_runs": [],
+        }
+        await pilot.pause()
+
+        assert "Latest run status\n-" in str(
+            pane.query_one("#overview-latest-run-status").renderable
+        )
+        # A real, present `0` must still render as "0", not fall through
+        # to "-" as if it were also missing.
+        assert "New items\n0" in str(pane.query_one("#overview-new-items").renderable)
+
+
+@pytest.mark.asyncio
+async def test_latest_run_status_sentinels_render_as_prose_not_raw_literals():
+    """UAT batch-5 review, finding I1: the two `latest_run_status`
+    sentinels (`scope_service` unwired; a real lookup exception) must not
+    leak into this card as their raw, machine-readable literal
+    ("not_configured"/"lookup_failed") -- they get the same honest,
+    human-readable treatment `WatchlistsCollectionsScreen.
+    _latest_run_status_text` gives the Inspector's line, and the two must
+    stay distinguishable from EACH OTHER as well as from "-" (no runs) and
+    from a real DB-sourced status string.
+    """
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        base = {
+            "total_sources": 1,
+            "active_sources": 1,
+            "sources_in_error": 0,
+            "total_items": 0,
+            "new_items": 0,
+            "active_alert_rules": 0,
+            "failed_runs": [],
+        }
+
+        pane.data = {**base, "latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+        await pilot.pause()
+        not_configured_text = str(pane.query_one("#overview-latest-run-status").renderable)
+        assert "Latest run status\nnot connected" in not_configured_text
+        assert WatchlistsBackendController.NOT_CONFIGURED_STATUS not in not_configured_text
+
+        pane.data = {**base, "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+        await pilot.pause()
+        lookup_failed_text = str(pane.query_one("#overview-latest-run-status").renderable)
+        assert "Latest run status\ncouldn't check" in lookup_failed_text
+        assert WatchlistsBackendController.LOOKUP_FAILED_STATUS not in lookup_failed_text
+
+        assert not_configured_text != lookup_failed_text
+
+
+@pytest.mark.asyncio
+async def test_overview_pane_renders_failed_runs():
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        pane.data = {
+            "total_sources": 1,
+            "active_sources": 1,
+            "sources_in_error": 0,
+            "total_items": 5,
+            "new_items": 1,
+            "latest_run_status": "failed",
+            "active_alert_rules": 0,
+            "failed_runs": [
+                {"source_title": "RSS A", "status": "timeout", "error_msg": "slow"},
+            ],
+        }
+        await pilot.pause()
+
+        table = pane.query_one("#overview-failed-runs")
+        assert table.row_count == 1
+        assert list(table.get_row_at(0)) == ["RSS A", "timeout", "slow"]
+
+
+# -- task-1347: first-run guidance has two variants, and neither was ever
+# asserted on its actual copy -- every existing test only checked that
+# `#overview-first-run` existed, so blanking `_first_run_body` left them all
+# green. These mount the pane the same way the rest of this file does and
+# read the rendered `Static` the user would actually see, rather than calling
+# `_first_run_body()` as a pure function.
+
+
+@pytest.mark.asyncio
+async def test_overview_pane_first_run_guidance_for_a_brand_new_profile():
+    """`watchlist_count == 0`: the user has not made a watchlist yet."""
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        pane.watchlist_count = 0
+        pane.data = {"total_sources": 0, "failed_runs": []}
+        await pilot.pause()
+
+        assert pane.query_one("#overview-first-run")
+        body = str(pane.query_one("#overview-first-run-body").renderable)
+        assert "A watchlist is a folder of feeds" in body, (
+            f"a brand-new profile must be told what a watchlist is; it renders {body!r}"
+        )
+        assert "Your watchlists have no sources yet" not in body, (
+            "the has-sources variant must not leak into the no-watchlists one"
+        )
+
+
+@pytest.mark.asyncio
+async def test_overview_pane_first_run_guidance_for_a_watchlist_with_no_sources():
+    """The has-watchlists first-run variant shows the sources guidance.
+
+    `watchlist_count > 0`: telling this user to make a watchlist is the same
+    dead end the copy exists to remove, one step further along.
+    """
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        pane.watchlist_count = 1
+        pane.data = {"total_sources": 0, "failed_runs": []}
+        await pilot.pause()
+
+        assert pane.query_one("#overview-first-run")
+        body = str(pane.query_one("#overview-first-run-body").renderable)
+        assert "Your watchlists have no sources yet" in body, (
+            f"a watchlist with no sources must be told to add one; it renders {body!r}"
+        )
+        assert "A watchlist is a folder of feeds" not in body, (
+            "the no-watchlists variant must not leak into the has-sources one"
+        )
+
+
+# -- task-670: RecomposeCaptureGuard extended to OverviewPane -------------
+# OverviewPane.data is a `recompose=True` reactive; before this fix the pane
+# carried no guard against task-637's bug class (a capture landing in the
+# window between the reactive-driven `refresh(recompose=True)` and the
+# deferred teardown it schedules leaks `App.mouse_captured` onto a removed
+# widget forever, silently swallowing every mouse event anywhere in the app).
+
+
+@pytest.mark.asyncio
+async def test_data_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_window():
+    """A capture that lands after ``pane.data = ...`` schedules the pane's
+    recompose (via the `recompose=True` reactive's own `refresh(recompose=True)`
+    call) but before the deferred teardown actually runs must not survive it.
+
+    Mirrors ``test_sync_state_recompose_releases_a_capture_that_lands_in_the_
+    deferred_teardown_window`` in ``Tests/UI/test_mcp_rail.py`` (task-637):
+    ``Widget.refresh(recompose=True)`` only *schedules* the real teardown via
+    ``self.call_next(self._check_recompose)`` -- it runs on a LATER
+    message-loop iteration, not synchronously. This simulates a MouseDown
+    capturing a pane descendant (one of the summary cards) landing in that
+    same window, the same way a real one arriving over a laggy transport
+    would.
+    """
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        # TASK-1020: a pane whose `data` is still `{}` is in the LOADING
+        # state and renders no cards, so the victim widget this test needs to
+        # capture has to be brought into existence first. The recompose being
+        # exercised is the second assignment below, exactly as before.
+        pane.data = {"total_sources": 1, "failed_runs": []}
+        await pilot.pause()
+        victim = pane.query_one("#overview-total-sources")
+
+        pane.data = {
+            "total_sources": 3,
+            "active_sources": 2,
+            "sources_in_error": 1,
+            "total_items": 12,
+            "new_items": 5,
+            "latest_run_status": "completed",
+            "active_alert_rules": 2,
+            "failed_runs": [],
+        }
+        # Same synchronous stack, no `await` yet: simulate a MouseDown
+        # capturing a widget the just-scheduled (but not yet run) recompose
+        # is about to tear down.
+        pilot.app.capture_mouse(victim)
+        assert pilot.app.mouse_captured is victim, (
+            "test setup didn't actually capture the victim widget"
+        )
+
+        # Let the deferred recompose (and everything else queued) run.
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.mouse_captured is None, (
+            "mouse_captured is still referencing a widget OverviewPane's "
+            "deferred recompose already tore down -- every mouse click "
+            "anywhere in the app is now silently swallowed (task-670)"
+        )

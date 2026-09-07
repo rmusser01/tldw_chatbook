@@ -1,0 +1,119 @@
+"""Geometry regression for the Console workspace action row (TASK-712).
+
+The Session action row once clipped the New button entirely out of view while
+leaving a blank clickable strip: the row's left margin plus Textual's default
+16-column Button min-width overflowed the ~37-column rail, so the New label
+rendered outside the clip. These tests mount the real ChatScreen with the real
+app stylesheet (the defect lives in app-tier CSS, not widget DEFAULT_CSS) and
+assert every workspace action button fits inside its row's content region.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from Tests.UI.app_factory import _build_test_app
+
+ROOT = Path(__file__).resolve().parents[2]
+BUNDLE = ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+CONSOLE_SHEET = ROOT / "tldw_chatbook" / "css" / "screen_agentic_console.tcss"
+
+
+class StyledConsoleHarness(ConsoleHarness):
+    """ConsoleHarness with the shipped stylesheet so app-tier rules apply."""
+
+    CSS_PATH = [str(BUNDLE), str(CONSOLE_SHEET)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", [(100, 48), (235, 52)])
+async def test_workspace_action_buttons_fit_inside_their_rows(terminal_size) -> None:
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=terminal_size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspaces-context")
+        console.query_one("#console-left-rail").apply_section_open("workspace", True)
+        for _ in range(10):
+            await pilot.pause()
+            if console.query_one("#console-change-workspace").region.width > 0:
+                break
+
+        tray = console.query_one("#console-workspace-context")
+        checks = [
+            ("#console-workspace-action-row", "#console-change-workspace"),
+            ("#console-workspace-action-row", "#console-new-workspace"),
+            ("#console-workspace-action-row", "#console-workspace-rag-scope-open"),
+            ("#console-workspace-files-row", "#console-workspace-files-open"),
+        ]
+        for row_selector, button_selector in checks:
+            row = console.query_one(row_selector)
+            button = console.query_one(button_selector)
+            assert button.display, f"{button_selector} must be displayed"
+            assert button.region.width > 0, f"{button_selector} has no width"
+            assert button.region.right <= row.content_region.right, (
+                f"{button_selector} overflows its row: button right edge "
+                f"{button.region.right} > row content right "
+                f"{row.content_region.right} - the overflowed part renders "
+                "outside the rail clip (invisible but clickable)."
+            )
+            assert row.region.right <= tray.content_region.right, (
+                f"{row_selector} overflows the tray content region"
+            )
+
+
+@pytest.mark.asyncio
+async def test_workspace_action_row_holds_switch_and_new_side_by_side() -> None:
+    """Both actions must coexist on the shared row without either collapsing."""
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspaces-context")
+        console.query_one("#console-left-rail").apply_section_open("workspace", True)
+        await pilot.pause()
+
+        switch = console.query_one("#console-change-workspace")
+        new = console.query_one("#console-new-workspace")
+        # Side by side on one line, no overlap, both wide enough for their labels.
+        assert switch.region.y == new.region.y
+        assert switch.region.right <= new.region.x
+        assert switch.region.width >= len("Switch")
+        assert new.region.width >= len("New")
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_is_a_dedicated_row_immediately_after_primary_actions() -> None:
+    """Files remains a complete, keyboard-reachable rail action.
+
+    It must not consume space in the width-sensitive Switch/New row.
+    """
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspaces-context")
+        console.query_one("#console-left-rail").apply_section_open("workspace", True)
+        for _ in range(10):
+            await pilot.pause()
+            if console.query_one("#console-workspace-files-open").region.width:
+                break
+
+        tray = console.query_one("#console-workspaces-context")
+        primary_row = tray.query_one("#console-workspace-action-row")
+        files_row = tray.query_one("#console-workspace-files-row")
+        files = tray.query_one("#console-workspace-files-open")
+        search = tray.query_one("#console-workspace-search")
+        assert files.disabled is False
+        assert primary_row.region.bottom <= files_row.region.y
+        assert files_row.region.bottom <= search.region.y
+        assert files.region.right <= files_row.content_region.right

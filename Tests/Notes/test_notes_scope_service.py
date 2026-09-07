@@ -1,7 +1,5 @@
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -11,6 +9,8 @@ class FakeLocalNotes:
         self.add_calls = []
         self.update_calls = []
         self.delete_calls = []
+        self.restore_calls = []
+        self.restored_versions = {}
         self.search_calls = []
         self.link_calls = []
         self.unlink_calls = []
@@ -67,6 +67,17 @@ class FakeLocalNotes:
         )
         return True
 
+    def restore_note(self, user_id, note_id, expected_version):
+        self.restore_calls.append(
+            {
+                "user_id": user_id,
+                "note_id": note_id,
+                "expected_version": expected_version,
+            }
+        )
+        self.restored_versions[str(note_id)] = expected_version + 1
+        return True
+
     def search_notes(self, user_id, search_term, limit=10):
         self.search_calls.append(
             {
@@ -79,9 +90,19 @@ class FakeLocalNotes:
 
     def get_note_by_id(self, user_id, note_id):
         if note_id == "local-1":
-            return {"id": "local-1", "title": "Local", "content": "Body", "version": 1}
+            return {
+                "id": "local-1",
+                "title": "Local",
+                "content": "Body",
+                "version": self.restored_versions.get("local-1", 1),
+            }
         if note_id == "local-2":
-            return {"id": "local-2", "title": "Related", "content": "More", "version": 1}
+            return {
+                "id": "local-2",
+                "title": "Related",
+                "content": "More",
+                "version": 1,
+            }
         return None
 
     def list_notes(self, user_id, limit=100, offset=0):
@@ -129,7 +150,9 @@ class FakeLocalNotes:
         )
         return True
 
-    def create_note_link(self, user_id, note_id, to_note_id, directed=False, weight=None, metadata=None):
+    def create_note_link(
+        self, user_id, note_id, to_note_id, directed=False, weight=None, metadata=None
+    ):
         edge = {
             "id": f"local:manual:{len(self.manual_links) + 1}",
             "source": note_id,
@@ -154,7 +177,9 @@ class FakeLocalNotes:
 
     def delete_note_link(self, user_id, edge_id):
         before = len(self.manual_links)
-        self.manual_links = [edge for edge in self.manual_links if edge["id"] != edge_id]
+        self.manual_links = [
+            edge for edge in self.manual_links if edge["id"] != edge_id
+        ]
         return {"deleted": len(self.manual_links) != before, "edge_id": edge_id}
 
 
@@ -419,7 +444,12 @@ async def test_scope_service_routes_workspace_record_crud_to_server_service():
     assert deleted == {"deleted": True, "workspace_id": "ws-1"}
     assert server.workspace_record_saves == [
         {"workspace_id": "ws-1", "name": "Research"},
-        {"workspace_id": "ws-1", "name": "Research Updated", "version": 3, "archived": True},
+        {
+            "workspace_id": "ws-1",
+            "name": "Research Updated",
+            "version": 3,
+            "archived": True,
+        },
     ]
     assert server.workspace_deletes == ["ws-1"]
     assert policy_enforcer.calls == [
@@ -806,6 +836,56 @@ async def test_scope_service_local_delete_survives_sync_v2_enqueue_failure():
 
 
 @pytest.mark.asyncio
+async def test_scope_service_restores_local_note_as_update_and_enqueues_active_upsert():
+    """Restore uses update authority and emits the fresh active sync record."""
+    local = FakeLocalNotes()
+    producer = FakeNotesSyncV2Producer()
+    policy = FakePolicyEnforcer()
+    scope_service = NotesScopeService(
+        local_notes_service=local,
+        server_service=FakeServerNotes(),
+        policy_enforcer=policy,
+        sync_v2_notes_producer=producer,
+    )
+
+    result = await scope_service.restore_note(
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_id="local-1",
+        version=4,
+        sync_v2_profile={
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+        },
+    )
+
+    assert result["version"] == 5
+    assert local.restore_calls == [
+        {
+            "user_id": "user-1",
+            "note_id": "local-1",
+            "expected_version": 4,
+        }
+    ]
+    assert policy.calls == ["notes.update.local"]
+    assert producer.upserts == [
+        {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": None,
+            "note_id": "local-1",
+            "title": "Local",
+            "content": "Body",
+            "status": "active",
+            "tag_ids": ["existing", "stale"],
+            "base_version": 4,
+            "entity_version": 5,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_scope_service_routes_local_note_keywords_through_local_service():
     local = FakeLocalNotes()
     scope_service = NotesScopeService(
@@ -949,7 +1029,9 @@ async def test_scope_service_rejects_local_notes_graph_operations_explicitly():
         server_service=FakeServerNotes(),
     )
 
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
         await scope_service.get_notes_graph(scope=ScopeType.LOCAL_NOTE)
 
 
@@ -961,16 +1043,26 @@ async def test_scope_service_rejects_all_local_notes_graph_operations_before_bac
         server_service=server,
     )
 
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
-        await scope_service.get_note_neighbors(scope=ScopeType.LOCAL_NOTE, note_id="local-1")
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
+        await scope_service.get_note_neighbors(
+            scope=ScopeType.LOCAL_NOTE, note_id="local-1"
+        )
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
         await scope_service.create_note_link(
             scope=ScopeType.LOCAL_NOTE,
             note_id="local-1",
             to_note_id="local-2",
         )
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
-        await scope_service.delete_note_link(scope=ScopeType.LOCAL_NOTE, edge_id="local:manual:1")
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
+        await scope_service.delete_note_link(
+            scope=ScopeType.LOCAL_NOTE, edge_id="local:manual:1"
+        )
 
     assert server.graph_calls == []
 
@@ -983,17 +1075,29 @@ async def test_scope_service_rejects_all_workspace_notes_graph_operations_before
         server_service=server,
     )
 
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
-        await scope_service.get_notes_graph(scope=ScopeType.WORKSPACE, center_note_id="note:123")
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
-        await scope_service.get_note_neighbors(scope=ScopeType.WORKSPACE, note_id="note:123")
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
+        await scope_service.get_notes_graph(
+            scope=ScopeType.WORKSPACE, center_note_id="note:123"
+        )
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
+        await scope_service.get_note_neighbors(
+            scope=ScopeType.WORKSPACE, note_id="note:123"
+        )
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
         await scope_service.create_note_link(
             scope=ScopeType.WORKSPACE,
             note_id="note:123",
             to_note_id="note:456",
         )
-    with pytest.raises(ValueError, match="Notes graph operations are currently server-backed"):
+    with pytest.raises(
+        ValueError, match="Notes graph operations are currently server-backed"
+    ):
         await scope_service.delete_note_link(scope=ScopeType.WORKSPACE, edge_id="e:1")
 
     assert server.graph_calls == []
@@ -1005,9 +1109,15 @@ def test_scope_service_reports_known_notes_graph_capability_gaps():
         server_service=FakeServerNotes(),
     )
 
-    local_report = scope_service.list_unsupported_capabilities(scope=ScopeType.LOCAL_NOTE)
-    workspace_report = scope_service.list_unsupported_capabilities(scope=ScopeType.WORKSPACE)
-    server_report = scope_service.list_unsupported_capabilities(scope=ScopeType.SERVER_NOTE)
+    local_report = scope_service.list_unsupported_capabilities(
+        scope=ScopeType.LOCAL_NOTE
+    )
+    workspace_report = scope_service.list_unsupported_capabilities(
+        scope=ScopeType.WORKSPACE
+    )
+    server_report = scope_service.list_unsupported_capabilities(
+        scope=ScopeType.SERVER_NOTE
+    )
 
     assert local_report == [
         {
@@ -1101,7 +1211,9 @@ async def test_scope_service_routes_local_note_count_to_local_service():
         server_service=FakeServerNotes(),
     )
 
-    result = await scope_service.count_notes(scope=ScopeType.LOCAL_NOTE, user_id="user-1")
+    result = await scope_service.count_notes(
+        scope=ScopeType.LOCAL_NOTE, user_id="user-1"
+    )
 
     assert result == 2
     assert local.count_calls == [{"user_id": "user-1"}]
@@ -1122,3 +1234,17 @@ async def test_scope_service_count_notes_rejects_server_and_workspace_scopes():
 
     # Neither unsupported scope should have reached the server backend.
     assert not hasattr(server, "count_calls") or server.count_calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_list_notes_forwards_offset_to_local_service():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+    )
+
+    page = await scope_service.list_notes(
+        scope=ScopeType.LOCAL_NOTE, limit=1, offset=1, user_id="user-1"
+    )
+
+    assert [note["id"] for note in page] == ["local-2"]

@@ -6,12 +6,65 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Workspaces.models import WorkspaceRecord
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID, WorkspaceRecord
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
+#: TASK-714: the switcher dismisses with an (action, workspace_id) tuple -
+#: "switch", "rename", or "archive" - or None on cancel.
+WorkspaceSwitcherResult = tuple[str, str]
 
 
-class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
+def workspace_persona_label_suffix(
+    app_instance: object, workspace: WorkspaceRecord
+) -> str:
+    """Return ``" · {persona_label}"`` for a workspace with an available
+    default assistant persona, or ``""``.
+
+    Task 11 (workspace-assistant-defaults): the switcher annotates each
+    workspace whose effective assistant default resolves ``available``.
+    Guarded end to end (missing registry/persona services, lookup errors,
+    deleted personas) — any failure is a silent omit, never a broken modal.
+    """
+    try:
+        from tldw_chatbook.Workspaces.assistant_defaults import (
+            resolve_effective_assistant_default,
+        )
+
+        registry = getattr(app_instance, "workspace_registry_service", None)
+        record = None
+        if registry is not None and hasattr(registry, "get_workspace"):
+            try:
+                record = registry.get_workspace(workspace.workspace_id)
+            except Exception:  # noqa: BLE001 - display-only, degrade silently
+                record = None
+        if record is None:
+            record = workspace
+        defaults = getattr(record, "assistant_defaults", None)
+        personas = getattr(app_instance, "local_character_persona_service", None)
+
+        def lookup(persona_id: str):
+            if personas is None or not hasattr(
+                personas, "get_persona_profile"
+            ):
+                return None
+            try:
+                return personas.get_persona_profile(persona_id)
+            except Exception:  # noqa: BLE001 - display-only
+                return None
+
+        effective = resolve_effective_assistant_default(defaults, lookup)
+        if effective.status == "available" and effective.label:
+            return f" · {effective.label}"
+    except Exception:  # noqa: BLE001 - display-only, degrade silently
+        pass
+    return ""
+
+
+class ConsoleWorkspaceSwitcherModal(
+    SafeModalDismissMixin, ModalScreen[WorkspaceSwitcherResult | None]
+):
     """Choose the active workspace for Console context.
 
     Args:
@@ -40,11 +93,29 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
         margin: 1 0;
     }
 
-    .console-workspace-switcher-option {
+    .console-workspace-switcher-row {
         width: 100%;
         height: 3;
         min-height: 3;
+    }
+
+    /* TASK-714: the option shares its row with compact Rename/Archive
+       buttons - 1fr (not 100%) so the lifecycle controls keep real width
+       instead of being pushed past the modal clip (the TASK-712 failure
+       class). */
+    .console-workspace-switcher-option {
+        width: 1fr;
+        height: 3;
+        min-height: 3;
         margin: 0;
+    }
+
+    .console-workspace-switcher-lifecycle {
+        width: auto;
+        min-width: 9;
+        height: 3;
+        min-height: 3;
+        margin: 0 0 0 1;
     }
 
     .console-workspace-switcher-current {
@@ -68,7 +139,17 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-workspace-switcher-modal"
+    BINDINGS = [
+        ("escape", "request_safe_cancel", "Cancel"),
+        # TASK-722: arrow ergonomics on top of Tab/Shift+Tab focus cycling.
+        ("down", "focus_next", "Next"),
+        ("up", "focus_previous", "Previous"),
+    ]
+
+    # TASK-722: land focus on the first actionable workspace option so the
+    # modal is operable start-to-finish without a pointer (Enter selects).
+    AUTO_FOCUS = "Button.console-workspace-switcher-option"
 
     def __init__(
         self,
@@ -90,44 +171,179 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
             )
             with Vertical(id="console-workspace-switcher-list"):
                 for index, workspace in enumerate(self._workspaces):
-                    label = workspace.name
-                    if workspace.workspace_id == self._active_workspace_id:
-                        yield Static(
-                            f"{workspace.name} (current)",
-                            id=f"console-workspace-switch-current-{index}",
-                            classes=(
-                                "console-workspace-switcher-option "
-                                "console-workspace-switcher-current"
-                            ),
-                            markup=False,
+                    with Horizontal(
+                        classes="console-workspace-switcher-row",
+                    ):
+                        # ADR-027 (TASK-723): the switcher and the browser
+                        # must tell one story - Default holds everyday chats
+                        # (the browser's Chats section), named workspaces get
+                        # grouped contexts.
+                        display_name = (
+                            f"{workspace.name} (everyday chats)"
+                            if workspace.workspace_id == DEFAULT_WORKSPACE_ID
+                            else workspace.name
                         )
-                    else:
-                        button = Button(
-                            label,
-                            id=f"console-workspace-switch-{index}",
-                            classes="console-workspace-switcher-option",
-                            compact=True,
+                        # Task 11: annotate workspaces whose effective
+                        # default assistant resolves available; silent omit
+                        # otherwise (helper degrades on any lookup failure).
+                        display_name += workspace_persona_label_suffix(
+                            self.app, workspace
                         )
-                        button.tooltip = f"Use {workspace.name} as the active Console workspace"
-                        yield button
+                        if workspace.workspace_id == self._active_workspace_id:
+                            yield Static(
+                                f"{display_name} (current)",
+                                id=f"console-workspace-switch-current-{index}",
+                                classes=(
+                                    "console-workspace-switcher-option "
+                                    "console-workspace-switcher-current"
+                                ),
+                                markup=False,
+                            )
+                        else:
+                            button = Button(
+                                display_name,
+                                id=f"console-workspace-switch-{index}",
+                                classes="console-workspace-switcher-option",
+                                compact=True,
+                            )
+                            button.tooltip = (
+                                f"Use {workspace.name} as the active Console workspace"
+                            )
+                            yield button
+                        # TASK-714: lifecycle controls. The built-in Default
+                        # workspace keeps its identity (rail copy and runtime
+                        # rules reference it by name), so it gets neither.
+                        if workspace.workspace_id != DEFAULT_WORKSPACE_ID:
+                            rename = Button(
+                                "Rename",
+                                id=f"console-workspace-rename-{index}",
+                                classes="console-workspace-switcher-lifecycle",
+                                compact=True,
+                            )
+                            rename.tooltip = f"Rename {workspace.name}"
+                            yield rename
+                            archive = Button(
+                                "Archive",
+                                id=f"console-workspace-archive-{index}",
+                                classes="console-workspace-switcher-lifecycle",
+                                compact=True,
+                            )
+                            archive.tooltip = (
+                                f"Archive {workspace.name}. Its conversations "
+                                "stay saved and remain visible in Library."
+                            )
+                            yield archive
             with Horizontal(id="console-workspace-switcher-actions"):
-                yield Button("Cancel", id="console-workspace-switcher-cancel", compact=True)
-
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
+                yield Button(
+                    "Cancel", id="console-workspace-switcher-cancel", compact=True
+                )
 
     @on(Button.Pressed, "#console-workspace-switcher-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
+
+    def _workspace_at(self, button_id: str) -> WorkspaceRecord | None:
+        try:
+            index = int(button_id.rsplit("-", 1)[-1])
+        except ValueError:
+            return None
+        if 0 <= index < len(self._workspaces):
+            return self._workspaces[index]
+        return None
 
     @on(Button.Pressed, ".console-workspace-switcher-option")
     def _select_workspace(self, event: Button.Pressed) -> None:
         event.stop()
+        workspace = self._workspace_at(event.button.id or "")
+        if workspace is not None:
+            self.dismiss(("switch", workspace.workspace_id))
+
+    @on(Button.Pressed, ".console-workspace-switcher-lifecycle")
+    def _lifecycle_action(self, event: Button.Pressed) -> None:
+        event.stop()
         button_id = event.button.id or ""
-        try:
-            index = int(button_id.rsplit("-", 1)[-1])
-        except ValueError:
+        workspace = self._workspace_at(button_id)
+        if workspace is None:
             return
-        if 0 <= index < len(self._workspaces):
-            self.dismiss(self._workspaces[index].workspace_id)
+        action = "rename" if button_id.startswith(
+            "console-workspace-rename-"
+        ) else "archive"
+        self.dismiss((action, workspace.workspace_id))
+
+
+class ConsoleWorkspaceRenameModal(SafeModalDismissMixin, ModalScreen[str | None]):
+    """Prompt for a new workspace name (TASK-714)."""
+
+    DEFAULT_CSS = """
+    ConsoleWorkspaceRenameModal {
+        align: center middle;
+    }
+
+    #console-workspace-rename-modal {
+        width: 56;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #console-workspace-rename-input {
+        width: 100%;
+        margin: 1 0 0 0;
+    }
+
+    #console-workspace-rename-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+    """
+
+    SAFE_MODAL_CONTENT = "#console-workspace-rename-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+
+    AUTO_FOCUS = "#console-workspace-rename-input"
+
+    def __init__(self, *, current_name: str) -> None:
+        super().__init__()
+        self._current_name = current_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="console-workspace-rename-modal"):
+            yield Static("Rename Workspace", classes="console-modal-header")
+            yield Input(
+                value=self._current_name,
+                id="console-workspace-rename-input",
+                placeholder="Workspace name",
+            )
+            with Horizontal(id="console-workspace-rename-actions"):
+                yield Button(
+                    "Cancel", id="console-workspace-rename-cancel", compact=True
+                )
+                yield Button(
+                    "Save", id="console-workspace-rename-save", compact=True
+                )
+
+    def _submit(self) -> None:
+        value = self.query_one(
+            "#console-workspace-rename-input", Input
+        ).value.strip()
+        if value:
+            self.dismiss(value)
+
+    @on(Button.Pressed, "#console-workspace-rename-cancel")
+    async def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.request_safe_cancel(source="button")
+
+    @on(Button.Pressed, "#console-workspace-rename-save")
+    def _save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Input.Submitted, "#console-workspace-rename-input")
+    def _submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()

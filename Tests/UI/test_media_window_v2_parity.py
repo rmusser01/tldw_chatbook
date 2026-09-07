@@ -1,25 +1,33 @@
 import asyncio
 from types import SimpleNamespace
 from typing import Optional
-from unittest.mock import call
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Collapsible, Label, Select, Static
+from textual.widgets import Button, Collapsible, Select, Static
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Event_Handlers.media_events import (
+    MediaAnalysisRequestEvent,
     MediaAnalysisSaveEvent,
     MediaReadingHighlightCreateEvent,
     MediaReadingHighlightDeleteEvent,
     MediaReadingHighlightUpdateEvent,
     MediaReadItLaterToggleEvent,
 )
-from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
-from tldw_chatbook.Widgets.Media.media_list_panel import MediaListPanel
-from tldw_chatbook.Widgets.Media.media_search_panel import MediaBrowseSubviewChangedEvent, MediaSearchPanel
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+from tldw_chatbook.UI.MediaWindow_v2 import MEDIA_EMPTY_STATE_COPY, MediaWindow
+from tldw_chatbook.Widgets.Media.media_list_panel import (
+    MediaItemSelectedEvent,
+    MediaListPanel,
+)
+from tldw_chatbook.Widgets.Media.media_search_panel import (
+    MediaBrowseSubviewChangedEvent,
+    MediaSearchPanel,
+)
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
 
@@ -28,18 +36,23 @@ def _plain_text(widget) -> str:
     return getattr(rendered, "plain", str(rendered))
 
 
-def _build_media_window(*, runtime_backend: str = "local", scope_service: Optional[Mock] = None):
+def _build_media_window(
+    *, runtime_backend: str = "local", scope_service: Optional[Mock] = None
+):
     app = SimpleNamespace(
         _media_types_for_ui=["All Media"],
-        media_runtime_state=MediaRuntimeState(runtime_backend=runtime_backend),
-        media_reading_scope_service=scope_service if scope_service is not None else Mock(),
+        get_authoritative_runtime_source=lambda: runtime_backend,
+        media_reading_scope_service=scope_service
+        if scope_service is not None
+        else Mock(),
         notify=Mock(),
         media_db=None,
     )
     window = MediaWindow(app)
-    window.runtime_state = app.media_runtime_state
     if not isinstance(app.media_reading_scope_service.search_media, AsyncMock):
-        app.media_reading_scope_service.search_media = AsyncMock(return_value={"items": [], "total": 0})
+        app.media_reading_scope_service.search_media = AsyncMock(
+            return_value={"items": [], "total": 0}
+        )
     window.viewer_panel = Mock()
     window.list_panel = SimpleNamespace(
         current_page=1,
@@ -59,37 +72,16 @@ def _build_media_window(*, runtime_backend: str = "local", scope_service: Option
     window.nav_panel = Mock()
     empty_state = SimpleNamespace(add_class=Mock(), remove_class=Mock())
     window.query_one = Mock(return_value=empty_state)
-    window.run_worker = lambda coro, exclusive=True: coro.close()
+    window.run_worker = lambda coro, *args, **kwargs: coro.close()
     return window, app
 
 
-@pytest.mark.asyncio
-async def test_media_empty_state_orients_first_time_users():
-    app_instance = SimpleNamespace(
-        _media_types_for_ui=["All Media"],
-        media_runtime_state=MediaRuntimeState(runtime_backend="local"),
-        media_reading_scope_service=Mock(),
-        notify=Mock(),
-        media_db=None,
-    )
-    app_instance.media_reading_scope_service.search_media = AsyncMock(return_value={"items": [], "total": 0})
-
-    class MediaWindowApp(App[None]):
-        def compose(self) -> ComposeResult:
-            yield MediaWindow(app_instance)
-
-    app = MediaWindowApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        empty_label = app.query_one("#empty-state-label", Label)
-        text = _plain_text(empty_label)
-
-        assert "Media Library" in text
-        assert "Ingest" in text
-        assert "Select a media item" in text
-        assert "analysis" in text
-        assert "Use in Chat" in text
+def test_media_empty_state_orients_first_time_users():
+    assert "Media Library" in MEDIA_EMPTY_STATE_COPY
+    assert "Ingest" in MEDIA_EMPTY_STATE_COPY
+    assert "Select a media item" in MEDIA_EMPTY_STATE_COPY
+    assert "analysis" in MEDIA_EMPTY_STATE_COPY
+    assert "Use in Chat" in MEDIA_EMPTY_STATE_COPY
 
 
 @pytest.mark.asyncio
@@ -284,22 +276,33 @@ async def test_media_window_selection_uses_scope_service_detail_and_runtime_stat
             "content": "hello",
         }
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
-
-    await window.handle_media_item_selected(
-        SimpleNamespace(
-            record_id="server:reading_item:118",
-            media_data={
-                "id": "server:reading_item:118",
-                "backend": "server",
-                "backing_media_id": 42,
-            },
-        )
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
     )
+    workers = []
+    window.run_worker = lambda coro, *args, **kwargs: workers.append(coro)
+    window._is_current_media_owner = lambda: True
 
-    scope_service.get_media_detail.assert_awaited_once_with(mode="server", media_id="118")
+    event = MediaItemSelectedEvent(
+        "server:reading_item:118",
+        {
+            "id": "server:reading_item:118",
+            "backend": "server",
+            "backing_media_id": 42,
+        },
+    )
+    await window.handle_media_item_selected(event)
+    await workers.pop()
+
+    assert event._stop_propagation is True
+    scope_service.get_media_detail.assert_awaited_once_with(
+        mode="server", media_id="118"
+    )
     assert window.runtime_state.selected_record_id == "server:reading_item:118"
-    assert window.runtime_state.detail_by_record_id["server:reading_item:118"]["title"] == "Remote Article"
+    assert (
+        window.runtime_state.detail_by_record_id["server:reading_item:118"]["title"]
+        == "Remote Article"
+    )
     window.viewer_panel.load_media.assert_called_once()
 
 
@@ -317,19 +320,25 @@ async def test_media_window_selection_tolerates_document_version_load_failures()
         }
     )
     scope_service.list_document_versions = AsyncMock(side_effect=RuntimeError("boom"))
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
-
-    await window.handle_media_item_selected(
-        SimpleNamespace(
-            record_id="server:reading_item:118",
-            media_data={
-                "id": "server:reading_item:118",
-                "backend": "server",
-                "backing_media_id": 42,
-            },
-        )
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
     )
+    workers = []
+    window.run_worker = lambda coro, *args, **kwargs: workers.append(coro)
+    window._is_current_media_owner = lambda: True
 
+    event = MediaItemSelectedEvent(
+        "server:reading_item:118",
+        {
+            "id": "server:reading_item:118",
+            "backend": "server",
+            "backing_media_id": 42,
+        },
+    )
+    await window.handle_media_item_selected(event)
+    await workers.pop()
+
+    assert event._stop_propagation is True
     window.viewer_panel.load_media.assert_called_once()
     window.viewer_panel.load_analysis_versions.assert_called_once_with([])
 
@@ -340,14 +349,25 @@ async def test_media_window_uses_scope_service_for_reading_progress():
     scope_service.get_reading_progress = AsyncMock(
         return_value={"backing_media_id": 42, "current_page": 3, "total_pages": 10}
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
-    record = {"id": "server:reading_item:118", "backing_media_id": 42, "backend": "server"}
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
+    record = {
+        "id": "server:reading_item:118",
+        "backing_media_id": 42,
+        "backend": "server",
+    }
 
     progress = await window.load_reading_progress(record)
 
-    scope_service.get_reading_progress.assert_awaited_once_with(mode="server", record=record)
+    scope_service.get_reading_progress.assert_awaited_once_with(
+        mode="server", record=record
+    )
     assert progress["current_page"] == 3
-    assert window.runtime_state.reading_progress_by_record_id[record["id"]]["total_pages"] == 10
+    assert (
+        window.runtime_state.reading_progress_by_record_id[record["id"]]["total_pages"]
+        == 10
+    )
 
 
 @pytest.mark.asyncio
@@ -374,21 +394,29 @@ async def test_media_window_loads_reading_highlights_for_selected_record():
             }
         ]
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
-
-    await window.handle_media_item_selected(
-        SimpleNamespace(
-            record_id="server:reading_item:118",
-            media_data={
-                "id": "server:reading_item:118",
-                "backend": "server",
-                "source_id": "118",
-                "backing_media_id": 42,
-            },
-        )
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
     )
+    workers = []
+    window.run_worker = lambda coro, *args, **kwargs: workers.append(coro)
+    window._is_current_media_owner = lambda: True
 
-    scope_service.list_reading_highlights.assert_awaited_once_with(mode="server", record=scope_service.get_media_detail.return_value)
+    event = MediaItemSelectedEvent(
+        "server:reading_item:118",
+        {
+            "id": "server:reading_item:118",
+            "backend": "server",
+            "source_id": "118",
+            "backing_media_id": 42,
+        },
+    )
+    await window.handle_media_item_selected(event)
+    await workers.pop()
+
+    assert event._stop_propagation is True
+    scope_service.list_reading_highlights.assert_awaited_once_with(
+        mode="server", record=scope_service.get_media_detail.return_value
+    )
     loaded_detail = window.viewer_panel.load_media.call_args.args[0]
     assert loaded_detail["reading_highlights"][0]["quote"] == "Important sentence"
 
@@ -438,7 +466,9 @@ async def test_media_window_routes_reading_highlight_crud_through_scope_service(
             [],
         ]
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
     record = {
         "id": "server:reading_item:118",
         "backend": "server",
@@ -489,10 +519,11 @@ async def test_media_window_routes_reading_highlight_crud_through_scope_service(
         note="Created note",
         anchor_strategy="fuzzy_quote",
     )
+    # task-15768: `quote` is not forwarded -- it is not an updatable field on
+    # either backend's highlight-update contract.
     scope_service.update_reading_highlight.assert_awaited_once_with(
         mode="server",
         highlight_id="6",
-        quote="Created quote",
         color="blue",
         note="Updated note",
         state="active",
@@ -505,12 +536,164 @@ async def test_media_window_routes_reading_highlight_crud_through_scope_service(
 
 
 @pytest.mark.asyncio
+async def test_media_window_local_highlight_crud_end_to_end_against_real_service():
+    """task-15768: local-mode Media hub highlight CRUD against the real seam.
+
+    Every scope call runs through a REAL ``MediaReadingScopeService`` wired to
+    a REAL ``LocalMediaReadingService`` on a real ``MediaDatabase`` -- a mocked
+    scope service is exactly what hid the ``reading_``-prefixed leaf-name
+    mismatch that made all four local-mode CRUD paths ``AttributeError`` in
+    production (list swallowed to an empty panel; create/update/delete
+    surfaced as error toasts).
+    """
+    db = MediaDatabase(":memory:", client_id="media_window_local_highlights")
+    try:
+        media_id, _, _ = db.add_media_with_keywords(
+            title="Hub Local Article",
+            content="Important local content for the media hub.",
+            media_type="article",
+            keywords=[],
+        )
+        local_service = LocalMediaReadingService(db)
+        seeded = local_service.create_highlight(
+            media_id, quote="Important", start_offset=0, end_offset=9
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=local_service, server_service=None
+        )
+        window, app = _build_media_window(
+            runtime_backend="local", scope_service=scope_service
+        )
+        record = {
+            "id": f"local:media:{media_id}",
+            "backend": "local",
+            "source_id": str(media_id),
+            "backing_media_id": media_id,
+            "title": "Hub Local Article",
+        }
+        window.runtime_state.detail_by_record_id[record["id"]] = record
+
+        # Item detail's highlight load shows the pre-existing highlight.
+        highlights = await window.load_reading_highlights(record)
+        assert [h["source_id"] for h in highlights] == [str(seeded["id"])]
+        assert highlights[0]["quote"] == "Important"
+
+        # Create.
+        await window._handle_reading_highlight_create_async(
+            MediaReadingHighlightCreateEvent(
+                media_id=str(media_id),
+                record_id=record["id"],
+                quote="local content",
+                color="yellow",
+                note="revisit",
+                media_data=record,
+            )
+        )
+        stored = local_service.list_highlights(media_id)
+        assert len(stored) == 2
+        created_id = next(h["id"] for h in stored if h["quote"] == "local content")
+        presented = window.viewer_panel.load_media.call_args.args[0]
+        assert {h["quote"] for h in presented["reading_highlights"]} == {
+            "Important",
+            "local content",
+        }
+
+        # Update.
+        await window._handle_reading_highlight_update_async(
+            MediaReadingHighlightUpdateEvent(
+                media_id=str(media_id),
+                record_id=record["id"],
+                highlight_id=created_id,
+                color="blue",
+                note="done",
+                state="stale",
+                media_data=record,
+            )
+        )
+        updated_row = next(
+            h for h in local_service.list_highlights(media_id) if h["id"] == created_id
+        )
+        assert updated_row["color"] == "blue"
+        assert updated_row["note"] == "done"
+        assert updated_row["state"] == "stale"
+
+        # Delete.
+        await window._handle_reading_highlight_delete_async(
+            MediaReadingHighlightDeleteEvent(
+                media_id=str(media_id),
+                record_id=record["id"],
+                highlight_id=created_id,
+                media_data=record,
+            )
+        )
+        assert [h["id"] for h in local_service.list_highlights(media_id)] == [
+            seeded["id"]
+        ]
+        presented = window.viewer_panel.load_media.call_args.args[0]
+        assert [h["source_id"] for h in presented["reading_highlights"]] == [
+            str(seeded["id"])
+        ]
+
+        app.notify.assert_any_call("Reading highlight created", severity="information")
+        app.notify.assert_any_call("Reading highlight updated", severity="information")
+        app.notify.assert_any_call("Reading highlight deleted", severity="information")
+        error_calls = [
+            call
+            for call in app.notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ]
+        assert error_calls == []
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_media_window_logs_highlight_contract_drift_with_traceback():
+    """task-15768 AC4: a naming/contract drift must be loudly visible.
+
+    An ``AttributeError`` from the highlights seam previously produced only a
+    message-text log line (no exception type, no traceback) and an empty
+    panel. The drift branch must log the traceback so the next contract drift
+    cannot masquerade as 'this item has no highlights'.
+    """
+    from loguru import logger as loguru_logger
+
+    scope_service = Mock()
+    scope_service.list_reading_highlights = Mock(
+        side_effect=AttributeError(
+            "'LocalMediaReadingService' object has no attribute "
+            "'list_reading_highlights'"
+        )
+    )
+    window, _app = _build_media_window(
+        runtime_backend="local", scope_service=scope_service
+    )
+    captured: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: captured.append(str(message)), level="ERROR"
+    )
+    try:
+        result = await window.load_reading_highlights(
+            {"id": "local:media:1", "backend": "local", "backing_media_id": 1}
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result == []
+    joined = "".join(captured)
+    assert "contract" in joined.lower()
+    assert "AttributeError" in joined
+
+
+@pytest.mark.asyncio
 async def test_media_window_analysis_save_warns_when_server_versions_are_unavailable():
     scope_service = Mock()
     scope_service.save_analysis_version = AsyncMock(
         side_effect=ValueError("Server document versions are not available yet.")
     )
-    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
     event = MediaAnalysisSaveEvent(
         media_id="server:reading_item:118",
         analysis_content="Remote analysis",
@@ -531,16 +714,31 @@ async def test_media_window_filters_server_results_by_selected_type():
     scope_service.search_media = AsyncMock(
         return_value={
             "items": [
-                {"id": "server:reading_item:1", "media_type": "article", "title": "Article"},
-                {"id": "server:reading_item:2", "media_type": "video", "title": "Video"},
+                {
+                    "id": "server:reading_item:1",
+                    "media_type": "article",
+                    "title": "Article",
+                },
+                {
+                    "id": "server:reading_item:2",
+                    "media_type": "video",
+                    "title": "Video",
+                },
             ],
             "total": 2,
         }
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
+    window._is_current_media_owner = lambda: True
+    window.active_media_type = "article"
+    window.runtime_state.active_media_type = "article"
 
     tasks = []
-    window.run_worker = lambda coro, exclusive=True: tasks.append(asyncio.create_task(coro))
+    window.run_worker = lambda coro, *args, **kwargs: tasks.append(
+        asyncio.create_task(coro)
+    )
 
     window._perform_search("article", "", "")
     await asyncio.gather(*tasks)
@@ -559,11 +757,15 @@ async def test_media_window_uses_explicit_saved_view_search_for_read_it_later_su
     scope_service.list_read_it_later = AsyncMock(
         return_value={"items": [{"id": "local:media:7", "title": "Saved"}], "total": 1}
     )
-    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="local", scope_service=scope_service
+    )
     window.runtime_state.active_browse_subview = "read-it-later"
 
     tasks = []
-    window.run_worker = lambda coro, exclusive=True: tasks.append(asyncio.create_task(coro))
+    window.run_worker = lambda coro, *args, **kwargs: tasks.append(
+        asyncio.create_task(coro)
+    )
 
     window._perform_search("all-media", "", "")
     await asyncio.gather(*tasks)
@@ -583,7 +785,9 @@ def test_media_window_uses_scope_saved_view_capability_as_authority():
             )
         ),
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
     window.active_media_type = "all-media"
 
     capability = window._saved_view_capability_for_context()
@@ -610,13 +814,19 @@ def test_media_window_mount_normalizes_invalid_restored_server_saved_context():
             )
         ),
     )
-    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
     window.call_after_refresh = Mock()
     window.active_media_type = "article"
     window.runtime_state.active_browse_subview = "read-it-later"
     window.runtime_state.selected_record_id = "server:reading_item:41"
-    window.runtime_state.browse_items = [{"id": "server:reading_item:41", "title": "Stale"}]
-    window.runtime_state.detail_by_record_id = {"server:reading_item:41": {"id": "server:reading_item:41"}}
+    window.runtime_state.browse_items = [
+        {"id": "server:reading_item:41", "title": "Stale"}
+    ]
+    window.runtime_state.detail_by_record_id = {
+        "server:reading_item:41": {"id": "server:reading_item:41"}
+    }
 
     window.on_mount()
 
@@ -632,7 +842,13 @@ async def test_media_window_prequery_normalizes_invalid_server_saved_context_and
     scope_service = SimpleNamespace(
         search_media=AsyncMock(
             return_value={
-                "items": [{"id": "server:reading_item:200", "title": "Corrected", "media_type": "article"}],
+                "items": [
+                    {
+                        "id": "server:reading_item:200",
+                        "title": "Corrected",
+                        "media_type": "article",
+                    }
+                ],
                 "total": 1,
             }
         ),
@@ -644,15 +860,24 @@ async def test_media_window_prequery_normalizes_invalid_server_saved_context_and
             )
         ),
     )
-    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
+    window._is_current_media_owner = lambda: True
     window.active_media_type = "article"
     window.runtime_state.active_browse_subview = "read-it-later"
     window.runtime_state.selected_record_id = "server:reading_item:41"
-    window.runtime_state.browse_items = [{"id": "server:reading_item:41", "title": "Stale"}]
-    window.runtime_state.detail_by_record_id = {"server:reading_item:41": {"id": "server:reading_item:41"}}
+    window.runtime_state.browse_items = [
+        {"id": "server:reading_item:41", "title": "Stale"}
+    ]
+    window.runtime_state.detail_by_record_id = {
+        "server:reading_item:41": {"id": "server:reading_item:41"}
+    }
 
     tasks = []
-    window.run_worker = lambda coro, exclusive=True: tasks.append(asyncio.create_task(coro))
+    window.run_worker = lambda coro, *args, **kwargs: tasks.append(
+        asyncio.create_task(coro)
+    )
 
     window._perform_search("article", "", "")
     await asyncio.gather(*tasks)
@@ -660,7 +885,9 @@ async def test_media_window_prequery_normalizes_invalid_server_saved_context_and
     assert window.runtime_state.active_browse_subview == "all"
     assert window.runtime_state.selected_record_id is None
     assert window.runtime_state.detail_by_record_id == {}
-    assert [item["id"] for item in window.runtime_state.browse_items] == ["server:reading_item:200"]
+    assert [item["id"] for item in window.runtime_state.browse_items] == [
+        "server:reading_item:200"
+    ]
     app.notify.assert_called_once_with("Scope-owned reason.", severity="warning")
     scope_service.search_media.assert_awaited_once()
 
@@ -672,12 +899,16 @@ async def test_media_window_remove_from_saved_view_clears_selection_when_filtere
         return_value={"id": "local:media:7", "is_read_it_later": False}
     )
     scope_service.list_read_it_later = AsyncMock(return_value={"items": [], "total": 0})
-    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="local", scope_service=scope_service
+    )
     window.runtime_state.active_browse_subview = "read-it-later"
     window.runtime_state.selected_record_id = "local:media:7"
 
     await window._handle_read_it_later_toggle_async(
-        MediaReadItLaterToggleEvent(record_id="local:media:7", media_id="7", save_for_later=False)
+        MediaReadItLaterToggleEvent(
+            record_id="local:media:7", media_id="7", save_for_later=False
+        )
     )
 
     assert window.runtime_state.selected_record_id is None
@@ -707,16 +938,29 @@ async def test_media_window_remove_from_saved_view_requeries_first_page_when_cur
 
     scope_service = Mock()
     scope_service.remove_from_read_it_later = AsyncMock(
-        return_value={"id": "local:media:21", "source_id": "21", "is_read_it_later": False}
+        return_value={
+            "id": "local:media:21",
+            "source_id": "21",
+            "is_read_it_later": False,
+        }
     )
     scope_service.list_read_it_later = AsyncMock(side_effect=list_read_it_later)
-    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="local", scope_service=scope_service
+    )
+    workers = []
+    window.run_worker = lambda coro, *args, **kwargs: workers.append(coro)
+    window._is_current_media_owner = lambda: True
+    window.active_media_type = "all-media"
     window.runtime_state.active_browse_subview = "read-it-later"
     window.list_panel.current_page = 2
 
     await window._handle_read_it_later_toggle_async(
-        MediaReadItLaterToggleEvent(record_id="local:media:21", media_id="21", save_for_later=False)
+        MediaReadItLaterToggleEvent(
+            record_id="local:media:21", media_id="21", save_for_later=False
+        )
     )
+    await workers.pop()
 
     assert [call["offset"] for call in read_it_later_calls] == [20, 0]
     results, page, total_pages = window.list_panel.load_items.call_args.args
@@ -745,7 +989,10 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
             }
 
         return {
-            "items": [{"id": f"local:media:{index}", "title": f"Other {index}"} for index in range(20, 40)],
+            "items": [
+                {"id": f"local:media:{index}", "title": f"Other {index}"}
+                for index in range(20, 40)
+            ],
             "total": 25,
         }
 
@@ -754,7 +1001,13 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
         return_value={"id": "local:media:7", "source_id": "7", "is_read_it_later": True}
     )
     scope_service.list_read_it_later = AsyncMock(side_effect=list_read_it_later)
-    window, _app = _build_media_window(runtime_backend="local", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="local", scope_service=scope_service
+    )
+    workers = []
+    window.run_worker = lambda coro, *args, **kwargs: workers.append(coro)
+    window._is_current_media_owner = lambda: True
+    window.active_media_type = "all-media"
     window.list_panel.current_page = 2
     window.runtime_state.active_browse_subview = "read-it-later"
     window.runtime_state.selected_record_id = "local:media:7"
@@ -765,11 +1018,16 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
         "supports_read_it_later": True,
         "is_read_it_later": False,
     }
-    window.viewer_panel.media_data = dict(window.runtime_state.detail_by_record_id["local:media:7"])
+    window.viewer_panel.media_data = dict(
+        window.runtime_state.detail_by_record_id["local:media:7"]
+    )
 
     await window._handle_read_it_later_toggle_async(
-        MediaReadItLaterToggleEvent(record_id="local:media:7", media_id="7", save_for_later=True)
+        MediaReadItLaterToggleEvent(
+            record_id="local:media:7", media_id="7", save_for_later=True
+        )
     )
+    await workers.pop()
 
     assert window.runtime_state.selected_record_id == "local:media:7"
     scope_service.list_read_it_later.assert_awaited()
@@ -780,18 +1038,31 @@ async def test_media_window_toggle_keeps_selection_when_record_still_matches_fil
 async def test_media_window_server_toggle_keeps_selection_when_off_page_in_non_saved_view():
     scope_service = Mock()
     scope_service.remove_from_read_it_later = AsyncMock(
-        return_value={"id": "server:reading_item:118", "source_id": "118", "is_read_it_later": False}
+        return_value={
+            "id": "server:reading_item:118",
+            "source_id": "118",
+            "is_read_it_later": False,
+        }
     )
     scope_service.search_media = AsyncMock(
         return_value={
             "items": [
-                {"id": f"server:reading_item:{index}", "media_type": "article", "title": f"Article {index}"}
+                {
+                    "id": f"server:reading_item:{index}",
+                    "media_type": "article",
+                    "title": f"Article {index}",
+                }
                 for index in range(200, 220)
             ],
             "total": 40,
         }
     )
-    window, _app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, _app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
+    workers = []
+    window.run_worker = lambda coro, *args, **kwargs: workers.append(coro)
+    window._is_current_media_owner = lambda: True
     window.active_media_type = "article"
     window.list_panel.current_page = 2
     window.runtime_state.selected_record_id = "server:reading_item:118"
@@ -810,6 +1081,7 @@ async def test_media_window_server_toggle_keeps_selection_when_off_page_in_non_s
             save_for_later=False,
         )
     )
+    await workers.pop()
 
     assert window.runtime_state.selected_record_id == "server:reading_item:118"
     scope_service.search_media.assert_awaited()
@@ -828,7 +1100,9 @@ async def test_media_window_forces_server_saved_view_back_to_all_media_when_type
             )
         ),
     )
-    window, app = _build_media_window(runtime_backend="server", scope_service=scope_service)
+    window, app = _build_media_window(
+        runtime_backend="server", scope_service=scope_service
+    )
     window.runtime_state.active_browse_subview = "read-it-later"
 
     window.activate_media_type("article", "Article")
@@ -851,7 +1125,9 @@ async def test_media_search_panel_programmatic_browse_sync_does_not_emit_change_
             yield MediaSearchPanel(SimpleNamespace())
 
         @on(MediaBrowseSubviewChangedEvent)
-        def record_browse_subview_changed(self, event: MediaBrowseSubviewChangedEvent) -> None:
+        def record_browse_subview_changed(
+            self, event: MediaBrowseSubviewChangedEvent
+        ) -> None:
             self.events.append(event.subview)
 
     app = MediaSearchPanelApp()
@@ -950,9 +1226,13 @@ async def test_media_viewer_highlight_actions_explain_disabled_selection_state()
         delete_button = panel.query_one("#delete-reading-highlight-btn", Button)
 
         assert update_button.disabled is True
-        assert "Select a reading highlight before updating it" in str(update_button.tooltip)
+        assert "Select a reading highlight before updating it" in str(
+            update_button.tooltip
+        )
         assert delete_button.disabled is True
-        assert "Select a reading highlight before deleting it" in str(delete_button.tooltip)
+        assert "Select a reading highlight before deleting it" in str(
+            delete_button.tooltip
+        )
 
 
 def test_media_viewer_load_analysis_versions_resets_button_state_when_empty():
@@ -1056,13 +1336,19 @@ async def test_media_viewer_analysis_actions_explain_disabled_and_available_stat
         assert save_button.disabled is True
         assert "Generate an analysis before saving it" in str(save_button.tooltip)
         assert save_as_note_button.disabled is True
-        assert "Generate an analysis before saving it as a note" in str(save_as_note_button.tooltip)
+        assert "Generate an analysis before saving it as a note" in str(
+            save_as_note_button.tooltip
+        )
         assert edit_button.disabled is True
-        assert "Generate or select an analysis before editing it" in str(edit_button.tooltip)
+        assert "Generate or select an analysis before editing it" in str(
+            edit_button.tooltip
+        )
         assert overwrite_button.disabled is True
         assert "Save an analysis before overwriting it" in str(overwrite_button.tooltip)
         assert delete_button.disabled is True
-        assert "Select a saved analysis version before deleting it" in str(delete_button.tooltip)
+        assert "Select a saved analysis version before deleting it" in str(
+            delete_button.tooltip
+        )
 
         panel.current_analysis = "Generated analysis"
         panel.has_existing_analysis = False
@@ -1079,4 +1365,146 @@ async def test_media_viewer_analysis_actions_explain_disabled_and_available_stat
         assert overwrite_button.disabled is True
         assert "Save an analysis before overwriting it" in str(overwrite_button.tooltip)
         assert delete_button.disabled is True
-        assert "Select a saved analysis version before deleting it" in str(delete_button.tooltip)
+        assert "Select a saved analysis version before deleting it" in str(
+            delete_button.tooltip
+        )
+
+
+@pytest.mark.asyncio
+async def test_media_analysis_llm_failure_surfaces_error_not_sentinel():
+    """task-634: a failing LLM call during media analysis must notify an error
+    and reset the analysis display -- it must never render the internal
+    "STREAMING_HANDLED_BY_EVENTS" sentinel or claim success."""
+    window, app = _build_media_window()
+    app.chat_wrapper = Mock(side_effect=RuntimeError("LLM exploded"))
+    app.app_config = {"api_settings": {}}
+    window._record_for_event = Mock(
+        return_value={
+            "title": "Doc",
+            "content": "some content",
+            "author": "Someone",
+            "type": "article",
+        }
+    )
+
+    analysis_display = AsyncMock()
+
+    def _query_one(selector, expect_type=None):
+        if selector == "#analysis-display":
+            return analysis_display
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+    window.viewer_panel = Mock()
+    window.viewer_panel.query_one = Mock(side_effect=_query_one)
+    window.viewer_panel.all_analyses = []
+    # Simulate a prior successful analysis still parked on the viewer panel --
+    # the failure path must not leave this stale content actionable.
+    window.viewer_panel.current_analysis = "Stale prior analysis"
+
+    captured = {}
+
+    # TASK-19559: analysis generation now names its own group, so a
+    # sibling media worker cannot cancel it mid-flight.
+    def _run_worker(coro, exclusive=True, group=None):
+        captured["coro"] = coro
+        captured["group"] = group
+
+    window.run_worker = _run_worker
+
+    event = MediaAnalysisRequestEvent(
+        media_id="local:media:1",
+        provider="Local",
+        model="test-model",
+        system_prompt="",
+        user_prompt="Summarize this",
+        type_slug="article",
+    )
+
+    window.handle_analysis_request(event)
+    await captured["coro"]
+
+    notified_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert any("Error" in message for message in notified_messages)
+    assert not any(
+        "Analysis generated successfully" in message for message in notified_messages
+    )
+    assert not any(
+        "STREAMING_HANDLED_BY_EVENTS" in message for message in notified_messages
+    )
+
+    analysis_display.update.assert_awaited()
+    updated_text = analysis_display.update.await_args.args[0]
+    assert "STREAMING_HANDLED_BY_EVENTS" not in updated_text
+    assert "failed" in updated_text.lower()
+
+    # task-634 Qodo follow-up: the stale current_analysis pointer must be
+    # cleared and button states refreshed so Save/Edit can't act on a prior
+    # successful analysis while the panel is showing a failure message.
+    assert window.viewer_panel.current_analysis is None
+    window.viewer_panel._update_analysis_button_states.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_media_analysis_missing_response_text_clears_stale_analysis_state():
+    """task-634 Qodo follow-up: the "no valid response text" branch (LLM
+    returns a response but no extractable text) must reset the same way as
+    the outer-exception branch -- clearing the stale current_analysis
+    pointer and refreshing button states, not just the display text."""
+    window, app = _build_media_window()
+    # Response has no usable text under any of the extraction branches.
+    app.chat_wrapper = Mock(return_value={"unexpected": "shape"})
+    app.app_config = {"api_settings": {}}
+    window._record_for_event = Mock(
+        return_value={
+            "title": "Doc",
+            "content": "some content",
+            "author": "Someone",
+            "type": "article",
+        }
+    )
+
+    analysis_display = AsyncMock()
+
+    def _query_one(selector, expect_type=None):
+        if selector == "#analysis-display":
+            return analysis_display
+        raise AssertionError(f"Unexpected selector: {selector}")
+
+    window.viewer_panel = Mock()
+    window.viewer_panel.query_one = Mock(side_effect=_query_one)
+    window.viewer_panel.all_analyses = []
+    window.viewer_panel.current_analysis = "Stale prior analysis"
+
+    captured = {}
+
+    # TASK-19559: analysis generation now names its own group, so a
+    # sibling media worker cannot cancel it mid-flight.
+    def _run_worker(coro, exclusive=True, group=None):
+        captured["coro"] = coro
+        captured["group"] = group
+
+    window.run_worker = _run_worker
+
+    event = MediaAnalysisRequestEvent(
+        media_id="local:media:2",
+        provider="Local",
+        model="test-model",
+        system_prompt="",
+        user_prompt="Summarize this",
+        type_slug="article",
+    )
+
+    window.handle_analysis_request(event)
+    await captured["coro"]
+
+    notified_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert any(
+        "Failed to generate analysis" in message for message in notified_messages
+    )
+
+    analysis_display.update.assert_awaited()
+    updated_text = analysis_display.update.await_args.args[0]
+    assert "failed" in updated_text.lower()
+
+    assert window.viewer_panel.current_analysis is None
+    window.viewer_panel._update_analysis_button_states.assert_called()

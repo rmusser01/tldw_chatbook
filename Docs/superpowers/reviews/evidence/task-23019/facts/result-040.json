@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/UI/test_library_multiselect_media.py::test_confirming_bulk_delete_swaps_toolbar_for_confirm_row",
+  "status": "PASS"
+}

@@ -1,32 +1,55 @@
 # tool_message_widgets.py
-"""
-Specialized message widgets for displaying tool calls and tool results in the chat interface.
+"""Tool call/result message widgets for the Character-Chat (CCP) window.
+
+OWNERSHIP (TASK-1846). These widgets render tool activity for the CCP
+window ONLY -- the sole production caller is
+``UI/CCP_Modules/ccp_message_manager.py``. The Console does NOT use them
+and deliberately cannot:
+
+* these extend ``ChatMessage``; the Console transcript is built from
+  ``ConsoleTranscriptMessage(Static)`` rows whose selection, ``sync_message``
+  and jump-pill behaviour depend on that widget type;
+* these format with Rich MARKUP (``[bold green]``, ``[red]``), while the
+  Console's marker text is deliberately markup-OFF -- see
+  ``console_agent_bridge.format_agent_step_marker``, which documents that
+  escaping for a parser that never runs left literal backslashes in the
+  rendered marker.
+
+Adopting one renderer across both surfaces was considered and rejected for
+those two reasons: it would break one surface's row model or the other's
+escaping contract. The file is named generically, which previously read as
+"this is where tool rendering lives" -- it is not. If you are changing what
+the CONSOLE shows for a tool call, you want ``format_agent_step_marker``
+and ``console_transcript.py``.
 """
 
 import json
 from typing import List, Dict, Any, Optional
 
+from loguru import logger
 from rich.text import Text
 from textual.widgets import Static
 from textual.containers import Vertical
 from textual.css.query import QueryError
+from textual_diff_view import DiffView
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.diff_widgets import extract_diff_from_result, make_diff
 
 
 class ToolCallMessage(ChatMessage):
     """Widget for displaying tool/function calls in the chat."""
-    
+
     def __init__(
         self,
         tool_calls: List[Dict[str, Any]],
         message_id: Optional[str] = None,
         generation_complete: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize a tool call message widget.
-        
+
         Args:
             tool_calls: List of tool calls in OpenAI format
             message_id: Optional message ID for database tracking
@@ -34,41 +57,41 @@ class ToolCallMessage(ChatMessage):
             **kwargs: Additional arguments passed to ChatMessage
         """
         self.tool_calls = tool_calls
-        
+
         # Format the tool calls for display
         formatted_content = self._format_tool_calls()
-        
+
         # Initialize parent with formatted content
         super().__init__(
             message=formatted_content,
             role="Tool Call",
             generation_complete=generation_complete,
             message_id=message_id,
-            **kwargs
+            **kwargs,
         )
-        
+
         # Add special CSS class for styling
         self.add_class("-tool-call")
-    
+
     def _format_tool_calls(self) -> str:
         """Format tool calls for display."""
         if not self.tool_calls:
             return "[No tool calls]"
-        
+
         lines = []
         lines.append("🔧 [bold cyan]Tool Calls:[/bold cyan]")
-        
+
         for i, call in enumerate(self.tool_calls, 1):
             func = call.get("function", {})
             func_name = func.get("name", "unknown")
-            
+
             lines.append(f"\n[yellow]#{i} {func_name}[/yellow]")
-            
+
             # Parse and format arguments
             try:
                 args_str = func.get("arguments", "{}")
                 args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                
+
                 if args:
                     lines.append("[dim]Arguments:[/dim]")
                     for key, value in args.items():
@@ -80,24 +103,26 @@ class ToolCallMessage(ChatMessage):
                 else:
                     lines.append("  [dim](no arguments)[/dim]")
             except json.JSONDecodeError:
-                lines.append(f"  [dim red]Invalid arguments: {func.get('arguments', 'N/A')}[/dim red]")
-        
+                lines.append(
+                    f"  [dim red]Invalid arguments: {func.get('arguments', 'N/A')}[/dim red]"
+                )
+
         return "\n".join(lines)
 
 
 class ToolResultMessage(ChatMessage):
     """Widget for displaying tool execution results in the chat."""
-    
+
     def __init__(
         self,
         tool_results: List[Dict[str, Any]],
         message_id: Optional[str] = None,
         generation_complete: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize a tool result message widget.
-        
+
         Args:
             tool_results: List of tool execution results
             message_id: Optional message ID for database tracking
@@ -105,33 +130,33 @@ class ToolResultMessage(ChatMessage):
             **kwargs: Additional arguments passed to ChatMessage
         """
         self.tool_results = tool_results
-        
+
         # Format the results for display
         formatted_content = self._format_results()
-        
+
         # Initialize parent with formatted content
         super().__init__(
             message=formatted_content,
             role="Tool Result",
             generation_complete=generation_complete,
             message_id=message_id,
-            **kwargs
+            **kwargs,
         )
-        
+
         # Add special CSS class for styling
         self.add_class("-tool-result")
-    
+
     def _format_results(self) -> str:
         """Format tool results for display."""
         if not self.tool_results:
             return "[No results]"
-        
+
         lines = []
         lines.append("📊 [bold green]Tool Results:[/bold green]")
-        
+
         for i, result in enumerate(self.tool_results, 1):
             tool_call_id = result.get("tool_call_id", f"call_{i}")
-            
+
             if "error" in result:
                 # Error result
                 lines.append(f"\n[red]#{i} Error (ID: {tool_call_id}):[/red]")
@@ -139,11 +164,14 @@ class ToolResultMessage(ChatMessage):
             else:
                 # Success result
                 lines.append(f"\n[green]#{i} Success (ID: {tool_call_id}):[/green]")
-                
+
                 result_data = result.get("result", {})
                 if isinstance(result_data, dict):
-                    # Format dict results
+                    # Format dict results (skip raw before/after contents;
+                    # those render as a DiffView instead, see TASK-1351)
                     for key, value in result_data.items():
+                        if key in ("old_content", "new_content"):
+                            continue
                         value_str = str(value)
                         if len(value_str) > 100:
                             value_str = value_str[:97] + "..."
@@ -157,14 +185,16 @@ class ToolResultMessage(ChatMessage):
                             item_str = item_str[:77] + "..."
                         lines.append(f"    [dim]- {item_str}[/dim]")
                     if len(result_data) > 3:
-                        lines.append(f"    [dim]... and {len(result_data) - 3} more[/dim]")
+                        lines.append(
+                            f"    [dim]... and {len(result_data) - 3} more[/dim]"
+                        )
                 else:
                     # Simple result
                     result_str = str(result_data)
                     if len(result_str) > 200:
                         result_str = result_str[:197] + "..."
                     lines.append(f"  [dim]{result_str}[/dim]")
-        
+
         return "\n".join(lines)
 
 
@@ -172,49 +202,54 @@ class ToolExecutionWidget(Vertical):
     """
     Container widget that displays both tool calls and their results together.
     """
-    
+
     def __init__(
         self,
         tool_calls: List[Dict[str, Any]],
         tool_results: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize a tool execution widget.
-        
+
         Args:
             tool_calls: List of tool calls
             tool_results: Optional list of tool results (can be added later)
             **kwargs: Additional arguments passed to Vertical
         """
         super().__init__(**kwargs)
-        
+
         self.tool_calls = tool_calls
         self.tool_results = tool_results or []
-        
+
         # Create and mount the tool call message
         self.tool_call_widget = ToolCallMessage(tool_calls)
-        
+
         # Create result widget if results are provided
         self.tool_result_widget = None
         if self.tool_results:
             self.tool_result_widget = ToolResultMessage(self.tool_results)
-    
+
     def compose(self):
         """Compose the widget with tool call and optional result messages."""
         yield self.tool_call_widget
         if self.tool_result_widget:
             yield self.tool_result_widget
-    
+
+    async def on_mount(self):
+        """Mount diff views for any results already present at mount time."""
+        if self.tool_results:
+            self._queue_diff_mounts(self.tool_results)
+
     def update_results(self, tool_results: List[Dict[str, Any]]):
         """
         Update the widget with tool execution results.
-        
+
         Args:
             tool_results: List of tool execution results
         """
         self.tool_results = tool_results
-        
+
         if not self.tool_result_widget:
             # Create and mount new result widget
             self.tool_result_widget = ToolResultMessage(tool_results)
@@ -225,7 +260,46 @@ class ToolExecutionWidget(Vertical):
             self.tool_result_widget.message = self.tool_result_widget._format_results()
             # Update the display
             try:
-                static_widget = self.tool_result_widget.query_one(".message-text", Static)
+                static_widget = self.tool_result_widget.query_one(
+                    ".message-text", Static
+                )
                 static_widget.update(Text.from_markup(self.tool_result_widget.message))
             except QueryError:
                 pass
+
+        # Results carrying before/after file contents also render as a
+        # DiffView; the diff is prepared off the UI thread (TASK-1351).
+        # Cancel pending prepare workers and drop previously rendered diffs
+        # first so a repeated update can't double-render.
+        self.workers.cancel_group(self, "tool-diff-mount")
+        self.remove_children(DiffView)
+        self._queue_diff_mounts(tool_results)
+
+    def _queue_diff_mounts(self, tool_results: List[Dict[str, Any]]):
+        """Schedule DiffView mounts for results with before/after content."""
+        for result in tool_results:
+            diff_data = extract_diff_from_result(result)
+            if diff_data is None:
+                continue
+            path, old_content, new_content = diff_data
+            self.run_worker(
+                self._prepare_and_mount_diff(path, old_content, new_content),
+                thread=False,
+                group="tool-diff-mount",
+            )
+
+    async def _prepare_and_mount_diff(
+        self, path: str, old_content: str, new_content: str
+    ):
+        """Prepare the diff off the UI thread, then mount the DiffView."""
+        try:
+            diff_view = make_diff(path, old_content, new_content)
+            await diff_view.prepare()
+            if not self.is_mounted:
+                # Widget was unmounted while the diff prepared off-thread.
+                return
+            await self.mount(diff_view)
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Failed to render tool-call diff for {path}: {e}"
+            )

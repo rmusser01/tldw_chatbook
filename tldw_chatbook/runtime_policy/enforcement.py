@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Callable
 
-from tldw_chatbook.tldw_api.exceptions import APIConnectionError, APIResponseError, AuthenticationError
-
 from .engine import PolicyEngine
 from .registry import CAPABILITY_REGISTRY
 from .types import PolicyDeniedError, RuntimeSourceState
@@ -25,7 +23,7 @@ class ServicePolicyEnforcer:
     @classmethod
     def from_runtime_policy_context(cls, context: Any) -> "ServicePolicyEnforcer":
         return cls(
-            state_provider=lambda: getattr(context, "state", None),
+            state_provider=lambda: context.state,
         )
 
     def current_state(self) -> RuntimeSourceState | None:
@@ -40,7 +38,11 @@ class ServicePolicyEnforcer:
         action_id: str,
         runtime_state_override: RuntimeSourceState | None = None,
     ) -> None:
-        state = runtime_state_override if isinstance(runtime_state_override, RuntimeSourceState) else self.current_state()
+        state = (
+            runtime_state_override
+            if isinstance(runtime_state_override, RuntimeSourceState)
+            else self.current_state()
+        )
         if state is None:
             raise PolicyDeniedError(
                 action_id=action_id,
@@ -65,8 +67,17 @@ class ServicePolicyEnforcer:
 
 
 def classify_backend_exception(error: Exception) -> str | None:
+    # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+    from tldw_chatbook.tldw_api.exceptions import (
+        APIConnectionError,
+        APIResponseError,
+        AuthenticationError,
+    )
+
     if isinstance(error, AuthenticationError):
-        if _contains_session_invalid_signal([str(error), getattr(error, "response_data", None)]):
+        if _contains_session_invalid_signal(
+            [str(error), getattr(error, "response_data", None)]
+        ):
             return "server_session_invalid"
         return "server_auth_required"
 
@@ -86,7 +97,13 @@ def classify_backend_exception(error: Exception) -> str | None:
 
 
 def _contains_session_invalid_signal(values: Iterable[object]) -> bool:
-    needles = ("session invalid", "invalid session", "session expired", "token expired", "auth session invalid")
+    needles = (
+        "session invalid",
+        "invalid session",
+        "session expired",
+        "token expired",
+        "auth session invalid",
+    )
     for value in values:
         if isinstance(value, dict):
             if _contains_session_invalid_signal(value.values()):

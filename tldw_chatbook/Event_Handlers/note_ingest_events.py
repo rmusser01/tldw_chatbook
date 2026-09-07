@@ -3,31 +3,48 @@
 # Note ingestion event handlers and related functions
 #
 # Imports
+import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, List, Any, Dict
 
 # 3rd-party Libraries
 from loguru import logger
-from textual.widgets import Button, Label, ListItem, ListView, Static, Markdown, TextArea, RadioButton, RadioSet, Collapsible
+from textual.widgets import (
+    Button,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    Markdown,
+    TextArea,
+    RadioButton,
+    RadioSet,
+    Collapsible,
+)
 from textual.css.query import QueryError
 from textual.containers import VerticalScroll
 
 # Local Imports
-from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError, CharactersRAGDBError
-from ..Utils.note_importers import note_importer_registry, ParsedNote
-from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
-from .ingest_utils import (
-    NOTE_FILE_FILTERS,
-    MAX_NOTE_PREVIEWS,
-    _truncate_text
+from ..DB.ChaChaNotes_DB import (
+    ConflictError as ChaChaConflictError,
+    CharactersRAGDBError,
 )
+
+# NOTE: LibraryScreen is imported lazily inside on_import_success_notes (not at
+# module scope) -- event handlers and UI screens import each other, so a
+# top-level import here risks a circular import at load time (PR #599 review).
+from ..Utils.note_importers import note_importer_registry
+from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from .ingest_utils import NOTE_FILE_FILTERS, MAX_NOTE_PREVIEWS, _truncate_text
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
+
 # --- Note Preview Functions ---
-async def _update_note_preview_display(app: 'TldwCli') -> None:
+async def _update_note_preview_display(app: "TldwCli") -> None:
     """Updates the note preview area in the UI."""
     try:
         preview_area = app.query_one("#ingest-notes-preview-area", VerticalScroll)
@@ -35,7 +52,11 @@ async def _update_note_preview_display(app: 'TldwCli') -> None:
 
         if not app.parsed_notes_for_preview:
             await preview_area.mount(
-                Static("Select files to see a preview, or no notes found.", id="ingest-notes-preview-placeholder"))
+                Static(
+                    "Select files to see a preview, or no notes found.",
+                    id="ingest-notes-preview-placeholder",
+                )
+            )
             return
 
         num_to_display = len(app.parsed_notes_for_preview)
@@ -65,11 +86,16 @@ IGNORE_WHEN_COPYING_END
                 Text
                 IGNORE_WHEN_COPYING_END                
                 """
-                await preview_area.mount(Markdown(md_content, classes="prompt-preview-item"))
+                await preview_area.mount(
+                    Markdown(md_content, classes="prompt-preview-item")
+                )
 
             if num_to_display > MAX_NOTE_PREVIEWS:
-                    await preview_area.mount(
-                        Static(f"...and {num_to_display - MAX_NOTE_PREVIEWS} more notes loaded (not shown)."))
+                await preview_area.mount(
+                    Static(
+                        f"...and {num_to_display - MAX_NOTE_PREVIEWS} more notes loaded (not shown)."
+                    )
+                )
 
     except QueryError as e:
         logger.error(f"UI component not found for note preview update: {e}")
@@ -79,7 +105,9 @@ IGNORE_WHEN_COPYING_END
         app.notify("Unexpected error during note preview update.", severity="error")
 
 
-def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', import_as_template: bool = False) -> List[Dict[str, Any]]:
+def _parse_single_note_file_for_preview(
+    file_path: Path, app_ref: "TldwCli", import_as_template: bool = False
+) -> List[Dict[str, Any]]:
     """
     Parses a single note file using the appropriate importer.
     Returns a list of note data dicts for preview.
@@ -89,8 +117,10 @@ def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', imp
 
     try:
         # Use the note importer registry to parse the file
-        parsed_notes = note_importer_registry.parse_file(file_path, import_as_template=import_as_template)
-        
+        parsed_notes = note_importer_registry.parse_file(
+            file_path, import_as_template=import_as_template
+        )
+
         for note in parsed_notes:
             note_data = {
                 "filename": file_path.name,
@@ -98,54 +128,70 @@ def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', imp
                 "content": note.content,
                 "is_template": note.is_template,
                 "template": note.template,
-                "keywords": note.keywords
+                "keywords": note.keywords,
             }
-            
+
             # Add type indicator to title for templates
             if note.is_template:
                 note_data["title"] = f"[TEMPLATE] {note.title}"
             elif note.template:
                 note_data["title"] = f"[{note.template}] {note.title}"
-                
+
             preview_notes.append(note_data)
-            
+
     except FileNotFoundError as e:
         logger.error(f"File not found: {file_path}")
-        preview_notes.append({
-            "filename": file_path.name, 
-            "title": f"Error: {file_path.name}",
-            "error": f"File not found: {e}"
-        })
+        preview_notes.append(
+            {
+                "filename": file_path.name,
+                "title": f"Error: {file_path.name}",
+                "error": f"File not found: {e}",
+            }
+        )
     except ValueError as e:
         logger.error(f"Error parsing {file_path.name}: {e}")
-        preview_notes.append({
-            "filename": file_path.name,
-            "title": f"Error: {file_path.name}",
-            "error": str(e)
-        })
+        preview_notes.append(
+            {
+                "filename": file_path.name,
+                "title": f"Error: {file_path.name}",
+                "error": str(e),
+            }
+        )
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error parsing note file {file_path}: {e}")
-        preview_notes.append({
-            "filename": file_path.name,
-            "title": f"Error: {file_path.name}",
-            "error": f"Unexpected error: {e}"
-        })
+        logger.opt(exception=True).error(
+            f"Unexpected error parsing note file {file_path}: {e}"
+        )
+        preview_notes.append(
+            {
+                "filename": file_path.name,
+                "title": f"Error: {file_path.name}",
+                "error": f"Unexpected error: {e}",
+            }
+        )
 
     if not preview_notes:  # If parsing yielded nothing
-        preview_notes.append({
-            "filename": file_path.name,
-            "title": file_path.name,
-            "content": "No notes found in file."
-        })
+        preview_notes.append(
+            {
+                "filename": file_path.name,
+                "title": file_path.name,
+                "content": "No notes found in file.",
+            }
+        )
 
     return preview_notes
 
-async def _handle_note_file_selected_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
+
+async def _handle_note_file_selected_callback(
+    app: "TldwCli", selected_path: Optional[Path]
+) -> None:
     """Callback for note file selection."""
     if selected_path:
         logger.info(f"Note file selected via dialog: {selected_path}")
         if selected_path in app.selected_note_files_for_import:
-            app.notify(f"File '{selected_path.name}' is already in the note selection.", severity="warning")
+            app.notify(
+                f"File '{selected_path.name}' is already in the note selection.",
+                severity="warning",
+            )
             return
 
         app.selected_note_files_for_import.append(selected_path)
@@ -158,23 +204,32 @@ async def _handle_note_file_selected_callback(app: 'TldwCli', selected_path: Opt
                 first_child = list_view.children[0]
                 if isinstance(first_child, ListItem) and first_child.children:
                     first_label = first_child.children[0]
-                    if isinstance(first_label, Label) and str(first_label.renderable).strip() == "No files selected.":
+                    if (
+                        isinstance(first_label, Label)
+                        and str(first_label.renderable).strip() == "No files selected."
+                    ):
                         placeholder_exists = True
             if placeholder_exists:
                 await list_view.clear()
             await list_view.append(ListItem(Label(str(selected_path))))
         except QueryError:
-            logger.error("Could not find #ingest-notes-selected-files-list ListView to update.")
+            logger.error(
+                "Could not find #ingest-notes-selected-files-list ListView to update."
+            )
 
         # Check if importing as templates
         import_as_template = False
         try:
             radio_set = app.query_one("#ingest-notes-import-type", RadioSet)
-            import_as_template = radio_set.pressed_index == 1  # Second option is "Import as Templates"
+            import_as_template = (
+                radio_set.pressed_index == 1
+            )  # Second option is "Import as Templates"
         except QueryError:
             logger.debug("Could not find import type RadioSet, defaulting to notes")
-        
-        parsed_notes_from_file = _parse_single_note_file_for_preview(selected_path, app, import_as_template=import_as_template)
+
+        parsed_notes_from_file = _parse_single_note_file_for_preview(
+            selected_path, app, import_as_template=import_as_template
+        )
         app.parsed_notes_for_preview.extend(parsed_notes_from_file)
 
         await _update_note_preview_display(app)
@@ -184,7 +239,9 @@ async def _handle_note_file_selected_callback(app: 'TldwCli', selected_path: Opt
 
 
 # --- Notes Ingest Handlers ---
-async def handle_ingest_notes_select_file_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_notes_select_file_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger.debug("Select Notes File(s) button pressed. Opening file dialog.")
     current_dir = app.last_note_import_dir or Path(".")
 
@@ -194,14 +251,20 @@ async def handle_ingest_notes_select_file_button_pressed(app: 'TldwCli', event: 
         # is schedule an async task via call_after_refresh.
         if selected_file_path is not None:  # Or however you want to handle None path
             # The lambda passed to call_after_refresh captures selected_file_path
-            app.call_after_refresh(lambda: _handle_note_file_selected_callback(app, selected_file_path))
+            app.call_after_refresh(
+                lambda: _handle_note_file_selected_callback(app, selected_file_path)
+            )
         else:
             # Handle the case where selection was cancelled (path is None)
-            app.call_after_refresh(lambda: _handle_note_file_selected_callback(app, None))
+            app.call_after_refresh(
+                lambda: _handle_note_file_selected_callback(app, None)
+            )
+
     # The screen you're pushing
-    file_open_screen = FileOpen(location=str(current_dir, context="note_ingest"),
+    file_open_screen = FileOpen(
+        location=str(current_dir, context="note_ingest"),
         title="Select Notes File (.json)",
-        filters=NOTE_FILE_FILTERS
+        filters=NOTE_FILE_FILTERS,
     )
     # Push the screen with the defined callback
     # await app.push_screen(file_open_screen, post_file_open_action) # This should work
@@ -211,20 +274,28 @@ async def handle_ingest_notes_select_file_button_pressed(app: 'TldwCli', event: 
     await app.push_screen(file_open_screen, post_file_open_action)
 
 
-async def handle_ingest_notes_clear_files_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_notes_clear_files_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles 'Clear Selection' for note import."""
     logger.info("Clearing selected note files and preview.")
     app.selected_note_files_for_import.clear()
     app.parsed_notes_for_preview.clear()
 
     try:
-        selected_list_view = app.query_one("#ingest-notes-selected-files-list", ListView)
+        selected_list_view = app.query_one(
+            "#ingest-notes-selected-files-list", ListView
+        )
         await selected_list_view.clear()
         await selected_list_view.append(ListItem(Label("No files selected.")))
 
         preview_area = app.query_one("#ingest-notes-preview-area", VerticalScroll)
         await preview_area.remove_children()
-        await preview_area.mount(Static("Select files to see a preview.", id="ingest-notes-preview-placeholder"))
+        await preview_area.mount(
+            Static(
+                "Select files to see a preview.", id="ingest-notes-preview-placeholder"
+            )
+        )
 
         status_area = app.query_one("#ingest-notes-import-status-area", TextArea)
         status_area.clear()
@@ -234,7 +305,9 @@ async def handle_ingest_notes_clear_files_button_pressed(app: 'TldwCli', event: 
         app.notify("Error clearing note UI.", severity="error")
 
 
-async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_notes_import_now_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles 'Import Selected Notes Now' button press."""
     logger.info("Import Selected Note Files Now button pressed.")
 
@@ -270,85 +343,176 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
 
     user_id = app.notes_user_id
 
-    async def import_worker_notes():
+    # TASK-15468 fix-round-1 (SHARED-LIST RACE): once the loop runs on a
+    # worker thread, the main thread keeps handling clicks concurrently --
+    # including "Clear Selection", which does
+    # `app.selected_note_files_for_import.clear()`. Iterating the live list
+    # from the thread would let a mid-import click silently truncate the
+    # loop (incomplete import, no error). Snapshot it once here, on the
+    # event loop, synchronously and before the thread hop (this whole
+    # handler runs without an intervening `await` up to `run_worker(...)`
+    # below, so there is no race window on the snapshot itself), and have
+    # the loop iterate ONLY the snapshot -- never the live, mutable list.
+    note_files_snapshot: List[Path] = list(app.selected_note_files_for_import)
+
+    # TASK-15468 fix-round-1 (QUIT-DURING-IMPORT): cooperative cancellation.
+    # `asyncio.to_thread`'s awaited future is cancelled promptly when this
+    # coroutine's Task is cancelled (e.g. app shutdown cancels outstanding
+    # workers), but the background thread itself is NOT interruptible -- it
+    # keeps running `import_worker_notes` to completion regardless of the
+    # coroutine giving up on it, which can block process shutdown on the
+    # executor for as long as the whole batch takes (up to ~300s on a
+    # large import), with no indication to the user. This Event lets the
+    # thread notice a cancellation request and stop at the next note/file
+    # boundary instead of finishing the rest of the batch unattended.
+    # Honest residual: the note/template *currently* being committed when
+    # cancellation is requested still finishes -- there is no way to
+    # interrupt a single `add_note` call or a single file parse mid-flight,
+    # only between them.
+    cancel_event = threading.Event()
+
+    def import_worker_notes():
+        """Per-file/per-note import loop.
+
+        TASK-15468: plain ``def`` (not ``async def``) on purpose -- this body
+        is entirely synchronous (sync file parse, sync
+        ``notes_service.add_note`` DB transaction, sync template JSON I/O)
+        and contains no ``await``. It used to be declared ``async def`` and
+        called with a bare ``await`` from
+        ``_run_note_import_worker_and_dispatch``, which -- with no internal
+        await points -- ran the *entire* O(files x notes) loop inline, in one
+        shot, on the caller's coroutine (the main event loop), blocking all
+        UI input for the duration of a large import (see
+        Docs/Design/2026-08-11-input-latency-audit.md). It is now dispatched
+        via ``asyncio.to_thread`` instead, which needs a plain sync callable.
+
+        TASK-15468 fix-round-1: iterates `note_files_snapshot` (a copy taken
+        on the event loop before dispatch), never the live
+        `app.selected_note_files_for_import`, and checks `cancel_event`
+        between files and between notes so a cancelled import (app
+        shutdown) stops at the next boundary instead of running the whole
+        batch unattended.
+        """
         results = []
-        
+
         if import_as_templates:
             # Import as templates
             # Load existing templates
-            user_config_dir = Path.home() / ".config" / "tldw_cli"
+            from ..config import _get_effective_config_path
+
+            user_config_dir = _get_effective_config_path().parent
             user_templates_path = user_config_dir / "note_templates.json"
-            
+
             # Create directory if needed
             user_config_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Load existing templates if any
             templates = {}
             if user_templates_path.exists():
                 try:
-                    with open(user_templates_path, 'r', encoding='utf-8') as f:
+                    with open(user_templates_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        templates = data.get('templates', {})
+                        templates = data.get("templates", {})
                 except Exception as e:
                     logger.error(f"Error loading existing templates: {e}")
-            
-            # Process each file
-            for file_path in app.selected_note_files_for_import:
-                notes_in_file = _parse_single_note_file_for_preview(file_path, app, import_as_template=True)
+
+            # Process each file (TASK-15468: snapshot, not the live list)
+            for file_path in note_files_snapshot:
+                if cancel_event.is_set():
+                    logger.info(
+                        "Template import cancelled; stopping at file boundary."
+                    )
+                    break
+                notes_in_file = _parse_single_note_file_for_preview(
+                    file_path, app, import_as_template=True
+                )
+                file_cancelled = False
                 for note_data in notes_in_file:
-                    if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data.get("title", file_path.stem),
-                            "status": "failure",
-                            "message": note_data.get("error", "Missing title or content.")
-                        })
+                    if cancel_event.is_set():
+                        file_cancelled = True
+                        break
+                    if (
+                        "error" in note_data
+                        or not note_data.get("title")
+                        or not note_data.get("content")
+                    ):
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data.get("title", file_path.stem),
+                                "status": "failure",
+                                "message": note_data.get(
+                                    "error", "Missing title or content."
+                                ),
+                            }
+                        )
                         continue
-                    
+
                     try:
                         # Generate a unique template key from the title
-                        base_key = note_data["title"].lower().replace(" ", "_").replace("-", "_")
+                        base_key = (
+                            note_data["title"]
+                            .lower()
+                            .replace(" ", "_")
+                            .replace("-", "_")
+                        )
                         # Remove non-alphanumeric characters except underscores
-                        base_key = ''.join(c for c in base_key if c.isalnum() or c == '_')
-                        
+                        base_key = "".join(
+                            c for c in base_key if c.isalnum() or c == "_"
+                        )
+
                         # Ensure unique key
                         key = base_key
                         counter = 1
                         while key in templates:
                             key = f"{base_key}_{counter}"
                             counter += 1
-                        
+
                         # Create template entry
                         templates[key] = {
                             "title": note_data["title"],
                             "content": note_data["content"],
                             "keywords": note_data.get("keywords", ""),
-                            "description": f"Imported template: {note_data['title']}"
+                            "description": f"Imported template: {note_data['title']}",
                         }
-                        
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data["title"],
-                            "status": "success",
-                            "message": f"Template imported successfully. Key: {key}",
-                            "template_key": key
-                        })
+
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data["title"],
+                                "status": "success",
+                                "message": f"Template imported successfully. Key: {key}",
+                                "template_key": key,
+                            }
+                        )
                     except Exception as e:
-                        logger.opt(exception=True).error(f"Error importing template '{note_data['title']}' from {file_path}: {e}")
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data["title"],
-                            "status": "failure",
-                            "message": f"Error: {type(e).__name__}"
-                        })
-            
-            # Save all templates
+                        logger.opt(exception=True).error(
+                            f"Error importing template '{note_data['title']}' from {file_path}: {e}"
+                        )
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data["title"],
+                                "status": "failure",
+                                "message": f"Error: {type(e).__name__}",
+                            }
+                        )
+                if file_cancelled:
+                    logger.info(
+                        "Template import cancelled; stopping at note boundary."
+                    )
+                    break
+
+            # Save all templates parsed so far (honest partial progress if
+            # cancelled -- see cancel_event above).
             if any(r["status"] == "success" for r in results):
                 try:
                     output = {"templates": templates}
-                    with open(user_templates_path, 'w', encoding='utf-8') as f:
+                    with open(user_templates_path, "w", encoding="utf-8") as f:
                         json.dump(output, f, indent=2, ensure_ascii=False)
-                    logger.info(f"Saved {len(templates)} templates to {user_templates_path}")
+                    logger.info(
+                        f"Saved {len(templates)} templates to {user_templates_path}"
+                    )
                 except Exception as e:
                     logger.error(f"Error saving templates file: {e}")
                     # Update all success results to failure
@@ -356,54 +520,88 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                         if r["status"] == "success":
                             r["status"] = "failure"
                             r["message"] = f"Template imported but failed to save: {e}"
-        
+
         else:
-            # Import as notes (existing logic)
-            for file_path in app.selected_note_files_for_import:
+            # Import as notes (existing logic). TASK-15468: snapshot, not
+            # the live list; checked for cancellation between files and
+            # between notes.
+            for file_path in note_files_snapshot:
+                if cancel_event.is_set():
+                    logger.info(
+                        "Note import cancelled; stopping at file boundary."
+                    )
+                    break
                 notes_in_file = _parse_single_note_file_for_preview(file_path, app)
+                file_cancelled = False
                 for note_data in notes_in_file:
-                    if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data.get("title", file_path.stem),
-                            "status": "failure",
-                            "message": note_data.get("error", "Missing title or content.")
-                        })
+                    if cancel_event.is_set():
+                        file_cancelled = True
+                        break
+                    if (
+                        "error" in note_data
+                        or not note_data.get("title")
+                        or not note_data.get("content")
+                    ):
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data.get("title", file_path.stem),
+                                "status": "failure",
+                                "message": note_data.get(
+                                    "error", "Missing title or content."
+                                ),
+                            }
+                        )
                         continue
                     try:
                         note_id = app.notes_service.add_note(
                             user_id=user_id,
                             title=note_data["title"],
-                            content=note_data["content"]
+                            content=note_data["content"],
                         )
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data["title"],
-                            "status": "success",
-                            "message": f"Note imported successfully. ID: {note_id}",
-                            "note_id": note_id
-                        })
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data["title"],
+                                "status": "success",
+                                "message": f"Note imported successfully. ID: {note_id}",
+                                "note_id": note_id,
+                            }
+                        )
                     except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
-                        logger.opt(exception=True).error(f"Error importing note '{note_data['title']}' from {file_path}: {e}")
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data["title"],
-                            "status": "failure",
-                            "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
-                        })
+                        logger.opt(exception=True).error(
+                            f"Error importing note '{note_data['title']}' from {file_path}: {e}"
+                        )
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data["title"],
+                                "status": "failure",
+                                "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}",
+                            }
+                        )
                     except Exception as e:
-                        logger.opt(exception=True).error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}")
-                        results.append({
-                            "file_path": str(file_path),
-                            "note_title": note_data["title"],
-                            "status": "failure",
-                            "message": f"Unexpected error: {type(e).__name__}"
-                        })
+                        logger.opt(exception=True).error(
+                            f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}"
+                        )
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "note_title": note_data["title"],
+                                "status": "failure",
+                                "message": f"Unexpected error: {type(e).__name__}",
+                            }
+                        )
+                if file_cancelled:
+                    logger.info("Note import cancelled; stopping at note boundary.")
+                    break
         return results
 
     def on_import_success_notes(results: List[Dict[str, Any]]):
         import_type = "template" if import_as_templates else "note"
-        log_text_parts = [f"{import_type.capitalize()} import process finished.\n\nResults:\n"]  # Renamed to avoid conflict
+        log_text_parts = [
+            f"{import_type.capitalize()} import process finished.\n\nResults:\n"
+        ]  # Renamed to avoid conflict
         successful_imports = 0
         failed_imports = 0
         for res in results:
@@ -412,7 +610,9 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             note_title = res.get("note_title", "N/A")
             message = res.get("message", "")
 
-            log_text_parts.append(f"File: {Path(file_path_str).name} ({import_type.capitalize()}: '{note_title}')\n")
+            log_text_parts.append(
+                f"File: {Path(file_path_str).name} ({import_type.capitalize()}: '{note_title}')\n"
+            )
             log_text_parts.append(f"  Status: {status.upper()}\n")
             if message:
                 log_text_parts.append(f"  Message: {message}\n")
@@ -430,37 +630,131 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             status_area_cb = app.query_one("#ingest-notes-import-status-area", TextArea)
             status_area_cb.load_text("".join(log_text_parts))
         except QueryError:
-            logger.error("Failed to find #ingest-notes-import-status-area in on_import_success_notes.")
+            logger.error(
+                "Failed to find #ingest-notes-import-status-area in on_import_success_notes."
+            )
 
-        app.notify(f"{import_type.capitalize()} import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
+        app.notify(
+            f"{import_type.capitalize()} import finished. Success: {successful_imports}, Failed: {failed_imports}",
+            timeout=8,
+        )
         logger.info(summary)
 
         if import_as_templates:
             # For templates, we need to reload the templates in the notes event handler
-            app.notify("Templates will be available after restarting the application.", severity="information", timeout=10)
+            app.notify(
+                "Templates will be available after restarting the application.",
+                severity="information",
+                timeout=10,
+            )
         else:
             try:
                 # Make sure to query the collapsible before creating the Toggled event instance
-                chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)
-                app.call_later(app.on_chat_notes_collapsible_toggle, Collapsible.Toggled(chat_notes_collapsible_widget))
+                chat_notes_collapsible_widget = app.query_one(
+                    "#chat-notes-collapsible", Collapsible
+                )
+                app.call_later(
+                    app.on_chat_notes_collapsible_toggle,
+                    Collapsible.Toggled(chat_notes_collapsible_widget),
+                )
             except QueryError:
-                logger.error("Failed to find #chat-notes-collapsible widget for refresh after note import.")
+                logger.error(
+                    "Failed to find #chat-notes-collapsible widget for refresh after note import."
+                )
+
+            # T167: the Library notes canvas composes fresh on every visit
+            # (so a later visit already sees the imported notes), but if
+            # Library is *already* the mounted/active screen while the
+            # import runs, nothing else pokes it to reload -- so its list
+            # would silently go stale until the user navigates away and
+            # back. Trigger its local-source snapshot refresh directly,
+            # guarded with isinstance since the active screen is usually
+            # NOT Library (e.g. the user is on the Ingest tab importing).
+            screen = getattr(app, "screen", None)
+            # Lazy import: avoids a module-load circular import between event
+            # handlers and UI screens (PR #599 review).
+            from ..UI.Screens.library_screen import LibraryScreen
+
+            if isinstance(screen, LibraryScreen):
+                try:
+                    screen._refresh_local_source_snapshot()
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to refresh Library notes snapshot after note import."
+                    )
 
     def on_import_failure_notes(error: Exception):
         import_type = "template" if import_as_templates else "note"
-        logger.opt(exception=True).error(f"{import_type.capitalize()} import worker failed critically: {error}")
+        logger.opt(exception=True).error(
+            f"{import_type.capitalize()} import worker failed critically: {error}"
+        )
         try:
-            status_area_cb_fail = app.query_one("#ingest-notes-import-status-area", TextArea)
+            status_area_cb_fail = app.query_one(
+                "#ingest-notes-import-status-area", TextArea
+            )
             current_text = status_area_cb_fail.text
             status_area_cb_fail.load_text(
-                current_text + f"\n{import_type.capitalize()} import process failed critically: {error}\nCheck logs.\n")
+                current_text
+                + f"\n{import_type.capitalize()} import process failed critically: {error}\nCheck logs.\n"
+            )
         except QueryError:
-            logger.error("Failed to find #ingest-notes-import-status-area in on_import_failure_notes.")
-        app.notify(f"{import_type.capitalize()} import CRITICALLY failed: {error}", severity="error", timeout=10)
+            logger.error(
+                "Failed to find #ingest-notes-import-status-area in on_import_failure_notes."
+            )
+        app.notify(
+            f"{import_type.capitalize()} import CRITICALLY failed: {error}",
+            severity="error",
+            timeout=10,
+        )
+
+    async def _run_note_import_worker_and_dispatch() -> List[Dict[str, Any]]:
+        # T167: `on_import_success_notes`/`on_import_failure_notes` above
+        # were previously dead code -- nothing in this module or app.py's
+        # generic worker-state dispatch (`on_worker_state_changed` ->
+        # `WorkerHandlerRegistry`, where no registered handler owned the
+        # "file_operations" group this worker runs in) ever invoked them,
+        # so the post-import status-area summary, the chat-notes sidebar
+        # refresh, and (now) the Library notes-canvas refresh never actually
+        # fired. Calling these UI-touching callbacks directly here -- rather
+        # than relying on that dead dispatch path -- is safe because
+        # `await asyncio.to_thread(...)` below always resumes this coroutine
+        # back on the *same* event-loop thread it started on once the worker
+        # thread finishes (TASK-15468), so by the time execution reaches
+        # this point we are back on the main/UI thread regardless of where
+        # `import_worker_notes` itself ran.
+        #
+        # TASK-15468: `import_worker_notes` moved off the event loop via
+        # `asyncio.to_thread` -- see its docstring. This is the only line
+        # that changed to fix the import-freezes-the-app symptom; everything
+        # else in this function (ordering, exception handling, callback
+        # dispatch) is unchanged from before.
+        #
+        # TASK-15468 fix-round-1 (QUIT-DURING-IMPORT): an `asyncio.Future`
+        # in PENDING state (which is what `asyncio.to_thread` awaits)
+        # cancels immediately when this coroutine's Task is cancelled --
+        # even though the underlying executor thread keeps running
+        # `import_worker_notes` regardless, since a running thread cannot
+        # be forcibly interrupted. Catching `CancelledError` here and
+        # setting `cancel_event` lets that still-running thread notice the
+        # cancellation and return early (see `import_worker_notes`'s
+        # per-file/per-note checks), bounding how long it keeps running
+        # unattended -- and therefore how long process shutdown can block
+        # waiting on the executor -- to "until the next note/file
+        # boundary" instead of "the rest of the batch".
+        try:
+            results = await asyncio.to_thread(import_worker_notes)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            raise
+        except Exception as e:
+            on_import_failure_notes(e)
+            raise
+        on_import_success_notes(results)
+        return results
 
     app.run_worker(
-        import_worker_notes,
+        _run_note_import_worker_and_dispatch,
         name="note_import_worker",
         group="file_operations",
-        description="Importing selected note files."
+        description="Importing selected note files.",
     )

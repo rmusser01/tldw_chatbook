@@ -1,7 +1,12 @@
-"""Tools & Settings screen implementation."""
+"""Tools & Settings screen implementation.
+
+DEPRECATED (TASK-1346): This wrapper around the legacy ToolsSettingsWindow is not
+routed — the "tools_settings" route resolves to MCPScreen (see
+UI/Navigation/screen_registry.py). The canonical settings surface is
+UI/Screens/settings_screen.py (the F9 Settings destination).
+"""
 
 from typing import TYPE_CHECKING
-from loguru import logger
 
 from textual.app import ComposeResult
 from textual.widgets import Button, Markdown
@@ -28,19 +33,6 @@ class ToolsSettingsScreen(BaseAppScreen):
         # Yield the window widget directly
         yield self.tools_window
     
-    def save_state(self):
-        """Save tools window state."""
-        state = super().save_state()
-        if self.tools_window:
-            state["unified_mcp_view_state"] = self.tools_window.get_unified_mcp_view_state()
-        return state
-    
-    def restore_state(self, state):
-        """Restore tools window state."""
-        super().restore_state(state)
-        if self.tools_window and isinstance(state, dict):
-            self.tools_window.set_unified_mcp_view_state(state.get("unified_mcp_view_state"))
-
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Refresh runtime-sensitive child content when the active source changes."""
         if self.tools_window:

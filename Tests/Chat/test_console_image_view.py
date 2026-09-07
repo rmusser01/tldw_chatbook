@@ -1,0 +1,456 @@
+from io import BytesIO
+
+import pytest
+from PIL import Image as PILImage
+
+from tldw_chatbook.Chat.console_image_view import (
+    IMAGE_CACHE_MAX_ENTRIES,
+    IMAGE_DECODE_MAX_DIMENSION,
+    ConsoleImageRenderCache,
+    ConsoleImageViewState,
+    fit_image_cell_size,
+    next_view_mode,
+    resolve_default_mode,
+)
+
+
+def _png_bytes(size=(64, 64), color=(200, 10, 10)) -> bytes:
+    buffer = BytesIO()
+    PILImage.new("RGB", size, color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_next_view_mode_cycles_three_states():
+    assert next_view_mode("pixels") == "graphics"
+    assert next_view_mode("graphics") == "hidden"
+    assert next_view_mode("hidden") == "pixels"
+
+
+def test_resolve_default_mode_explicit_config_wins(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "kitty"}
+    )
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "pixels"}}})
+        == "pixels"
+    )
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "regular"}}})
+        == "graphics"
+    )
+
+
+def test_resolve_default_mode_auto_uses_terminal_override(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "kitty"}
+    )
+    config = {
+        "chat": {
+            "images": {
+                "default_render_mode": "auto",
+                "terminal_overrides": {"kitty": "regular", "default": "pixels"},
+            }
+        }
+    }
+    assert resolve_default_mode(config) == "graphics"
+
+
+def test_resolve_default_mode_auto_falls_back_to_default_override(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "xterm"}
+    )
+    config = {
+        "chat": {
+            "images": {
+                "default_render_mode": "auto",
+                "terminal_overrides": {"kitty": "regular", "default": "pixels"},
+            }
+        }
+    }
+    assert resolve_default_mode(config) == "pixels"
+
+
+def test_resolve_default_mode_auto_without_overrides_uses_capability_mode(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "unknown"}
+    )
+    monkeypatch.setattr(civ, "get_image_render_mode", lambda mode: "regular")
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "auto"}}})
+        == "graphics"
+    )
+
+
+def test_resolve_default_mode_garbage_falls_back_to_pixels(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "unknown"}
+    )
+    monkeypatch.setattr(civ, "get_image_render_mode", lambda mode: "regular")
+    # An unrecognized value pins to "pixels" immediately instead of falling
+    # through to the terminal-auto path.
+    assert (
+        resolve_default_mode({"chat": {"images": {"default_render_mode": "nonsense"}}})
+        == "pixels"
+    )
+    # Missing/empty behaves as "auto" -- it must still consult the
+    # terminal-auto path (proven here by the patched `get_image_render_mode`
+    # returning "regular" -> "graphics"), not fall back to "pixels".
+    assert resolve_default_mode({}) == "graphics"
+
+
+def test_view_state_defaults_overrides_and_prune():
+    state = ConsoleImageViewState()
+    assert state.mode_for("m-1", default="pixels") == "pixels"
+
+    state.set_mode("m-1", "hidden", default="pixels")
+    assert state.mode_for("m-1", default="pixels") == "hidden"
+    assert state.serialize() == {"m-1": "hidden"}
+
+    # Setting back to the default drops the entry.
+    state.set_mode("m-1", "pixels", default="pixels")
+    assert state.serialize() == {}
+
+    state.set_mode("m-1", "graphics", default="pixels")
+    state.set_mode("m-2", "hidden", default="pixels")
+    state.prune({"m-2"})
+    assert state.serialize() == {"m-2": "hidden"}
+
+
+def test_view_state_restore_ignores_invalid_entries():
+    state = ConsoleImageViewState()
+    state.restore({"m-1": "graphics", "m-2": "bogus", 3: "hidden"})
+    assert state.serialize() == {"m-1": "graphics"}
+
+
+def test_cache_prepares_downscales_and_serves_both_renderables():
+    cache = ConsoleImageRenderCache()
+    big = _png_bytes(size=(2048, 512))
+
+    assert cache.prepare("m-1", big) is True
+    pil = cache.get_pil("m-1")
+    assert pil is not None
+    assert max(pil.width, pil.height) <= IMAGE_DECODE_MAX_DIMENSION
+    assert cache.get_pixels("m-1") is not None
+    assert cache.get_pixels("m-1") is cache.get_pixels("m-1")  # lazy build cached
+
+
+def test_cache_negative_caches_corrupt_bytes():
+    cache = ConsoleImageRenderCache()
+    assert cache.prepare("m-bad", b"not an image") is False
+    assert cache.is_failed("m-bad") is True
+    assert cache.get_pil("m-bad") is None
+
+
+def test_cache_lru_bound_evicts_oldest():
+    cache = ConsoleImageRenderCache()
+    payload = _png_bytes(size=(8, 8))
+    for index in range(IMAGE_CACHE_MAX_ENTRIES + 1):
+        cache.prepare(f"m-{index}", payload)
+    assert cache.get_pil("m-0") is None  # evicted
+    assert cache.get_pil(f"m-{IMAGE_CACHE_MAX_ENTRIES}") is not None
+
+
+def test_cache_pending_ids_and_session_eviction():
+    class _Message:
+        def __init__(self, message_id, image_data):
+            self.id = message_id
+            self.image_data = image_data
+
+    cache = ConsoleImageRenderCache()
+    payload = _png_bytes()
+    cache.prepare("m-done", payload)
+    cache.prepare("m-bad", b"junk")
+    messages = [
+        _Message("m-done", payload),
+        _Message("m-bad", b"junk"),
+        _Message("m-new", payload),
+        _Message("m-none", None),
+    ]
+    pending = cache.pending_ids(messages)
+    assert [message_id for message_id, _ in pending] == ["m-new"]
+
+    cache.evict_session({"m-done"})
+    assert cache.get_pil("m-done") is None
+
+
+def test_cache_evict_session_drops_composite_variant_keys():
+    """``evict_session`` is key-agnostic: composite ``f"{message_id}:{i}"``
+    generation-card cache keys (see ``ConsoleGenerationCardSpec``) pop the
+    same way plain message-id keys do -- images, pixels, AND failure marks
+    all clear (regression guard for the Keep-leaves-stale-image bug: keep
+    swaps store bytes but never invalidated these composite keys, so the
+    card kept showing the pre-keep image)."""
+    cache = ConsoleImageRenderCache()
+    payload = _png_bytes()
+    cache.prepare("gen-1:0", payload)
+    cache.prepare("gen-1:1", payload)
+    assert cache.get_pixels("gen-1:0") is not None  # populate the pixels cache too
+    cache.prepare("gen-1:2", b"not an image")  # negative-cached (failed)
+    assert cache.is_failed("gen-1:2") is True
+
+    cache.evict_session([f"gen-1:{i}" for i in range(3)])
+
+    assert cache.get_pil("gen-1:0") is None
+    assert cache.get_pil("gen-1:1") is None
+    assert cache.get_pixels("gen-1:0") is None
+    assert cache.is_failed("gen-1:2") is False
+    # A sibling message's own composite key is untouched by the eviction.
+    cache.prepare("gen-2:0", payload)
+    cache.evict_session([f"gen-1:{i}" for i in range(3)])
+    assert cache.get_pil("gen-2:0") is not None
+
+
+def test_resolve_default_mode_reads_live_app_config_shape(monkeypatch):
+    """The real app nests raw TOML under COMPREHENSIVE_CONFIG_RAW (config.py:1326)."""
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "unknown"}
+    )
+    live_shape = {
+        "APP_MODE_STR": "single",
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "chat": {"images": {"default_render_mode": "regular"}}
+        },
+    }
+    assert resolve_default_mode(live_shape) == "graphics"
+
+
+def test_resolve_default_mode_live_shape_terminal_override(monkeypatch):
+    import tldw_chatbook.Chat.console_image_view as civ
+
+    monkeypatch.setattr(
+        civ, "detect_terminal_capabilities", lambda: {"terminal_type": "kitty"}
+    )
+    live_shape = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "chat": {
+                "images": {
+                    "default_render_mode": "auto",
+                    "terminal_overrides": {"kitty": "regular", "default": "pixels"},
+                }
+            }
+        }
+    }
+    assert resolve_default_mode(live_shape) == "graphics"
+
+
+# --- fit_image_cell_size (P3b avatar guard, generalized for the transcript) ---
+
+
+def test_fit_image_cell_size_returns_explicit_positive_ints_within_box():
+    # The whole point: never "auto" (0-size crash) - always explicit >=1 ints
+    # clamped to the box, for any realistic image.
+    for w, h in [(512, 512), (1024, 256), (100, 900), (7, 3), (1, 1)]:
+        cw, ch = fit_image_cell_size(w, h, 80, 40)
+        assert isinstance(cw, int) and isinstance(ch, int)
+        assert 1 <= cw <= 80 and 1 <= ch <= 40
+
+
+def test_fit_image_cell_size_wide_image_fits_width():
+    # A very wide image is width-bound: full 80 cols, fewer lines.
+    cw, ch = fit_image_cell_size(1600, 200, 80, 40)
+    assert cw == 80 and ch < 40
+
+
+def test_fit_image_cell_size_tall_image_fits_height():
+    # A very tall image is height-bound: full 40 lines, fewer cols.
+    cw, ch = fit_image_cell_size(100, 1600, 80, 40)
+    assert ch == 40 and cw < 80
+
+
+def test_fit_image_cell_size_preserves_aspect_within_box():
+    # Square pixels -> ~2:1 cell aspect (cells are ~2x taller than wide);
+    # fitting into 80x40 should be width-bound at 80 with height ~ 80/2 = 40.
+    cw, ch = fit_image_cell_size(400, 400, 80, 40)
+    assert cw == 80 and ch == 40
+
+
+def test_fit_image_cell_size_degenerate_returns_full_box():
+    assert fit_image_cell_size(0, 100, 80, 40) == (80, 40)
+    assert fit_image_cell_size(100, 0, 24, 10) == (24, 10)
+
+
+def test_fit_image_cell_size_respects_arbitrary_box():
+    # The avatar box (24x10) still works through the same helper.
+    cw, ch = fit_image_cell_size(1000, 1000, 24, 10)
+    assert 1 <= cw <= 24 and 1 <= ch <= 10
+
+
+# --- resolve_show_character_avatar (P3c) -------------------------------------
+
+
+def test_resolve_show_character_avatar_defaults_true():
+    from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
+
+    assert resolve_show_character_avatar({}) is True
+    assert resolve_show_character_avatar({"chat": {"images": {}}}) is True
+
+
+def test_resolve_show_character_avatar_explicit_false():
+    from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
+
+    assert (
+        resolve_show_character_avatar(
+            {"chat": {"images": {"show_character_avatar": False}}}
+        )
+        is False
+    )
+
+
+def test_resolve_show_character_avatar_live_shape():
+    from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
+
+    assert (
+        resolve_show_character_avatar(
+            {
+                "COMPREHENSIVE_CONFIG_RAW": {
+                    "chat": {"images": {"show_character_avatar": False}}
+                }
+            }
+        )
+        is False
+    )
+
+
+# --- Roleplay UAT regression: the chat character avatar showed only its corner ---
+# Live repro (origin/dev @ f384a2807): the avatar spec reused the shared
+# transcript render cache, which builds Pixels at PIXELS_MAX_COLS x
+# PIXELS_MAX_LINES (80x40 cells). That renderable was then placed in the rail's
+# 16x8 avatar box, so Rich simply clipped it -- the user saw the top-left ~1/5
+# of their character's portrait instead of a scaled-down whole image.
+
+
+def test_scale_image_for_cell_box_fits_avatar_box():
+    """A large portrait must be scaled to fit the box, never left oversized."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import scale_image_for_cell_box
+
+    source = PILImage.new("RGB", (512, 512))
+    scaled = scale_image_for_cell_box(source, 16, 8)
+
+    # A terminal cell is ~2x taller than wide, so an N-line box shows 2N pixel
+    # rows. Anything larger than the box in either axis gets clipped, not fitted.
+    assert scaled.width <= 16
+    assert scaled.height <= 16
+
+
+def test_scale_image_for_cell_box_preserves_aspect_ratio():
+    """Scaling must not distort the portrait."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import scale_image_for_cell_box
+
+    source = PILImage.new("RGB", (400, 200))
+    scaled = scale_image_for_cell_box(source, 16, 8)
+
+    assert scaled.width / scaled.height == 400 / 200
+
+
+def test_scale_image_for_cell_box_leaves_source_unmodified():
+    """The cached source image must not be mutated in place by scaling."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import scale_image_for_cell_box
+
+    source = PILImage.new("RGB", (512, 512))
+    scale_image_for_cell_box(source, 16, 8)
+
+    assert source.size == (512, 512)
+
+
+# --- TASK-22221: the size-only form must be an EXACT stand-in for the resample ---
+# `fit_character_avatar_cell_box` reads only `.width`/`.height` off the scaled
+# copy and throws the pixels away, once per distinct rail viewport size during a
+# resize drag, on the event loop. `scale_image_pixel_size_for_cell_box` replaces
+# that with arithmetic -- so it has to agree with PIL everywhere, including the
+# rounding corners (`round_aspect` picks floor or ceil by aspect error) and the
+# no-enlargement early return.
+
+
+@pytest.mark.parametrize(
+    "source_size",
+    [
+        (1, 1),
+        (1, 1000),
+        (1000, 1),
+        (3, 7),
+        (17, 5),
+        (64, 64),
+        (300, 1200),
+        (1200, 300),
+        (999, 1000),
+        (1000, 999),
+        (1024, 1024),
+    ],
+)
+def test_scale_image_pixel_size_matches_the_real_resample(source_size):
+    """The arithmetic size must equal the resampled copy's size, exactly."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import (
+        scale_image_for_cell_box,
+        scale_image_pixel_size_for_cell_box,
+    )
+
+    source = PILImage.new("RGB", source_size)
+    boxes = [
+        (1, 1),
+        (1, 2),
+        (2, 1),
+        (5, 3),
+        (16, 8),
+        (24, 30),
+        (37, 13),
+        (60, 30),
+        (80, 40),
+        (100, 1),
+        (1, 100),
+        (2000, 2000),
+    ]
+    for box_cols, box_lines in boxes:
+        resampled = scale_image_for_cell_box(source, box_cols, box_lines)
+        assert scale_image_pixel_size_for_cell_box(
+            source_size[0], source_size[1], box_cols, box_lines
+        ) == (resampled.width, resampled.height), (source_size, box_cols, box_lines)
+
+
+def test_scale_image_pixel_size_sweeps_the_rail_drag_range_without_resampling(
+    monkeypatch,
+):
+    """A whole drag's worth of fits must agree with PIL and resample nothing."""
+    from PIL import Image as PILImage
+
+    from tldw_chatbook.Chat.console_image_view import (
+        scale_image_for_cell_box,
+        scale_image_pixel_size_for_cell_box,
+    )
+
+    source = PILImage.new("RGB", (1024, 768))
+    expected = [
+        (
+            cols,
+            scale_image_for_cell_box(source, cols, 30).size,
+        )
+        for cols in range(1, 121)
+    ]
+
+    def forbidden_resize(*_args, **_kwargs):
+        raise AssertionError("the size-only form must never resample")
+
+    monkeypatch.setattr(PILImage.Image, "resize", forbidden_resize)
+    monkeypatch.setattr(PILImage.Image, "thumbnail", forbidden_resize)
+
+    for cols, size in expected:
+        assert scale_image_pixel_size_for_cell_box(1024, 768, cols, 30) == size, cols

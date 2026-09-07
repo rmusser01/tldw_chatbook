@@ -1,0 +1,96 @@
+{
+  "artifact_version": 1,
+  "verdict": "pass",
+  "operator": "agent-operated",
+  "launch": "python -m tldw_chatbook.app",
+  "primary_source_commit": "ad0285f96c8cb7b8cbc8c1d06d7f28be7fd16d33",
+  "remediation_source_commit": "913d02fd764168247600bff017a7fb6d9d09de80",
+  "platform": {
+    "os": "macOS 15.6 (24G84)",
+    "architecture": "arm64",
+    "python": "3.12.11",
+    "git": "2.39.5 (Apple Git-154)",
+    "openssh": "9.9p2, LibreSSL 3.3.6",
+    "tmux": "3.6a"
+  },
+  "viewports": [
+    "120x40",
+    "40x20"
+  ],
+  "sanitized_destination": "ssh · fixture-user@127.0.0.1:PORT · [remote]",
+  "destination_ref": "refs/heads/main",
+  "frontmatter": {
+    "sha256_before": "ac13b2e120ff32b9afec2192578aba6e1eb7671b86333bb7ffd8f55ada008767",
+    "sha256_after": "ac13b2e120ff32b9afec2192578aba6e1eb7671b86333bb7ffd8f55ada008767",
+    "exact_bytes_preserved": true,
+    "body_not_retained": true
+  },
+  "ssh_agent_only": true,
+  "disk_identity_available": false,
+  "trust_snapshot_materialized": true,
+  "trust_snapshot_mode": "0400",
+  "trust_drift_blocked_before_push": true,
+  "terminal_prompts_observed": 0,
+  "askpass_marker_observed": false,
+  "credential_helper_marker_observed": false,
+  "proxy_marker_observed": false,
+  "success_scenario": {
+    "lane": "production-app-pty",
+    "parent_oid": "fafdd5e84acd1e59b28ae2306e8364fed4af3133",
+    "candidate_oid": "2ec70b72f6639d37e19509147bcd55501a560ef4",
+    "pre_local_ref": "2ec70b72f6639d37e19509147bcd55501a560ef4",
+    "pre_remote_ref": "fafdd5e84acd1e59b28ae2306e8364fed4af3133",
+    "post_local_ref": "2ec70b72f6639d37e19509147bcd55501a560ef4",
+    "post_remote_ref": "2ec70b72f6639d37e19509147bcd55501a560ef4",
+    "raw_connection_delta": 4,
+    "upload_pack_delta": 3,
+    "receive_pack_delta": 1,
+    "exact_transition_proved": true
+  },
+  "divergent_scenario": {
+    "lane": "production-app-pty",
+    "local_candidate_oid": "319010b48a8aebe3194b086bb8776c69077541e4",
+    "remote_divergent_oid": "35466df8c8c669b1e511359fd5cf36fef293670b",
+    "pre_remote_ref": "35466df8c8c669b1e511359fd5cf36fef293670b",
+    "post_remote_ref": "35466df8c8c669b1e511359fd5cf36fef293670b",
+    "raw_connection_delta": 1,
+    "upload_pack_delta": 1,
+    "receive_pack_delta": 0,
+    "blocked_before_receive": true,
+    "remote_unchanged": true
+  },
+  "uncertain_reopen_remediation": {
+    "lane": "production-app-pty",
+    "parent_oid": "319010b48a8aebe3194b086bb8776c69077541e4",
+    "candidate_oid": "4abf305610b1d4842f3c3ec3715ea0c193ca875e",
+    "pre_local_ref": "4abf305610b1d4842f3c3ec3715ea0c193ca875e",
+    "pre_remote_ref": "319010b48a8aebe3194b086bb8776c69077541e4",
+    "post_local_ref": "4abf305610b1d4842f3c3ec3715ea0c193ca875e",
+    "post_remote_ref": "319010b48a8aebe3194b086bb8776c69077541e4",
+    "connections_before_authorization": 10,
+    "connections_after_authorization": 11,
+    "connections_after_uncertain_postflight": 14,
+    "connections_before_explicit_reopen": 14,
+    "connections_after_explicit_reopen": 14,
+    "receive_pack_total_before": 2,
+    "receive_pack_total_after": 3,
+    "upload_pack_total_before": 8,
+    "upload_pack_total_after": 11,
+    "ordinary_refresh_kept_result_dismissed": true,
+    "explicit_reopen_restored_original_result": true,
+    "query_only_action_visible_and_enabled": true,
+    "duplicate_network_work_on_reopen": false
+  },
+  "session_scope": {
+    "only_session_paths_staged": true,
+    "only_session_paths_committed": true,
+    "unrelated_changes_untouched": true,
+    "disk_and_replica_hashes_matched": true
+  },
+  "automated_lanes": {
+    "mounted_reopen_regression": "2 passed, 57 deselected",
+    "native_process_containment": "62 passed, 1 skipped, 246 deselected",
+    "https_transport": "passed in focused transport coverage",
+    "windows_job_object": "skipped on non-Windows host"
+  }
+}

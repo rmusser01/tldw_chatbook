@@ -18,7 +18,9 @@ from tldw_chatbook.tldw_api import (
 
 
 @pytest.mark.asyncio
-async def test_server_runtime_routes_wire_health_config_and_provider_discovery(monkeypatch):
+async def test_server_runtime_routes_wire_health_config_and_provider_discovery(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -38,7 +40,13 @@ async def test_server_runtime_routes_wire_health_config_and_provider_discovery(m
             },
             {
                 "cpu": {"percent": 12.5},
-                "memory": {"total": 100, "available": 80, "percent": 20.0, "used": 20, "free": 80},
+                "memory": {
+                    "total": 100,
+                    "available": 80,
+                    "percent": 20.0,
+                    "used": 20,
+                    "free": 80,
+                },
                 "disk": {"total": 1000, "used": 200, "free": 800, "percent": 20.0},
             },
             {
@@ -65,8 +73,16 @@ async def test_server_runtime_routes_wire_health_config_and_provider_discovery(m
                 "max_field_length": 8192,
                 "overrides": {"query_params": ["max_lines"]},
             },
-            {"mode": "whitespace", "divisor": 4, "available_modes": ["whitespace", "char_approx"]},
-            {"mode": "char_approx", "divisor": 5, "available_modes": ["whitespace", "char_approx"]},
+            {
+                "mode": "whitespace",
+                "divisor": 4,
+                "available_modes": ["whitespace", "char_approx"],
+            },
+            {
+                "mode": "char_approx",
+                "divisor": 5,
+                "available_modes": ["whitespace", "char_approx"],
+            },
             {
                 "backend": "sqlite",
                 "configured": True,
@@ -114,14 +130,26 @@ async def test_server_runtime_routes_wire_health_config_and_provider_discovery(m
     assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/health/metrics")
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/health/security")
     assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/config/docs-info")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/config/flashcards-import-limits")
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/config/flashcards-import-limits",
+    )
     assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/config/tokenizer")
     assert mocked.await_args_list[8].args[:2] == ("PUT", "/api/v1/config/tokenizer")
-    assert mocked.await_args_list[8].kwargs["json_data"] == {"mode": "char_approx", "divisor": 5}
+    assert mocked.await_args_list[8].kwargs["json_data"] == {
+        "mode": "char_approx",
+        "divisor": 5,
+    }
     assert mocked.await_args_list[9].args[:2] == ("GET", "/api/v1/config/jobs")
     assert mocked.await_args_list[10].args[:2] == ("GET", "/api/v1/config/providers")
-    assert mocked.await_args_list[11].args[:2] == ("POST", "/api/v1/config/validate-provider")
-    assert mocked.await_args_list[11].kwargs["json_data"] == {"provider": "openai", "api_key": "sk-test"}
+    assert mocked.await_args_list[11].args[:2] == (
+        "POST",
+        "/api/v1/config/validate-provider",
+    )
+    assert mocked.await_args_list[11].kwargs["json_data"] == {
+        "provider": "openai",
+        "api_key": "sk-test",
+    }
     assert isinstance(health, ServerHealthResponse)
     assert health.auth_mode == "multi_user"
     assert live.status == "alive"

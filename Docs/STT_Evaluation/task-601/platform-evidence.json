@@ -1,0 +1,96 @@
+{
+  "evidence_label": "task601_native_process_tree_matrix",
+  "platforms": {
+    "linux-x86_64": {
+      "evidence_label": "task601_native_process_tree",
+      "evidence_name": "linux-x86_64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.13",
+        "system": "Linux"
+      },
+      "pytest": {
+        "duration_seconds": 2.684,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/STT/test_executor_process_tree.py::test_native_crashed_leader_reaps_descendant_before_scratch_cleanup": "passed",
+          "Tests/STT/test_executor_process_tree.py::test_native_force_stop_removes_worker_and_descendant_before_scratch_cleanup": "passed",
+          "Tests/STT/test_local_stt_executor.py::test_force_stop_detaches_before_kill_and_cleans_generation_scratch": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "0e34f7462e4dbd5a724fbe9a6f93ded959623d3e",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31580179256",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31580179256"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "macos-x86_64": {
+      "evidence_label": "task601_native_process_tree",
+      "evidence_name": "macos-x86_64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "system": "Darwin"
+      },
+      "pytest": {
+        "duration_seconds": 3.6830000000000003,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/STT/test_executor_process_tree.py::test_native_crashed_leader_reaps_descendant_before_scratch_cleanup": "passed",
+          "Tests/STT/test_executor_process_tree.py::test_native_force_stop_removes_worker_and_descendant_before_scratch_cleanup": "passed",
+          "Tests/STT/test_local_stt_executor.py::test_force_stop_detaches_before_kill_and_cleans_generation_scratch": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "0e34f7462e4dbd5a724fbe9a6f93ded959623d3e",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31580179256",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31580179256"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    },
+    "windows-x86_64": {
+      "evidence_label": "task601_native_process_tree",
+      "evidence_name": "windows-x86_64",
+      "failure_code": null,
+      "failure_stage": null,
+      "host": {
+        "architecture": "x86_64",
+        "python": "3.12.10",
+        "system": "Windows"
+      },
+      "pytest": {
+        "duration_seconds": 3.4499999999999997,
+        "outcome": "success",
+        "required_nodes": {
+          "Tests/STT/test_executor_process_tree.py::test_native_crashed_leader_reaps_descendant_before_scratch_cleanup": "passed",
+          "Tests/STT/test_executor_process_tree.py::test_native_force_stop_removes_worker_and_descendant_before_scratch_cleanup": "passed",
+          "Tests/STT/test_local_stt_executor.py::test_force_stop_detaches_before_kill_and_cleans_generation_scratch": "passed"
+        }
+      },
+      "run": {
+        "tested_commit": "0e34f7462e4dbd5a724fbe9a6f93ded959623d3e",
+        "workflow_run_attempt": "1",
+        "workflow_run_id": "31580179256",
+        "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31580179256"
+      },
+      "schema_version": 1,
+      "status": "passed"
+    }
+  },
+  "run": {
+    "tested_commit": "0e34f7462e4dbd5a724fbe9a6f93ded959623d3e",
+    "workflow_run_id": "31580179256",
+    "workflow_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/31580179256"
+  },
+  "schema_version": 1,
+  "status": "passed"
+}

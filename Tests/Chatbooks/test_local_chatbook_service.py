@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from tldw_chatbook.Chatbooks import LocalChatbookService
@@ -28,6 +30,7 @@ async def test_local_chatbook_service_persists_record_crud(tmp_path):
     deleted = await reloaded.delete_chatbook(created["chatbook_id"])
 
     assert created["id"] == "1"
+    assert created["artifact_revision"] == 1
     assert created["name"] == "Research Pack"
     assert created["file_path"] == "/tmp/research.chatbook.zip"
     assert listed[0]["chatbook_id"] == created["chatbook_id"]
@@ -36,6 +39,9 @@ async def test_local_chatbook_service_persists_record_crud(tmp_path):
     assert updated["description"] == "Curated notes and chats"
     assert updated["tags"] == ["research"]
     assert persisted["name"] == "Research Pack v2"
+    assert (
+        json.loads(registry_path.read_text(encoding="utf-8"))["provenance_outbox"] == []
+    )
     assert deleted is True
     with pytest.raises(KeyError):
         await reloaded.get_chatbook(created["chatbook_id"])
@@ -43,7 +49,9 @@ async def test_local_chatbook_service_persists_record_crud(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_chatbook_service_lists_with_query_limit_and_offset(tmp_path):
-    service = LocalChatbookService(db_paths={}, registry_path=tmp_path / "chatbooks.json")
+    service = LocalChatbookService(
+        db_paths={}, registry_path=tmp_path / "chatbooks.json"
+    )
     await service.create_chatbook(name="Alpha Pack", description="first")
     await service.create_chatbook(name="Beta Pack", description="second")
     await service.create_chatbook(name="Gamma Notes", description="third")
@@ -54,8 +62,12 @@ async def test_local_chatbook_service_lists_with_query_limit_and_offset(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_local_chatbook_service_home_artifact_snapshot_lists_latest_console_saved_artifacts(tmp_path):
-    service = LocalChatbookService(db_paths={}, registry_path=tmp_path / "chatbooks.json")
+async def test_local_chatbook_service_home_artifact_snapshot_lists_latest_console_saved_artifacts(
+    tmp_path,
+):
+    service = LocalChatbookService(
+        db_paths={}, registry_path=tmp_path / "chatbooks.json"
+    )
     await service.create_chatbook(
         name="Generic Pack",
         description="Imported pack",

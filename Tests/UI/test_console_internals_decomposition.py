@@ -1,12 +1,18 @@
+# ruff: noqa: F811
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from rich.console import Console
 from rich.text import Text
-from textual.app import App, ComposeResult
-from textual.events import Paste
-from textual.widgets import Button, Footer, Input, Select, Static
+from textual.app import ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from textual.events import Key, Paste
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     _build_test_app,
@@ -18,8 +24,17 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from Tests.Agents.test_mcp_tool_provider import (
+    FakeMCPService,
+    _catalog_record,
+    _tool_dict,
+)
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ACTION_SAVE_CHATBOOK,
+)
 from tldw_chatbook.Chat.console_display_state import (
+    ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
@@ -28,16 +43,24 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
     ChatScreen,
 )
 from tldw_chatbook.config import resolve_provider_name
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsoleSetupModal,
     ConsoleStagedContextTray,
+)
+from tldw_chatbook.Widgets.Console.console_library_search_modal import (
+    ConsoleLibrarySearchModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
@@ -45,7 +68,7 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class StagedContextHarness(App):
+class StagedContextHarness(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleStagedContextState) -> None:
         super().__init__()
         self.state = state
@@ -88,7 +111,9 @@ def _without_trailing_cursor(text: str) -> str:
         return text[len(glyph) :]
     if text.endswith(glyph):
         return text[: -len(glyph)]
-    if text.startswith(" ") and text[1:].startswith(ConsoleComposerBar.DRAFT_PLACEHOLDER):
+    if text.startswith(" ") and text[1:].startswith(
+        ConsoleComposerBar.DRAFT_PLACEHOLDER
+    ):
         return text[1:]
     if text.endswith(" "):
         return text[:-1]
@@ -137,7 +162,9 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
-def _configure_openai_missing_key_console(app, model: str = "gpt-4.1-2025-04-14") -> None:
+def _configure_openai_missing_key_console(
+    app, model: str = "gpt-4.1-2025-04-14"
+) -> None:
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": model},
         "api_settings": {"openai": {"api_key": ""}},
@@ -170,6 +197,48 @@ async def _wait_for_console_library_rag_button_state(
     )
 
 
+async def _run_manual_library_search(console, pilot, query: str) -> None:
+    """Run the one-shot Library search through the user-visible modal."""
+    console.query_one("#console-run-library-rag", Button).press()
+    await pilot.pause()
+    modal = console.app.screen
+    assert isinstance(modal, ConsoleLibrarySearchModal)
+    modal.query_one("#console-rag-settings-query", Input).value = query
+    await pilot.pause()
+    modal.query_one("#console-rag-settings-run", Button).press()
+    await pilot.pause()
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 10.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_enabled_button(
+    screen, pilot, selector: str, *, timeout: float = 4.0
+) -> Button:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        buttons = list(screen.query(selector))
+        if buttons:
+            button = buttons[0]
+            if button.region.width > 0 and not button.disabled:
+                await pilot.pause()
+                return button
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for enabled button {selector}")
+
+
 async def _open_console_inspector(console, pilot) -> None:
     """Open the persistent Inspector rail and wait for measurable layout."""
     right_rail = console.query_one("#console-right-rail")
@@ -177,7 +246,8 @@ async def _open_console_inspector(console, pilot) -> None:
         return
 
     await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
-    await pilot.click("#console-inspector-rail-open")
+    console.query_one("#console-inspector-rail-open", Button).press()
+    await pilot.pause()
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
@@ -200,7 +270,9 @@ def _wrapped_plain_lines(rendered: object, width: int) -> list[str]:
     return [line.plain for line in rich_text.wrap(console, max(1, width))]
 
 
-def _assert_single_style_span(renderable: Text, *, style: str, expected_text: str) -> None:
+def _assert_single_style_span(
+    renderable: Text, *, style: str, expected_text: str
+) -> None:
     matching_spans = [span for span in renderable.spans if span.style == style]
     assert len(matching_spans) == 1
     span = matching_spans[0]
@@ -241,13 +313,6 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    margin: 0;"
         ) in css
         assert (
-            "#console-start-here,\n"
-            "#console-action-hints {\n"
-            "    display: none;\n"
-            "    height: 0;\n"
-            "    min-height: 0;"
-        ) in css
-        assert (
             ".console-left-rail-section.console-settings-summary {\n"
             "    margin: 0 0 1 0;\n"
             "    padding: 0 1;\n"
@@ -256,18 +321,14 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         assert (
             "#console-staged-context-tray {\n"
             "    height: auto;\n"
-            "    min-height: 3;\n"
-            "    max-height: 6;"
+            "    min-height: 0;\n"
+            "}"
         ) in css
         assert (
-            "#console-workspace-context {\n"
-            "    height: auto;\n"
-            "    min-height: 0;"
+            "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
         ) in css
         assert (
-            ".console-transcript-action-guide {\n"
-            "    height: auto;\n"
-            "    min-height: 1;"
+            ".console-transcript-action-guide {\n    height: auto;\n    min-height: 1;"
         ) in css
         assert (
             "#console-left-rail-body {\n"
@@ -284,10 +345,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    height: 1fr;\n"
             "    min-height: 0;"
         ) in css
-        assert (
-            "#console-composer-actions {\n"
-            "    width: 37;"
-        ) in css
+        assert ("#console-composer-actions {\n    width: 45;") in css
 
 
 @pytest.mark.asyncio
@@ -329,26 +387,39 @@ async def test_console_hidden_workbench_strips_do_not_reserve_rows():
         assert workbench.region.y > command_strip.region.y + command_strip.region.height
 
 
-@pytest.mark.asyncio
-async def test_console_mode_bar_groups_location_mode_and_readiness():
-    app = _build_test_app()
-    host = ConsoleHarness(app)
+def test_console_mode_bar_groups_location_mode_and_readiness():
+    control_state = ConsoleControlState.from_values(
+        provider="OpenAI",
+        model="gpt-4.1",
+    )
 
-    async with host.run_test(size=(212, 64)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-mode-bar")
+    # The mode segment is derived from the assistant identity contract, not
+    # from a human user profile. With no character or assistant selected, the
+    # production fallback is General; the neutral unloaded-tools label reduces
+    # to a dash.
+    assert (
+        ChatScreen._console_mode_summary(control_state)
+        == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
+    )
 
-        title = console.query_one("#console-title", Static)
-        mode_bar = console.query_one("#console-mode-bar", Static)
 
-        title_plain = getattr(title.render(), "plain", str(title.render()))
-        mode_plain = getattr(mode_bar.render(), "plain", str(mode_bar.render()))
+def test_console_mode_bar_treats_assistant_label_as_literal_text():
+    control_state = ConsoleControlState(
+        provider_label="Provider: OpenAI",
+        model_label="Model: gpt-5",
+        assistant_label="Persona: [bold]Guide[/bold]",
+        rag_label="RAG: off",
+        sources_label="Sources: 0 staged",
+        tools_label="Tools: not loaded",
+        approvals_label="Approvals: 0 pending",
+    )
+    summary = ChatScreen._console_mode_summary(control_state)
 
-        assert title_plain == "Console"
-        assert (
-            mode_plain
-            == "Chat/RAG/Follow | General | Sources 0 | Tools 0 | Approvals 0"
-        )
+    mode_bar = ChatScreen._hidden_static(summary, id="console-mode-bar")
+    rendered = mode_bar.render()
+
+    assert mode_bar._render_markup is False
+    assert getattr(rendered, "plain", str(rendered)) == summary
 
 
 @pytest.mark.asyncio
@@ -364,7 +435,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert "Send" in text
         assert "Stop" in text
         assert "Attach" in text
-        assert "Save" in text
+        # "Save" left the always-visible chrome entirely (user request
+        # 2026-08-01): Save Chatbook's surviving surfaces are the composer's
+        # ☰ menu and the Inspector's Artifacts row, both asserted below.
         send_controls = [
             button
             for button in console.query(Button)
@@ -373,8 +446,11 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         ]
         assert send_controls
         assert console.query_one("#console-stop-generation", Button)
-        assert console.query_one("#console-attach-context", Button)
-        assert console.query_one("#console-save-chatbook", Button)
+        # Attach and Save Chatbook now live in the composer's ☰ menu,
+        # not this width-bounded row -- see test_console_composer_menu.py.
+        assert console.query_one("#console-composer-menu", Button)
+        assert console.query_one("#console-inspector-save-chatbook", Button)
+        assert not list(console.query("#console-control-save-chatbook"))
 
 
 @pytest.mark.asyncio
@@ -392,8 +468,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
         legacy_inputs = [
             widget
             for widget in console.query(".chat-input-area")
@@ -406,24 +481,40 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert composer.region.y + composer.region.height <= console.size.height
         assert command_input.display is False
         assert visible_draft.region.width > 20
-        assert 4 <= composer.region.height <= 6
+        # task-17651/17654: dense-form composer — zero chrome rows, 1-8 total.
+        assert 1 <= composer.region.height <= 8
         assert visible_draft.region.height == 1
         composer.load_draft("visible composer text")
         await pilot.pause(0.1)
         assert composer.draft_text() == "visible composer text"
         assert "visible composer text" in visible_draft.renderable.plain
         assert "visible composer text" in _visible_text(composer)
-        for action_button in (send_button, stop_button, attach_button, save_button):
+        for action_button in (
+            send_button,
+            stop_button,
+            mic_button,
+        ):
             assert action_button.compact is True
             # Stop button is hidden when not running, so it has no valid region
             if action_button is not stop_button:
                 assert action_button.region.height == 1
-                assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
+                assert (
+                    action_button.region.y + action_button.region.height
+                    <= composer.region.y + composer.region.height
+                )
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
-        assert str(attach_button.label) == "Attach"
-        assert str(save_button.label) == "Save"
-        assert save_button.region.width >= len("Save")
+        assert str(mic_button.label) == "Dictate"
+        # Attach and Save Chatbook are composer-Menu rows now, not row
+        # buttons. The overflow button itself is labeled in words
+        # (task-2154.14 DS-01/DS-02): a bare ☰ glyph had a tooltip-only
+        # identity, and the tooltip under-sold the menu's contents.
+        menu_button = composer.query_one("#console-composer-menu", Button)
+        assert str(menu_button.label) == "Menu"
+        assert menu_button.tooltip == (
+            "Composer menu: prompts, attach, save as Chatbook, "
+            "generate image or caption, impersonate."
+        )
         assert legacy_inputs == []
 
 
@@ -549,7 +640,10 @@ async def test_console_composer_hides_cursor_when_blurred():
         assert not composer.has_focus_within
         assert not composer.has_class("console-composer-focused")
         assert ConsoleComposerBar.CURSOR_GLYPH not in visible_draft.renderable.plain
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        )
 
 
 @pytest.mark.asyncio
@@ -566,6 +660,10 @@ async def test_console_composer_cursor_blink_toggles():
         visible_draft = composer.query_one("#console-command-visible-text", Static)
 
         composer.focus()
+        # De-flake (2026-07-17): same hazard as the wrap-width test below —
+        # focus auto-resumes the real 0.53s blink interval; pause it so the
+        # manual toggles below own every phase flip.
+        composer._cursor_blink_timer.pause()
         await pilot.pause(0.1)
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
 
@@ -598,10 +696,28 @@ async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_widt
 
         composer.focus()
         await pilot.pause(0.1)
+        # De-flake (2026-07-17): focus auto-resumes the REAL 0.53s blink
+        # interval timer; on a loaded machine the pilot pauses below can
+        # cross a real tick, which fires an extra toggle and desyncs the
+        # manual _toggle_cursor_blink() phase assertions. Pause the timer so
+        # this test owns every toggle and is clock-independent.
+        composer._cursor_blink_timer.pause()
 
+        # TASK-2154.6: the empty composer's "Send disabled: type a message"
+        # reason strip borrows cells from the 1fr draft -- measure the wrap
+        # width only with a draft present (strip hidden) so the fixture and
+        # the painted window share one width.
+        composer.load_draft("probe")
+        await pilot.pause()
         width = composer._draft_render_width()
         composer.load_draft("a" * width)
         await pilot.pause(0.1)
+
+        # load_draft/focus paths re-sync blink state; make sure the caret is
+        # in its VISIBLE phase and the timer is still ours before asserting.
+        if ConsoleComposerBar.CURSOR_GLYPH not in visible_draft.renderable.plain:
+            composer._toggle_cursor_blink()
+        composer._cursor_blink_timer.pause()
 
         height_visible = composer.styles.height
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
@@ -630,7 +746,9 @@ async def test_console_composer_send_is_primary_only_with_draft():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
 
-        assert send_button.disabled is False
+        # TASK-2154.6 (FR-04): Send is genuinely disabled while there is
+        # nothing sendable; the subdued/inactive classes still apply.
+        assert send_button.disabled is True
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -639,7 +757,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         await pilot.pause(0.1)
 
         assert composer.has_class("console-composer-has-draft")
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -656,7 +774,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         composer.clear_draft()
         await pilot.pause(0.1)
 
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -674,19 +792,14 @@ async def test_console_composer_ranks_actions_by_current_availability():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
 
-        assert send_button.disabled is False
+        # TASK-2154.6 (FR-04): Send starts genuinely disabled -- a fresh
+        # composer has an empty draft, so there is nothing sendable yet.
+        # Stop/Mic are not part of the new flag's contract.
+        assert send_button.disabled is True
         assert stop_button.disabled is False
-        assert save_button.disabled is False
-        assert attach_button.disabled is False
-        assert attach_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-save-chatbook-secondary")
-        assert save_button.has_class("console-action-subdued")
-        assert save_button.has_class("console-action-disabled")
-        assert not save_button.has_class("console-action-primary")
+        assert mic_button.disabled is False
 
         composer.sync_action_state(
             has_draft=True,
@@ -696,13 +809,30 @@ async def test_console_composer_ranks_actions_by_current_availability():
         await pilot.pause(0.1)
 
         assert send_button.has_class("console-action-primary")
-        assert save_button.disabled is False
-        assert save_button.has_class("console-action-secondary")
-        assert save_button.has_class("console-save-chatbook-secondary")
-        assert save_button.has_class("console-save-chatbook-ready")
-        assert not save_button.has_class("console-action-disabled")
-        assert not save_button.has_class("console-action-subdued")
-        assert not save_button.has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
+async def test_console_composer_save_chatbook_left_this_row_for_the_menu():
+    """Save Chatbook is no longer a button here; the ☰ menu owns it.
+
+    Its disabled-with-a-reason contract -- including the temporary-chat
+    block that was the point of the earlier version of this test -- did not
+    disappear, it moved with the control and is asserted in
+    `Tests/UI/test_console_composer_menu.py`. What this pins is that the
+    button did not stay BEHIND as well, which would give one action two
+    surfaces that can disagree.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert not composer.query("#console-save-chatbook")
+        assert not composer.query("#console-attach-context")
+        assert composer.query_one("#console-composer-menu", Button)
 
 
 @pytest.mark.asyncio
@@ -729,18 +859,37 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         )
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        )
         assert recovery.styles.display == "none"
-        assert disabled_reason.styles.display == "none"
-        assert send_button.disabled is False
-        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+        # TASK-2154.6 (FR-04): this test's name finally matches reality --
+        # the reason strip RENDERS the setup blocker (no hover needed) and
+        # Send is genuinely disabled, with the tooltip kept as well.
+        assert disabled_reason.styles.display == "block"
+        assert (
+            disabled_reason.renderable.plain
+            == "Send blocked — choose a model to continue ›"
+        )
+        assert send_button.disabled is True
+        assert (
+            send_button.tooltip == "Choose a model in Console Settings before sending."
+        )
 
         composer.load_draft("draft despite missing setup")
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "draft despite missing setup"
-        assert send_button.disabled is False
-        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == "draft despite missing setup"
+        )
+        # A typed draft does not lift a setup block.
+        assert send_button.disabled is True
+        assert disabled_reason.styles.display == "block"
+        assert (
+            send_button.tooltip == "Choose a model in Console Settings before sending."
+        )
 
 
 @pytest.mark.asyncio
@@ -766,8 +915,14 @@ async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
         await pilot.pause(0.1)
 
         assert "Setup required" not in visible_draft.renderable.plain
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
-        assert send_button.tooltip == "Wait for the active Console run to finish before sending."
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        )
+        assert (
+            send_button.tooltip
+            == "Wait for the active Console run to finish before sending."
+        )
 
 
 @pytest.mark.asyncio
@@ -786,13 +941,16 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         actions = composer.query_one("#console-composer-actions")
         send_button = composer.query_one("#console-send-message", Button)
         stop_button = composer.query_one("#console-stop-generation", Button)
-        attach_button = composer.query_one("#console-attach-context", Button)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        mic_button = composer.query_one("#console-dictation", Button)
 
         composer_right = composer.region.x + composer.region.width
         assert actions.region.x > visible_draft.region.x
         assert actions.region.x + actions.region.width <= composer_right
-        for button in (send_button, stop_button, attach_button, save_button):
+        for button in (
+            send_button,
+            stop_button,
+            mic_button,
+        ):
             # Stop button is hidden when not running, others remain visible
             if button is stop_button:
                 assert button.display is False
@@ -800,33 +958,42 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
                 assert button.display is True
                 assert button.region.x + button.region.width <= composer_right
 
-        assert str(save_button.label) == "Save"
-        assert save_button.tooltip == "No Chatbook artifact is available to save yet."
+        # The ☰ button must itself stay inside the composer bounds --
+        # it is now the only way to reach Attach and Save Chatbook.
+        menu_button = composer.query_one("#console-composer-menu", Button)
+        assert menu_button.display is True
+        assert menu_button.region.x + menu_button.region.width <= composer_right
 
 
 @pytest.mark.asyncio
 async def test_console_composer_save_chatbook_routes_available_artifact_action():
     app = _build_test_app()
     handled_launches = []
-    app.pending_console_launch = {
-        "source": "artifacts",
-        "title": "Grounded Answer Chatbook",
-        "status": "ready",
-        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
-        "action_label": "Open Chatbook artifact",
-    }
-    app.open_console_live_work_primary_action = lambda launch: handled_launches.append(launch) or True
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "artifacts",
+            "title": "Grounded Answer Chatbook",
+            "status": "ready",
+            "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+            "action_label": "Open Chatbook artifact",
+        },
+    )
+    app.open_console_live_work_primary_action = lambda launch: (
+        handled_launches.append(launch) or True
+    )
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-
-        save_button = console.query_one("#console-save-chatbook", Button)
-
-        assert save_button.disabled is False
-        save_button.press()
-        await pilot.pause(0.1)
+    async with app.run_test(size=(140, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        # Save Chatbook moved from a composer button into the ☰ menu, so the
+        # route under test is now the menu dispatch. The guarantee is
+        # unchanged and still the point of this test: choosing it must reach
+        # the real Artifacts handoff, not merely close the menu.
+        console._handle_console_composer_menu_choice(ACTION_SAVE_CHATBOOK)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not handled_launches:
+            await pilot.pause(0.01)
 
     assert len(handled_launches) == 1
     assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
@@ -843,12 +1010,48 @@ async def test_console_stop_button_hidden_unless_streaming():
         stop = console.query_one("#console-stop-generation")
         assert stop.styles.display == "none"
         composer = console.query_one("#console-native-composer")
-        composer.sync_action_state(has_draft=True, run_active=True, can_save_chatbook=False)
+        composer.sync_action_state(
+            has_draft=True, run_active=True, can_save_chatbook=False
+        )
         await pilot.pause()
         assert stop.styles.display != "none"
-        composer.sync_action_state(has_draft=False, run_active=False, can_save_chatbook=False)
+        composer.sync_action_state(
+            has_draft=False, run_active=False, can_save_chatbook=False
+        )
         await pilot.pause()
         assert stop.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_console_stop_button_tooltip_scopes_to_this_tab():
+    """Fleet-UX expert review F7 (task-1234): under parallel runs, "Stop"
+    alone doesn't say WHICH run it stops -- the button only ever stops the
+    viewed tab's own run (behavior unchanged by this task), so the tooltip
+    must say so explicitly rather than the old ambiguous "active Console
+    session" phrasing. Both the expanded and collapsed-composer Stop
+    buttons carry the same copy. `ConsoleComposerBar.sync_action_state`
+    overwrites the expanded button's tooltip on every refresh (the
+    construction-time value alone is never what a user hovering an
+    ACTIVE Stop button actually sees), so a run must be active for this
+    assertion to exercise the real, live copy -- mirrors
+    `test_console_stop_button_hidden_unless_streaming`'s own setup."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer")
+        composer.sync_action_state(
+            has_draft=True, run_active=True, can_save_chatbook=False
+        )
+        await pilot.pause()
+
+        stop = console.query_one("#console-stop-generation")
+        assert str(stop.tooltip) == "Stop this tab's run."
+
+        collapsed_stop = console.query_one("#console-collapsed-stop-generation")
+        assert str(collapsed_stop.tooltip) == "Stop this tab's run."
 
 
 @pytest.mark.asyncio
@@ -869,12 +1072,13 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == long_draft
-        assert composer.region.height > 5
-        assert composer.region.height <= 10
+        # task-17651/17654: growth is draft rows alone (no chrome), capped at 8.
+        assert composer.region.height > 1
+        assert composer.region.height <= 8
         assert visible_draft.region.height > 1
-        assert visible_draft.region.height <= 4
+        assert visible_draft.region.height <= 8
         assert "\n" in visible_plain
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         assert "long composer qa" in visible_plain
 
 
@@ -892,7 +1096,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "pasted composer qa " * 80
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         console.on_paste(Paste(pasted_text))
         await pilot.pause(0.2)
@@ -900,8 +1104,8 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert command_input.value == pasted_text
-        assert composer.region.height <= 10
-        assert visible_draft.region.height <= 4
+        assert composer.region.height <= 8
+        assert visible_draft.region.height <= 8
         assert expected_token in visible_plain
         assert pasted_text not in visible_plain
         assert len(visible_plain) < len(pasted_text)
@@ -915,7 +1119,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
 
 def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
     pasted_text = "x" * 51
-    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
     display_text = f"... {expected_token}"
 
     renderable = ConsoleComposerBar._draft_renderable(
@@ -934,14 +1138,16 @@ def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
 
 def test_console_paste_token_style_span_survives_crlf_before_token():
     pasted_text = "x" * 51
-    expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
     display_text = f"before\r\n{expected_token}"
     token_start = display_text.index(expected_token)
 
     renderable = ConsoleComposerBar._draft_renderable(
         display_text,
         width=200,
-        style_ranges=[(token_start, len(display_text), ConsoleComposerBar.PASTE_TOKEN_STYLE)],
+        style_ranges=[
+            (token_start, len(display_text), ConsoleComposerBar.PASTE_TOKEN_STYLE)
+        ],
     )
 
     assert renderable.plain == f"before\n{expected_token}"
@@ -952,7 +1158,7 @@ def test_console_paste_token_style_span_survives_crlf_before_token():
     )
 
 
-def test_console_literal_segments_merge_during_typing_and_small_pastes():
+def test_console_typing_and_small_paste_render_contiguously_with_explicit_origins():
     composer = ConsoleComposerBar()
 
     composer.insert_text("a")
@@ -960,8 +1166,15 @@ def test_console_literal_segments_merge_during_typing_and_small_pastes():
     composer.insert_pasted_text("small paste")
 
     assert composer.draft_text() == "absmall paste"
-    assert len(composer._segments) == 1
-    assert composer._segments[0].collapse_state == "literal"
+    assert composer._display_draft_text() == "absmall paste"
+    assert [
+        (segment.text, segment.origin, segment.collapse_state)
+        for segment in composer._segments
+    ] == [
+        ("ab", "literal", "literal"),
+        ("small paste", "paste", "literal"),
+    ]
+    assert composer.has_paste_segments() is True
 
 
 def test_console_composer_empty_placeholder_is_task_oriented():
@@ -990,7 +1203,7 @@ async def test_console_paste_under_threshold_remains_literal():
         assert composer.draft_text() == pasted_text
         assert composer._display_draft_text() == pasted_text
         _assert_visible_literal_projection(visible_plain, pasted_text)
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1026,12 +1239,17 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         await pilot.pause(0.1)
 
         assert composer.draft_text() == over_custom_threshold
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Pasted Text: 81 Characters"
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == "Pasted text | 81 characters | Expand"
+        )
 
 
 @pytest.mark.parametrize("collapse_setting", [False, "false"])
 @pytest.mark.asyncio
-async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse_setting):
+async def test_console_large_paste_collapse_can_be_disabled_from_config(
+    collapse_setting,
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.app_config["console"] = {"collapse_large_pastes": collapse_setting}
@@ -1052,7 +1270,7 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert composer._display_draft_text() == pasted_text
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         _assert_visible_literal_projection(visible_plain, pasted_text)
 
 
@@ -1075,7 +1293,10 @@ async def test_console_clear_draft_keeps_canonical_payload_empty():
         await pilot.pause(0.1)
 
         assert composer.draft_text() == ""
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        )
         assert pasted_text not in visible_draft.renderable.plain
 
 
@@ -1103,11 +1324,18 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
         assert composer.draft_text() == prefix
         assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
+    """Forward Delete removes the paste token right of the caret as a unit.
+
+    Since the composer caret is now a real editable position, ``delete`` is a
+    forward delete (``backspace`` deletes left): with the caret at the draft
+    end it is a no-op, so this first steps left over the token -- arrows skip
+    collapsed paste tokens as units -- and then deletes it forward.
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1127,11 +1355,18 @@ async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
         await pilot.press("delete")
         await pilot.pause(0.1)
 
+        # Forward delete at the end of the draft is a no-op.
+        assert composer.draft_text() == f"{prefix}{pasted_text}"
+
+        await pilot.press("left")
+        await pilot.press("delete")
+        await pilot.pause(0.1)
+
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == prefix
         assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
 
 
 @pytest.mark.asyncio
@@ -1151,13 +1386,13 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
         _assert_single_style_span(
             visible_draft.renderable,
             style=ConsoleComposerBar.PASTE_CONFIRM_STYLE,
-            expected_text="Unfurl?",
+            expected_text="Expand?",
         )
 
 
@@ -1175,15 +1410,28 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         pasted_text = "container row paste " * 8
 
         composer.insert_pasted_text(pasted_text)
-        await pilot.click("#console-native-composer", offset=(13, 1))
+        visible_draft_offset = (
+            visible_draft.region.offset - composer.region.offset + (1, 0)
+        )
+        await pilot.click(
+            "#console-native-composer",
+            offset=visible_draft_offset,
+        )
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_prompt():
+async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
+    """task-17651: the row above the draft belongs to the widget above.
+
+    The textual-web boundary forgiveness keys off the composer's real box;
+    with zero chrome rows the draft IS the composer, so a click one row up
+    lands on the neighboring strip and must not steal the activation —
+    while the draft's own first row still activates.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1199,17 +1447,27 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
-        assert composer.activate_visible_draft_screen_position(
+        assert not composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
             visible_region.y - 1,
         )
+        assert composer.activate_visible_draft_screen_position(
+            visible_region.x + 4,
+            visible_region.y,
+        )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_unfurl_prompt():
+async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor():
+    """task-17651: the row below the draft belongs to the widget below.
+
+    Mirror of the top-boundary contract: the old +1-row forgiveness only
+    ever covered the composer's own padding row, which no longer exists —
+    the draft's own last row still activates.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1225,12 +1483,16 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
-        assert composer.activate_visible_draft_screen_position(
+        assert not composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
             visible_region.y + visible_draft.size.height,
         )
+        assert composer.activate_visible_draft_screen_position(
+            visible_region.x + 4,
+            visible_region.y + visible_draft.size.height - 1,
+        )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1252,12 +1514,14 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
+        # task-17651: click the draft's own last row (the old +1 forgiveness
+        # row was the composer's padding, which no longer exists).
         assert composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
-            visible_region.y + visible_draft.size.height,
+            visible_region.y + visible_draft.size.height - 1,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert console.app.focused is composer
         assert composer.draft_text() == pasted_text
 
@@ -1282,8 +1546,8 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
 
         visible_plain = visible_draft.renderable.plain
         assert "literal unfurled paste" in visible_plain
-        assert "Pasted Text:" not in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1304,15 +1568,15 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(8, 0))
         await pilot.pause(0.1)
-        assert "Unfurl?" in visible_draft.renderable.plain
+        assert "Expand?" in visible_draft.renderable.plain
 
         await pilot.click("#console-command-visible-text", offset=(0, 0))
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert "prefix " in visible_plain
-        assert "Pasted Text:" in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
@@ -1336,7 +1600,7 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
@@ -1344,8 +1608,8 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
 
         visible_plain = visible_draft.renderable.plain
         assert "keyboard unfurl paste" in visible_plain
-        assert "Pasted Text:" not in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Pasted text |" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1369,7 +1633,10 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
         await pilot.click("#console-command-visible-text", offset=(0, 1))
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "prefix\nUnfurl?"
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == "prefix\nExpand?"
+        )
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
 
@@ -1386,24 +1653,30 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         first_paste = "first large paste " * 10
         second_paste = "second large paste " * 10
-        first_token = f"Pasted Text: {len(first_paste)} Characters"
-        second_token = f"Pasted Text: {len(second_paste)} Characters"
+        first_token = f"Pasted text | {len(first_paste)} characters | Expand"
+        second_token = f"Pasted text | {len(second_paste)} characters | Expand"
 
         composer.insert_pasted_text(first_paste)
         composer.insert_pasted_text(second_paste)
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == f"{first_token}{second_token}"
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == f"{first_token}\n{second_token}"
+        )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(len(first_token) + 2, 0),
+            offset=(2, 1),
         )
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == f"{first_token}Unfurl?"
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == f"{first_token}\nExpand?"
+        )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(len(first_token) + 2, 0),
+            offset=(2, 1),
         )
         await pilot.pause(0.1)
 
@@ -1411,8 +1684,8 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         assert first_token in visible_plain
         assert "second large paste" in visible_plain
         assert "first large paste" not in visible_plain
-        assert "Unfurl?" not in visible_plain
-        assert composer.draft_text() == f"{first_paste}{second_paste}"
+        assert "Expand?" not in visible_plain
+        assert composer.draft_text() == f"{first_paste}\n{second_paste}"
 
 
 @pytest.mark.asyncio
@@ -1428,21 +1701,24 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "typing resets pending paste " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         await pilot.press("x")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == f"{expected_token}x"
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == f"{expected_token}x"
+        )
         assert composer.draft_text() == f"{pasted_text}x"
 
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?x"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?x"
         assert composer.draft_text() == f"{pasted_text}x"
 
 
@@ -1459,7 +1735,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         prefix = "preceding wrapped composer text " * 40
         pasted_text = "visible clipped paste " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_text(prefix)
         composer.insert_pasted_text(pasted_text)
@@ -1474,9 +1750,11 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
             display_text,
             composer._draft_render_width(),
         )
-        assert len(composer._wrap_draft_lines(composer._display_draft_text(), composer._draft_render_width())) > (
-            ConsoleComposerBar.MAX_DRAFT_ROWS
-        )
+        assert len(
+            composer._wrap_draft_lines(
+                composer._display_draft_text(), composer._draft_render_width()
+            )
+        ) > (ConsoleComposerBar.MAX_DRAFT_ROWS)
         assert visible_lines[0].startswith("...")
         assert expected_token in visible_plain.replace("\n", "")
         token_row, token_slice = next(
@@ -1499,7 +1777,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         )
         await pilot.pause(0.1)
 
-        assert "Unfurl?" in visible_draft.renderable.plain
+        assert "Expand?" in visible_draft.renderable.plain
         assert expected_token not in visible_draft.renderable.plain
         assert composer.draft_text() == f"{prefix}{pasted_text}"
 
@@ -1516,19 +1794,19 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "reset pending unfurl " * 10
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1544,12 +1822,12 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "stale suppressed click reset paste " * 6
-        expected_token = f"Pasted Text: {len(pasted_text)} Characters"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
 
         composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
@@ -1557,7 +1835,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Unfurl?" not in visible_plain
+        assert "Expand?" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1581,7 +1859,7 @@ async def test_console_normal_typing_remains_literal_over_paste_threshold():
         visible_plain = visible_draft.renderable.plain
         assert len(typed_text) > ConsoleComposerBar.PASTE_COLLAPSE_THRESHOLD
         assert composer.draft_text() == typed_text
-        assert "Pasted Text:" not in visible_plain
+        assert "Pasted text |" not in visible_plain
         assert "normaltypedcomposertext" in visible_plain
         assert isinstance(visible_draft.renderable, Text)
         assert not visible_draft.renderable.spans
@@ -1600,9 +1878,11 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
-        save_button = composer.query_one("#console-save-chatbook", Button)
+        # Focus any non-text control in the row; the point is that a
+        # printable key still reaches the draft from non-text focus.
+        menu_button = composer.query_one("#console-composer-menu", Button)
 
-        save_button.focus()
+        menu_button.focus()
         await pilot.pause(0.1)
         await pilot.press("k")
         await pilot.pause(0.1)
@@ -1635,7 +1915,10 @@ async def test_console_native_composer_select_all_shortcut_preserves_draft_and_c
 
         assert composer.draft_text() == "replace this text"
         assert composer.has_full_draft_selection()
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "replace this text"
+        assert (
+            _without_trailing_cursor(visible_draft.renderable.plain)
+            == "replace this text"
+        )
 
         await pilot.press("ctrl+c")
         await pilot.pause(0.1)
@@ -1693,7 +1976,9 @@ async def test_console_native_composer_click_focuses_composer_not_visible_static
 
 
 @pytest.mark.asyncio
-async def test_console_native_composer_does_not_capture_typing_from_select_focus(monkeypatch):
+async def test_console_native_composer_does_not_capture_typing_from_select_focus(
+    monkeypatch,
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1705,7 +1990,9 @@ async def test_console_native_composer_does_not_capture_typing_from_select_focus
         compact_bar = console.query_one("#console-compact-model-bar")
         provider_select = compact_bar.query_one("#compact-api-provider", Select)
 
-        monkeypatch.setattr(type(console.app), "focused", property(lambda _app: provider_select))
+        monkeypatch.setattr(
+            type(console.app), "focused", property(lambda _app: provider_select)
+        )
         await pilot.press("x")
         await pilot.pause(0.1)
 
@@ -1713,7 +2000,9 @@ async def test_console_native_composer_does_not_capture_typing_from_select_focus
 
 
 @pytest.mark.asyncio
-async def test_console_native_composer_does_not_capture_paste_from_select_focus(monkeypatch):
+async def test_console_native_composer_does_not_capture_paste_from_select_focus(
+    monkeypatch,
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1725,7 +2014,9 @@ async def test_console_native_composer_does_not_capture_paste_from_select_focus(
         compact_bar = console.query_one("#console-compact-model-bar")
         provider_select = compact_bar.query_one("#compact-api-provider", Select)
 
-        monkeypatch.setattr(type(console.app), "focused", property(lambda _app: provider_select))
+        monkeypatch.setattr(
+            type(console.app), "focused", property(lambda _app: provider_select)
+        )
         console.on_paste(Paste("paste should stay with focused control"))
         await pilot.pause(0.1)
 
@@ -1733,7 +2024,9 @@ async def test_console_native_composer_does_not_capture_paste_from_select_focus(
 
 
 @pytest.mark.asyncio
-async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only(monkeypatch):
+async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only(
+    monkeypatch,
+):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     _configure_openai_missing_key_console(app)
@@ -1874,7 +2167,9 @@ async def test_console_setup_modal_visible_again_on_fresh_blocked_mount():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-setup-modal")
-        assert console.query_one("#console-setup-modal", ConsoleSetupModal).display is True
+        assert (
+            console.query_one("#console-setup-modal", ConsoleSetupModal).display is True
+        )
 
     host_again = ConsoleHarness(app)
     async with host_again.run_test(size=(160, 48)) as pilot:
@@ -2017,11 +2312,13 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         await _wait_for_selector(console, pilot, "#console-setup-modal")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        start_here = console.query_one("#console-start-here", Static)
-        action_hints = console.query_one("#console-action-hints", Static)
         # The shared Workbench recovery banner must stay hidden — the blocking
         # setup modal owns first-run/provider-setup guidance now (Phase 2 spec,
         # section 2 revised), so it must not be duplicated in a top-level banner.
+        # The empty #console-start-here / #console-action-hints compat blocks
+        # were removed outright for the same reason.
+        assert not list(console.query("#console-start-here"))
+        assert not list(console.query("#console-action-hints"))
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
@@ -2032,14 +2329,19 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         assert recovery_action.display is False
         assert modal.display is True
         assert modal.is_blocking
-        assert start_here.styles.display == "none"
-        assert action_hints.styles.display == "none"
 
         text = _visible_text(console)
+        # task-264: the Console screen mounts its own AppFooterStatus, which
+        # legitimately renders the workbench shortcut hint ("... Enter send
+        # ..."). The redundancy pin below is about setup-guidance copy being
+        # duplicated in the CONTENT area (banner/transcript/hints), so scope
+        # it to #screen-content -- the footer is a distinct, always-on
+        # surface, not a duplicate of the setup card.
+        content_text = _visible_text(console.query_one("#screen-content"))
         for expected in (
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Get started",
-            "Add an API key",
+            "Connect a provider (API key or local server)",
             "Send your first message",
         ):
             assert expected in text
@@ -2057,7 +2359,7 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
             "Provider setup needed",
             "Impact: Send is blocked until setup is finished.",
         ):
-            assert redundant_copy not in text
+            assert redundant_copy not in content_text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
         assert console.query_one("#console-inspector-rail-handle").display is True
@@ -2080,7 +2382,10 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
 
         text = _visible_text(console)
         assert "Ready — type a message to begin." in text
-        assert "Type in Composer, attach sources, or run Library RAG before sending." not in text
+        assert (
+            "Type in Composer, attach sources, or run Library RAG before sending."
+            not in text
+        )
         assert "Start Console" not in text
 
         await pilot.press("h")
@@ -2216,10 +2521,17 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         card_button = console.query_one("#console-setup-modal-action", Button)
         assert str(card_button.label) == "Choose model"
         assert "Choose model" in _visible_text(console)
-        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
+        assert (
+            "Choose a model in Console Settings to start chatting."
+            not in _visible_text(console)
+        )
         send_button = console.query_one("#console-send-message", Button)
-        assert send_button.tooltip == "Choose a model in Console Settings before sending."
-        assert "Setup required: Choose model before sending." not in _visible_text(console)
+        assert (
+            send_button.tooltip == "Choose a model in Console Settings before sending."
+        )
+        assert "Setup required: Choose model before sending." not in _visible_text(
+            console
+        )
 
         store.replace_session_settings(
             session.id,
@@ -2231,8 +2543,13 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert not list(console.query("#console-provider-blocker"))
         assert not list(console.query("#console-provider-recovery-strip"))
         assert not list(console.query("#console-empty-action-row"))
-        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
-        assert "Setup required: Choose model before sending." not in _visible_text(console)
+        assert (
+            "Choose a model in Console Settings to start chatting."
+            not in _visible_text(console)
+        )
+        assert "Setup required: Choose model before sending." not in _visible_text(
+            console
+        )
 
         store.replace_session_settings(
             session.id,
@@ -2252,9 +2569,14 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert modal.display is True
         card_button = console.query_one("#console-setup-modal-action", Button)
         assert str(card_button.label) == "Choose model"
-        assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
+        assert (
+            "Choose a model in Console Settings to start chatting."
+            not in _visible_text(console)
+        )
         send_button = console.query_one("#console-send-message", Button)
-        assert send_button.tooltip == "Choose a model in Console Settings before sending."
+        assert (
+            send_button.tooltip == "Choose a model in Console Settings before sending."
+        )
 
 
 @pytest.mark.asyncio
@@ -2274,7 +2596,10 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         # The transcript itself stays neutral (dimmed quiet line under the
         # modal); the numbered setup guidance lives on the blocking modal.
         transcript_text = _visible_text(console.query_one("#console-native-transcript"))
-        assert "Choose a model in Console Settings to start chatting." not in transcript_text
+        assert (
+            "Choose a model in Console Settings to start chatting."
+            not in transcript_text
+        )
         assert "Ready. Ask a question" not in transcript_text
 
         text = _visible_text(console)
@@ -2282,7 +2607,7 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         assert "Send your first message" in text
         assert "Choose model" in text
         assert "Attach context" in text
-        assert "Run Library RAG" in text
+        assert "Search Library" in text
 
 
 @pytest.mark.asyncio
@@ -2293,32 +2618,32 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-start-here")
-        await _wait_for_selector(console, pilot, "#console-action-hints")
         await _wait_for_selector(console, pilot, "#console-transcript-title")
-        start_here = console.query_one("#console-start-here", Static)
-        action_hints = console.query_one("#console-action-hints", Static)
         transcript_title = console.query_one("#console-transcript-title", Static)
 
-        assert start_here.styles.display == "none"
-        assert action_hints.styles.display == "none"
-        assert str(start_here.styles.height) == "0"
-        start_copy = getattr(start_here.render(), "plain", str(start_here.render()))
-        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert start_copy == ""
-        assert title_copy == "Transcript / Event Stream"
+        # Guidance copy blocks are gone entirely, not just hidden.
+        assert not list(console.query("#console-start-here"))
+        assert not list(console.query("#console-action-hints"))
+        title_copy = getattr(
+            transcript_title.render(), "plain", str(transcript_title.render())
+        )
+        assert title_copy.startswith("Conversation")
 
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello Console")
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Hello Console"
+        )
         await console._sync_native_console_chat_ui()
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert start_here.styles.display == "none"
-        assert action_hints.styles.display == "none"
-        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert title_copy == "Transcript / Event Stream"
+        assert not list(console.query("#console-start-here"))
+        assert not list(console.query("#console-action-hints"))
+        title_copy = getattr(
+            transcript_title.render(), "plain", str(transcript_title.render())
+        )
+        assert title_copy.startswith("Conversation")
 
 
 @pytest.mark.asyncio
@@ -2334,23 +2659,29 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         transcript_title = console.query_one("#console-transcript-title", Static)
 
-        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
-        assert title_copy == "Transcript / Event Stream"
+        title_copy = getattr(
+            transcript_title.render(), "plain", str(transcript_title.render())
+        )
+        assert title_copy.startswith("Conversation")
 
         await pilot.press("h")
         await pilot.pause(0.1)
 
-        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        title_copy = getattr(
+            transcript_title.render(), "plain", str(transcript_title.render())
+        )
         assert composer.draft_text() == "h"
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Conversation")
 
         composer.clear_draft()
         console._sync_console_transcript_guidance()
         await pilot.pause(0.1)
 
-        title_copy = getattr(transcript_title.render(), "plain", str(transcript_title.render()))
+        title_copy = getattr(
+            transcript_title.render(), "plain", str(transcript_title.render())
+        )
         assert composer.draft_text() == ""
-        assert title_copy == "Transcript / Event Stream"
+        assert title_copy.startswith("Conversation")
 
 
 @pytest.mark.asyncio
@@ -2361,21 +2692,25 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-start-here")
         await _wait_for_selector(console, pilot, "#console-transcript-title")
 
-        start_here = console.query_one("#console-start-here", Static)
         transcript_region = console.query_one("#console-transcript-region")
         transcript_title = console.query_one("#console-transcript-title", Static)
         tab_strip = console.query_one("#console-native-tab-strip")
         transcript = console.query_one("#console-native-transcript")
 
-        assert start_here.styles.display == "none"
-        assert start_here.region.height == 0
+        assert not list(console.query("#console-start-here"))
         assert transcript_region.styles.border.top[0] in {"", "none"}
         assert transcript_title.region.y == transcript_region.region.y
-        assert tab_strip.region.y == transcript_title.region.y + transcript_title.region.height
-        assert transcript.region.y == tab_strip.region.y + tab_strip.region.height
+        assert (
+            tab_strip.region.y
+            == transcript_title.region.y + transcript_title.region.height
+        )
+        assert transcript.region.y == (
+            tab_strip.region.y
+            + tab_strip.region.height
+            + tab_strip.styles.margin.bottom
+        )
 
 
 @pytest.mark.asyncio
@@ -2410,7 +2745,9 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
         assert transcript_title.styles.height.value == 1
         assert tab_strip.styles.height.value == 1
         assert tab_strip.region.y == transcript_title.region.y + 1
-        assert transcript.region.y == tab_strip.region.y + 1
+        assert transcript.region.y == (
+            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+        )
         assert transcript_title.styles.color != active_tab.styles.color
         assert active_tab.styles.background != tab_strip.styles.background
         assert active_tab.has_class("console-session-tab-active")
@@ -2433,7 +2770,10 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.styles.display != "none"
         text = _visible_text(console)
         assert "Ready — type a message to begin." in text
-        assert "Type in Composer, attach sources, or run Library RAG before sending." not in text
+        assert (
+            "Type in Composer, attach sources, or run Library RAG before sending."
+            not in text
+        )
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
@@ -2463,7 +2803,11 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
-        assert empty_panel.region.y == tab_strip.region.y + tab_strip.region.height
+        assert empty_panel.region.y == (
+            tab_strip.region.y
+            + tab_strip.region.height
+            + tab_strip.styles.margin.bottom
+        )
 
 
 @pytest.mark.asyncio
@@ -2508,6 +2852,11 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
 
 @pytest.mark.asyncio
 async def test_console_app_footer_status_bar_remains_visible_below_console():
+    """task-264: the Console screen's own `AppFooterStatus` (mounted by
+    `BaseAppScreen.compose()`) is what a user actually sees below the
+    console -- the app's plain Textual `Footer` was retired in favor of a
+    per-screen `AppFooterStatus` so shortcut-hint registration is never
+    occluded (see `base_app_screen.py`)."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2515,7 +2864,7 @@ async def test_console_app_footer_status_bar_remains_visible_below_console():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
-        footer = console.query_one(Footer)
+        footer = console.query_one(AppFooterStatus)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         assert footer.region.height == 1
@@ -2534,15 +2883,21 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         await _wait_for_selector(console, pilot, "#console-live-work-source-readiness")
 
         inspector = console.query_one("#console-run-inspector")
-        inspector_state = console.query_one("#console-run-inspector-state")
+        console.query_one("#console-run-inspector-state")
         body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
+        live_work_viewport = source_readiness.parent
+        live_work_section = live_work_viewport.parent
+        live_work_root = live_work_section.parent
 
         assert inspector.parent is body
-        assert source_readiness.parent is body
+        assert live_work_viewport.id == "console-bounded-section-live-work-viewport"
+        assert live_work_section.id == "console-bounded-section-live-work"
+        assert live_work_root.id == "console-live-work-section"
+        assert live_work_root.parent is body
+        assert body.children.index(live_work_root) == body.children.index(inspector) + 1
         assert source_readiness.region.y >= inspector.region.y
-        assert source_readiness.region.y <= body.region.y + body.region.height
-        assert source_readiness.region.height <= 18
+        assert live_work_viewport.region.height <= 20
 
 
 @pytest.mark.asyncio
@@ -2559,10 +2914,17 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
         scope = console.query_one("#console-library-rag-scope", Static)
         rows = list(console.query(".console-live-work-source-row"))
 
-        assert run_rag.disabled is True
+        assert run_rag.disabled is False
         assert str(run_rag.tooltip or "") == ""
-        scope_plain = getattr(scope.render(), "plain", str(scope.render()))
-        assert len(scope_plain) <= scope.region.width
+        # RAG-44: the source line now carries Library's summary grammar
+        # ("Sources: Notes, Media, Conversations (Prompts off)"), which is
+        # wider than this 35-column rail, so it is held to the same
+        # no-clipping rule as the source rows below rather than to a
+        # single-line rule it can no longer meet.
+        scope_lines = _wrapped_plain_lines(scope.render(), scope.region.width)
+        assert scope_lines
+        assert len(scope_lines) <= scope.region.height
+        assert all(len(line) <= scope.region.width for line in scope_lines)
         assert rows
         for row in rows:
             lines = _wrapped_plain_lines(row.render(), row.region.width)
@@ -2583,7 +2945,9 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
 
         for selector in (
             "#console-inspector-review-approval",
-            "#console-inspector-review-tool-call",
+            # TASK-1843: review-tool-call removed -- it gated on a counter
+            # production never populates, so it was permanently disabled
+            # while permanently claiming a reason.
             "#console-inspector-save-chatbook",
         ):
             button = console.query_one(selector, Button)
@@ -2602,18 +2966,20 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-run-heading")
-        await _wait_for_selector(console, pilot, "#console-inspector-source-readiness-heading")
+        await _wait_for_selector(
+            console, pilot, "#console-inspector-source-readiness-heading"
+        )
         await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-artifacts-heading")
+        console.query_one("#console-inspector-more-toggle", Button).press()
+        await pilot.pause()
 
-        assert (
-            getattr(
-                console.query_one("#console-inspector-run-status-summary", Static).render(),
-                "plain",
-                "",
-            )
-            == "Status: Ready"
+        assert not list(console.query("#console-inspector-run-status-summary"))
+        assert "Run recipe:" in getattr(
+            console.query_one("#console-inspector-run-recipe", Static).render(),
+            "plain",
+            "",
         )
         assert not list(console.query("#console-run-inspector-title"))
         assert (
@@ -2626,7 +2992,9 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         )
         assert (
             getattr(
-                console.query_one("#console-inspector-approvals-heading", Static).render(),
+                console.query_one(
+                    "#console-inspector-approvals-heading", Static
+                ).render(),
                 "plain",
                 "",
             )
@@ -2634,7 +3002,9 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         )
         assert (
             getattr(
-                console.query_one("#console-inspector-source-readiness-heading", Static).render(),
+                console.query_one(
+                    "#console-inspector-source-readiness-heading", Static
+                ).render(),
                 "plain",
                 "",
             )
@@ -2701,30 +3071,29 @@ async def test_console_left_rail_sections_use_available_space():
         left_rail = console.query_one("#console-left-rail")
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
-        session_body = console.query_one("#console-rail-section-body-session")
-        context_body = console.query_one("#console-rail-section-body-context")
-        staged_context = console.query_one("#console-staged-context-tray")
+        conversations_body = console.query_one(
+            "#console-rail-section-body-conversations"
+        )
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
         assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        # The trays now live inside their collapsible section bodies: workspace
-        # context in Session (first), staged context in Context (second).
-        assert staged_context.parent is context_body
-        assert workspace_context.parent is session_body
-        assert workspace_context.region.y < staged_context.region.y
-        assert workspace_context.region.height > staged_context.region.height
+        # TASK-14810 split the former mixed Session tray into peer Session,
+        # Workspace, and Conversation sections. The legacy selector now names
+        # the conversation tray; staged context remains in the Inspector.
+        assert workspace_context.parent is conversations_body
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        assert not list(console.query("#console-rail-section-body-context"))
 
         # Rail section widths can still be converging on the first render pass
         # (especially under a busy scheduler in a full-suite run), so settle
         # until the measured widths stop changing before asserting equality.
-        previous_widths: tuple[int, int, int] | None = None
+        previous_widths: tuple[int, int] | None = None
         for _ in range(20):
             current_widths = (
                 body.scrollable_content_region.width,
-                staged_context.region.width,
                 workspace_context.region.width,
             )
             if current_widths == previous_widths:
@@ -2734,8 +3103,11 @@ async def test_console_left_rail_sections_use_available_space():
 
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
-        assert staged_context.region.width == body_content_width
-        assert workspace_context.region.width == body_content_width
+        # The section body owns the rail's single-cell content indent; the
+        # tray fills that body's content box rather than the outer scroll
+        # viewport.  Comparing against the viewport incorrectly counts the
+        # indent (and the stable scrollbar gutter) as usable tray width.
+        assert workspace_context.region.width == conversations_body.content_region.width
 
 
 @pytest.mark.asyncio
@@ -2749,60 +3121,73 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 
         workbench_border = console.query_one("#console-workspace-grid").styles.border
         assert workbench_border.top[0] == "solid"
-        assert workbench_border.right[0] == "solid"
+        assert workbench_border.right[0] in {"", "none"}
         assert workbench_border.bottom[0] == "solid"
-        assert workbench_border.left[0] == "solid"
+        assert workbench_border.left[0] in {"", "none"}
 
-        transcript_border = console.query_one("#console-transcript-region").styles.border
+        transcript_border = console.query_one(
+            "#console-transcript-region"
+        ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
-        assert transcript_border.bottom[0] == "solid"
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.right[0] in {"", "none"}
+        # TASK-20937.3: transcript owns no frame edge.
+        assert transcript_border.bottom[0] in {"", "none"}
+        assert transcript_border.left[0] in {"", "none"}
 
-        staged_context_border = console.query_one("#console-staged-context-tray").styles.border
+        staged_context_border = console.query_one(
+            "#console-staged-context-tray"
+        ).styles.border
         assert staged_context_border.top[0] in {"", "none"}
         assert staged_context_border.right[0] in {"", "none"}
         assert staged_context_border.bottom[0] in {"", "none"}
         assert staged_context_border.left[0] in {"", "none"}
 
-        workspace_context_border = console.query_one("#console-workspace-context").styles.border
+        workspace_context_border = console.query_one(
+            "#console-workspace-context"
+        ).styles.border
         assert workspace_context_border.top[0] in {"", "none"}
         assert workspace_context_border.right[0] in {"", "none"}
         assert workspace_context_border.bottom[0] in {"", "none"}
         assert workspace_context_border.left[0] in {"", "none"}
 
         composer_border = console.query_one("#console-native-composer").styles.border
-        assert composer_border.top[0] == "solid"
-        assert composer_border.right[0] == "solid"
-        assert composer_border.bottom[0] == "solid"
+        # task-17651: the dense composer owns only its semantic left edge.
         assert composer_border.left[0] == "solid"
+        assert composer_border.top[0] in {"", "none"}
+        assert composer_border.right[0] in {"", "none"}
+        assert composer_border.bottom[0] in {"", "none"}
 
 
 @pytest.mark.asyncio
 async def test_console_staged_context_tray_stays_quiet_when_populated():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Incident Review",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "runtime_backend": "local-fts",
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Incident Review",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {
+                "source_id": "note-42",
+                "chunk_id": "chunk-7",
+                "runtime_backend": "local-fts",
+            },
         },
-    }
-    host = ConsoleHarness(app)
+    )
 
-    async with host.run_test(size=(212, 64)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(212, 64)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         # Confirm the tray genuinely has content, so the quiet-border
         # assertion below is meaningful for the non-empty state (and not
         # accidentally re-checking the empty case).
         staged_context = console.query_one("#console-staged-context-tray")
-        assert "source_id: note-42" in _visible_text(staged_context)
+        staged_text = _visible_text(staged_context)
+        assert "Incident Review" in staged_text
+        assert "ready" in staged_text
 
         staged_context_border = staged_context.styles.border
         assert staged_context_border.top[0] in {"", "none"}
@@ -2820,30 +3205,46 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        for selector in (
-            "#console-workspace-grid",
-            "#console-left-rail",
-            "#console-native-composer",
-        ):
-            border = console.query_one(selector).styles.border
-            assert border.top[0] == "solid", f"{selector} missing top frame"
-            assert border.right[0] == "solid", f"{selector} missing right frame"
-            assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
-            assert border.left[0] == "solid", f"{selector} missing left frame"
+        # TASK-20937.3: the grid closes only the top/bottom. Each rail owns
+        # its one interior divider; transcript and composer own no shell box.
+        grid_border = console.query_one("#console-workspace-grid").styles.border
+        assert grid_border.top[0] == "solid"
+        assert grid_border.right[0] in {"", "none"}
+        assert grid_border.bottom[0] == "solid"
+        assert grid_border.left[0] in {"", "none"}
+
+        rail_border = console.query_one("#console-left-rail").styles.border
+        assert rail_border.top[0] in {"", "none"}
+        assert rail_border.right[0] == "solid"
+        assert rail_border.bottom[0] in {"", "none"}
+        assert rail_border.left[0] in {"", "none"}
+
+        # The composer owns one semantic dense-form edge, not a shell box.
+        composer = console.query_one("#console-native-composer")
+        assert not composer.has_class("console-frame-solid")
+        composer_border = composer.styles.border
+        assert composer_border.left[0] == "solid"
+        assert composer_border.top[0] in {"", "none"}
+        assert composer_border.right[0] in {"", "none"}
+        assert composer_border.bottom[0] in {"", "none"}
 
         right_handle = console.query_one("#console-inspector-rail-handle")
-        assert right_handle.has_class("console-frame-quiet")
+        assert right_handle.has_class("console-frame-solid")
+        assert right_handle.region.width == 11
+        assert right_handle.content_region.width == 10
         handle_border = right_handle.styles.border
         assert handle_border.top[0] in {"", "none"}
         assert handle_border.right[0] in {"", "none"}
         assert handle_border.bottom[0] in {"", "none"}
-        assert handle_border.left[0] in {"", "none"}
+        assert handle_border.left[0] == "solid"
 
-        transcript_border = console.query_one("#console-transcript-region").styles.border
+        transcript_border = console.query_one(
+            "#console-transcript-region"
+        ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
-        assert transcript_border.bottom[0] == "solid"
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.right[0] in {"", "none"}
+        assert transcript_border.bottom[0] in {"", "none"}
+        assert transcript_border.left[0] in {"", "none"}
 
         for selector in (
             "#console-staged-context-tray",
@@ -2851,8 +3252,12 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         ):
             border = console.query_one(selector).styles.border
             assert border.top[0] in {"", "none"}, f"{selector} has a heavy top frame"
-            assert border.right[0] in {"", "none"}, f"{selector} has a heavy right frame"
-            assert border.bottom[0] in {"", "none"}, f"{selector} has a heavy bottom frame"
+            assert border.right[0] in {"", "none"}, (
+                f"{selector} has a heavy right frame"
+            )
+            assert border.bottom[0] in {"", "none"}, (
+                f"{selector} has a heavy bottom frame"
+            )
             assert border.left[0] in {"", "none"}, f"{selector} has a heavy left frame"
 
         await _open_console_inspector(console, pilot)
@@ -2860,9 +3265,9 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         right_rail = console.query_one("#console-right-rail")
         inspector_state = console.query_one("#console-run-inspector-state")
         border = right_rail.styles.border
-        assert border.top[0] == "solid", "#console-right-rail missing top frame"
-        assert border.right[0] == "solid", "#console-right-rail missing right frame"
-        assert border.bottom[0] == "solid", "#console-right-rail missing bottom frame"
+        assert border.top[0] in {"", "none"}, "#console-right-rail top edge"
+        assert border.right[0] in {"", "none"}, "#console-right-rail right edge"
+        assert border.bottom[0] in {"", "none"}, "#console-right-rail bottom edge"
         assert border.left[0] == "solid", "#console-right-rail missing left frame"
         assert inspector_state.region.width > 0
         assert right_rail.region.x <= inspector_state.region.x
@@ -2873,61 +3278,42 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
 
 
 @pytest.mark.asyncio
-async def test_console_empty_staged_context_action_fits_tray():
+async def test_console_empty_staged_context_shows_guidance_and_count():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-staged-context-attach")
+        await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
-        summary = console.query_one("#console-staged-context-summary")
-        attach_button = console.query_one("#console-staged-context-attach", Button)
-        summary_plain = getattr(summary.render(), "plain", str(summary.render()))
+        count = console.query_one("#console-staged-context-count", Static)
+        guidance = console.query_one("#console-staged-context-empty", Static)
+        guidance_plain = str(guidance.renderable)
 
-        assert summary_plain == "No sources attached."
-        assert str(attach_button.label) == "Attach"
-        visible_text_width = max(0, summary.region.width - 2)
-        assert all(len(line) <= visible_text_width for line in summary_plain.splitlines())
-        assert len(str(attach_button.label)) <= max(0, attach_button.region.width - 2)
+        assert str(count.renderable) == "0"
+        assert "Stage sources from Library" in guidance_plain
 
 
 @pytest.mark.asyncio
-async def test_console_empty_staged_context_exposes_attach_action():
+async def test_console_empty_staged_context_omits_attach_action():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    class FakeSession:
-        def __init__(self) -> None:
-            self.attach_events = []
-
-        def handle_attach_button(self, event) -> None:
-            self.attach_events.append(event)
-
-    fake_session = FakeSession()
-
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        console._get_active_chat_session = lambda: fake_session
-        await _wait_for_selector(console, pilot, "#console-staged-context-attach")
+        await _wait_for_selector(console, pilot, "#console-staged-context-empty")
 
-        summary = console.query_one("#console-staged-context-summary", Static)
-        attach_button = console.query_one("#console-staged-context-attach", Button)
-        tray_text = _visible_text(console.query_one("#console-staged-context-tray"))
+        # Task-400: the tray lives in the Inspector rail, so its content is
+        # only display-visible once the Inspector is open.
+        await _open_console_inspector(console, pilot)
 
-        assert getattr(summary.render(), "plain", str(summary.render())) == "No sources attached."
-        assert str(attach_button.label) == "Attach"
-        assert attach_button.compact is True
-        assert "Attach sources." not in tray_text
-
-        await pilot.click("#console-staged-context-attach")
-        await pilot.pause()
-
-        assert len(fake_session.attach_events) == 1
+        tray = console.query_one("#console-staged-context-tray")
+        assert not list(tray.query("#console-staged-context-attach"))
+        assert "Stage sources from Library" in _visible_text(tray)
 
 
 @pytest.mark.asyncio
-async def test_console_staged_context_attach_uses_semantic_empty_state():
+async def test_console_staged_context_empty_state_renders_summary_when_provided():
     state = ConsoleStagedContextState(
         heading="Staged Context",
         summary="Nothing attached yet.",
@@ -2936,33 +3322,36 @@ async def test_console_staged_context_attach_uses_semantic_empty_state():
     app = StagedContextHarness(state)
 
     async with app.run_test(size=(60, 10)) as pilot:
-        await _wait_for_selector(app.screen, pilot, "#console-staged-context-attach")
+        await _wait_for_selector(app.screen, pilot, "#console-staged-context-empty")
 
-        assert app.query_one("#console-staged-context-summary", Static).render().plain == (
-            "Nothing attached yet."
-        )
-        assert str(app.query_one("#console-staged-context-attach", Button).label) == "Attach"
+        assert str(
+            app.query_one("#console-staged-context-summary", Static).renderable
+        ) == ("Nothing attached yet.")
+        assert not list(app.screen.query("#console-staged-context-attach"))
 
 
 @pytest.mark.asyncio
 async def test_console_non_empty_staged_context_keeps_room_for_source_details():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Incident Review",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {
-            "source_id": "note-42",
-            "chunk_id": "chunk-7",
-            "runtime_backend": "local-fts",
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Incident Review",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {
+                "source_id": "note-42",
+                "chunk_id": "chunk-7",
+                "runtime_backend": "local-fts",
+            },
         },
-    }
-    host = ConsoleHarness(app)
+    )
 
-    async with host.run_test(size=(120, 40)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(120, 40)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         staged_context = console.query_one("#console-staged-context-tray")
         max_height = getattr(
@@ -2970,18 +3359,19 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
             "value",
             staged_context.styles.max_height,
         )
-        assert max_height >= 10
-        assert "source_id: note-42" in _visible_text(staged_context)
-        assert "Review citations before sending." in _visible_text(staged_context)
+        assert max_height is None
+        staged_text = _visible_text(staged_context)
+        assert "Incident Review" in staged_text
+        assert "ready" in staged_text
+        assert "Review citations before sending." in staged_text
 
 
 @pytest.mark.asyncio
 async def test_console_control_bar_renders_readable_summary_line():
     app = _build_test_app()
-    host = ConsoleHarness(app)
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(140, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
 
         summary = console.query_one("#console-control-status-line", Static)
@@ -2990,6 +3380,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert "Provider:" in plain
         assert " | Model:" in plain
         assert " | Assistant:" in plain
+        assert " | Library · Auto " in plain
         assert " | Sources:" in plain
 
 
@@ -3006,9 +3397,9 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         composer.sync_session_data(
             ChatSessionData(
                 tab_id="metadata",
-                title="[red]Injected[/red]",
+                title="[red]Injected[/red]\n\tforged title",
                 runtime_backend="[blue]server[/blue]",
-                assistant_id="[green]persona[/green]",
+                assistant_id="[green]persona[/green]\n\tforged assistant",
                 scope_type="workspace",
                 workspace_id="[yellow]workspace[/yellow]",
             )
@@ -3023,32 +3414,45 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         assert "[blue]server[/blue]" in plain
         assert "[green]persona[/green]" in plain
         assert "[yellow]workspace[/yellow]" in plain
+        assert "\n" not in plain
+        assert "\t" not in plain
+        assert "forged title" in plain
+        assert "forged assistant" in plain
 
 
 @pytest.mark.asyncio
 async def test_console_native_control_bar_and_staged_context_reflect_pending_handoff():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Transformer notes",
-        "status": "ready",
-        "recovery": "Review citations before sending.",
-        "payload": {"source_id": "note-1", "citation_count": 2},
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Transformer notes",
+            "status": "ready",
+            "recovery": "Review citations before sending.",
+            "payload": {"source_id": "note-1", "citation_count": 2},
+        },
+    )
 
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
+    # Task-400: staged context renders in the Inspector rail. The pending
+    # launch auto-open is suppressed while the rail is force-collapsed
+    # (widths under 150 columns OUTSIDE the 118-128 standard-width contract,
+    # which auto-opens a fresh Inspector on its own); 170 columns keeps the
+    # auto-open effective so the staged text is measurable here.
+    async with app.run_test(size=(170, 42)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-control-bar")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        await _open_console_inspector(console, pilot)
 
         text = _visible_text(console)
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "RAG:" in text
-        assert "Sources: 1 staged" in text
+        assert "Library · Auto off · Agent blocked" in text
+        assert "Sources: 1" in text
         assert "Transformer notes" in text
-        assert "citation_count: 2" in text
+        assert "ready" in text
         assert "Review citations before sending." in text
 
 
@@ -3099,9 +3503,7 @@ async def test_console_control_labels_refresh_after_compact_control_sync():
         compact_bar = console.query_one("#console-compact-model-bar")
         provider_select = compact_bar.query_one("#compact-api-provider", Select)
         provider = next(
-            value
-            for _, value in provider_select._options
-            if isinstance(value, str)
+            value for _, value in provider_select._options if isinstance(value, str)
         )
 
         console._sync_compact_shell_controls(
@@ -3130,8 +3532,8 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "RAG: off"
-    assert rag_state.rag_label == "RAG: on"
+    assert non_rag_state.rag_label == "Library · Auto off · Agent blocked"
+    assert rag_state.rag_label == non_rag_state.rag_label
 
 
 def test_console_control_state_tolerates_missing_launch_source():
@@ -3142,7 +3544,7 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "RAG: off"
+    assert state.rag_label == "Library · Auto off · Agent blocked"
 
 
 def test_console_control_and_inspector_share_effective_provider_model_sources():
@@ -3157,6 +3559,100 @@ def test_console_control_and_inspector_share_effective_provider_model_sources():
     assert control_state.provider_label == "Provider: llama_cpp"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
+
+
+def test_console_rag_source_status_unchanged_with_a_pending_launch():
+    """D1b: a sent-notice count must never override an actually staged
+    launch -- live staging always wins, mirroring the strip's own
+    precedence rule (``build_console_staged_evidence_strip_state``)."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="RAG result",
+        payload={"source_id": "note-1"},
+        status="ready",
+    )
+
+    assert screen._retrieval._console_rag_source_status(launch) == (
+        "staged from Library Search/RAG"
+    )
+    # A stale sent-notice sitting alongside a NEW pending launch changes
+    # nothing -- pending-launch derivation takes over unconditionally.
+    assert screen._retrieval._console_rag_source_status(launch, sent_source_count=5) == (
+        "staged from Library Search/RAG"
+    )
+
+
+def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
+    """D1b: the Inspector gains the strip's one-send memory."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=5) == (
+        "sent with the last message · 5 sources"
+    )
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=1) == (
+        "sent with the last message · 1 source"
+    )
+
+
+def test_console_rag_source_status_genuinely_empty_reads_not_staged():
+    """Neither a pending launch nor a sent-notice: the honest empty copy."""
+    app = _build_test_app()
+    screen = ChatScreen(app)
+
+    assert screen._retrieval._console_rag_source_status(None) == "not staged"
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=0) == "not staged"
+    assert screen._retrieval._console_rag_source_status(None, sent_source_count=None) == (
+        "not staged"
+    )
+
+
+def test_console_inspector_sources_row_remembers_the_last_send():
+    """D1b end-to-end: the Inspector's "Retrieval" row (TASK-24610 renamed
+    it from "Sources"; and the run recipe
+    line built from the same value) read the one-send memory instead of
+    the literal "not staged" a send just superseded."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    screen = ChatScreen(app)
+    screen._console_evidence_sent_notice = 5
+
+    inspector_state = screen._build_console_inspector_state(None)
+    rows_by_label = {row.label: row for row in inspector_state.rows}
+
+    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
+    assert "sent with the last message · 5 sources" in rows_by_label["Run recipe"].value
+
+
+def test_console_strip_and_inspector_sent_counts_provably_agree():
+    """D1a+D1b agreement: the strip and the Inspector must read the SAME
+    number after a send releases its staged launch -- this fix gives the
+    Inspector the strip's own memory field, not a second, independently
+    derived count that could drift from it again."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    screen = ChatScreen(app)
+    # Simulate the state immediately after `_release_consumed_console_launch`:
+    # the launch is gone, and the one-send memory is armed.
+    screen._pending_console_launch_context = None
+    screen._console_evidence_sent_notice = 5
+
+    strip_state = screen._build_console_staged_evidence_strip_state(None)
+    inspector_state = screen._build_console_inspector_state(None)
+    rows_by_label = {row.label: row for row in inspector_state.rows}
+
+    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
+    # Change the ONE shared field and both surfaces move together -- proof
+    # they read the same number, not two counts that merely match today.
+    screen._console_evidence_sent_notice = 2
+    strip_state_2 = screen._build_console_staged_evidence_strip_state(None)
+    inspector_state_2 = screen._build_console_inspector_state(None)
+    rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
+    assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
+    assert rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
@@ -3219,21 +3715,24 @@ def test_console_provider_selection_normalizes_display_provider_key():
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
     app = _build_test_app()
-    app.app_config = {"chat_defaults": {}}
+    app.app_config["chat_defaults"] = {}
     app.console_provider_ready = False
-    app.pending_console_launch = {
-        "source": "Library Search/RAG",
-        "title": "Grounded answer",
-        "status": "ready",
-        "recovery": "Attach a source before asking the model.",
-        "payload": {},
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Library Search/RAG",
+            "title": "Grounded answer",
+            "status": "ready",
+            "recovery": "Attach a source before asking the model.",
+            "payload": {},
+        },
+    )
 
-    async with host.run_test(size=(196, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(196, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-provider")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         assert "Provider: blocked" in str(
             console.query_one("#console-inspector-provider", Static).renderable
@@ -3241,13 +3740,19 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         assert "Select a provider and model before sending." in str(
             console.query_one("#console-inspector-provider", Static).renderable
         )
-        assert "Sources: missing source" in str(
-            console.query_one("#console-inspector-sources", Static).renderable
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval",
+        # so "Sources" means only staged context anywhere in the rail.
+        assert "Retrieval: missing source" in str(
+            console.query_one("#console-inspector-retrieval", Static).renderable
         )
         assert not list(console.query("#console-inspector-rag-source"))
-        assert console.query_one("#console-inspector-review-tool-call", Button).disabled is True
-        assert "No tool calls are ready for review." in str(
-            console.query_one("#console-inspector-review-tool-call-reason", Static).renderable
+        # TASK-1843: the permanently-disabled review-tool-call action is gone,
+        # and so is the disabled-reason Static that explained it. Both must
+        # disappear together -- a stranded reason line would still advertise a
+        # control the user cannot reach.
+        assert not list(console.query("#console-inspector-review-tool-call"))
+        assert not list(
+            console.query("#console-inspector-review-tool-call-reason")
         )
 
 
@@ -3256,20 +3761,25 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
     app = _build_test_app()
     app.console_pending_approval_count = 1
     app.console_tool_count = 1
-    app.pending_console_launch = {
-        "source": "artifacts",
-        "title": "Grounded Answer Chatbook",
-        "status": "ready",
-        "recovery": "Review this Chatbook artifact in Console or return to Artifacts.",
-        "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
-        "action_label": "Open Chatbook artifact",
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "artifacts",
+            "title": "Grounded Answer Chatbook",
+            "status": "ready",
+            "recovery": (
+                "Review this Chatbook artifact in Console or return to Artifacts."
+            ),
+            "payload": {"target_id": "local:chatbook:77", "chatbook_id": 77},
+            "action_label": "Open Chatbook artifact",
+        },
+    )
 
-    async with host.run_test(size=(196, 48)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(196, 48)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         assert "Approvals: 1 pending" in str(
             console.query_one("#console-inspector-approvals", Static).renderable
@@ -3277,9 +3787,16 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert "Artifacts: Chatbook artifact available" in str(
             console.query_one("#console-inspector-artifacts", Static).renderable
         )
-        assert console.query_one("#console-inspector-review-approval", Button).disabled is False
-        assert console.query_one("#console-inspector-review-tool-call", Button).disabled is False
-        assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
+        assert (
+            console.query_one("#console-inspector-review-approval", Button).disabled
+            is False
+        )
+        # TASK-1843: removed; see the note above.
+        assert not list(console.query("#console-inspector-review-tool-call"))
+        assert (
+            console.query_one("#console-inspector-save-chatbook", Button).disabled
+            is False
+        )
         assert (
             console.query_one("#console-inspector-source-readiness-heading").region.y
             < console.query_one("#console-inspector-tools-heading").region.y
@@ -3287,7 +3804,6 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert (
             console.query_one("#console-inspector-tools-heading").region.y
             < console.query_one("#console-inspector-tools").region.y
-            < console.query_one("#console-inspector-review-tool-call").region.y
             < console.query_one("#console-inspector-approvals-heading").region.y
         )
         assert (
@@ -3298,11 +3814,292 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
             < console.query_one("#console-inspector-artifacts").region.y
             < console.query_one("#console-inspector-save-chatbook").region.y
         )
-        assert console.query_one("#console-live-work-primary-action", Button).disabled is False
+        assert (
+            console.query_one("#console-live-work-primary-action", Button).disabled
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_rag_action_requests_library_retrieval_and_stages_result():
+async def test_console_run_inspector_shows_mcp_tools_ready_row():
+    app = _build_test_app()
+    app.console_mcp_tool_count = 5
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 5 tools ready" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+        assert (
+            console.query_one("#console-inspector-tools-heading").region.y
+            < console.query_one("#console-inspector-tools").region.y
+            < console.query_one("#console-inspector-mcp").region.y
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_shows_mcp_not_connected_row():
+    """Finding I2: the blocked "not connected" row must win even when
+    `console_mcp_tool_count` is non-zero -- (5, 2) is the REAL reachable
+    mixed state (a stale server's snapshot tools still count toward
+    `tool_count`); the old (0, 2) case this test used to pin can never
+    actually happen in production (see `_mcp_inspector_row`'s docstring)."""
+    app = _build_test_app()
+    app.console_mcp_tool_count = 5
+    app.console_mcp_not_connected_count = 2
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 2 servers enabled, not connected" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_omits_mcp_row_by_default():
+    """No `console_mcp_tool_count` seam wired -- e.g. no `unified_mcp_service`
+    on the app, or the kill switch is on -- must not render an "MCP" row."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-tools")
+
+        assert not list(console.query("#console-inspector-mcp"))
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider():
+    """P5 review fix: the three tests above only prove the render logic
+    given a hand-set `console_mcp_tool_count`/`console_mcp_not_connected_
+    count` -- they never prove anything in production actually SETS those
+    attributes. This drives the real `ConsoleChatController._compose_mcp_
+    provider` (the only production writer) against a real mounted
+    ChatScreen and confirms its output reaches the rendered row, closing
+    the "dead scaffolding, no production writer" gap."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        controller = console._ensure_console_chat_controller()
+        app.unified_mcp_service = FakeMCPService(
+            catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        )
+
+        provider = await controller._compose_mcp_provider()
+        assert provider is not None
+        assert app.console_mcp_tool_count == 1
+        assert app.console_mcp_not_connected_count == 0
+
+        console._sync_console_control_bar()
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        # Pluralization fix (Finding I2): exactly one tool reads
+        # "1 tool ready", not "1 tools ready".
+        assert "MCP: 1 tool ready" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has_tools():
+    """Finding I2, RED per the review: build the state from a REAL
+    composed catalog with one stale (disconnected-with-snapshot) server
+    that still contributes an eligible tool -- `tool_count` is 1 (not 0),
+    so pre-fix the blocked affordance never rendered and the row silently
+    claimed "1 tool ready" for a server the user cannot actually reach."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        controller = console._ensure_console_chat_controller()
+        app.unified_mcp_service = FakeMCPService(
+            catalog_records=[
+                _catalog_record("stale", [_tool_dict("run")], is_connected=False),
+            ],
+        )
+
+        provider = await controller._compose_mcp_provider()
+        assert provider is not None
+        assert app.console_mcp_tool_count == 1
+        assert app.console_mcp_not_connected_count == 1
+
+        console._sync_console_control_bar()
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+
+        assert "MCP: 1 server enabled, not connected" in str(
+            console.query_one("#console-inspector-mcp", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_requests_library_retrieval_and_stages_result(
+    monkeypatch,
+):
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    # This test is about scope/evidence staging, not top_k resolution --
+    # pin the shared helper (TASK-3170 task 9) so it stays decoupled from
+    # whatever the real default profile's default_top_k happens to be.
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 5
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        # RAG-44: the readiness card's source line is now Library's
+        # scope-summary grammar under the Console's own "Sources" noun
+        # ("Scope" here already means the retrieval ITEM scope), and it
+        # names what is off -- the default still being today's three.
+        assert (
+            "Sources: Notes, Media, Conversations (Prompts off)"
+            in _visible_text(console)
+        )
+        await _run_manual_library_search(console, pilot, query)
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+        text = _visible_text(console)
+        # TASK-24610: the run inspector's retrieval-status row is "Retrieval";
+        # "Sources" now means staged context only.
+        assert "Retrieval: staged from Library Search/RAG" in text
+        assert "RAG/source:" not in text
+        assert "Title: Incident Review" in text
+        assert "source_id: note-42" in text
+        assert "chunk_id: chunk-7" in text
+        assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
+    """TASK-3170 task 9: the chip's manual run must not hardcode top_k=5.
+
+    Task 8 gave auto-retrieve a shared helper,
+    ``_console_library_rag_profile_top_k``, that reads the active RAG
+    profile's ``search.default_top_k`` (fallback 5 when unavailable). The
+    manual chip run built its own request with a literal ``top_k=5`` and
+    ignored the profile entirely -- a profile tuned for more (or fewer)
+    results silently lost that setting the moment a user pressed Run
+    instead of relying on auto-retrieve. This pins the chip run onto the
+    SAME helper so both call sites can never drift again.
+    """
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 12
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        await _run_manual_library_search(console, pilot, query)
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": 12,
+                "include_citations": True,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable(
+    monkeypatch,
+):
+    """TASK-3170 task 9: the chip run's OTHER branch -- profile unresolvable.
+
+    ``_console_library_rag_profile_top_k`` degrades to the shared Library
+    fallback when the active RAG profile can't
+    be read (broken/absent profile), so a manual chip run must never raise
+    inside a send just because profile resolution failed. Patches
+    ``resolve_active_rag_top_k`` itself (what the helper actually reads,
+    imported lazily inside the shared Library seam it delegates to since
+    TASK-15020/B3) rather than the helper, so this exercises the real
+    try/except fallback path end to end -- not a mock standing in for it.
+    """
+    from tldw_chatbook.Library.library_rag_state import LIBRARY_RAG_FALLBACK_TOP_K
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def _raise_profile_unavailable():
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_top_k", _raise_profile_unavailable
+    )
+
     app = _build_test_app()
     service = StaticConsoleLibraryRagSearchService(
         {
@@ -3329,14 +4126,7 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        assert "Scope: notes, media, conversations" in _visible_text(console)
-        query_input = console.query_one("#console-library-rag-query-input", Input)
-        query_input.value = query
-        await pilot.pause(0.1)
-
-        run_button = console.query_one("#console-run-library-rag", Button)
-        assert run_button.disabled is False
-        run_button.press()
+        await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
 
         assert service.calls == [
@@ -3344,17 +4134,10 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
                 "query": query,
                 "scope": ("notes", "media", "conversations"),
                 "mode": "rag",
-                "top_k": 5,
+                "top_k": LIBRARY_RAG_FALLBACK_TOP_K,
                 "include_citations": True,
             }
         ]
-        text = _visible_text(console)
-        assert "Sources: staged from Library Search/RAG" in text
-        assert "RAG/source:" not in text
-        assert "Title: Incident Review" in text
-        assert "source_id: note-42" in text
-        assert "chunk_id: chunk-7" in text
-        assert "Review citations before sending." in text
 
 
 def test_console_evidence_display_state_sanitizes_markup_fields():
@@ -3468,15 +4251,9 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one("#console-library-rag-query-input", Input).value = (
-            "Why did the incident happen?"
+        await _run_manual_library_search(
+            console, pilot, "Why did the incident happen?"
         )
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
-        )
-        console.query_one("#console-run-library-rag", Button).press()
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -3484,9 +4261,8 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         text = _visible_text(console)
         assert "Evidence: 1/1 available (available)" in text
         assert "Authority: Source authority: local" in text
-        assert "Evidence source: [S1] Incident Review" in text
-        assert "Evidence authority: Source authority: local" in text
-        assert "Evidence status: available" in text
+        assert "Incident Review" in text
+        assert "ready" in text
         assert "Expired credential caused the incident." in text
         assert "evidence_bundle:" not in text
 
@@ -3527,15 +4303,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one("#console-library-rag-query-input", Input).value = (
-            "Summarize this source"
-        )
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=False,
-        )
-        console.query_one("#console-run-library-rag", Button).press()
+        await _run_manual_library_search(console, pilot, "Summarize this source")
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -3547,12 +4315,14 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
         await _wait_for_visible_text(
             console,
             pilot,
-            "Console send blocked: Library Search/RAG has no available evidence",
+            "Console send blocked: Library search has no available evidence",
         )
 
         text = _visible_text(console)
         assert "Evidence: 0/1 available (blocked)" in text
-        assert "Console send blocked: Library Search/RAG has no available evidence" in text
+        assert (
+            "Console send blocked: Library search has no available evidence" in text
+        )
         assert "Review source authority before sending." in text
         assert composer.draft_text() == "Answer using the staged RAG evidence"
 
@@ -3569,22 +4339,190 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one("#console-library-rag-query-input", Input).value = (
-            "<script>alert('bad')</script>"
-        )
-        await _wait_for_console_library_rag_button_state(
-            console,
-            pilot,
-            disabled=True,
-        )
-        assert str(console.query_one("#console-run-library-rag", Button).tooltip or "") == ""
+        console.query_one("#console-run-library-rag", Button).press()
+        await pilot.pause()
+        modal = console.app.screen
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        modal.query_one(
+            "#console-rag-settings-query", Input
+        ).value = "<script>alert('bad')</script>"
+        await pilot.pause()
+        assert modal.query_one("#console-rag-settings-run", Button).disabled is True
 
+        assert console._console_library_rag_query == ""
+        assert service.calls == []
+        modal.query_one("#console-rag-settings-cancel", Button).press()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_without_service_stages_recoverable_blocker(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.library_rag_search_service = None
+    rag_factory_calls = []
+
+    def record_rag_factory_call():
+        rag_factory_calls.append(True)
+        return None
+
+    monkeypatch.setattr(
+        library_local_rag_search_service,
+        "get_shared_rag_service",
+        record_rag_factory_call,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        await _run_manual_library_search(console, pilot, "What changed?")
+        await _wait_for_visible_text(console, pilot, "Status: blocked")
+
+        text = _visible_text(console)
+        assert "Status: blocked" in text
+        assert "Retrieval: unavailable" in text
+        assert "RAG/source:" not in text
+        assert "Unavailable: Library Search/RAG retrieval." in text
+        assert "Owner: Library retrieval service." in text
+        assert rag_factory_calls == []
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_run_library_rag_opens_settings_modal_when_blank():
+    """RAG-41/42: the always-visible control-bar action has no place for a
+    query to live -- it toasted "Type a Library RAG query" at an invisible
+    input. With no dedicated query AND no composer draft, it must now open
+    the same RAG settings modal the chip opens, not toast, and it must not
+    run retrieval underneath the modal (the loop-guard proof: Cancel leaves
+    no query stored and the search service uncalled)."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        console.query_one("#console-control-run-library-rag", Button).press()
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+
+        # Loop-guard: Cancel dismisses with no changes -- no query gets
+        # stored and the modal's own Run callback (which re-enters
+        # `_run_console_library_rag_from_visible_action`) never fires.
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+
+        assert host.screen is console
         assert console._console_library_rag_query == ""
         assert service.calls == []
 
 
 @pytest.mark.asyncio
-async def test_console_rag_action_without_service_stages_recoverable_blocker():
+async def test_console_control_bar_run_library_search_preserves_path_shaped_draft():
+    """The one-shot search modal preserves the exact composer draft as its query."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/Users/x/notes.md")
+        await pilot.pause()
+
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify = Mock()
+
+        console.query_one("#console-control-run-library-rag", Button).press()
+        await pilot.pause()
+
+        modal = host.screen
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+        assert modal._query == "/Users/x/notes.md"
+        assert console._console_library_rag_query == ""
+        console.app_instance.notify.assert_not_called()
+        assert service.calls == []
+        # Opening the modal does not mutate the composer.
+        assert composer.draft_text() == "/Users/x/notes.md"
+
+
+@pytest.mark.asyncio
+async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
+    monkeypatch,
+):
+    """RAG-44 end to end: the settings modal's source toggles decide what
+    retrieval actually reads. Switching Media off and running must send a
+    request WITHOUT media to the search service (and leave the Inspector's
+    source line saying so) -- the critique's complaint was that Library
+    offered these toggles while the Console showed a read-only line."""
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+
+    # This test is about source-scope narrowing, not top_k resolution --
+    # pin the shared helper (TASK-3170 task 9) so it stays decoupled from
+    # whatever the real default profile's default_top_k happens to be.
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 5
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-run-library-rag")
+
+        # Queryless control-bar action opens the settings modal (task-2).
+        console.query_one("#console-control-run-library-rag", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, ConsoleLibrarySearchModal)
+
+        modal.query_one("#console-rag-settings-query", Input).value = "why did it fail"
+        await pilot.pause()
+        modal.query_one("#console-rag-settings-source-media", Button).press()
+        await pilot.pause()
+        modal.query_one("#console-rag-settings-run", Button).press()
+        for _ in range(10):
+            await pilot.pause()
+
+        assert service.calls == [
+            {
+                "query": "why did it fail",
+                "scope": ("notes", "conversations"),
+                "mode": "rag",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+        assert console._console_library_rag_source_types == ("notes", "conversations")
+        # The staged live-work card reports the same narrowed selection the
+        # request carried, so what ran is visible after the fact too.
+        assert "source_scope: notes, conversations" in _visible_text(console)
+        assert (
+            console._retrieval._console_library_rag_scope_label()
+            == "Sources: Notes, Conversations (Media, Prompts off)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_search_library_opens_modal_when_query_is_blank():
+    """Inspector Search remains reachable without a previously stored query."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -3593,17 +4531,17 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        console.query_one("#console-library-rag-query-input", Input).value = "What changed?"
-        await pilot.pause(0.1)
-        console.query_one("#console-run-library-rag", Button).press()
-        await _wait_for_selector(console, pilot, "#console-live-work-status")
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is False
 
-        text = _visible_text(console)
-        assert "Status: blocked" in text
-        assert "Sources: unavailable" in text
-        assert "RAG/source:" not in text
-        assert "Unavailable: Library Search/RAG retrieval." in text
-        assert "Owner: Library retrieval service." in text
+        run_rag.press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConsoleLibrarySearchModal)
+        host.screen.query_one("#console-rag-settings-cancel", Button).press()
+        await pilot.pause()
+
+        run_rag = console.query_one("#console-run-library-rag", Button)
+        assert run_rag.disabled is False
 
 
 @pytest.mark.asyncio
@@ -3623,10 +4561,16 @@ async def test_alt_m_opens_model_popover_and_apply_updates_session_settings():
 
 
 def test_console_keyboard_hints_visible_in_native_footer():
-    """Ctrl+K/Alt+M/Ctrl+T must surface via Textual's native Footer — the
-    only Console footer channel a user actually sees (the app-level
-    AppFooterStatus widget these bindings used to target sits on the
-    default screen and is occluded whenever the Console screen is pushed).
+    """Ctrl+K/Alt+M/Ctrl+T stay marked `show=True` on the binding list itself.
+
+    Historical note (pre task-264): these were once surfaced via Textual's
+    native `Footer` because the app-level `AppFooterStatus` these bindings
+    also target sat on the default screen and was occluded whenever the
+    Console screen was pushed. Task-264 gave every `BaseAppScreen` (Console
+    included) its own `AppFooterStatus` instance, so the shortcut hint now
+    also appears there (Ctrl+K is in `CONSOLE_WORKBENCH_SHORTCUTS`) -- but
+    the bindings themselves are unchanged, so `show=True` remains correct
+    and is pinned here regardless of which surface renders them.
     Escape and Alt+1..9 stay hidden: Escape shown at screen level would
     clash-confuse with the transcript's own "esc Clear selection" hint, and
     nine Alt-digit entries would flood the footer.
@@ -3636,6 +4580,9 @@ def test_console_keyboard_hints_visible_in_native_footer():
     bindings_by_key = {binding.key: binding for binding in ChatScreen.BINDINGS}
 
     visible = {
+        "f1": "Help",
+        "f6": "Next pane",
+        "shift+f6": "Previous pane",
         "ctrl+k": "Switch session",
         "alt+m": "Model",
         "ctrl+t": "New tab",
@@ -3670,7 +4617,9 @@ async def test_escape_returns_focus_to_composer_and_ctrl_t_opens_tab():
         # running Textual App under test here (see every other assertion in
         # this file that checks focus/screen state via `host`), so this uses
         # `host.focused` instead.
-        assert host.focused is composer or composer in getattr(host.focused, "ancestors", [])
+        assert host.focused is composer or composer in getattr(
+            host.focused, "ancestors", []
+        )
         store = console._console_chat_store
         before = len(store.sessions())
         await pilot.press("ctrl+t")
@@ -3699,6 +4648,7 @@ async def test_alt_digit_jumps_to_tab():
 @pytest.mark.asyncio
 async def test_console_command_provider_lists_commands_only_on_console():
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -3711,6 +4661,7 @@ async def test_console_command_provider_lists_commands_only_on_console():
 
         class _FakeScreen:  # not a ChatScreen
             pass
+
         other = ConsoleCommandProvider(screen=_FakeScreen(), match_style=None)
         other_hits = [hit async for hit in other.search("switch session")]
         assert other_hits == []
@@ -3722,6 +4673,7 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
     # (which checks _console_setup_modal_blocking()) rather than calling
     # screen._open_console_settings() directly.
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -3734,6 +4686,26 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
         matching = [hit for hit in hits if "Session settings" in str(hit.text)]
         assert matching, "expected a 'Console: Session settings…' hit"
         assert matching[0].command == console.action_open_console_session_settings
+
+
+@pytest.mark.asyncio
+async def test_console_command_provider_terminal_targets_guarded_action():
+    """The palette and pinned rail must share the screen's guarded action."""
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        assert hasattr(console, "action_open_console_terminal")
+
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.search("open terminal")]
+        matching = [hit for hit in hits if "Open Terminal" in str(hit.text)]
+        assert matching, "expected a 'Console: Open Terminal' hit"
+        assert matching[0].command == console.action_open_console_terminal
 
 
 @pytest.mark.asyncio
@@ -3753,3 +4725,178 @@ async def test_console_session_settings_action_noop_while_setup_modal_blocking()
         await pilot.pause(0.2)
         assert len(host.screen_stack) == before_depth
         assert host.screen_stack[-1].__class__.__name__ != "ConsoleSettingsModal"
+
+
+@pytest.mark.asyncio
+async def test_alt_letter_is_not_captured_as_composer_typing():
+    """TASK-1800: Alt+<letter> must not be swallowed as composer text.
+
+    `ChatScreen.on_key` routes every `is_printable` key into the draft. The
+    real terminal parser yields `Key("alt+m", "m")` (`_xterm_parser.py`
+    renames the key but passes the bare letter as `character`), so the chord
+    was `is_printable`, got captured as typing, and the screen's own
+    `Binding("alt+m", ...)` never ran -- pressing it inserted a literal "m"
+    into the user's draft.
+
+    **This cannot be written with `pilot.press("alt+m")`.** Textual's test
+    pilot builds the event as `char = key if len(key) == 1 else None`
+    (`app.py`), so a pilot alt-chord arrives with `character=None` and
+    `is_printable` False -- the bug is invisible to it. That is why the whole
+    suite passed while a real terminal typed stray letters into the draft.
+    The event below is constructed the way the parser really builds it.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        for chord, letter in (("alt+m", "m"), ("alt+w", "w"), ("alt+t", "t")):
+            event = Key(chord, letter)
+            assert event.is_printable, "precondition: the parser marks these printable"
+            console.on_key(event)
+            await pilot.pause(0.05)
+            assert composer.draft_text() == "", (
+                f"{chord} was typed into the draft: {composer.draft_text()!r}"
+            )
+            assert not event._forwarded, f"{chord} should not be consumed here"
+
+        # Control: the same letters WITHOUT alt must still reach the draft.
+        # A guard that skipped on `character` alone would pass above and
+        # silently break all text entry.
+        for letter in ("m", "w", "t"):
+            console.on_key(Key(letter, letter))
+            await pilot.pause(0.05)
+        assert composer.draft_text() == "mwt", (
+            f"plain typing broke: {composer.draft_text()!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_command_provider_covers_every_alt_bound_action():
+    """AC-03 (TASK-2154.20): each Alt binding has a palette path."""
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.discover()]
+        commands = {hit.command for hit in hits}
+
+        # Alt+M, Alt+W, Alt+V, and (via the switcher) Alt+1..9.
+        assert console.action_open_console_model_popover in commands
+        assert console.action_open_console_workspace_switcher in commands
+        assert console.action_paste_clipboard_image in commands
+        assert console.action_open_console_session_switcher in commands
+
+        paste_hits = [hit async for hit in provider.search("paste image")]
+        assert paste_hits, "expected the paste-image command to be searchable"
+        assert any(
+            hit.command == console.action_paste_clipboard_image
+            for hit in paste_hits
+        )
+
+
+def test_console_f1_help_documents_the_macos_alt_caveat():
+    """AC-03 (TASK-2154.20): the F1 panel carries the Option-as-Meta note."""
+    group_names = [name for name, _rows in CONSOLE_WORKBENCH_SHORTCUT_GROUPS]
+    assert "macOS terminals" in group_names
+    rows = dict(CONSOLE_WORKBENCH_SHORTCUT_GROUPS)["macOS terminals"]
+    rendered = " ".join(f"{key} {copy}" for key, copy in rows)
+    assert "Option is not Meta" in rendered
+    assert "Ctrl+P" in rendered
+    assert "Ctrl+K" in rendered
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_section_headers_all_visible_without_scrolling():
+    """Keep default headers visible while enforcing the 20-row section ceiling.
+
+    With every section expanded, the rail's virtual height used to run ~3x
+    its viewport and Conversations started ~20 rows below the fold with no
+    scroll cue. The current contract gives each expanded section its own
+    bounded 20-row viewport and leaves ordinary outer scrolling available
+    when populated sections need more room. This guard keeps the compact
+    default headers visible at 160x48 and pins the local section ceiling.
+
+    Runs on the REAL app CSS stack (screen css + bundle), not the
+    bundle-less ConsoleHarness: the rail's vertical geometry -- header
+    min-heights, the workspace grid's height -- lives in the bundle, and a
+    geometry contract measured without it is not measured (the
+    task-14822/15790 lesson).
+    """
+    from pathlib import Path as _Path
+
+    from tldw_chatbook.css import build_css as _build_css
+
+    css_dir = _Path(_build_css.__file__).parent
+    screen_self, screen_scoped = _build_css.screen_css_paths(css_dir)
+
+    class _BundledConsoleHarness(ConsoleHarness):
+        CSS_PATH = [
+            str(screen_self),
+            str(css_dir / "tldw_cli_modular.tcss"),
+            str(screen_scoped),
+        ]
+
+    app = _build_test_app()
+    host = _BundledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        body = console.query_one("#console-left-rail-body")
+
+        section_names = (
+            "workspace",
+            "conversations",
+            "model",
+            "agent",
+            "details",
+            "character",
+        )
+        terminal = console.query_one("#console-terminal-open")
+        assert terminal.parent is not body
+        previous: tuple[tuple[int, int], ...] | None = None
+        for _ in range(40):
+            current = tuple(
+                (header.region.y, header.region.height)
+                for name in section_names
+                for header in (
+                    console.query_one(f"#console-rail-section-header-{name}"),
+                )
+            )
+            if current == previous and all(h > 0 for _y, h in current):
+                break
+            previous = current
+            await pilot.pause()
+
+        assert body.scroll_offset.y == 0
+        viewport_bottom = body.region.y + body.region.height
+        for name in section_names:
+            header = console.query_one(f"#console-rail-section-header-{name}")
+            assert header.region.height >= 1, f"{name} header not rendered"
+            assert body.region.y <= header.region.y < viewport_bottom, (
+                f"the {name} section header sits outside the rail viewport "
+                f"(header y={header.region.y}, viewport "
+                f"[{body.region.y}, {viewport_bottom})) -- the rail has "
+                "outgrown its budget again (task-15110)"
+            )
+
+        # Each expanded section owns up to 20 content rows before local
+        # scrolling, independent of how many peer sections are expanded.
+        budget = 20
+        for section_body in console.query(".console-rail-section-body"):
+            if not section_body.display:
+                continue
+            assert section_body.region.height <= budget, (
+                f"{section_body.id} height {section_body.region.height} "
+                f"exceeds the per-section budget {budget}"
+            )

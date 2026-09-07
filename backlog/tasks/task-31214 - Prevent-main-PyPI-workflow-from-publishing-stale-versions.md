@@ -46,16 +46,14 @@ Reason: This is a defensive CI release guard inside the existing packaging workf
 <!-- SECTION:NOTES:BEGIN -->
 Extended `Packaging/check_pypi_release.py` so it checks both exact candidate-version existence and the latest package-level PyPI release. The workflow now consumes `publish_release`, which is true only when the candidate version is absent and greater than the latest valid published version. This prevents a stale `main` checkout at `0.1.8.0` from publishing after `0.1.8.1` already exists.
 
-Updated PyPI release docs to state that protected `main` publishes only absent versions newer than the latest PyPI release. Added focused tests for newer absent versions, existing versions, stale lower versions, missing-project first releases, workflow output wiring, and a subprocess CLI run against a local PyPI-shaped HTTP server. Addressed review feedback by validating CLI inputs with Pydantic through the shared input-validation module, validating the PyPI JSON response shape, centralizing the PyPI request timeout, reporting the real latest release for existing stale candidates, rejecting custom output names that would overwrite fixed metadata, and keeping the selected Python interpreter consistent through the local release scripts.
+Updated PyPI release docs to state that protected `main` publishes only absent versions newer than the latest PyPI release. Added focused tests for newer absent versions, existing versions, stale lower versions, missing-project first releases, and workflow output wiring. Addressed review feedback by validating CLI inputs with Pydantic, validating the PyPI JSON response shape, centralizing the PyPI request timeout, reporting the real latest release for existing stale candidates, and rejecting custom output names that would overwrite fixed metadata.
 
 Verification:
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q` -> 25 passed
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Web_Scraping/test_input_validation.py -q` -> 9 passed
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m py_compile Packaging/check_pypi_release.py Packaging/common/dist_path.py Packaging/common/version.py Tests/Packaging/test_release_metadata.py tldw_chatbook/Utils/input_validation.py` -> passed
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check Packaging/check_pypi_release.py Packaging/common/dist_path.py Packaging/common/version.py Tests/Packaging/test_release_metadata.py tldw_chatbook/Utils/input_validation.py` -> passed
+- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q` -> 24 passed, 1 existing dependency warning
+- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m py_compile Packaging/check_pypi_release.py Tests/Packaging/test_release_metadata.py` -> passed
+- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check Packaging/check_pypi_release.py Tests/Packaging/test_release_metadata.py` -> passed
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c "from pathlib import Path; import yaml; yaml.safe_load(Path('.github/workflows/publish-pypi.yml').read_text()); print('yaml ok')"` -> yaml ok
 - `bash -n Packaging/build_release.sh` -> passed
-- `bash -n Packaging/build_dist.sh` -> passed
 - `git diff --check` -> passed
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python Packaging/check_pypi_release.py 0.1.8.0` -> `release_exists=false`, `latest_version=0.1.8.1`, `publish_release=false`
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python Packaging/check_pypi_release.py 0.1.8.2` -> `release_exists=false`, `latest_version=0.1.8.1`, `publish_release=true`

@@ -218,9 +218,13 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
                     if probe.status_code in {401, 403}:
                         auth_state = f"token REJECTED (HTTP {probe.status_code})"
                     elif probe.status_code == 404:
-                        auth_state = "could not verify (sync endpoint missing, HTTP 404)"
+                        auth_state = (
+                            "could not verify (sync endpoint missing, HTTP 404)"
+                        )
                     elif probe.status_code >= 500:
-                        auth_state = f"could not verify (server error HTTP {probe.status_code})"
+                        auth_state = (
+                            f"could not verify (server error HTTP {probe.status_code})"
+                        )
                     else:
                         # 2xx, or 422 schema rejection — the token itself passed.
                         auth_state = f"token accepted (HTTP {probe.status_code})"
@@ -230,9 +234,7 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
         except Exception as exc:  # never leave the status stuck on "Testing..."
             self._set_status(f"Test failed: {exc.__class__.__name__}: {exc}")
             return
-        self._set_status(
-            f"Reachable (HTTP {reach.status_code}). Auth: {auth_state}."
-        )
+        self._set_status(f"Reachable (HTTP {reach.status_code}). Auth: {auth_state}.")
 
     @on(Button.Pressed, "#server-switch-activate")
     def handle_activate_pressed(self, event: Button.Pressed) -> None:

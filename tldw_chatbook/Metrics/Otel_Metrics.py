@@ -18,13 +18,15 @@ In OpenTelemetry, labels are called 'attributes'. The same warning applies:
 attributes should only be used for values with low cardinality. Do not use
 user IDs, request IDs, etc., as attributes.
 """
+
 #
 # Imports
 import functools
+import logging
 import os
 import threading
 import time
-import logging
+
 #
 # Third-Party Libraries
 try:
@@ -33,74 +35,130 @@ try:
     from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    logging.warning("OpenTelemetry not installed. Advanced metrics features will be disabled.")
 #
 # Local Imports
 #
 #######################################################################################################################
 #
 # Statics:
+# A thread-safe registry for dynamically created OTel instruments.
+_instrument_registry = {}
+_instrument_lock = threading.Lock()
+_initialization_lock = threading.Lock()
+_initialization_result: bool | None = None
 # Global Meter object. The "Meter" is how you create instruments (counters, etc.)
 _meter = None
+
 #############################################################
 #
 # Functions:
 
-# A thread-safe registry for dynamically created OTel instruments.
-_instrument_registry = {}
-_instrument_lock = threading.Lock()
-_meter = None
 
+def init_metrics() -> bool:
+    """Initialize OpenTelemetry once and report whether it is available.
 
-def init_metrics():
+    Returns:
+        True after successful initialization, or False when the optional
+        OpenTelemetry dependencies are unavailable.
+
+    Raises:
+        Exception: Propagates OpenTelemetry setup failures after partial state
+            has been cleaned up.
     """
-    Initializes the OpenTelemetry SDK. Should be called once at startup.
+    global _meter, _initialization_result
 
-    Configures a Prometheus exporter and sets global resource attributes
-    which are attached to all emitted metrics. Configuration is read from
-    standard OTel environment variables.
-    """
-    if not OTEL_AVAILABLE:
-        logging.warning("OpenTelemetry not available. Metrics initialization skipped.")
-        return
-        
-    global _meter
+    if _initialization_result is not None:
+        return _initialization_result
 
-    # Use standard OTel env vars for configuration.
-    service_name = os.getenv("OTEL_SERVICE_NAME", "unknown_service")
-    service_version = os.getenv("OTEL_SERVICE_VERSION", "0.1.0")
+    with _initialization_lock:
+        if _initialization_result is not None:
+            return _initialization_result
+        if not OTEL_AVAILABLE:
+            logging.info(
+                "OpenTelemetry metrics are unavailable. "
+                "Install tldw_chatbook[debugging] to enable them."
+            )
+            _initialization_result = False
+            return False
 
-    resource = Resource(attributes={
-        SERVICE_NAME: service_name,
-        SERVICE_VERSION: service_version,
-    })
+        # Use standard OTel env vars for configuration.
+        service_name = os.getenv("OTEL_SERVICE_NAME", "unknown_service")
+        service_version = os.getenv("OTEL_SERVICE_VERSION", "0.1.0")
 
-    # The reader is the "exporter" for metrics.
-    # This one starts a Prometheus-compatible server.
-    reader = PrometheusMetricReader()
-    provider = MeterProvider(resource=resource, metric_readers=[reader])
-    metrics.set_meter_provider(provider)
+        reader = None
+        provider = None
+        instrumentor = None
+        instrumented_here = False
+        try:
+            resource = Resource(
+                attributes={
+                    SERVICE_NAME: service_name,
+                    SERVICE_VERSION: service_version,
+                }
+            )
 
-    _meter = metrics.get_meter("app.metrics.library")
+            # Registers an OpenTelemetry collector with prometheus_client.
+            reader = PrometheusMetricReader()
+            provider = MeterProvider(resource=resource, metric_readers=[reader])
+            meter = provider.get_meter("app.metrics.library")
 
-    # Automatically instrument system metrics (CPU, memory, etc.)
-    SystemMetricsInstrumentor().instrument()
+            # Automatically instrument system metrics (CPU, memory, etc.)
+            instrumentor = SystemMetricsInstrumentor()
+            was_instrumented = instrumentor.is_instrumented_by_opentelemetry
+            if was_instrumented:
+                raise RuntimeError(
+                    "OpenTelemetry system metrics are already instrumented."
+                )
+            instrumentor.instrument(meter_provider=provider)
+            instrumented_here = (
+                not was_instrumented and instrumentor.is_instrumented_by_opentelemetry
+            )
+            if not instrumented_here:
+                raise RuntimeError(
+                    "OpenTelemetry system metrics instrumentation did not activate."
+                )
 
-    logging.info(
-        f"OTel metrics initialized for service '{service_name}'. "
-        f"Prometheus exporter available on port 9464 at /metrics"
-    )
+            metrics.set_meter_provider(provider)
+            if metrics.get_meter_provider() is not provider:
+                raise RuntimeError(
+                    "OpenTelemetry meter provider ownership was not acquired."
+                )
+        except Exception:
+            if instrumented_here:
+                try:
+                    instrumentor.uninstrument()
+                except Exception:
+                    pass
+            if provider is not None:
+                try:
+                    provider.shutdown()
+                except Exception:
+                    pass
+            elif reader is not None:
+                try:
+                    reader.shutdown()
+                except Exception:
+                    pass
+            raise
+
+        _meter = meter
+        _initialization_result = True
+        logging.info("OpenTelemetry metrics initialized.")
+        return True
 
 
 def _get_meter():
     """Returns the global meter, initializing if necessary."""
     if not OTEL_AVAILABLE:
         return None
-    if not _meter:
-        logging.warning("Metrics not explicitly initialized. Calling init_metrics() with defaults.")
+    if _initialization_result is not True:
+        logging.warning(
+            "Metrics not explicitly initialized. Calling init_metrics() with defaults."
+        )
         init_metrics()
     return _meter
 
@@ -112,7 +170,7 @@ def _get_or_create_instrument(instrument_type, name, unit="", description=""):
     """
     if not OTEL_AVAILABLE:
         return None
-        
+
     if name in _instrument_registry:
         return _instrument_registry[name]
 
@@ -123,12 +181,14 @@ def _get_or_create_instrument(instrument_type, name, unit="", description=""):
         meter = _get_meter()
         if not meter:
             return None
-            
+
         instrument = None
-        if instrument_type == 'counter':
+        if instrument_type == "counter":
             instrument = meter.create_counter(name, unit=unit, description=description)
-        elif instrument_type == 'histogram':
-            instrument = meter.create_histogram(name, unit=unit, description=description)
+        elif instrument_type == "histogram":
+            instrument = meter.create_histogram(
+                name, unit=unit, description=description
+            )
         else:
             raise ValueError(f"Unsupported instrument type: {instrument_type}")
 
@@ -142,11 +202,13 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     In OTel, 'labels' are called 'attributes'.
     """
     if not OTEL_AVAILABLE:
-        logging.debug(f"OpenTelemetry not available. Would have logged counter: {metric_name}")
+        logging.debug(
+            f"OpenTelemetry not available. Would have logged counter: {metric_name}"
+        )
         return
     try:
         counter = _get_or_create_instrument(
-            'counter', metric_name, unit="1", description=documentation
+            "counter", metric_name, unit="1", description=documentation
         )
         if counter:
             counter.add(value, attributes=(labels or {}))
@@ -159,11 +221,13 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Records a value in a histogram. Documentation is used only on first creation.
     """
     if not OTEL_AVAILABLE:
-        logging.debug(f"OpenTelemetry not available. Would have logged histogram: {metric_name} = {value}")
+        logging.debug(
+            f"OpenTelemetry not available. Would have logged histogram: {metric_name} = {value}"
+        )
         return
     try:
         histogram = _get_or_create_instrument(
-            'histogram', metric_name, unit="s", description=documentation
+            "histogram", metric_name, unit="s", description=documentation
         )
         if histogram:
             histogram.record(value, attributes=(labels or {}))
@@ -171,7 +235,9 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
         logging.error(f"Failed to log OTel histogram {metric_name}: {e}")
 
 
-def timeit(metric_name=None, documentation="Execution time and call count of a function."):
+def timeit(
+    metric_name=None, documentation="Execution time and call count of a function."
+):
     """
     Decorator that times a function.
 
@@ -206,12 +272,12 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
                     metric_name=f"{base_name}_duration_seconds",
                     value=elapsed_time,
                     labels=common_attributes,
-                    documentation="Duration of function execution in seconds."
+                    documentation="Duration of function execution in seconds.",
                 )
                 log_counter(
                     metric_name=f"{base_name}_calls_total",
                     labels=common_attributes,
-                    documentation=f"Total calls to the function."
+                    documentation="Total calls to the function.",
                 )
 
                 # 2. Add a precise event to the active trace for debugging
@@ -221,13 +287,12 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
                         attributes={
                             "duration_sec": round(elapsed_time, 4),
                             "status": status,
-                        }
+                        },
                     )
 
         return wrapper
 
     return decorator
-
 
 
 # --- Example Usage ----

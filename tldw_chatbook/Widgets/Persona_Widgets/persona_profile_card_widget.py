@@ -14,15 +14,15 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from .personas_pane_messages import EditPersonaRequested
+from .personas_pane_messages import EditPersonaProfileRequested
 
 
 class PersonaProfileCardWidget(Container):
     """Read-only persona profile card with an Edit action."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
-    DEFAULT_CSS = """
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
+    BUNDLED_CSS = """
     PersonaProfileCardWidget {
         width: 100%;
         height: 100%;
@@ -95,13 +95,15 @@ class PersonaProfileCardWidget(Container):
             # not information (same rule as the character card).
             widget.display = bool(value)
             widget.update(f"{label}: {value}" if value else f"{label}:")
-        self.query_one("#personas-card-edit", Button).disabled = self._persona_id is None
+        self.query_one("#personas-card-edit", Button).disabled = (
+            self._persona_id is None
+        )
 
     @on(Button.Pressed, "#personas-card-edit")
     def _edit_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         if self._persona_id is not None:
-            self.post_message(EditPersonaRequested(self._persona_id))
+            self.post_message(EditPersonaProfileRequested(self._persona_id))
 
 
 __all__ = ["PersonaProfileCardWidget"]

@@ -1,18 +1,30 @@
-"""Compact Console rail handle widgets."""
+"""Console's rail handle: the shared base plus Console's own vocabulary."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_COLLAPSE_LEFT,
+    GLYPH_COLLAPSE_RIGHT,
+    GLYPH_COLLAPSED,
+)
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_RAIL_CONTEXT_LABEL,
+    CONSOLE_RAIL_INSPECTOR_LABEL,
+)
+from tldw_chatbook.Widgets.destination_rail import DestinationRailHandle
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 
-class ConsoleRailHandle(Vertical):
-    """Focusable compact handle for opening a collapsed Console rail."""
+class ConsoleRailHandle(DestinationRailHandle):
+    """Rail handle carrying Console's tooltips and compact vocabulary."""
+
+    VERTICAL_WIDTH = 3
+    VERTICAL_CONTENT_WIDTH = 1
 
     def __init__(
         self,
@@ -22,64 +34,122 @@ class ConsoleRailHandle(Vertical):
         button_id: str,
         badge_id: str,
         side: str,
+        vertical: bool = False,
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
-        self.label = label
-        self.badge = badge
-        self.button_id = button_id
-        self.badge_id = badge_id
-        self.side = side
-        self.add_class("console-rail-handle")
-        self.add_class(f"console-rail-handle-{side}")
+        """Create a Console rail handle.
+
+        Args:
+            label: Rail name shown on the handle button.
+            badge: Optional secondary line under the button.
+            button_id: DOM id for the open button.
+            badge_id: DOM id for the badge static.
+            side: ``"left"`` for Context or ``"right"`` for Inspector.
+            vertical: Whether to stack the compact handle text top-to-bottom.
+            kwargs: Forwarded to ``DestinationRailHandle``.
+        """
+        super().__init__(
+            label=label,
+            badge=badge,
+            button_id=button_id,
+            badge_id=badge_id,
+            side=side,
+            open_tooltip=(
+                "Open Context rail" if side == "left" else "Open Inspector rail"
+            ),
+            **kwargs,
+        )
+        self.vertical = vertical
+        if side == "right":
+            self.add_class("console-inspector-rail-handle")
+        if self.vertical:
+            self.add_class("console-rail-handle-vertical")
+            self.styles.width = self.VERTICAL_WIDTH
+            self.styles.min_width = self.VERTICAL_WIDTH
+            self.styles.max_width = self.VERTICAL_WIDTH
 
     def compose(self) -> ComposeResult:
-        button_width = 11
-        button_height: int | str = 3 if self.side == "right" else "100%"
-        button = Button(self._display_label(), id=self.button_id, compact=True)
-        button.add_class("console-rail-handle-button")
-        button.add_class(f"console-rail-handle-button-{self.side}")
-        button.styles.width = button_width
-        button.styles.min_width = 0
-        button.styles.max_width = button_width
-        button.styles.height = button_height
-        button.styles.min_height = button_height
-        button.styles.max_height = button_height
-        button.tooltip = (
-            "Open Context rail"
-            if self.side == "left"
-            else "Open Inspector rail"
-        )
-        yield button
-        if self.badge:
-            badge = Static(self._display_badge(), id=self.badge_id, markup=False)
-            badge.add_class("console-rail-handle-badge")
-            badge.tooltip = self.badge
-            yield badge
+        """Render the Inspector fill or opt-in vertical child geometry.
 
-    def sync_state(self, label: str, badge: str) -> None:
-        """Refresh this handle's label and badge without recomposing the screen."""
-        if self.label == label and self.badge == badge:
-            return
-        self.label = label
-        self.badge = badge
-        self.call_later(self.recompose)
+        Returns:
+            Child widgets with Console-specific handle geometry.
+        """
+        for child in super().compose():
+            if self.vertical and isinstance(child, Button):
+                child.add_class("console-rail-handle-button-vertical")
+                child.styles.width = self.VERTICAL_CONTENT_WIDTH
+                child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
+                child.styles.height = "1fr"
+                child.styles.clear_rule("min_height")
+                child.styles.clear_rule("max_height")
+                child.styles.line_pad = 0
+            elif self.vertical and isinstance(child, Static):
+                child.add_class("console-rail-handle-badge-vertical")
+                child.styles.width = self.VERTICAL_CONTENT_WIDTH
+                child.styles.min_width = 0
+                child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
+            elif self.side == "right" and isinstance(child, Button):
+                child.styles.width = "100%"
+                child.styles.max_width = "100%"
+                child.styles.height = "1fr"
+                child.styles.min_height = 0
+                child.styles.max_height = "100%"
+                child.styles.line_pad = 0
+            yield child
 
     def _display_label(self) -> str:
-        """Return a compact visible label while preserving full tooltips."""
-        if self.side != "right":
+        """Return compact visible text while preserving full tooltips.
+
+        TASK-31665 AC#4: the compact forms used to spell their arrows in
+        ASCII (``Context->`` / ``<-Inspect``) while the OPEN rails' own
+        collapse controls used the glyph vocabulary (``Context ◂`` in
+        `left_rail.py`, ``▸ Inspect`` in `right_rail.py`) -- so the same
+        rail spoke two arrow languages depending on whether it was open.
+        Both now use `console_glyphs`' arrows, resolved through
+        ``resolve_glyph`` so ASCII-glyph mode still gets ``>``/``<``. The
+        arrow points the way ACTIVATING the control moves the rail, which
+        is why a collapsed rail's arrow is the mirror of its open one, not
+        a copy. Widths are unchanged (9 cells either way), so the collapsed
+        handle's fixed geometry is untouched.
+        """
+        if self.vertical:
+            return self._stack_vertical_label(self.label)
+        if self.side == "left":
+            if self.label != CONSOLE_RAIL_CONTEXT_LABEL:
+                return self.label
+            return f"Context {resolve_glyph(GLYPH_COLLAPSE_RIGHT)}"
+        if self.label != CONSOLE_RAIL_INSPECTOR_LABEL:
             return self.label
-        return "Inspector" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+        return f"{resolve_glyph(GLYPH_COLLAPSE_LEFT)} Inspect"
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""
-        if self.side != "right":
-            return self.badge
-        if self.badge == "1 approval":
-            return "1 appr"
-        if self.badge.endswith(" approvals"):
-            count = self.badge.split(maxsplit=1)[0]
-            return f"{count} appr"
-        if self.badge == "artifact":
-            return "art"
-        return self.badge
+        display_badge = self.badge
+        if self.side == "right":
+            if self.badge == "1 approval":
+                display_badge = "1 appr"
+            elif self.badge.endswith(" approvals"):
+                count = self.badge.split(maxsplit=1)[0]
+                display_badge = f"{count} appr"
+            elif self.badge == "artifact":
+                display_badge = "art"
+        if self.vertical:
+            return self._stack_vertical_text(display_badge)
+        return display_badge
+
+    @staticmethod
+    def _stack_vertical_label(label: str) -> str:
+        """Normalize known rail labels before rendering them one cell per row."""
+        normalized_label = " ".join(label.split())
+        if normalized_label == " ".join(CONSOLE_RAIL_CONTEXT_LABEL.split()):
+            normalized_label = normalized_label.removesuffix(GLYPH_COLLAPSED).rstrip()
+        elif normalized_label == " ".join(CONSOLE_RAIL_INSPECTOR_LABEL.split()):
+            normalized_label = normalized_label.removeprefix(
+                GLYPH_COLLAPSE_LEFT
+            ).lstrip()
+        return ConsoleRailHandle._stack_vertical_text(normalized_label)
+
+    @staticmethod
+    def _stack_vertical_text(text: str) -> str:
+        """Normalize whitespace and render each remaining character on its own row."""
+        return "\n".join(" ".join(text.split()))

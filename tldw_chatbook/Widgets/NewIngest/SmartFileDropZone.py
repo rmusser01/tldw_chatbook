@@ -24,7 +24,9 @@ class ImmediateButton(Button):
         if self.action is None:
             self.post_message(Button.Pressed(self))
         else:
-            self.call_later(self.app.run_action, self.action, default_namespace=self._parent)
+            self.call_later(
+                self.app.run_action, self.action, default_namespace=self._parent
+            )
         return self
 
 
@@ -102,10 +104,16 @@ class FilePreviewItem(CaptureSafePostMixin, Widget):
         return f"{float(size):.1f} B"
 
     @staticmethod
-    def _get_file_icon_and_type(extension: str, mime_type: str | None) -> tuple[str, str]:
-        if extension in {".mp4", ".avi", ".mov", ".mkv"} or str(mime_type).startswith("video/"):
+    def _get_file_icon_and_type(
+        extension: str, mime_type: str | None
+    ) -> tuple[str, str]:
+        if extension in {".mp4", ".avi", ".mov", ".mkv"} or str(mime_type).startswith(
+            "video/"
+        ):
             return "🎬", "Video"
-        if extension in {".mp3", ".wav", ".flac", ".m4a"} or str(mime_type).startswith("audio/"):
+        if extension in {".mp3", ".wav", ".flac", ".m4a"} or str(mime_type).startswith(
+            "audio/"
+        ):
             return "🎵", "Audio"
         if extension == ".pdf":
             return "📕", "PDF"
@@ -197,7 +205,9 @@ class SmartFileDropZone(CaptureSafePostMixin, Widget):
         self._emit_message(FilesSelected(list(self.selected_files)))
 
     def remove_file(self, file_path: Path) -> None:
-        self.selected_files = [path for path in self.selected_files if path != file_path]
+        self.selected_files = [
+            path for path in self.selected_files if path != file_path
+        ]
         self._emit_message(FileRemoved(file_path))
 
     def clear_files(self) -> None:
@@ -207,20 +217,29 @@ class SmartFileDropZone(CaptureSafePostMixin, Widget):
     def set_allowed_types(self, allowed_types: set[str] | None) -> None:
         self.allowed_types = allowed_types
         if allowed_types is not None:
-            self.selected_files = [path for path in self.selected_files if self._is_file_type_allowed(path)]
+            self.selected_files = [
+                path for path in self.selected_files if self._is_file_type_allowed(path)
+            ]
 
     def _is_file_type_allowed(self, file_path: Path) -> bool:
-        return self.allowed_types is None or file_path.suffix.lower() in self.allowed_types
+        return (
+            self.allowed_types is None or file_path.suffix.lower() in self.allowed_types
+        )
 
     def _create_file_filters(self) -> list[tuple[str, list[str]]]:
         if not self.allowed_types:
             return [("All Files", ["*"])]
         extensions = sorted(self.allowed_types)
-        return [("All Allowed Files", extensions), *[(ext, [ext]) for ext in extensions]]
+        return [
+            ("All Allowed Files", extensions),
+            *[(ext, [ext]) for ext in extensions],
+        ]
 
     @on(Button.Pressed, "#browse-overlay")
     def _browse_files(self) -> None:
-        selected = self.app.push_screen_wait(FileOpen(filters=self._create_file_filters()))
+        selected = self.app.push_screen_wait(
+            FileOpen(filters=self._create_file_filters())
+        )
         if selected:
             self.add_files(list(selected))
 

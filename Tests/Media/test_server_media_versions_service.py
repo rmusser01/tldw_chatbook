@@ -16,7 +16,13 @@ class FakeMediaVersionsClient:
         return {"media_id": media_id, "version_number": version_number}
 
     async def create_media_version(self, media_id, request_data):
-        self.calls.append(("create_media_version", media_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_media_version",
+                media_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"media_id": media_id, "versions": []}
 
     async def delete_media_version(self, media_id, version_number):
@@ -29,7 +35,9 @@ async def test_server_media_service_routes_document_version_operations():
     client = FakeMediaVersionsClient()
     service = ServerMediaReadingService(client=client)
 
-    versions = await service.list_document_versions(7, include_content=True, limit=25, page=2)
+    versions = await service.list_document_versions(
+        7, include_content=True, limit=25, page=2
+    )
     version = await service.get_document_version(7, 2, include_content=False)
     saved = await service.save_analysis_version(
         7,

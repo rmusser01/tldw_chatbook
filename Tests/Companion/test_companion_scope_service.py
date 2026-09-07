@@ -14,7 +14,10 @@ class FakeServerCompanionService:
 
     async def create_check_in(self, request_data):
         self.calls.append(("create_check_in", request_data))
-        return {"backend": "server", "record_id": "server:companion_activity:act-check-in"}
+        return {
+            "backend": "server",
+            "record_id": "server:companion_activity:act-check-in",
+        }
 
     async def list_activity(self, **kwargs):
         self.calls.append(("list_activity", kwargs))
@@ -22,7 +25,10 @@ class FakeServerCompanionService:
 
     async def get_activity(self, event_id):
         self.calls.append(("get_activity", event_id))
-        return {"backend": "server", "record_id": f"server:companion_activity:{event_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:companion_activity:{event_id}",
+        }
 
     async def list_knowledge(self, **kwargs):
         self.calls.append(("list_knowledge", kwargs))
@@ -30,15 +36,24 @@ class FakeServerCompanionService:
 
     async def get_knowledge(self, card_id):
         self.calls.append(("get_knowledge", card_id))
-        return {"backend": "server", "record_id": f"server:companion_knowledge:{card_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:companion_knowledge:{card_id}",
+        }
 
     async def get_reflection(self, reflection_id):
         self.calls.append(("get_reflection", reflection_id))
-        return {"backend": "server", "record_id": f"server:companion_reflection:{reflection_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:companion_reflection:{reflection_id}",
+        }
 
     async def get_conversation_prompts(self, **kwargs):
         self.calls.append(("get_conversation_prompts", kwargs))
-        return {"backend": "server", "record_id": "server:companion_conversation_prompts"}
+        return {
+            "backend": "server",
+            "record_id": "server:companion_conversation_prompts",
+        }
 
     async def list_goals(self, **kwargs):
         self.calls.append(("list_goals", kwargs))
@@ -54,11 +69,17 @@ class FakeServerCompanionService:
 
     async def purge_data(self, request_data):
         self.calls.append(("purge_data", request_data))
-        return {"backend": "server", "record_id": "server:companion_lifecycle:knowledge"}
+        return {
+            "backend": "server",
+            "record_id": "server:companion_lifecycle:knowledge",
+        }
 
     async def rebuild_data(self, request_data):
         self.calls.append(("rebuild_data", request_data))
-        return {"backend": "server", "record_id": "server:companion_lifecycle:reflections"}
+        return {
+            "backend": "server",
+            "record_id": "server:companion_lifecycle:reflections",
+        }
 
 
 class FakePolicyEnforcer:
@@ -120,7 +141,9 @@ async def test_companion_scope_service_routes_server_surface():
 @pytest.mark.asyncio
 async def test_companion_scope_service_honestly_rejects_local_mode():
     server = FakeServerCompanionService()
-    scope = CompanionScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = CompanionScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Companion server operations are server-only"):
         await scope.list_activity(mode="local")

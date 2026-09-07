@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.Translation_Interop.translation_scope_service import TranslationScopeService
+from tldw_chatbook.Translation_Interop.translation_scope_service import (
+    TranslationScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -69,7 +71,9 @@ async def test_translation_scope_service_routes_server_translation():
         "backend": "server",
         "record_id": "server:translation:text",
     }
-    assert server.calls == [("translate_text", {"text": "Hello", "target_language": "French"})]
+    assert server.calls == [
+        ("translate_text", {"text": "Hello", "target_language": "French"})
+    ]
     assert policy.calls == ["translation.text.launch.server"]
 
 
@@ -79,7 +83,9 @@ async def test_translation_scope_service_rejects_local_mode_without_dispatch():
     scope = TranslationScopeService(server_service=server)
 
     with pytest.raises(ValueError, match="server-only"):
-        await scope.translate_text({"text": "Hello", "target_language": "French"}, mode="local")
+        await scope.translate_text(
+            {"text": "Hello", "target_language": "French"}, mode="local"
+        )
 
     assert server.calls == []
 
@@ -89,7 +95,9 @@ async def test_translation_scope_service_routes_local_translation_when_adapter_c
     server = FakeServerTranslationService()
     local = FakeLocalTranslationService()
     policy = FakePolicyEnforcer()
-    scope = TranslationScopeService(server_service=server, local_service=local, policy_enforcer=policy)
+    scope = TranslationScopeService(
+        server_service=server, local_service=local, policy_enforcer=policy
+    )
 
     result = await scope.translate_text(
         {"text": "Hello", "target_language": "French"},
@@ -103,7 +111,9 @@ async def test_translation_scope_service_routes_local_translation_when_adapter_c
         "backend": "local",
         "record_id": "local:translation:text",
     }
-    assert local.calls == [("translate_text", {"text": "Hello", "target_language": "French"})]
+    assert local.calls == [
+        ("translate_text", {"text": "Hello", "target_language": "French"})
+    ]
     assert server.calls == []
     assert policy.calls == []
     assert scope.list_unsupported_capabilities(mode="local") == []
@@ -112,10 +122,14 @@ async def test_translation_scope_service_routes_local_translation_when_adapter_c
 @pytest.mark.asyncio
 async def test_translation_scope_service_blocks_denied_action_before_dispatch():
     server = FakeServerTranslationService()
-    scope = TranslationScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    scope = TranslationScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
-        await scope.translate_text({"text": "Hello", "target_language": "French"}, mode="server")
+        await scope.translate_text(
+            {"text": "Hello", "target_language": "French"}, mode="server"
+        )
 
     assert server.calls == []
 

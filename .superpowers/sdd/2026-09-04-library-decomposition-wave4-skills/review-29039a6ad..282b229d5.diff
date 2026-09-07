@@ -1,0 +1,414 @@
+# Review package: 29039a6ad..282b229d5
+
+## Commits
+282b229d5 docs(library): wave-4 final review outcome recorded in the ledger
+4bf1187f8 docs(library): wave-4 fix wave — probe caveat corrected, dead import pruned, hazard-census follow-ups filed
+
+## Files changed
+ .../progress.md                                    |  3 +
+ .../task-2-report.md                               | 17 +++---
+ .../task-4-report.md                               | 24 +++++---
+ .../test_library_modules_size_ratchet.py           | 13 +++-
+ backlog/docs/library-decomposition-recipe.md       | 69 ++++++++++++++++------
+ ...y-skill-allowed-tools-selector-and-CSS-rules.md | 28 +++++++++
+ ...nsuses-to-a-standing-Tests-Architecture-test.md | 28 +++++++++
+ .../Library_Modules/library_skills_controller.py   | 10 ++--
+ 8 files changed, 155 insertions(+), 37 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/progress.md b/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/progress.md
+index 6806cf5a3..efeb07de3 100644
+--- a/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/progress.md
++++ b/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/progress.md
+@@ -77,10 +77,13 @@ than wave-2's own band, attributed to this session's sustained 8-9+ concurrent p
+ on the probed Media/Notes rail-switch path. Follow-ups filed: TASK-31421 (skills-browse
+ loading/ready settlement race, Task 2's own forward note) and TASK-31422 (closeout-cycle flake
+ 20+-run paired quiescent sample, Task 1's own minor). True max task id swept at 31420 across
+ every remote ref + local branch + worktree; CLI auto-assign probed and confirmed stale (offered
+ 31263); both filed by hand at 31421/31422 with two-item hand-authored AC blocks. Stale-doc sweep:
+ library_skills_state.py's own module docstring rewritten from future to past tense (comment-only)
+ to match the collections/search+RAG post-cleanup template; library_skills_controller.py's own
+ docstring re-checked and already correct. Durable evidence force-added (ledger + 3 reports + 5
+ review diffs + this report). Report: .superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-4-report.md.
+ WAVE-4 COMPLETE.
++Task 4: complete (commits 6c71826b1 + 29039a6ad; battery green, sweep zero unexplained, probe slower-than-band under measured load — honest caveat recorded)
++ALL WAVE-4 TASKS COMPLETE — dispatching final whole-branch review (fable)
++FINAL REVIEW (wave 4): MERGE-READY WITH CONDITIONS (fable); fix wave + dev merge executed; see task-4-report + this commit.
+diff --git a/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-2-report.md b/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-2-report.md
+index ccaa143c6..1613cd876 100644
+--- a/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-2-report.md
++++ b/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-2-report.md
+@@ -453,42 +453,45 @@ untouched), `60857a2be` (GREEN — the move, at its final 86-mover/
+   fresh `git stash` re-derivation in this task specifically — consistent
+   with recipe §7's own "check this list before spending time re-proving"
+   guidance, but recorded here as a lighter-weight evidence path than the
+   stash-baseline method used everywhere else in this report.
+ 
+ ## 12. Post-landing review fix round
+ 
+ A coordinator review of the landed commits found 1 CRITICAL + 1 IMPORTANT
+ + 3 minor findings, all addressed in this fix round.
+ 
+-### 12a. CRITICAL — `focused` unbound on the controller (a SEVENTH bare-self
+-hazard instance, a NEW shape: unbound-attribute escape)
++### 12a. CRITICAL — `focused` unbound on the controller (recipe §3's sixth
++bypass shape, its own unbound-attribute-escape case — the seventh
++hazard instance counted under that one shape, not an eighth/new shape)
+ 
+ `_sync_library_skills_browse_result` reads `focused = getattr(self,
+ "focused", None)`. `LibrarySkillsController` had no `focused` property --
+ unlike every OTHER framework service this controller (and every sibling
+ controller in the file, e.g. `library_rag_search_controller.py:571-573`,
+ `library_conversations_controller.py:544-546`) binds, this one was
+ missed. The `getattr` default silently returned `None` on every call, no
+ exception anywhere, degrading two real behaviors permanently: the
+ live-focus override (`if isinstance(focused, (Button, Input)) and ...:
+ focus_identity = live_focus_id`) and the live-caret cursor-position read
+ (a deliberate fix, commit `8027e99f0`). User-visible: focus dropped on
+ every committed-mutation refresh (`focus_identity=None` callers at this
+ controller's own line ~1160 and the screen's `restore_state`/`_select_
+ library_rail_row_after_source_admission` call sites).
+ 
+-**This is a DISTINCT shape from exclusion 5's Forms A/B/C** (all three of
+-which are bare `self` passed to something that does an IDENTITY
+-comparison it can never satisfy). `getattr(self, "focused", None)` is not
+-an identity comparison at all -- it is a plain attribute read with a
+-silent default, invisible to BOTH the recipe's own `self.<attr>`
++**This is recipe §3's sixth bypass shape's own "close cousin" case, not a
++distinct seventh shape — but it IS a mechanically distinct FAILURE MODE
++from exclusion 5's Forms A/B/C** (all three of which are bare `self`
++passed to something that does an IDENTITY comparison it can never
++satisfy). `getattr(self, "focused", None)` is not an identity comparison
++at all -- it is a plain attribute read with a silent default, invisible
++to BOTH the recipe's own `self.<attr>`
+ `ast.Attribute` census (the name never appears as a literal expression)
+ and to any exception-based detection (no `AttributeError` is ever
+ raised). A dedicated re-scan of the whole moved-body source for `getattr(
+ self, "<literal-string>", ...)` calls (not just `self.<attr>` accesses)
+ found exactly this one instance in the final 86-mover set.
+ 
+ **Fix**: added the same live-read `@property` every sibling controller
+ already carries:
+ ```python
+ @property
+diff --git a/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-4-report.md b/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-4-report.md
+index 9e6b7a83a..a861e1cba 100644
+--- a/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-4-report.md
++++ b/.superpowers/sdd/2026-09-04-library-decomposition-wave4-skills/task-4-report.md
+@@ -62,27 +62,37 @@ Task 3). Contents:
+   independently via the probe run (see below) — this session's own machine
+   ran at a sustained ~22-23 load average with 8+ concurrent `pytest`
+   processes throughout, a condition worth recording explicitly per §19
+   lesson 5's own "the paired comparison is what keeps this valid regardless
+   of load" discipline.
+ - **Probe run**: `Helper_Scripts/library_click_probe.py`, once, compared
+   against the ONLY prior recorded run in this recipe (wave-2 close, §16).
+   Every interaction came in slower than that band (e.g. `notes (switch,
+   2nd)`'s 587 ms max gap vs. wave-2's highest recorded 195 ms) — recorded
+   as evidence of ambient machine load (8+ concurrent `pytest` processes,
+-  ~22.7 load average measured at run time), NOT a code regression: this
+-  task's diff touches zero code on the Media/Notes rail-switch path the
+-  probe exercises, and every prior wave-4 task's own report already
+-  confirms the skills move touches none of that path either (a completely
+-  separate subsystem). Recorded honestly with the load caveat attached,
+-  neither silently matched to the old band nor wrongly flagged as a
+-  regression.
++  ~22.7 load average measured at run time), NOT a code regression.
++  **Correction (wave-4 final review):** the "zero code on the probed path"
++  framing this bullet originally used was FALSE — the skills cleanup made
++  mechanical receiver swaps of skills-field reads/writes INSIDE five of the
++  probed path's own methods (`compose_content`,
++  `_select_library_rail_row_after_source_admission`,
++  `_toggle_library_media_reader_pane`, `restore_state`,
++  `_persist_library_reader_preference`); corrected in the recipe to "only
++  mechanical receiver swaps ... nanosecond-scale, cannot explain a ~3x
++  max-gap delta", with the load-independent probe columns (recompose 0→0,
++  full-updates identical row-for-row) added as the stronger evidence for no
++  structural regression, and the small mounts/nodes drift (media
++  163→173/113→115, notes-switch-2nd 110→115) remarked as attributable to
++  ordinary Media/Notes feature drift on this branch between wave-2 and
++  wave-4 close, not to this wave's own diff. Recorded honestly with the
++  load caveat attached, neither silently matched to the old band nor
++  wrongly flagged as a regression.
+ - **Lessons** (2 new, both cross-referencing existing §3/§19 content rather
+   than duplicating it): (1) a "count-accuracy discipline" lesson naming
+   three separate wave-4 incidents (the "three pairs" arithmetic error, the
+   "18 vs. 28" restructure-count review fix, and the mover-count
+   re-derivation after Forms B/C) as one recurring failure shape worth a
+   single named rule; (2) a lesson on why a CRITICAL bug (the unbound
+   `focused` property) survived an entire green verification battery and was
+   only caught by independent review — stated as a general point about what
+   a green battery does and does not prove; (3) a lesson tying the probe's
+   own load-sensitivity to the xdist sweep's already-documented load-
+diff --git a/Tests/Architecture/test_library_modules_size_ratchet.py b/Tests/Architecture/test_library_modules_size_ratchet.py
+index 36462401f..a248bc5a5 100644
+--- a/Tests/Architecture/test_library_modules_size_ratchet.py
++++ b/Tests/Architecture/test_library_modules_size_ratchet.py
+@@ -205,21 +205,32 @@ _BUDGETS: dict[str, int] = {
+     # growth, no method body touched (86 movers unchanged -- cleanup prunes
+     # the SCREEN's delegators, not the controller's own methods, per the
+     # collections/search+RAG precedent). Two moved-docstring-adjacent module
+     # docstring corrections: the "6-match gap is three @property/@x.setter
+     # pairs" arithmetic error (should be SIX -- 2 raw defs - 1 unique name =
+     # 1 gap per name, 6 names = 6 gap; the same error task 2's own report
+     # caught and fixed in its own text (§12c) but missed here) and the
+     # "LibraryScreen keeps one-line delegators under every one of these
+     # original names" claim, now false for 16 of the 86 (this task's own
+     # screen-side prune) -- both fixed in this task, +9 lines. 3131 -> 3140.
+-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3140,
++    #
++    # 2026-09-04, wave-4 final review (fix wave): two comment/import-only
++    # changes, no method body touched. (1) Removed the dead
++    # `LIBRARY_SKILLS_IMPORT_WORKER_GROUP` import from `.screen_constants`
++    # (zero in-file uses -- the screen, not this controller, is the one
++    # consumer of that name), -1 line. (2) Reworded the `focused`-property
++    # fix-round docstring paragraph to align its "SIXTH ... distinct in
++    # shape" framing with recipe §3's landed "sixth bypass shape, close
++    # cousin" framing (the getattr/focused escape is that shape's own
++    # sub-case -- the seventh instance counted under it -- not an eighth/
++    # new shape), +3 lines. Net 3140 -> 3142.
++    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
+ }
+ 
+ #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
+ #: tolerance for the same reasoning at a larger scale): ordinary in-file
+ #: edits — a strengthened comment, a docstring fix — must not fail this
+ #: check. It exists only to catch a budget left stale-high after a
+ #: controller shrinks (a cleanup PR that forgot to lower its row), not to
+ #: pin every file to its exact byte count at all times.
+ _SLACK_TOLERANCE_LINES = 50
+ 
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index 8a726f712..a74c4e24b 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -3054,34 +3054,63 @@ perl -e 'alarm 150; exec @ARGV' .venv/bin/python Helper_Scripts/library_click_pr
+ | media (re-click same, 2nd) | 460 | 96 | 0 | 2 | 89 | 115 |
+ | notes (switch) | 539 | 279 | 0 | 1 | 110 | 110 |
+ | notes (re-click same) | 312 | 76 | 0 | 1 | 38 | 110 |
+ | media (switch-back) | 747 | 286 | 0 | 1 | 175 | 115 |
+ | notes (switch, 2nd) | 853 | 587 | 0 | 1 | 110 | 115 |
+ | media (switch-back, 2nd) | 606 | 171 | 0 | 1 | 175 | 115 |
+ 
+ Every row is HIGHER than the wave-2 close band (§16: settle 264-485 ms, max
+ gap 54-195 ms) — most sharply `notes (switch, 2nd)`'s 587 ms max gap versus
+ §16's own highest recorded gap of 195 ms. This is NOT evidence of a
+-code-level regression: this task's diff is documentation-only (recipe
+-edits, two backlog filings, one comment-only docstring correction), and
+-every prior wave-4 task's own report already confirms the skills move
+-touches zero code on the Media/Notes rail-switch click path this probe
+-exercises (a completely separate subsystem). The load evidence above is the
+-far more plausible explanation — this probe measures wall-clock settle time
+-and main-thread gap under whatever CPU contention exists at run time, and
+-this session's own machine was running 8+ concurrent `pytest` processes and
+-sitting at a load average of ~22.7 for the ENTIRE sweep window this probe
+-ran inside of, versus wave-2 close's own probe run, which recorded "no
+-prior run exists to diff against" and gives no load context of its own
+-either way. Recorded here as this wave's own close-time baseline (like
+-wave-2's), with the load caveat attached rather than either silently
+-matched to the old band or wrongly flagged as a regression.
++code-level regression, but the "zero code on the probed path" framing this
++section originally used (corrected in the wave-4 final review) was FALSE:
++the skills cleanup (`ed4c29d45`) does touch this exact path, via mechanical
++receiver swaps of skills-field reads/writes INSIDE five of the probed
++path's own methods — `compose_content`,
++`_select_library_rail_row_after_source_admission`,
++`_toggle_library_media_reader_pane`, `restore_state`, and
++`_persist_library_reader_preference` (`self._library_skill(s)_<field>` →
++`self._skills_state.<field>`, dict/attribute lookups only, confirmed by
++diffing each hunk against every prior/subsequent commit's own claim on
++those line ranges — zero control-flow or logic changes anywhere in the
++five). That is nanosecond-scale work and cannot explain a ~3x max-gap
++delta on its own. The stronger evidence for "no structural regression" is
++the load-INDEPENDENT probe columns, which match wave-2's row-for-row:
++`recompose` is 0→0 on every row and `full-update` is identical row-for-row
++(2/2/2/1/1/1/1/1, both waves) — a real per-frame cost regression on this
++path would show up there, not only in wall-clock settle/gap numbers that
++scale with ambient CPU contention. The load evidence remains the far more
++plausible explanation for the timing delta itself — this probe measures
++wall-clock settle time and main-thread gap under whatever CPU contention
++exists at run time, and this session's own machine was running 8+
++concurrent `pytest` processes and sitting at a load average of ~22.7 for
++the ENTIRE sweep window this probe ran inside of, versus wave-2 close's own
++probe run, which recorded "no prior run exists to diff against" and gives
++no load context of its own either way. One further drift IS visible and
++worth naming rather than smoothing over: `mounts`/`nodes` counts rose
++slightly and unevenly — media mounts 163→173, nodes 113→115 (every media
++row gains exactly 2 nodes); `notes (switch, 2nd)` alone gains nodes
++110→115, while the other two notes rows stay at 110. This is small, does
++not track the settle/gap delta's shape, and is attributable to ordinary
++Media/Notes feature drift on this branch between wave-2 close (`09a5cadff`)
++and wave-4 close (`ed4c29d45`), not to this wave's own skills diff: 70
++non-doc commits touched `library_screen.py`/`Widgets/Library`/
++`Library_Modules` in that span, including several `origin/dev` merges and
++Media/Notes rail feature work with no connection to skills (e.g. `e34b11b23`
++"the media items pane gets a legible multi-row action grammar", `9c128c7ee`
++"the Reader carries a review-set banner", `35e9228df`/`c63e55cc0` review-set
++auto-resume/build-from-read-later) — any of which plausibly adds a handful
++of extra widgets/nodes to the Media pane and, specifically on a second
++notes switch, the notes canvas. Recorded here as this wave's own close-time
++baseline (like wave-2's), with both the load caveat and the corrected
++probed-path claim attached, rather than either silently matched to the old
++band or wrongly flagged as a regression.
+ 
+ #### Lessons
+ 
+ 1. **A battery-found hazard's own count correction needs the SAME evidence
+    discipline as any other claim — re-derive the full tuple, not just the
+    one number that changed.** Wave-4 saw this pattern three separate times
+    in one series: Task 1's own "three `@property`/`@x.setter` pairs"
+    arithmetic error (should have been six; 2 raw `FunctionDef`s − 1 unique
+    name = 1 gap per name, 6 names = 6 gap) propagated unfixed through Task
+    2's own report text AND its controller's module docstring — caught in
+@@ -3123,19 +3152,23 @@ matched to the old band or wrongly flagged as a regression.
+    not evidence no hazard exists — the review gate exists precisely to
+    catch the shapes the battery's own design cannot see yet.
+ 3. **A headless click-probe's absolute numbers move with ambient machine
+    load exactly the way the xdist sweep's absolute failure counts do (§19
+    lesson 5) — record the load alongside the numbers, or the probe's own
+    "must not move outside noise" contract (§9) becomes unfalsifiable.**
+    This close's own probe run posted every interaction slower than the
+    wave-2 close's recorded band, under a machine sitting at a ~22.7 load
+    average with 8+ concurrent `pytest` processes running throughout — a
+    condition wave-2's own probe run recorded no comparable load context
+-   for. Because this task's diff touches zero code on the probe's own
+-   Media/Notes rail-switch path, the honest read is ambient load, not
+-   regression — but that conclusion is only defensible because the load was
+-   actually measured and recorded at run time, not asserted after the fact.
++   for. This task's diff only makes mechanical receiver swaps of
++   skills-field reads/writes on the probe's own Media/Notes rail-switch
++   path (nanosecond-scale — see the correction above, this same section),
++   so the honest read is ambient load, not regression — corroborated by
++   the load-independent probe columns (recompose, full-update) matching
++   wave-2's row-for-row — but that conclusion is only defensible because
++   the load was actually measured and recorded at run time, not asserted
++   after the fact.
+    A future controller-move PR's own before/after probe pair (§9) should
+    capture the SAME `ps aux`/load-average snapshot each time, or a real
+    regression and a noisy machine become indistinguishable from the numbers
+    alone.
+ 
+diff --git a/backlog/tasks/task-31423 - Library-skills-editor-dead-library-skill-allowed-tools-selector-and-CSS-rules.md b/backlog/tasks/task-31423 - Library-skills-editor-dead-library-skill-allowed-tools-selector-and-CSS-rules.md
+new file mode 100644
+index 000000000..117ed673e
+--- /dev/null
++++ b/backlog/tasks/task-31423 - Library-skills-editor-dead-library-skill-allowed-tools-selector-and-CSS-rules.md	
+@@ -0,0 +1,28 @@
++---
++id: TASK-31423
++title: >-
++  Library skills editor: dead #library-skill-allowed-tools selector and CSS
++  rules
++status: To Do
++assignee: []
++created_date: '2026-09-05 01:07'
++labels:
++  - library
++  - skills
++  - tech-debt
++  - css
++dependencies: []
++priority: low
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++The Library skills editor's tool-selection UI moved from a plain Input to a SelectionList-based chooser (see library_skills_canvas.py's _tool_picker_selections/skill_allowed_tools_sequence), but the old #library-skill-allowed-tools Input id was never fully retired. Two @on(Input.Changed, "#library-skill-allowed-tools") handlers still exist (library_skills_controller.py and its screen-side delegator in library_screen.py) and never fire because no widget with that id is ever composed anywhere in the editor, and matching dead CSS rules remain in tldw_chatbook/css/screen_agentic_library.tcss (lines ~1424, ~1439) and tldw_chatbook/css/components/_agentic_terminal.tcss (lines ~2591, ~2606). Found during the wave-4 Library skills decomposition final review; out of scope for that review to fix, filed here so the dead surface is removed as its own atomic change.
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [ ] #1 The dead #library-skill-allowed-tools @on(Input.Changed, ...) handler(s) and any now-unreachable code they alone guard are removed from library_skills_controller.py and library_screen.py, with the full Library skills test suites still green
++- [ ] #2 The dead #library-skill-allowed-tools CSS rules are removed from screen_agentic_library.tcss and _agentic_terminal.tcss, and the CSS bundle sync check in scripts/preflight.sh stays green
++<!-- AC:END -->
+diff --git a/backlog/tasks/task-31424 - Promote-the-getattr-literal-resolves-and-bare-self-identity-hazard-censuses-to-a-standing-Tests-Architecture-test.md b/backlog/tasks/task-31424 - Promote-the-getattr-literal-resolves-and-bare-self-identity-hazard-censuses-to-a-standing-Tests-Architecture-test.md
+new file mode 100644
+index 000000000..80fcd5b06
+--- /dev/null
++++ b/backlog/tasks/task-31424 - Promote-the-getattr-literal-resolves-and-bare-self-identity-hazard-censuses-to-a-standing-Tests-Architecture-test.md	
+@@ -0,0 +1,28 @@
++---
++id: TASK-31424
++title: >-
++  Promote the getattr-literal-resolves and bare-self-identity hazard censuses to
++  a standing Tests/Architecture test
++status: To Do
++assignee: []
++created_date: '2026-09-05 01:07'
++labels:
++  - library
++  - architecture
++  - tech-debt
++  - testing
++dependencies: []
++priority: medium
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++Recipe section 3's sixth bypass shape (bare self used as an identity-compared/screen-identity argument, and its close cousin the unbound-attribute escape via getattr(self, "<literal>", default)) was found twice by one-off, hand-run AST censuses during the wave-4 skills series -- once pre-landing (bare-self-identity) and once only by post-landing review (the getattr/focused escape), the latter surviving a full green verification battery. Every future Library_Modules controller-move series (and any future subsystem's controller) is exposed to the same two silent-hazard shapes, with no automated guard re-running either census against new movers. Promoting both censuses into a standing test closes that gap for every controller under Library_Modules going forward, not just the skills series.
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [ ] #1 A Tests/Architecture test runs the getattr(self, "<literal-string>", default)-with-no-corresponding-property census and the bare-self-passed-as-an-identity-argument census over every controller module under tldw_chatbook/UI/Library_Modules/, not just library_skills_controller.py
++- [ ] #2 The new test fails against a reintroduced instance of either hazard shape (a negative-control fixture proves this) and passes on the current tree
++<!-- AC:END -->
+diff --git a/tldw_chatbook/UI/Library_Modules/library_skills_controller.py b/tldw_chatbook/UI/Library_Modules/library_skills_controller.py
+index 03480adcd..37e278d76 100644
+--- a/tldw_chatbook/UI/Library_Modules/library_skills_controller.py
++++ b/tldw_chatbook/UI/Library_Modules/library_skills_controller.py
+@@ -249,23 +249,26 @@ examples):
+    THIS controller), then falls into the function's own kind-independent
+    top/exception-handler code, which reads/writes ``is_running``,
+    ``app.capture_mouse(None)``, ``refresh``, ``call_after_refresh``, and
+    two SHARED shell fields this cluster's own moved bodies never otherwise
+    touch at all -- ``_library_canvas_projection_depth``/``_library_canvas_
+    resync_pending`` (group (b) below, bound purely for this reason, exactly
+    mirroring the RAG controller's own identical pair for the identical
+    cause).
+ 
+    **Fix round (post-landing review): ``focused`` was missing entirely --
+-   a SIXTH unbound-attribute-escape hazard, distinct in shape from
+-   exclusions 3e's bare-self-identity findings.** ``_sync_library_skills_
+-   browse_result`` reads ``focused = getattr(self, "focused", None)`` --
++   recipe §3's sixth bypass shape's own "close cousin" sub-case, not a
++   distinct seventh shape: an unbound-attribute-escape hazard alongside
++   exclusions 3e's bare-self-identity findings (Forms A/B/C) under that
++   SAME shape -- the SEVENTH instance counted under it (6 identity-
++   argument names + this one).** ``_sync_library_skills_browse_result``
++   reads ``focused = getattr(self, "focused", None)`` --
+    a literal-name ``getattr`` with a default, exactly the shape the
+    recipe's own census (a plain ``self.<attr>`` ``ast.Attribute`` walk)
+    cannot see, because the attribute name never appears as a literal
+    ``self.<name>`` expression. With no ``focused`` property bound, the
+    call silently returns ``None`` on every invocation -- not an
+    ``AttributeError``, not a wrong value, just quiet, permanent
+    degradation of the two behaviors gated on it: the live-focus override
+    (`if isinstance(focused, (Button, Input)) and ... startswith
+    ("library-skills-"): focus_identity = live_focus_id`) and the live
+    caret-position read for the filter input (a deliberate fix, commit
+@@ -388,21 +391,20 @@ from ...Widgets.Library import (
+     skill_trust_review_preview,
+     skill_trust_review_tooltip,
+     skill_trust_state_line,
+     skill_trust_unlock_enabled,
+     skill_trust_unlock_tooltip,
+     skill_user_invocable_label,
+ )
+ from .canvas_sync import _sync_library_canvas
+ from .library_skills_state import LibrarySkillsState, skill_state_shim_attr
+ from .screen_constants import (
+-    LIBRARY_SKILLS_IMPORT_WORKER_GROUP,
+     LIBRARY_SKILLS_READER_PROFILE,
+     LIBRARY_SKILL_DIRTY_VETO_COPY,
+     LIBRARY_SKILL_SAVE_STATUS_COPY,
+     LIBRARY_SKILL_TEXT_MAX_CHARS,
+ )
+ from .screen_helpers import _library_screen_is_current
+ from .screen_support_types import LibraryEntryReconcileResult
+ from ..Screens.skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
+ 
+ if TYPE_CHECKING:

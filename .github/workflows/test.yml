@@ -2,15 +2,20 @@ name: Tests
 
 on:
   push:
-    branches: [ "main", "dev" ]
-  pull_request:
-    branches: [ "main", "dev" ]
+    branches: ["main"]
   workflow_dispatch:
+
+# Comprehensive tests run on main pushes or explicit dispatch. Pull requests
+# use the bounded fast lane in derived-artifacts.yml; scheduled full-tree
+# breadth lives in nightly-deep.yml, activated from default-branch main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  # Keep the shared push-only cancellation policy. `main` and manual runs are
+  # never cancelled; this workflow no longer accepts pull_request events.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
   
 env:
   PYTEST_TIMEOUT: 300
@@ -24,164 +29,246 @@ defaults:
     shell: bash
 
 jobs:
-  unit-tests:
-    name: Unit Tests - Python ${{ matrix.python-version }} - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  core-tests:
+    # task-1465: complete-tree coverage replaces `-m unit` (which selected 27
+    # of ~950 files while ~590 files ran in no comprehensive job). The UI shard
+    # is its own job below; OS/Python breadth lives in nightly-deep.
+    #
+    # TASK-21411: sharded, because the 120-minute budget stopped being the
+    # question. Read from a killed run's own log: the ubuntu leg started
+    # pytest at 15:44:55 and was still emitting progress steadily -- no
+    # stall -- when the cap killed it at 17:39 having reached **60%**. So the
+    # suite needs ~190 minutes on a 4-vCPU runner, and no timeout this side
+    # of GitHub's 6-hour ceiling makes a single job a sane place to put it.
+    # Six deterministic pytest-shard slices are ~32 min each, roughly a
+    # quarter of the budget, and xdist still parallelizes within each slice.
+    #
+    # ubuntu only, on purpose. The measured constrained pool is ubuntu (~12
+    # concurrent slots), so the max-parallel bound below is the capacity
+    # control. Cross-platform breadth lives in nightly-deep.
+    name: Core Tests (all but UI) - shard ${{ matrix.shard }}/${{ strategy.job-total }}
+    runs-on: ubuntu-latest
+    # Kept at 120 as headroom: the per-shard estimate is ~32 min, so this is
+    # ~4x margin rather than a target. A shard that approaches it is a signal
+    # to resize the matrix, not to raise the cap again.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
+      # Six live Tests runs previously asked for ~100 ubuntu jobs against an
+      # account ceiling of roughly 12. Three core plus three UI shards leaves
+      # capacity for short required checks from other workflows.
+      max-parallel: 3
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
-        exclude:
-          # Exclude Windows + Python 3.13 if not yet supported
-          - os: windows-latest
-            python-version: "3.13"
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    
-    - name: Install core dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
-        pip install pytest-json-report pytest-cov
-    
-    - name: Install Windows-specific dependencies
-      if: runner.os == 'Windows'
-      run: |
-        # Install Windows-specific packages if needed
-        pip install windows-curses || echo "windows-curses not needed"
-    
-    - name: Run unit tests
-      shell: bash
-      run: |
-        pytest -m unit \
-          --json-report \
-          --json-report-file=unit-test-results-${{ matrix.os }}-${{ matrix.python-version }}.json \
-          --cov=tldw_chatbook \
-          --cov-report=xml:coverage-unit-${{ matrix.os }}-${{ matrix.python-version }}.xml \
-          --cov-report=term-missing \
-          -v
-    
-    - name: Upload test results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: unit-test-results-${{ matrix.os }}-${{ matrix.python-version }}
-        path: |
-          unit-test-results-*.json
-          coverage-unit-*.xml
-    
-  integration-tests:
-    name: Integration Tests - Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    
-    - name: Install all dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
-        pip install pytest-json-report pytest-cov
-        # Install optional dependencies for integration tests
-        pip install -e ".[embeddings_rag,websearch,chunker]"
-    
-    - name: Setup test environment
-      run: |
-        # Download NLTK data if needed
-        python -c "import nltk; nltk.download('punkt', quiet=True)"
-        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
-    
-    - name: Run integration tests
-      run: |
-        pytest -m integration \
-          --json-report \
-          --json-report-file=integration-test-results-${{ matrix.python-version }}.json \
-          --cov=tldw_chatbook \
-          --cov-report=xml:coverage-integration-${{ matrix.python-version }}.xml \
-          --cov-report=term-missing \
-          -v
-    
-    - name: Upload test results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: integration-test-results-${{ matrix.python-version }}
-        path: |
-          integration-test-results-*.json
-          coverage-integration-*.xml
-  
-  ui-tests:
-    name: UI Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+        shard: [0, 1, 2, 3, 4, 5]
 
     steps:
     - uses: actions/checkout@v4
-    
+      with:
+        fetch-depth: 0
+
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
         cache: 'pip'
-    
+
+    - name: Install all dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install pytest-json-report
+        pip install -e ".[embeddings_rag,websearch,chunker]"
+        # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
+        # these two and nothing else from the `audio` extra, which would also drag
+        # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
+        pip install pydub "audioop-lts; python_version >= '3.13'"
+
+    - name: Setup test environment
+      run: |
+        python -c "import nltk; nltk.download('punkt', quiet=True)"
+        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+
+    - name: Run core tests in parallel
+      # pytest-shard slices the collected list deterministically, so the union
+      # of the six shards is exactly the set one unsharded job would have run
+      # -- the same contract the UI job below relies on.
+      run: |
+        pytest Tests --ignore=Tests/UI \
+          -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=6 \
+          --timeout=300 \
+          --json-report --json-report-omit log \
+          --json-report-file=core-test-results-${{ matrix.shard }}.json
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        # Per-shard, so matrix siblings cannot overwrite each other's report.
+        name: core-test-results-${{ matrix.shard }}
+        path: |
+          core-test-results-*.json
+
+  artifact-lease-spike:
+    name: Artifact leases - Python ${{ matrix.python-version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: pip
+
+    - name: Install lease test dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -e .
+        pip install -r requirements-test.txt
+
+    - name: Prove cross-platform operation leases
+      shell: bash
+      run: |
+        pytest Tests/Model_Artifacts/test_operation_leases.py \
+          Tests/Model_Artifacts/test_operation_leases_process.py -v
+
+  artifact-lease-shape:
+    name: Artifact lease workflow shape
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install CI shape test dependencies
+      run: |
+        python -m pip install pytest pytest-timeout
+
+    - name: Verify artifact lease CI wiring
+      run: |
+        pytest Tests/CI/test_github_actions_test_workflow.py --confcutdir=Tests/CI
+
+  artifact-lease-gate:
+    name: Artifact Lease Gate
+    runs-on: ubuntu-latest
+    needs: [artifact-lease-spike, artifact-lease-shape]
+    if: ${{ always() }}
+
+    steps:
+    - name: Require successful native lease matrix and CI shape
+      run: |
+        if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || [ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then
+          echo "Artifact lease matrix result: ${{ needs.artifact-lease-spike.result }}"
+          echo "Artifact lease shape result: ${{ needs.artifact-lease-shape.result }}"
+          exit 1
+        fi
+
+  ui-tests:
+    # TASK-18608: the UI suite (~13.5k tests) needs ~5.8 hours on one
+    # 4-worker job -- it was cancelled by the 45-minute job cap at ~11%
+    # on every run, on every branch, so this job had not been green in
+    # 100+ runs. Sharded 12 ways via pytest-shard (deterministic split of
+    # the collected list): each shard runs ~30 min inside the same 45-min
+    # budget, with xdist parallelism retained WITHIN each shard.
+    name: UI Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: 'pip'
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report
+        # The vendored tldw_profile_core package (packages/tldw_profile_core/
+        # src, mapped via pyproject package-dir) is importable only when the
+        # distribution is installed; requirements.txt alone leaves every UI
+        # shard dead at collection (ModuleNotFoundError via
+        # Sync_Interop/sync_readiness.py) — the other jobs already install
+        # the project.
+        pip install -e .
         # Install textual dev tools for better debugging
         pip install textual-dev
-    
-    - name: Run UI tests
-      # Run the full Tests/UI directory, not just the 47 ui-marked tests —
-      # the unmarked ~2000 tests previously ran nowhere and rotted silently
-      # (repaired in PRs #508/#510; suite is green as of those merges).
+
+    - name: Run UI tests in parallel
+      # The full Tests/UI directory (not just ui-marked tests), sharded with
+      # xdist (task-1465) and across this matrix (TASK-18608). ui-marked
+      # tests OUTSIDE Tests/UI are covered by core-tests, which runs
+      # everything but this directory. pytest-shard slices the collected
+      # test list deterministically, so the union of the shards is exactly
+      # the suite and re-runs are stable.
       run: |
         pytest Tests/UI \
+          -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=12 \
           --timeout=180 \
-          --json-report \
-          --json-report-file=ui-test-results.json \
-          -v
-
-    - name: Run ui-marked tests outside Tests/UI
-      # A couple dozen ui-marked tests live in other Tests/ directories;
-      # keep collecting them so the directory switch above loses nothing.
-      run: |
-        pytest Tests -m ui --ignore=Tests/UI \
-          --timeout=180 \
-          --json-report \
-          --json-report-file=ui-marked-test-results.json \
-          -v
+          --json-report --json-report-omit log \
+          --json-report-file=ui-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ui-test-results
+        name: ui-test-results-${{ matrix.shard }}
         path: |
-          ui-test-results.json
-          ui-marked-test-results.json
+          ui-test-results-${{ matrix.shard }}.json
+
+  textual-minimum:
+    name: MCP - Minimum Textual 8.2.8
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install core and test dependencies at the Textual floor
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
+        pip install -e .
+        pip install pytest pytest-asyncio pytest-timeout
+        # Floor check against the declared minimum supported Textual (pinned in pyproject.toml).
+        pip install "textual==8.2.8"
+
+    - name: Verify packaging and MCP at the Textual floor
+      run: |
+        pytest \
+          Tests/CI/test_textual_runtime_contract.py \
+          Tests/UI/test_mcp_workbench.py \
+          Tests/UI/test_mcp_tools_mode.py \
+          --timeout=180 \
+          --tb=short
   
   all-tests:
     name: Full Test Suite (Manual)
@@ -191,6 +278,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
@@ -205,6 +294,10 @@ jobs:
         pip install -r requirements-test.txt
         pip install pytest-json-report pytest-cov
         pip install -e ".[embeddings_rag,websearch,chunker]"
+        # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
+        # these two and nothing else from the `audio` extra, which would also drag
+        # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
+        pip install pydub "audioop-lts; python_version >= '3.13'"
     
     - name: Setup test environment
       run: |
@@ -214,7 +307,7 @@ jobs:
     - name: Run all tests
       run: |
         pytest ./Tests/ \
-          --json-report \
+          --json-report --json-report-omit log \
           --json-report-file=all-test-results.json \
           --cov=tldw_chatbook \
           --cov-report=xml:coverage-all.xml \
@@ -243,8 +336,8 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, ui-tests]
-    if: always()
+    needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]
+    if: ${{ always() }}
     
     steps:
     - uses: actions/checkout@v4
@@ -265,18 +358,24 @@ jobs:
         pip install pytest-json-report
         python .github/scripts/generate_test_summary.py
     
-    - name: Comment PR with results
-      if: github.event_name == 'pull_request'
-      continue-on-error: true
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const summary = fs.readFileSync('test-summary.md', 'utf8');
-          
-          await github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: summary
-          });
+    # TASK-21411: this job declares `needs:` and `if: always()`, which makes it
+    # RUN after those jobs whatever they did -- it never inspected what they
+    # did. On run 32647831275 it reported `success` while all twelve UI shards
+    # were red. A summary that cannot go red is not a gate, and this is the
+    # check most likely to be marked required.
+    #
+    # `always()` stays: the summary is worth publishing on failure too. The
+    # verdict remains the final step.
+    - name: Require every gated job to have succeeded
+      if: >-
+        needs.core-tests.result != 'success' ||
+        needs.ui-tests.result != 'success' ||
+        needs.textual-minimum.result != 'success' ||
+        needs.artifact-lease-gate.result != 'success'
+      run: |
+        echo "core-tests:          ${{ needs.core-tests.result }}"
+        echo "ui-tests:            ${{ needs.ui-tests.result }}"
+        echo "textual-minimum:     ${{ needs.textual-minimum.result }}"
+        echo "artifact-lease-gate: ${{ needs.artifact-lease-gate.result }}"
+        echo "::error::A gated test job did not succeed; see the results above."
+        exit 1

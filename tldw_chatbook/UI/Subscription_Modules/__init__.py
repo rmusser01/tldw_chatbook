@@ -1,6 +1,10 @@
-"""Focused controllers for the subscription window runtime-aware slice."""
+"""Controllers surviving the retired subscription window.
+
+``SubscriptionBackendController`` used to live here. It drove a ``SubscriptionWindow``
+class that no longer exists and was removed with the legacy scheduler it wrapped
+(TASK-1211). Watchlists is now the home of that functionality.
+"""
 
 from .notifications_inbox_controller import NotificationsInboxController
-from .subscription_backend_controller import SubscriptionBackendController
 
-__all__ = ["NotificationsInboxController", "SubscriptionBackendController"]
+__all__ = ["NotificationsInboxController"]

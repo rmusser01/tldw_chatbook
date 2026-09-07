@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import os
+import stat
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from tldw_chatbook.Notifications import ClientNotificationsDB, EventStateRepository
 from tldw_chatbook.Sync_Interop import SyncStateRepository
+from tldw_chatbook.Utils.private_paths import PrivatePathError
 from tldw_chatbook.runtime_policy.server_parity_state import (
     ServerParityStateRepositories,
     build_server_parity_state_repositories,
@@ -23,13 +29,74 @@ def test_server_parity_state_bundle_reuses_client_notifications_db(tmp_path):
     assert bundle.local_notifications_db is local_notifications
     assert isinstance(bundle.event_state_repository, EventStateRepository)
     assert isinstance(bundle.sync_state_repository, SyncStateRepository)
-    assert bundle.event_state_repository.db_path == tmp_path / "tldw_chatbook_event_state.db"
-    assert bundle.sync_state_repository.db_path == tmp_path / "tldw_chatbook_sync_state.db"
+    assert (
+        bundle.event_state_repository.db_path
+        == tmp_path / "tldw_chatbook_event_state.db"
+    )
+    assert (
+        bundle.sync_state_repository.db_path == tmp_path / "tldw_chatbook_sync_state.db"
+    )
 
 
 def test_server_parity_state_builder_requires_existing_local_notifications_db(tmp_path):
     with pytest.raises(TypeError):
-        build_server_parity_state_repositories(data_dir=tmp_path, client_id="test-client")
+        build_server_parity_state_repositories(
+            data_dir=tmp_path, client_id="test-client"
+        )
+
+
+def test_server_parity_state_builder_requires_existing_data_directory(tmp_path: Path):
+    local_notifications = ClientNotificationsDB(":memory:")
+    missing = tmp_path / "missing"
+
+    with pytest.raises(PrivatePathError):
+        build_server_parity_state_repositories(
+            data_dir=missing,
+            client_id="test-client",
+            local_notifications_db=local_notifications,
+        )
+
+    assert not missing.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+def test_server_parity_state_builder_does_not_mutate_caller_directory(
+    tmp_path: Path,
+):
+    local_notifications = ClientNotificationsDB(":memory:")
+    data_dir = tmp_path / "custom"
+    data_dir.mkdir()
+    data_dir.chmod(0o751)
+
+    with (
+        patch("tldw_chatbook.runtime_policy.server_parity_state.EventStateRepository"),
+        patch("tldw_chatbook.runtime_policy.server_parity_state.SyncStateRepository"),
+    ):
+        build_server_parity_state_repositories(
+            data_dir=data_dir,
+            client_id="test-client",
+            local_notifications_db=local_notifications,
+        )
+
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o751
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink contract")
+def test_server_parity_state_builder_rejects_symlinked_data_directory(
+    tmp_path: Path,
+):
+    local_notifications = ClientNotificationsDB(":memory:")
+    target = tmp_path / "target"
+    target.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(PrivatePathError):
+        build_server_parity_state_repositories(
+            data_dir=alias,
+            client_id="test-client",
+            local_notifications_db=local_notifications,
+        )
 
 
 def test_server_parity_state_bundle_clears_scoped_server_profile_state(tmp_path):
@@ -40,7 +107,9 @@ def test_server_parity_state_bundle_clears_scoped_server_profile_state(tmp_path)
         local_notifications_db=local_notifications,
     )
     event = _event(server_profile_id="server-a", authenticated_principal_id="user-a")
-    other_event = _event(server_profile_id="server-a", authenticated_principal_id="user-b")
+    other_event = _event(
+        server_profile_id="server-a", authenticated_principal_id="user-b"
+    )
     bundle.event_state_repository.record_event_and_advance_processed_cursor(event)
     bundle.event_state_repository.record_event_and_advance_processed_cursor(other_event)
     bundle.sync_state_repository.record_identity_mapping(
@@ -71,30 +140,42 @@ def test_server_parity_state_bundle_clears_scoped_server_profile_state(tmp_path)
         authenticated_principal_id="user-a",
     )
 
-    assert bundle.event_state_repository.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor is None
-    assert bundle.event_state_repository.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-b",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "cursor-user-b"
-    assert bundle.sync_state_repository.list_identity_mappings(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-    ) == []
-    assert len(
-        bundle.sync_state_repository.list_identity_mappings(
+    assert (
+        bundle.event_state_repository.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        is None
+    )
+    assert (
+        bundle.event_state_repository.get_processed_cursor(
+            source_authority="server",
             server_profile_id="server-a",
             authenticated_principal_id="user-b",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "cursor-user-b"
+    )
+    assert (
+        bundle.sync_state_repository.list_identity_mappings(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
         )
-    ) == 1
+        == []
+    )
+    assert (
+        len(
+            bundle.sync_state_repository.list_identity_mappings(
+                server_profile_id="server-a",
+                authenticated_principal_id="user-b",
+            )
+        )
+        == 1
+    )
 
 
 def _event(*, server_profile_id: str, authenticated_principal_id: str):
@@ -107,7 +188,10 @@ def _event(*, server_profile_id: str, authenticated_principal_id: str):
         stream_name="notifications",
         stream_instance_id="workspace-1",
         event_kind="notification.created",
-        entity_ref={"type": "notification", "id": f"notification-{authenticated_principal_id}"},
+        entity_ref={
+            "type": "notification",
+            "id": f"notification-{authenticated_principal_id}",
+        },
         payload_hash=f"hash-{authenticated_principal_id}",
         event_id=f"event-{authenticated_principal_id}",
         server_cursor=f"cursor-{authenticated_principal_id}",

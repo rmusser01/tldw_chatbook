@@ -1,0 +1,3245 @@
+{
+  "change_groups": [
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "abandoning wedged sub-agent at end of turn",
+      "id": "TASK-15103-G001",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._settle_fleet",
+          "semantic_digest": "004402978fcb54cd2539f1ece9ff8ca5ab2e2a51858ab5e7d9d30c0f4a744896"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "ecbe6b2dda2267a78f6ba2de1a4ed501d1620dd7"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._settle_fleet",
+          "semantic_digest": "4ad072e5f6bf665a92e4cc12905efad9fc419afcea3262701404632676b4263c"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "on_run_id hook raised; continuing",
+      "id": "TASK-15103-G002",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one",
+          "semantic_digest": "b23077b710aac6bd61d8b24dba9869f3d97c58fa9200d7d72f25674a2ccd40aa"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "ecbe6b2dda2267a78f6ba2de1a4ed501d1620dd7"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one",
+          "semantic_digest": "5d16aa9e655523cb794778f7c87e8139c3f00a10ceee2268c27e79e5712e8d20"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "could not revoke pending approvals",
+      "id": "TASK-15103-G003",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._revoke_run_approvals",
+          "semantic_digest": "fc2edfeacb6f3dca3c26d7ebc06f7c6c0ca0e9511bf1c53abb0fd502a81d32ef"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "545d935c99af6f9b577bc219ae11dc5e232466ce"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._revoke_run_approvals",
+          "semantic_digest": "6729f494fc17211a51b79882d2a74526dc81f57e7f5350ae8bf46177e0d8b158"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "could not start sub-agent thread",
+      "id": "TASK-15103-G004",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one.spawn",
+          "semantic_digest": "aac2fadaf5d36c37bde6615872b410a40f2df067de9847316f4b0562004f1a00"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "614c4801a47cb844194c58331003825843985c89"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one.spawn",
+          "semantic_digest": "6b6fc162470f86819c92e42d422c6683c6eb75f176470a0a16b1ac4796501e0d"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "invalid max_live_subagents setting; using default",
+      "id": "TASK-15103-G005",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_coerce_max_live_subagents",
+          "semantic_digest": "b3edf12ecf31b0a0c9e98d13c985479c4b4f9f4730b02664060ceec7c77f15de"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "614c4801a47cb844194c58331003825843985c89"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_coerce_max_live_subagents",
+          "semantic_digest": "855b2efa4817702f6f37ebfb2188ceb4003bf7da187ea89e34681ade90322fcc"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "settling sub-agents at end of turn failed; finalizing the run anyway",
+      "id": "TASK-15103-G006",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService.run_turn",
+          "semantic_digest": "3059ada65bedb75b801a2923c75d93aa98266c6d8c68fe6d56e5b027feeccf91"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "614c4801a47cb844194c58331003825843985c89"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService.run_turn",
+          "semantic_digest": "aadaa5fa8b2df37dacabf9043e02ff4d7fe0df990ff63b10f397de919e1c142e"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "could not mark abandoned sub-agent run cancelled",
+      "id": "TASK-15103-G007",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._settle_fleet",
+          "semantic_digest": "6b26b9cbffc8250fa82fde7392838774ce6fb2387341a21ed477e520ae8435d4"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "ecbe6b2dda2267a78f6ba2de1a4ed501d1620dd7"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._settle_fleet",
+          "semantic_digest": "c8689d7ce4516f121253f504993f0aacc059b542d90edc3887aa005debfc05d6"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "sub-agent thread raised",
+      "id": "TASK-15103-G008",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one.spawn.run_child",
+          "semantic_digest": "a9618fdb7cbd36c09e69434b2de8504f3717642df6999ce378c0f744d9e8a402"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "ecbe6b2dda2267a78f6ba2de1a4ed501d1620dd7"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one.spawn.run_child",
+          "semantic_digest": "dc778f8d7c17e339d9887a1ef9cbb04f5bd04981ac03eea0df4871b778280a8e"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "could not persist terminal status for sub-agent run",
+      "id": "TASK-15103-G009",
+      "owner_path": "tldw_chatbook/Agents/agent_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one.spawn.run_child",
+          "semantic_digest": "f82d0af8e123ecd5c1ac9a92533e4cb9fbbb15ab6255b82e992f851e0c9b2d25"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b91e2e12c83e4e9c033c8dcda50007162e739c5e"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "AgentService._run_one.spawn.run_child",
+          "semantic_digest": "e5d1c2369214c61bcefe62a6422080c43758eaad8a7a3338db49b358d45e812d"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "console agent run loop did not stop within s; leaving it to the daemon thread",
+      "id": "TASK-15103-G010",
+      "owner_path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "permitted_fields": [
+        {
+          "expression": "_LOOP_THREAD_JOIN_SECONDS",
+          "provenance": "The value is a code-owned numeric constant reviewed at the recorded provenance revision."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleAgentBridge.run_reply",
+          "semantic_digest": "f23a41a0262dc1faa5d692a9e546dc065ecb9ad7ce37b9bf9d95527f6e3e8340"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b0d137f888542324d278af9ae1ad87f4639425a5"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to clear skill-script confirm during revocation",
+      "id": "TASK-15103-G011",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "37e1954a0b9fbb73291bf3498f5a4c01107d5b11abcff09ff37d9e6ae202bc7a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "c2bc5058fae060eff7e79b28642949fdf5e372b5"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "08da85dd881833f3693973c802f0358f3c9d7dc489ccb0cb6f908f995096be9d"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Revoked pending approval rounds for cancelled run",
+      "id": "TASK-15103-G012",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "ce9a979f139dcfe5b0b6d34ac41ed5a6d3448c5b77da7ccce765e60dd69d0293"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "c2bc5058fae060eff7e79b28642949fdf5e372b5"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "1b23c97e7f43da08aa8e74c16fafc6894a1d3cd0b8497bc2288aa8157d623e58"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_context_policy_decision",
+      "id": "TASK-15103-G013",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "54a7fa6e9abef2936e41725de23c4d96125d179487a2c16e87c85919f919f99e"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "b3165a9f204f10714ad7625ca01acc2e7dc9cd8fa39caeeaa9d394ad1c26b069"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "console_context_repository_init_failed",
+      "id": "TASK-15103-G014",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [
+        {
+          "expression": "error_type=type(exc).__name__",
+          "provenance": "The exception class name is ADR-029 metadata and excludes the exception message and traceback."
+        },
+        {
+          "expression": "persistence_db_present=True",
+          "provenance": "The value is a fixed code literal, not provider-, user-, or model-controlled data."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.__init__",
+          "semantic_digest": "bbc3846c2d574c8f7015c218eb9014be9767ed44b7b13de2e7ad47299bc5b1d8"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "97d3dd0805c726e7816f6c256e0c8901b3652e33"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to marshal approval clear during revocation",
+      "id": "TASK-15103-G015",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "1e560704cd0b7e54d7c651b72ab30615917c11d194ab2f87d8994956a57e6610"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "545d935c99af6f9b577bc219ae11dc5e232466ce"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "c61c0da165850b55ca51f9dfcb268a7bcd22e907e9f69270423b8f22b6667ba4"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "change_review: workspace roots unavailable; run untracked",
+      "id": "TASK-15103-G016",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "5be9e6a0472a81cc59424aea82c86bf2a794e20a"
+      },
+      "rationale": "The recorded refactor removed this obsolete diagnostic state; restoring it would add redundant output or reintroduce private values or exception details.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._run_agent_reply",
+          "semantic_digest": "2a1aa446f2ff8a35b89b818aaf12b3e07add45401e174b86caed6b2971a210d8"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Skipped staged Console context-policy flush: persistence adapter exposes no policy write seam.",
+      "id": "TASK-15103-G017",
+      "owner_path": "tldw_chatbook/Chat/console_chat_store.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore._flush_context_policy_on_first_persist",
+          "semantic_digest": "cc028be70e00c9da1dfdd478561326d1e6af6ba73054c0c9622febac25d5de3b"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore._flush_context_policy_on_first_persist",
+          "semantic_digest": "0008735943594d0b2d9bf5ba4e495ae671eb3072d6dbcbfc9b8d2eb6ab11b341"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to persist Console context policy; in-memory policy keeps the applied value.",
+      "id": "TASK-15103-G018",
+      "owner_path": "tldw_chatbook/Chat/console_chat_store.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore.set_session_context_policy_overrides",
+          "semantic_digest": "6046d363a8c43e4ebdb9c6d67f32633483504be2a8c57396376ef7dcd93faaff"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "exception",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore.set_session_context_policy_overrides",
+          "semantic_digest": "8ea29e5f6bfcbb64f7dbc58ae3cc4214fb19afd084e12a68ec3d10c9157a7dfe"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to read Console context policy on resume.",
+      "id": "TASK-15103-G019",
+      "owner_path": "tldw_chatbook/Chat/console_chat_store.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore._resolve_context_policy_on_resume",
+          "semantic_digest": "7dcd78beb49f51dd44f15df231e242ff950768fcec5e56275de5f743f2ce1c6e"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "exception",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore._resolve_context_policy_on_resume",
+          "semantic_digest": "91add3074fe965c0c0e43a8f7eaca7a9db144a93a121015ad7c9aa8b50b239e7"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to flush Console context policy on first persist.",
+      "id": "TASK-15103-G020",
+      "owner_path": "tldw_chatbook/Chat/console_chat_store.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore._flush_context_policy_on_first_persist",
+          "semantic_digest": "510841f30327499469a43e760fce25cc4c768bb2dfdfc9f619bb3d35b877745a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "exception",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatStore._flush_context_policy_on_first_persist",
+          "semantic_digest": "aa2299831bf0e7f1d1c4e99bedb5d86d65cf1422872ba11cfeadb4bb9dbc1ccd"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_compaction_auxiliary_started",
+      "id": "TASK-15103-G021",
+      "owner_path": "tldw_chatbook/Chat/console_context_compaction.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleCompactionService.compact",
+          "semantic_digest": "42716104bdcbf98acdb91bd74f6fc948905e6103a0ae6dff7dc4a85275800d9f"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleCompactionService.compact",
+          "semantic_digest": "7b7013b67ebb10758d1c9ad5fe53af331291fc7a51b5d6f091e35ea4a2c6dad7"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_compaction_auxiliary_finished",
+      "id": "TASK-15103-G022",
+      "owner_path": "tldw_chatbook/Chat/console_context_compaction.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleCompactionService._finish",
+          "semantic_digest": "ecd2820264279cca8b3a36d9b61cc8c7b252e347678a0ff86b15d66401f203c5"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleCompactionService._finish",
+          "semantic_digest": "c017275954feebd45f54502f681f707c6a98aec879e5967c38bd4da76d1654b5"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_request_capability_lookup_failed",
+      "id": "TASK-15103-G023",
+      "owner_path": "tldw_chatbook/Chat/console_provider_gateway.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleProviderGateway.prepare_chat_request",
+          "semantic_digest": "fd2b4d1ed85cb13c8682349f5c4f3c7859f46fa27bf80d1a3d55571f8fff8a53"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "2d88425ba6f4ce65bc4a3de2d4e534a91e7d6480"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleProviderGateway.prepare_chat_request",
+          "semantic_digest": "bc8e6bb85516c20529a4d6479418ba36d06329ca6a0b2adab412838b1093738a"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP transport task cancelled during cleanup",
+      "id": "TASK-15103-G024",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "03bd447e0cf126c86b4f68230fddbcaa3a8d9b8ccc68c34fe6831702e244c324"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP subprocess exited before kill cleanup",
+      "id": "TASK-15103-G025",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "084a3d72bcc0fc94f111e6b251b6a5d5104f5f4329a8f70b0adfd434dfe4230b"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to kill MCP subprocess during forced cleanup",
+      "id": "TASK-15103-G026",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "08ce40fa6a65ae60ff33561f30e38b6f26ecbc777c597fbf0e36739b35df4c33"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "330d6fdcc405b785a3f67a5d8ad3690019c98473"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to reap MCP subprocess after kill",
+      "id": "TASK-15103-G027",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "261a33e6a7bf65053387fd9fbce18626ae47a796c48699c1f039de1d0e8bb604"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP subprocess did not terminate before forced cleanup",
+      "id": "TASK-15103-G028",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "2d1593109b2f7c3e8ab89d5226c2f8e3994e69b1fd6dc61964c6e071f9391606"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "16dad429a4bb6f91c62219fd6261133d453052d2"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP connection attempt already in progress",
+      "id": "TASK-15103-G029",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.connect_to_server",
+          "semantic_digest": "301ae8c82d6b98b9917fa4a29fd2347503679aa79d3f6885e23e804be3bcb00a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "0f7200aced210038c2868d132c6ccdf630f43866"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to terminate MCP subprocess during forced cleanup",
+      "id": "TASK-15103-G030",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "30a7816120a5698edba62d9a9e3e966c2ccb47024d403b8d03b8beb5f7781392"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "16dad429a4bb6f91c62219fd6261133d453052d2"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Timed out reaping MCP subprocess after forced cleanup",
+      "id": "TASK-15103-G031",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "345f23563bc3a6bbd98f3f11b1c8effae2a605d1604939f0446a0fa913526d61"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "16dad429a4bb6f91c62219fd6261133d453052d2"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to wait for MCP subprocess termination during forced cleanup",
+      "id": "TASK-15103-G032",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "430649096819cb76b2855e7bf921921eefeade86807a1672f2d2d3919af7177e"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "16dad429a4bb6f91c62219fd6261133d453052d2"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP transport unavailable",
+      "id": "TASK-15103-G033",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._mark_reader_unavailable",
+          "semantic_digest": "48eff2b05c76b0d9e095d8a7d55d88e9c5952004c10718956f319b44b4750896"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8f73289c1c36d9127b693ea8842fc82241648066"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP subprocess exited before termination cleanup",
+      "id": "TASK-15103-G034",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "63de97ce3586b7f71e550c811f9c6fde4ff09da104611f0c1695a37e2a56b4fa"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to reap MCP subprocess after forced cleanup",
+      "id": "TASK-15103-G035",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "6b9572ff31fbc9ff6a653fa6110114d1971077fb777f479d8e32c312857ae6d9"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "16dad429a4bb6f91c62219fd6261133d453052d2"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Ignoring unrecognized MCP payload",
+      "id": "TASK-15103-G036",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_incoming_payload",
+          "semantic_digest": "78d12fb0ae6c4d49fbbb54400228da46d94c572344bff92beb7fdc4adbbdd356"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8f73289c1c36d9127b693ea8842fc82241648066"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_incoming_payload",
+          "semantic_digest": "c855eb8e403898d679910e338b906b6093c5885be50c89835436ff5d72bc2c14"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Discovered MCP capabilities: {} tools, {} resources, {} prompts",
+      "id": "TASK-15103-G037",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [
+        {
+          "expression": "len(server['tools'])",
+          "provenance": "A local len(...) over in-memory capability collections yields only an integer count."
+        },
+        {
+          "expression": "len(server['resources'])",
+          "provenance": "A local len(...) over in-memory capability collections yields only an integer count."
+        },
+        {
+          "expression": "len(server['prompts'])",
+          "provenance": "A local len(...) over in-memory capability collections yields only an integer count."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._discover_server_capabilities",
+          "semantic_digest": "677ab2b6fafe964b8e36a0834860771f1bc079a4d37dfb6346d7e829cf329d13"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "34d386f8c50c3f61199f7d63bc64534d5ae8ef0b"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._discover_server_capabilities",
+          "semantic_digest": "37dfc6b1b888dc1a3bf3a717f79c60a931aae8826947bdee327827fa07f248c2"
+        },
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._discover_server_capabilities",
+          "semantic_digest": "7ad196ae082832c1601663c649ffc25f0ef290b11a68e7bfffff3ec6c28a72fd"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to kill MCP subprocess cleanly",
+      "id": "TASK-15103-G038",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "8174315a32b94ea6dd20201b5fae2b153c0211516c9a6276215cb1dfed273001"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "437c7a2cf3d01197e667cb2f86b395d2481894f1fa4c2e93accae3af35c431af"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Ignoring MCP response with invalid id",
+      "id": "TASK-15103-G039",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_response",
+          "semantic_digest": "81aa38176e9d3f6ae29cb924dc30c51d5be04aa4d97c2385702fb4774b159bb6"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8f73289c1c36d9127b693ea8842fc82241648066"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_response",
+          "semantic_digest": "ed6098b27f8841aacfc3392ef55e820d74d9cb776eea441829791ff59edeacf2"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to close MCP subprocess stdin during forced cleanup",
+      "id": "TASK-15103-G040",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._force_stop_process",
+          "semantic_digest": "871763bf005273ccc49fc68f6749e976024c5e91437bd6aa265d26563bf811f9"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "16dad429a4bb6f91c62219fd6261133d453052d2"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP transport cleanup failed",
+      "id": "TASK-15103-G041",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._run_transport_failure_cleanup",
+          "semantic_digest": "8b95ceb3e1ab884afe9495dfa57dec515a588182bb11525a2b9db519c44d70da"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "4469fd34df5172b3369bf7419f55d98e919a0129"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP connection cleanup incomplete after connection failure",
+      "id": "TASK-15103-G042",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.connect_to_server",
+          "semantic_digest": "95acccbb3811af9cc62148a98005509fede004973a4d9bea18aed879dde1bb1d"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "34d386f8c50c3f61199f7d63bc64534d5ae8ef0b"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP disconnect_all cleanup incomplete",
+      "id": "TASK-15103-G043",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.disconnect_all",
+          "semantic_digest": "96c5002937c77162e9c6f02446c434746ba1da2605425b7ff884ab6af4f241db"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "0f7200aced210038c2868d132c6ccdf630f43866"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to wait for MCP subprocess termination",
+      "id": "TASK-15103-G044",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "9b7b96732e3e4404cd47358c672cbcba32aa832c688fa8d2d7f5d85ed107afb2"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP connection cleanup incomplete after ownership change",
+      "id": "TASK-15103-G045",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.connect_to_server",
+          "semantic_digest": "9e1c238afd169dbd2dc8d001586760757e702093f150b80bfadbfdbf1c50de16"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "0f7200aced210038c2868d132c6ccdf630f43866"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Ignoring unexpected MCP payload",
+      "id": "TASK-15103-G046",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_incoming_payload",
+          "semantic_digest": "b5b00c00ad0701a91196dd65c6641bb1f106198f800876bf28035268b9059be8"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8f73289c1c36d9127b693ea8842fc82241648066"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_incoming_payload",
+          "semantic_digest": "9f44e4541f30a10588ae19c345eaf91bc40748631102fb23a543a1c4e0c27667"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to terminate MCP subprocess cleanly",
+      "id": "TASK-15103-G047",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "c2de1caae3b8a0625dc9d5e49454b8a30c200f023a301a247ac397cbb3188c27"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "857b97c04b8e1492a991f76d4a758fe4274ae7db5d1c57048ffa359b4aa78dca"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to close MCP connection during teardown",
+      "id": "TASK-15103-G048",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient._teardown_connection",
+          "semantic_digest": "cad1704df4edef3a283ad3d92bd120741dda0460fc9c46dc5e352e6ecdb151b8"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to close MCP subprocess stdin",
+      "id": "TASK-15103-G049",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "cde8d2ff90edadd1c491cdf459d4d0518d57fcc8731fe48a0df22c47763770a6"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Timed out reaping MCP subprocess after kill",
+      "id": "TASK-15103-G050",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "d0af194e3fa980b277b007c37740419517dd7b8eeeab2f5f20c866ce56c2ff12"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP transport task failed before cleanup",
+      "id": "TASK-15103-G051",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "d1583fce7b8657ed7f0b72a337dc2e02cf94e4b460cbb1057d8210d1556294b1"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP transport task failed during cleanup",
+      "id": "TASK-15103-G052",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "e21799d4c33eb4a7de625ea5620ddc249b2402edd2f8a12da5c6c2dd87d9eaaa"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP connection cleanup incomplete before reconnect",
+      "id": "TASK-15103-G053",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.connect_to_server",
+          "semantic_digest": "e2696f3c6c5e66165f004579ef100d252bbe2fd886c18483e8fa7a704d9fb263"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "34d386f8c50c3f61199f7d63bc64534d5ae8ef0b"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to wait for MCP subprocess stdin closure",
+      "id": "TASK-15103-G054",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "e2734ccf078b19137b8657c8aef68348507c201b1f36e082b80bbdf66bd56491"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP connection cleanup incomplete after cancellation",
+      "id": "TASK-15103-G055",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 2,
+          "qualified_scope": "MCPClient._bounded_teardown_connection",
+          "semantic_digest": "e6c15218980b2a1aea7a6fcf81bcf875af29a45d8c758cbcabc26354388fcc49"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "34d386f8c50c3f61199f7d63bc64534d5ae8ef0b"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP transport task was already cancelled",
+      "id": "TASK-15103-G056",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection.close",
+          "semantic_digest": "e9c2282bfc3406ed7c9c1a2836843d33ae9d98541e9df478f2503a10df815532"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "8a8f775a9ff70d4fbf598404e76aeba3647fd36a"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Ignoring MCP server notification",
+      "id": "TASK-15103-G057",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_incoming_payload",
+          "semantic_digest": "f05c3fb777da537fa51650d84cc2f23e6c0c04441e7826fe4eef1c3bfcba4b3e"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "4469fd34df5172b3369bf7419f55d98e919a0129"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._handle_incoming_payload",
+          "semantic_digest": "d244dda17101cfea1c4eac67464d16e6b49745f557d4ede6c2e8427dc39d04b1"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to connect to MCP server",
+      "id": "TASK-15103-G058",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.connect_to_server",
+          "semantic_digest": "f9fd94e2fb42d0b080de1de4b4ce07f7d6204ad5cd156b0aefc203978dc43866"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "0f7200aced210038c2868d132c6ccdf630f43866"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPClient.connect_to_server",
+          "semantic_digest": "8ed0c5dfde6eb879025c548197cd3701141fc6b09df2db29488c3a64010edc0d"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Ignoring invalid MCP JSON-RPC payload from server: {}",
+      "id": "TASK-15103-G059",
+      "owner_path": "tldw_chatbook/MCP/client.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "8f73289c1c36d9127b693ea8842fc82241648066"
+      },
+      "rationale": "The recorded refactor removed this obsolete diagnostic state; restoring it would add redundant output or reintroduce private values or exception details.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_StdioJSONRPCConnection._read_loop",
+          "semantic_digest": "1062cc4f18f18c8a5b125af074a3f107a21f25b943e3e3438671f2d722578ab5"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Local MCP tool kill-switch state unavailable; failing closed.",
+      "id": "TASK-15103-G060",
+      "owner_path": "tldw_chatbook/MCP/local_server_tools.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "build_server_local_provider._kill_switch",
+          "semantic_digest": "1a64960ad619a8f23217a74439e396391fc230c24e8febd2187a284b2b5db82b"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "6ccc8d4a938e1cc03bc1251bd2087de4100a2617"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "build_server_local_provider._kill_switch",
+          "semantic_digest": "8e8096fd04b13d9230106b44eb41c66d131e2dc7d9f6106480956811dfdb50f4"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "MCP prompt creation failed.",
+      "id": "TASK-15103-G061",
+      "owner_path": "tldw_chatbook/MCP/prompts.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_prompt_failure",
+          "semantic_digest": "b9546674fd98af2f32a82f92625de49d7fcacd06a16f326085a675bddd41ecfe"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "44ad9e4c8d664a0c2dab6cc4027b91a985dd7669"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPPrompts.generate_document_prompt",
+          "semantic_digest": "5990322d49ef0a1969ef39078b91435a06a97e2ba9cf59752c063aa2e21056ab"
+        },
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPPrompts.character_writing_prompt",
+          "semantic_digest": "67e7a3e2fde2188678802422e9c74b4c1f1d9d5da19fd211bbf30927bb504a23"
+        },
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPPrompts.summarize_conversation_prompt",
+          "semantic_digest": "8151ff299c074b9e59ae30aef79601751e005f782094a64adfdddc034f6b1555"
+        },
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPPrompts.analyze_media_prompt",
+          "semantic_digest": "8275d97a2c135f4c84fe71bfe502e0d195bd2b91f4438b35f51b24f63fe33573"
+        },
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "MCPPrompts.search_and_synthesize_prompt",
+          "semantic_digest": "e5add8f064301201325b126be0f73b5659713ff71bb779b129e5808b084f8db0"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Standalone MCP database initialization failed.",
+      "id": "TASK-15103-G062",
+      "owner_path": "tldw_chatbook/MCP/server.py",
+      "permitted_fields": [
+        {
+          "expression": "operation='initialize_standalone_mcp_databases'",
+          "provenance": "The value is a fixed code literal, not provider-, user-, or model-controlled data."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._init_databases",
+          "semantic_digest": "fc6f5faffc31160d1f74f88ce7bee97a0ccc1030908e896f9297811b2591d3e6"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "fefbc29544c4d80a04ae420582403d577d608373"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._init_databases",
+          "semantic_digest": "c6bdbfb2887b51d6a338523b821aeca73dbcbc377c61b89268ef058ba5af5522"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Registered  local agent tools (permission-gated)",
+      "id": "TASK-15103-G063",
+      "owner_path": "tldw_chatbook/MCP/server.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "6ccc8d4a938e1cc03bc1251bd2087de4100a2617"
+      },
+      "rationale": "The recorded refactor removed this obsolete diagnostic state; restoring it would add redundant output or reintroduce private values or exception details.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._register_local_agent_tools",
+          "semantic_digest": "21d00e464523378f1e1f8e7f3c87cf0a99f9d91277173d2fb7c432c676ffdf21"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Failed to register local agent tools; continuing without them",
+      "id": "TASK-15103-G064",
+      "owner_path": "tldw_chatbook/MCP/server.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "6ccc8d4a938e1cc03bc1251bd2087de4100a2617"
+      },
+      "rationale": "The recorded refactor removed this obsolete diagnostic state; restoring it would add redundant output or reintroduce private values or exception details.",
+      "removed": [
+        {
+          "method": "exception",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._register_local_agent_tools",
+          "semantic_digest": "58b81e4f99ee588970fee21384fc9d6e5952eb9713c85210f63bb89e5eaf52bc"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Invalid rrf_k; using shipped default",
+      "id": "TASK-15103-G065",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "1df74a8b5b0215a268a7e6ce3b5d74d5866e5822cdee0ac7182d07033727042a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "37ca98ff1f6c7c58c200978880d7c0ddccf20a68"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "88a9b69d21fdcf9a5f670f6040f1680594a56b0c384582b7acb8f9235684f510"
+        },
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "20df19783dab7ed1e9ccf4ebfdb776c0c12a385f7226d9c8b2012bf427423200"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Could not read rrf_k from active profile; using shipped default",
+      "id": "TASK-15103-G066",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "b3cbd6c2e28627d0037f06ea1c860c5b6e841eb1e7c7c43a226e0a76fa08fa9c"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "336399433138f24485b1c0ff98c507e180d0f8aa"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "2512564c829a3340498e90fd39ab520887db04dfb9a7cb4ab5a4417fc0b97cad"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "rrf_k  is negative; falling back to ",
+      "id": "TASK-15103-G067",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [
+        {
+          "expression": "k",
+          "provenance": "The value has crossed the production integer conversion branch before this diagnostic."
+        },
+        {
+          "expression": "shipped_k",
+          "provenance": "The value is a code-owned numeric constant reviewed at the recorded provenance revision."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "8ec4fd6d51774bee463e951e1a6c452b45981d40d10a2d44f11a0af637150226"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "37ca98ff1f6c7c58c200978880d7c0ddccf20a68"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "429644bc8d061b8415f051cd7dff053cbfc976398e51c1f69335c8a7dd67d83b"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "hybrid_pool_multiplier  < 1; flooring to 1",
+      "id": "TASK-15103-G068",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [
+        {
+          "expression": "multiplier",
+          "provenance": "The value has crossed the production integer conversion branch before this diagnostic."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "1b4e49b71617974bc47c656254fc1488a70d589f3b87a50d5853043742c1bc47"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "f74fca8800db93ca35b35831398abf40fb93370e"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Invalid hybrid_pool_multiplier; using shipped default",
+      "id": "TASK-15103-G069",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "3023058be3c425ac5c1763bae7384b68e4fd833cca2fd8e1326d088d5361f0cc"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "c6909e8bf94250abb949f17fe6163e692998ad55"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "40b28af5c7b8889636fc8f71358c0958642d95de434de33b7b02ec99ae3bfd5d"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "hybrid_pool_multiplier  > ; capping to ",
+      "id": "TASK-15103-G070",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [
+        {
+          "expression": "multiplier",
+          "provenance": "The value has crossed the production integer conversion branch before this diagnostic."
+        },
+        {
+          "expression": "MAX_HYBRID_POOL_MULTIPLIER",
+          "provenance": "The value is a code-owned numeric constant reviewed at the recorded provenance revision."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "725023a2f9399db067e6329f4fb698d362a6c379034934029b2fa16349edb552"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "c6909e8bf94250abb949f17fe6163e692998ad55"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Ignoring unknown keyword-leg source types.",
+      "id": "TASK-15103-G071",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_keyword_source_types",
+          "semantic_digest": "4dc9c18aa4fd2942490b5bd5596821be11469180e047d9536a932f3d7896d36c"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "1efe5825ad7c1384e462a335524395e75cf5d086"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_keyword_source_types",
+          "semantic_digest": "780f74a139d626c2de9449022940900f968679cc213855542d60df1527130143"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Keyword search asked for no source types; returning no results without a database lookup.",
+      "id": "TASK-15103-G072",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "RAGService._keyword_search",
+          "semantic_digest": "acb920f2db825fe5ce9211ef55b057f0e991e78f453ee74c39266e17f9471b75"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "1efe5825ad7c1384e462a335524395e75cf5d086"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Keyword search failed.",
+      "id": "TASK-15103-G073",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/search_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "SimplifiedRAGSearchService.keyword_search",
+          "semantic_digest": "d273bb50fa66391b37caf434449b3cba3813d531a2929a5f0a543e186e7338c3"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "4a53c1960eed3ccabbd1cc18fd1034333c246345"
+      },
+      "rationale": "The surviving event is fixed operational text with only the enumerated code-bounded metadata and no exception or stack capture.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "SimplifiedRAGSearchService.keyword_search",
+          "semantic_digest": "1fd55b8fca031efbda7433bcc6c59412db106e6f8d4ab69e279e670e6c33d122"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Could not start Console session close flow",
+      "id": "TASK-15103-G074",
+      "owner_path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleSessionController.start_close_console_session_tab",
+          "semantic_digest": "4a4dcb01db57dbd55a11c375e7a9efc888e695be00ba6d7356950ad115939ca2"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleSessionController.start_close_console_session_tab",
+          "semantic_digest": "0d9a2d558c5f89dfe20cdcdc1a870253a38f8815c8de128b00d646ce8df32f82"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Mounting the freshly computed DB-sizes line failed; the next rail recompose renders it from the updated cache.",
+      "id": "TASK-15103-G075",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._refresh_library_details_db_sizes",
+          "semantic_digest": "db89326f8975d6110c683f32da8e6c2e3ab2f959b9aae2055d0e9ac0c5e40304"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "931817358638dcf15b12d3f9884408c49af312a1"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._refresh_library_details_db_sizes",
+          "semantic_digest": "120e5f45356350082934c13dcc89aac6f3bc5b6a04135077ed24a8d5b5d38207"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Details-open DB size recompute failed; the disclosure keeps its cached reading.",
+      "id": "TASK-15103-G076",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._refresh_library_details_db_sizes",
+          "semantic_digest": "5cd8a2fa42fa582e1d56c3cf89bbb9f9557f37e00859cf8efecb7340c903cd31"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "931817358638dcf15b12d3f9884408c49af312a1"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "debug",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._refresh_library_details_db_sizes",
+          "semantic_digest": "dd17666fca4edbf61f12be3e01ce9064a43e12d3501df10ee613afc0d92433c3"
+        }
+      ],
+      "severity": "debug"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Error in quit cache handler",
+      "id": "TASK-15103-G077",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_blocking_quit_persistence",
+          "semantic_digest": "d59b93b599333aab0e19a75eaad2417e1f03726f4ea4c11d94f58e54dccc359a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_blocking_quit_persistence",
+          "semantic_digest": "045f7da543ebe2b0f80289dda15881783d36096f1351efba46e84466e7f50603"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Pre-quit shutdown guard failed; staying in the app",
+      "id": "TASK-15103-G078",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._confirm_and_quit",
+          "semantic_digest": "4e5f30773976e196826457abef30d09ad3bc9e634c449e23c2e477fbe9dcb9d2"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._confirm_and_quit",
+          "semantic_digest": "3491e5b6adbeee9c667c33f9cab4194500a7c9b2d0091ac37b2c06d72daa9821"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Application quit worker could not start; staying in the app",
+      "id": "TASK-15103-G079",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli.action_quit",
+          "semantic_digest": "276dbbc23feab60b56f5e3b52ffc8febc49df72d313bfa7fe2191e3b72aa7d3d"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli.action_quit",
+          "semantic_digest": "8636bbe9668f33ed32200c612451d39a6fd9ae56b2eb3b847454560a05372493"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Pre-quit confirmation failed; staying in the app",
+      "id": "TASK-15103-G080",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._confirm_and_quit",
+          "semantic_digest": "0cbae0b3c840b6e0264f3e40f76a831724b4ba6ecd4d73d08a4e39b7d105628f"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._confirm_and_quit",
+          "semantic_digest": "8795579666c4c30dc5d221af6b8e4c7e95d700d30ae8d437776fef869d8a5cb9"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Audio stop failed during quit",
+      "id": "TASK-15103-G081",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._cleanup_audio_for_quit",
+          "semantic_digest": "27a9f165acea00427f05858fb845202d4fe16b013053694b203c659c7151338f"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli.action_quit",
+          "semantic_digest": "719a1784fdbe0add948bde8bb1f7840093337d45453d5a8f2e1d6d45885e7398"
+        },
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._cleanup_audio_for_quit",
+          "semantic_digest": "88d5aec7595fe2acffcae6ffa147ef2097ce50b3dc2a83e73c230b3141da1442"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Configuration shutdown persistence raised an error",
+      "id": "TASK-15103-G082",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_blocking_quit_persistence",
+          "semantic_digest": "473f2264104f9c1063fe6fe00c682b8db3655f963156a435ac4d174783a4ed16"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_blocking_quit_persistence",
+          "semantic_digest": "93cddec69ca7762cec2a0df9e770ca9acf851ee9e5a4d4cb9da211eebb95956e"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Blocking quit persistence failed",
+      "id": "TASK-15103-G083",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_approved_quit_cleanup",
+          "semantic_digest": "761563daa503751242fe3be341fd236476ff3aa0a0ba5395128b3de4be9fc62c"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_approved_quit_cleanup",
+          "semantic_digest": "973af5b055bf657cb88a000c7c57d5597b81d8287c298cf2532906adadf9e086"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Media cleanup timer could not stop during quit",
+      "id": "TASK-15103-G084",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_approved_quit_cleanup",
+          "semantic_digest": "e077ec0ed1abc8a65de15e6b0f64b7470d728460ab196e5b0f10f0b7d61ea070"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._run_approved_quit_cleanup",
+          "semantic_digest": "a717c6b1616aac464014654ccec468f03e7ea7c781fbdd5eba434e9b0c498840"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Audio cleanup failed during quit",
+      "id": "TASK-15103-G085",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._cleanup_audio_for_quit",
+          "semantic_digest": "bb579c36037039e3b0610e7bd6d07b7ba6fd83a827df550343396a45df6647aa"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The starting call exposes a private identifier, unbounded value, exception detail, or traceback capture; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli._cleanup_audio_for_quit",
+          "semantic_digest": "c256c54347d327c0d4d0ac4e421d67bb93f720c96604f7b8b1f804f322a83bfb"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Error in quit handler: ",
+      "id": "TASK-15103-G086",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The recorded refactor removed this obsolete diagnostic state; restoring it would add redundant output or reintroduce private values or exception details.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli.action_quit",
+          "semantic_digest": "019716bc883a7ca726830ec125291ecbb88d43899af47420d4030d37aaec2c46"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Audio player stopped and cleaned up",
+      "id": "TASK-15103-G087",
+      "owner_path": "tldw_chatbook/app.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "b07e9017446c37ce7e6a119897a6e4bfa1e9dead"
+      },
+      "rationale": "The recorded refactor removed this obsolete diagnostic state; restoring it would add redundant output or reintroduce private values or exception details.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwCli.action_quit",
+          "semantic_digest": "49af756ea91d797c71db1ff24c3ab0ac84ee092a342d1876f1bf688ed359cbd6"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_visual_compaction_prepared",
+      "id": "TASK-15103-G088",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "012b8385ffeeb026b38494711230178c7a4f1be418f912e39742e9b72cae259d"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "88f5f535a30fc882f8fd604f27d8bf393cd04d59"
+      },
+      "rationale": "The starting call exposes a private conversation identifier and unbounded bound values; the proposed fixed event preserves the operational state and severity without that data.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "7defac50d88ef6276a77b316354e6613ee8d70b61162879b803f3caa364f392f"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "console_visual_compaction_fell_back_to_text",
+      "id": "TASK-15103-G089",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "info",
+          "multiplicity_delta": 2,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "150a6f095d4b27939a9d896401a285da685401c968a50fef26fbb1d7f8a3f42a"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "88f5f535a30fc882f8fd604f27d8bf393cd04d59"
+      },
+      "rationale": "Both starting calls expose a private conversation identifier and unbounded bound values; the aggregated proposed multiset preserves the fallback state and severity without claiming unique before/after identities.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "14dee8aadbd06432929f8c45b211bcd3bb293f4e4807dfb42c9e1cf8aa09fae8"
+        },
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController._apply_conversation_memory_preflight",
+          "semantic_digest": "12216013d3b5c0604194947d32361279af6b4909c9fd8b4ae6417742222ed24b"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Console appearance refresh failed after settings save (screen_type=%s, generation=%s, error_type=%s).",
+      "id": "TASK-15103-G090",
+      "owner_path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "permitted_fields": [
+        {
+          "expression": "type(screen).__name__",
+          "provenance": "The runtime class name is code metadata and excludes object contents."
+        },
+        {
+          "expression": "generation",
+          "provenance": "The value has crossed the production integer conversion branch before this diagnostic."
+        },
+        {
+          "expression": "type(exc).__name__",
+          "provenance": "The exception class name is ADR-029 metadata and excludes the exception message and traceback."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "SettingsScreen._signal_console_appearance_refresh",
+          "semantic_digest": "466532bb5187801950c477f2dfd355b1d200e51e7466f1a65556ea0bd3915548"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "49e8e57f1245eddddc675a940e5c5dfc49d376dc"
+      },
+      "rationale": "The surviving event is fixed operational text with only a runtime code type, an integer generation counter, and an exception class name; it captures neither object contents nor exception details.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to initialize databases.",
+      "id": "TASK-15103-G091",
+      "owner_path": "tldw_chatbook/MCP/server.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._init_databases",
+          "semantic_digest": "c6bdbfb2887b51d6a338523b821aeca73dbcbc377c61b89268ef058ba5af5522"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "fab1cf4fe414a7ecc08824f59df6826c8fa118a8"
+      },
+      "rationale": "The historical call exposed the exception message; this exact intermediate repair replaced it with fixed operational text before the later reviewed-safe rewording.",
+      "removed": [
+        {
+          "method": "error",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TldwMCPServer._init_databases",
+          "semantic_digest": "6007d32e1305cb02a7b6d54889a0b4834a882094f6811e479317989a865c679f"
+        }
+      ],
+      "severity": "error"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "revoked  pending approval round(s) for cancelled run ",
+      "id": "TASK-15103-G092",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "545d935c99af6f9b577bc219ae11dc5e232466ce"
+      },
+      "rationale": "This exact transition introduced a transient diagnostic containing the private run identifier. The call is absent at the planning base and its final justified-deletion disposition forbids restoring it.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "31dd94634a0fb2f183f17f538ead7f0551433b0c464befded1355257821c587a"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "revoked  pending approval round(s) for cancelled run ",
+      "id": "TASK-15103-G093",
+      "owner_path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "c2bc5058fae060eff7e79b28642949fdf5e372b5"
+      },
+      "rationale": "This exact transition removed the transient private run-identifier diagnostic. Restoring it would reintroduce prohibited identifier content without an operational need.",
+      "removed": [
+        {
+          "method": "info",
+          "multiplicity_delta": 1,
+          "qualified_scope": "ConsoleChatController.revoke_approval_rounds_for_run",
+          "semantic_digest": "31dd94634a0fb2f183f17f538ead7f0551433b0c464befded1355257821c587a"
+        }
+      ],
+      "severity": "info"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Could not read rrf_k from active profile: ",
+      "id": "TASK-15103-G094",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "c6909e8bf94250abb949f17fe6163e692998ad55"
+      },
+      "rationale": "This exact transition introduced a transient diagnostic containing an exception message. The call is absent at the planning base and its final justified-deletion disposition forbids restoring it.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "04b7876a6740b49c146d81d660f0bb90f6286d1e99592c591268d94c8e4f13fa"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Could not read rrf_k from active profile: ",
+      "id": "TASK-15103-G095",
+      "owner_path": "tldw_chatbook/RAG_Search/fusion.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "336399433138f24485b1c0ff98c507e180d0f8aa"
+      },
+      "rationale": "This exact transition removed the transient exception-message diagnostic. Restoring it would reintroduce prohibited exception detail without an operational need.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "resolve_rrf_k",
+          "semantic_digest": "04b7876a6740b49c146d81d660f0bb90f6286d1e99592c591268d94c8e4f13fa"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Invalid hybrid_pool_multiplier ; falling back to ",
+      "id": "TASK-15103-G096",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "f74fca8800db93ca35b35831398abf40fb93370e"
+      },
+      "rationale": "This exact transition introduced a transient diagnostic containing raw configuration data. The call is absent at the planning base and its final justified-deletion disposition forbids restoring it.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "6ef97f09b5a521f09081133e137d803b76729b0b8a244a8f157969013f250c4d"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "justified-deletion",
+      "fixed_event": "Invalid hybrid_pool_multiplier ; falling back to ",
+      "id": "TASK-15103-G097",
+      "owner_path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "permitted_fields": [],
+      "proposed_surviving": [],
+      "provenance": {
+        "exact_commit": "c6909e8bf94250abb949f17fe6163e692998ad55"
+      },
+      "rationale": "This exact transition removed the transient raw-configuration diagnostic. Restoring it would reintroduce prohibited configuration content without an operational need.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "_resolve_hybrid_pool_multiplier",
+          "semantic_digest": "6ef97f09b5a521f09081133e137d803b76729b0b8a244a8f157969013f250c4d"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to load the Library media trash page.",
+      "id": "TASK-15103-G098",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._load_library_media_trash",
+          "semantic_digest": "34cd9b0d96db0c6fc7e178baedc7317f3b070b35dfae5fc93259133ee58bdb6f"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "566b4f0ea5db6b6fd6c6c9658b1633e134e53227"
+      },
+      "rationale": "The current warning captures the exception and therefore risks persisting exception details and a traceback. The proposed warning preserves the fixed operational event and severity without capture or dynamic data.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._load_library_media_trash",
+          "semantic_digest": "ffd4f17313d7d5136ad7bab0ddc263ce9e6937ca12eac165beff87d7e024a90c"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "reviewed-safe",
+      "fixed_event": "Failed to restore a Library media item from the Trash view (error_type={}).",
+      "id": "TASK-15103-G099",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [
+        {
+          "expression": "type(exc).__name__",
+          "provenance": "The exception class name is ADR-029 metadata and excludes the exception message and traceback."
+        }
+      ],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._restore_library_media_from_trash",
+          "semantic_digest": "913dadbfd14faebd51365ff7744d807aadaeb69c9d9642a5db98e4568e202278"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "566b4f0ea5db6b6fd6c6c9658b1633e134e53227"
+      },
+      "rationale": "The warning preserves a fixed failure event and only the exception class name, which is bounded code metadata; it excludes the private media identifier, exception message, and traceback capture.",
+      "removed": [],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Dropped a MouseDown that hit Textual's text-selection begin path while its target widget was mid-recompose (detached parent). The click was not delivered; the app stays alive (task-14903).",
+      "id": "TASK-15103-G100",
+      "owner_path": "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TextSelectionCrashGuard.on_event",
+          "semantic_digest": "6863c266001bc190bc2cd7f6c7543cdc5292fc1acf2aa5dc114d0c56340ca2a7"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "27779ef37108fef4f4c1bfecba22df6a2e5389bc"
+      },
+      "rationale": "The current warning renders an unbounded widget representation and mouse coordinates. The proposed warning preserves the dropped-click state, root cause, and severity without private widget data or interaction coordinates.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "TextSelectionCrashGuard.on_event",
+          "semantic_digest": "93f3c0e181496d6244dbb00966c3bd0b215220986e004659d267663f74aa3314"
+        }
+      ],
+      "severity": "warning"
+    },
+    {
+      "captures_exception": false,
+      "disposition": "metadata-repair",
+      "fixed_event": "Failed to delete a Library media item.",
+      "id": "TASK-15103-G101",
+      "owner_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "permitted_fields": [],
+      "proposed_surviving": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._delete_library_media_item",
+          "semantic_digest": "7b33cbe3e0c782f02c373e765f2f7c03d80461bd187c3c5f79eccd99cd905539"
+        }
+      ],
+      "provenance": {
+        "exact_commit": "dac12386739e2cdf8ed95a8e8e2a3dc441e4b264"
+      },
+      "rationale": "The complete-history reconstruction proves this control-flow rewrite as a semantic transition in the canonical extractor. Both historical atoms expose the private media identifier and capture exception details; the proposed fixed warning preserves the failure state and severity without either value.",
+      "removed": [
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._delete_library_media_item",
+          "semantic_digest": "31cf54fd57802837478ff9e0d4313beea49fae311802a3c2b7bf732060e00c3b"
+        },
+        {
+          "method": "warning",
+          "multiplicity_delta": 1,
+          "qualified_scope": "LibraryScreen._delete_library_media_item",
+          "semantic_digest": "d0532e06a89bd278ea5abda55fecb54009614b9bb633b91e2cf9273d21f55e4a"
+        }
+      ],
+      "severity": "warning"
+    }
+  ],
+  "incident": {
+    "final_base": "537451cb883420590603096d32f7f5c30aa465fc",
+    "planning_base": "82b595049d97836482c118cfeb4d31df537a86a1",
+    "recorded_base": "6d72f15f8332b6469a5d644d409b80914634a8dd"
+  },
+  "integration_checkpoint": {
+    "post_rebase": {
+      "aggregate": {
+        "call_count": 871,
+        "semantic_digest": "9150af5da3fb382e6ad7861f0636feeef3f520f543b25a39d4eda5e30d682d8b"
+      },
+      "base": "537451cb883420590603096d32f7f5c30aa465fc",
+      "head": "2dffafa57bf523057a77ee181e783ae4c3806086",
+      "owners": [
+        {
+          "evidence": {
+            "call_count": 13,
+            "semantic_digest": "acf640cccae00a0d3b7a3d0f04899980b7fb08269589ff2f50b39a99fa1203e3"
+          },
+          "path": "tldw_chatbook/Agents/agent_service.py"
+        },
+        {
+          "evidence": {
+            "call_count": 14,
+            "semantic_digest": "8f54dcf949947f66ed47d50d0324aef428ce4325b72e5331b76c912bf7a1d542"
+          },
+          "path": "tldw_chatbook/Chat/console_agent_bridge.py"
+        },
+        {
+          "evidence": {
+            "call_count": 36,
+            "semantic_digest": "fba0c747b8e758b2099681347ac983dcb3c41baf6c344eb2a493779c5abf6fd0"
+          },
+          "path": "tldw_chatbook/Chat/console_chat_controller.py"
+        },
+        {
+          "evidence": {
+            "call_count": 45,
+            "semantic_digest": "f58e29ff47fdce330d9d001446ba3d49f2bdfa92751efdfc1ced29165bc6d973"
+          },
+          "path": "tldw_chatbook/Chat/console_chat_store.py"
+        },
+        {
+          "evidence": {
+            "call_count": 2,
+            "semantic_digest": "932024ad21aa854ec4e4d7173113ab855bb1d4c1a5913381d386e7552c0a8fc0"
+          },
+          "path": "tldw_chatbook/Chat/console_context_compaction.py"
+        },
+        {
+          "evidence": {
+            "call_count": 2,
+            "semantic_digest": "55e8aecc4930b576afa303859cd5f690b52945648977d5f1874448a9ce188cae"
+          },
+          "path": "tldw_chatbook/Chat/console_provider_gateway.py"
+        },
+        {
+          "evidence": {
+            "call_count": 48,
+            "semantic_digest": "084fbbf652253d834f6ded12ed9de8c7fd65bfbd4f3f40dfd5802bbf86f7777f"
+          },
+          "path": "tldw_chatbook/MCP/client.py"
+        },
+        {
+          "evidence": {
+            "call_count": 1,
+            "semantic_digest": "c200950a14f2901e559c9f28905c91b10354ee7a5ab8fcc5991adfca07810097"
+          },
+          "path": "tldw_chatbook/MCP/local_server_tools.py"
+        },
+        {
+          "evidence": {
+            "call_count": 1,
+            "semantic_digest": "cdd6b7dac59fb964bf6f3d5a90525cd39eecb930ea0a2985bfdb8956f3932944"
+          },
+          "path": "tldw_chatbook/MCP/prompts.py"
+        },
+        {
+          "evidence": {
+            "call_count": 8,
+            "semantic_digest": "3968509955fd32b3f6d770cd8c8c9dda4df297fb62e20a533fd13ea8b09b031f"
+          },
+          "path": "tldw_chatbook/MCP/server.py"
+        },
+        {
+          "evidence": {
+            "call_count": 8,
+            "semantic_digest": "e547a3b926a43138c5edc38b30ab934b741752416a1a5939edaf7d381da5131a"
+          },
+          "path": "tldw_chatbook/RAG_Search/fusion.py"
+        },
+        {
+          "evidence": {
+            "call_count": 67,
+            "semantic_digest": "a679e6fa4735382e8a786b58e21cf28cf3b87e1084b6bc17420e6d75b60a5915"
+          },
+          "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py"
+        },
+        {
+          "evidence": {
+            "call_count": 5,
+            "semantic_digest": "eb7828300d12d895230160942c7f8e43a784e3b30ecb1bf538f049760a0400bb"
+          },
+          "path": "tldw_chatbook/RAG_Search/simplified/search_service.py"
+        },
+        {
+          "evidence": {
+            "call_count": 10,
+            "semantic_digest": "a84f7c7426a5f7dc54456a893adc9e51a69769a58cd951bcfee1319f4e61d1b2"
+          },
+          "path": "tldw_chatbook/UI/Console_Modules/session.py"
+        },
+        {
+          "evidence": {
+            "call_count": 170,
+            "semantic_digest": "63f4fa9a16c98bba0cd14ef97045cd54375e51c169b3e9234d472a5c0e47c63b"
+          },
+          "path": "tldw_chatbook/UI/Screens/chat_screen.py"
+        },
+        {
+          "evidence": {
+            "call_count": 98,
+            "semantic_digest": "a1fc491fbb09b5d1933b23825cf3c7313df11df1a4d2e592711a52d6183ab7b5"
+          },
+          "path": "tldw_chatbook/UI/Screens/library_screen.py"
+        },
+        {
+          "evidence": {
+            "call_count": 308,
+            "semantic_digest": "30d468a87e7e9caf479a75aac08b84e277a8b7bdc32bdd3ce0cdb6dbe41fea0e"
+          },
+          "path": "tldw_chatbook/app.py"
+        },
+        {
+          "evidence": {
+            "call_count": 34,
+            "semantic_digest": "b975da1b89d584c1f269d62349b2e61ec4e3827ac35880576f765daabdfba633"
+          },
+          "path": "tldw_chatbook/UI/Screens/settings_screen.py"
+        },
+        {
+          "evidence": {
+            "call_count": 1,
+            "semantic_digest": "7fcb6afb4a2c0d135bcdabc529a9db12c4dcea631985a926dfc27786607e75b4"
+          },
+          "path": "tldw_chatbook/Utils/text_selection_crash_guard.py"
+        }
+      ]
+    },
+    "pre_rebase": {
+      "aggregate": {
+        "call_count": 818,
+        "semantic_digest": "430bf29574b796d6076a1645bc31ee6eb507069a14bee08cef4f93ddc48ab837"
+      },
+      "base": "82b595049d97836482c118cfeb4d31df537a86a1",
+      "head": "79aca3f84786d3135239a7101b4bddc44bb13a4a",
+      "owners": [
+        {
+          "evidence": {
+            "call_count": 9,
+            "semantic_digest": "96375bf06eaf460bfe3bf7fe71f2a14c2e61848fc3746b6e6b6af3783b1c63ed"
+          },
+          "path": "tldw_chatbook/Agents/agent_service.py"
+        },
+        {
+          "evidence": {
+            "call_count": 12,
+            "semantic_digest": "12214d1810eedc0f87169169bb25c509e762ef68e410bf3677f33ad1a1dc42e5"
+          },
+          "path": "tldw_chatbook/Chat/console_agent_bridge.py"
+        },
+        {
+          "evidence": {
+            "call_count": 35,
+            "semantic_digest": "011be3a153a7ebb886878c8f089cc33d485ebf1f0e7e023c676f88f69e25328b"
+          },
+          "path": "tldw_chatbook/Chat/console_chat_controller.py"
+        },
+        {
+          "evidence": {
+            "call_count": 40,
+            "semantic_digest": "1eeb0b190917bf14031811043f321a743906ee93b6131015dbbd67196cfadf05"
+          },
+          "path": "tldw_chatbook/Chat/console_chat_store.py"
+        },
+        {
+          "evidence": {
+            "call_count": 2,
+            "semantic_digest": "932024ad21aa854ec4e4d7173113ab855bb1d4c1a5913381d386e7552c0a8fc0"
+          },
+          "path": "tldw_chatbook/Chat/console_context_compaction.py"
+        },
+        {
+          "evidence": {
+            "call_count": 2,
+            "semantic_digest": "55e8aecc4930b576afa303859cd5f690b52945648977d5f1874448a9ce188cae"
+          },
+          "path": "tldw_chatbook/Chat/console_provider_gateway.py"
+        },
+        {
+          "evidence": {
+            "call_count": 48,
+            "semantic_digest": "084fbbf652253d834f6ded12ed9de8c7fd65bfbd4f3f40dfd5802bbf86f7777f"
+          },
+          "path": "tldw_chatbook/MCP/client.py"
+        },
+        {
+          "evidence": {
+            "call_count": 1,
+            "semantic_digest": "c200950a14f2901e559c9f28905c91b10354ee7a5ab8fcc5991adfca07810097"
+          },
+          "path": "tldw_chatbook/MCP/local_server_tools.py"
+        },
+        {
+          "evidence": {
+            "call_count": 1,
+            "semantic_digest": "cdd6b7dac59fb964bf6f3d5a90525cd39eecb930ea0a2985bfdb8956f3932944"
+          },
+          "path": "tldw_chatbook/MCP/prompts.py"
+        },
+        {
+          "evidence": {
+            "call_count": 8,
+            "semantic_digest": "3968509955fd32b3f6d770cd8c8c9dda4df297fb62e20a533fd13ea8b09b031f"
+          },
+          "path": "tldw_chatbook/MCP/server.py"
+        },
+        {
+          "evidence": {
+            "call_count": 8,
+            "semantic_digest": "e547a3b926a43138c5edc38b30ab934b741752416a1a5939edaf7d381da5131a"
+          },
+          "path": "tldw_chatbook/RAG_Search/fusion.py"
+        },
+        {
+          "evidence": {
+            "call_count": 57,
+            "semantic_digest": "a025c33225b491562fe202526f1467ce862a7140a25d6da2797b0c83f3620e09"
+          },
+          "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py"
+        },
+        {
+          "evidence": {
+            "call_count": 5,
+            "semantic_digest": "eb7828300d12d895230160942c7f8e43a784e3b30ecb1bf538f049760a0400bb"
+          },
+          "path": "tldw_chatbook/RAG_Search/simplified/search_service.py"
+        },
+        {
+          "evidence": {
+            "call_count": 9,
+            "semantic_digest": "8bb2f652d81a40d2d90f5f47037af7d19f26f91796d314e5eac2b13819ce3849"
+          },
+          "path": "tldw_chatbook/UI/Console_Modules/session.py"
+        },
+        {
+          "evidence": {
+            "call_count": 158,
+            "semantic_digest": "2381034d6d472678def8b81316d0b4e8e960774fd3c0d983bd1ad46913de2aa3"
+          },
+          "path": "tldw_chatbook/UI/Screens/chat_screen.py"
+        },
+        {
+          "evidence": {
+            "call_count": 86,
+            "semantic_digest": "43752366283a21676eaf8c5753963c7c1cf974f01b29bc36849f053f8570bc2a"
+          },
+          "path": "tldw_chatbook/UI/Screens/library_screen.py"
+        },
+        {
+          "evidence": {
+            "call_count": 305,
+            "semantic_digest": "ac6d08e0d13f5dda48e29858545b4728753e9e3c471fb772d8eca1bd0f0e6568"
+          },
+          "path": "tldw_chatbook/app.py"
+        },
+        {
+          "evidence": {
+            "call_count": 31,
+            "semantic_digest": "44f3b8d8543aba4b457fc51bce8e6804bb8fd50a4639b7bc5302709056e71b04"
+          },
+          "path": "tldw_chatbook/UI/Screens/settings_screen.py"
+        },
+        {
+          "evidence": {
+            "call_count": 1,
+            "semantic_digest": "7fcb6afb4a2c0d135bcdabc529a9db12c4dcea631985a926dfc27786607e75b4"
+          },
+          "path": "tldw_chatbook/Utils/text_selection_crash_guard.py"
+        }
+      ]
+    },
+    "state": "post_rebase"
+  },
+  "owners": [
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "reviewed_final": {
+        "call_count": 13,
+        "diagnostic_digest": "77fa73b46097353ed1fb"
+      },
+      "starting": {
+        "call_count": 9,
+        "diagnostic_digest": "578de6bb91649fc9fc87"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "reviewed_final": {
+        "call_count": 14,
+        "diagnostic_digest": "ee9921349e5a07651d59"
+      },
+      "starting": {
+        "call_count": 12,
+        "diagnostic_digest": "7caa9d8c2694081e94e9"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "reviewed_final": {
+        "call_count": 36,
+        "diagnostic_digest": "88970d9db93c669f03aa"
+      },
+      "starting": {
+        "call_count": 35,
+        "diagnostic_digest": "5361a9926d2d6bede509"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "reviewed_final": {
+        "call_count": 45,
+        "diagnostic_digest": "457eaabe08ac4de827fd"
+      },
+      "starting": {
+        "call_count": 40,
+        "diagnostic_digest": "354cf52f8e1d76bbb9b8"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_context_compaction.py",
+      "reviewed_final": {
+        "call_count": 2,
+        "diagnostic_digest": "27d289b999d66e754418"
+      },
+      "starting": {
+        "call_count": 2,
+        "diagnostic_digest": "ad596e6fde321c7720f4"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_provider_gateway.py",
+      "reviewed_final": {
+        "call_count": 2,
+        "diagnostic_digest": "9bd43df1945e3a46d316"
+      },
+      "starting": {
+        "call_count": 2,
+        "diagnostic_digest": "747b675587167a1bec60"
+      }
+    },
+    {
+      "path": "tldw_chatbook/MCP/client.py",
+      "reviewed_final": {
+        "call_count": 48,
+        "diagnostic_digest": "e7bcc40dca9cfbb410a2"
+      },
+      "starting": {
+        "call_count": 48,
+        "diagnostic_digest": "7110f1c19a6a982f290a"
+      }
+    },
+    {
+      "path": "tldw_chatbook/MCP/local_server_tools.py",
+      "reviewed_final": {
+        "call_count": 1,
+        "diagnostic_digest": "5a6a84d5e177534348d2"
+      },
+      "starting": {
+        "call_count": 1,
+        "diagnostic_digest": "5a6a84d5e177534348d2"
+      }
+    },
+    {
+      "path": "tldw_chatbook/MCP/prompts.py",
+      "reviewed_final": {
+        "call_count": 1,
+        "diagnostic_digest": "af163025ed5780b49a46"
+      },
+      "starting": {
+        "call_count": 1,
+        "diagnostic_digest": "af163025ed5780b49a46"
+      }
+    },
+    {
+      "path": "tldw_chatbook/MCP/server.py",
+      "reviewed_final": {
+        "call_count": 8,
+        "diagnostic_digest": "86cbb8127d9b610be073"
+      },
+      "starting": {
+        "call_count": 8,
+        "diagnostic_digest": "86cbb8127d9b610be073"
+      }
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/fusion.py",
+      "reviewed_final": {
+        "call_count": 8,
+        "diagnostic_digest": "e12415663481f423ce12"
+      },
+      "starting": {
+        "call_count": 8,
+        "diagnostic_digest": "97d06c55271a5f01c549"
+      }
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/rag_service.py",
+      "reviewed_final": {
+        "call_count": 67,
+        "diagnostic_digest": "706e6fa2290e4780d91c"
+      },
+      "starting": {
+        "call_count": 57,
+        "diagnostic_digest": "283cb4ecf295fff754bc"
+      }
+    },
+    {
+      "path": "tldw_chatbook/RAG_Search/simplified/search_service.py",
+      "reviewed_final": {
+        "call_count": 5,
+        "diagnostic_digest": "57ac009dd80f8d7028b8"
+      },
+      "starting": {
+        "call_count": 5,
+        "diagnostic_digest": "57ac009dd80f8d7028b8"
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "reviewed_final": {
+        "call_count": 10,
+        "diagnostic_digest": "14f2fcd932871d099c1d"
+      },
+      "starting": {
+        "call_count": 9,
+        "diagnostic_digest": "a748c6b9e50e24ec30f5"
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "reviewed_final": {
+        "call_count": 170,
+        "diagnostic_digest": "ecbae47b5f681ffe86fc"
+      },
+      "starting": {
+        "call_count": 158,
+        "diagnostic_digest": "eef7b929c039940e51f5"
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "reviewed_final": {
+        "call_count": 98,
+        "diagnostic_digest": "f023e5f1ed1a4c24c40b"
+      },
+      "starting": {
+        "call_count": 86,
+        "diagnostic_digest": "ae0fac2e87bf1a6ee81c"
+      }
+    },
+    {
+      "path": "tldw_chatbook/app.py",
+      "reviewed_final": {
+        "call_count": 308,
+        "diagnostic_digest": "c3d6f1154bc175678f12"
+      },
+      "starting": {
+        "call_count": 305,
+        "diagnostic_digest": "dec5c30c1ad1b1b1c8fc"
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "reviewed_final": {
+        "call_count": 34,
+        "diagnostic_digest": "e6997e585e856c0a5a6a"
+      },
+      "starting": {
+        "call_count": 31,
+        "diagnostic_digest": "62ea61e3ba363d516a6e"
+      }
+    },
+    {
+      "path": "tldw_chatbook/Utils/text_selection_crash_guard.py",
+      "reviewed_final": {
+        "call_count": 1,
+        "diagnostic_digest": "84a766671e679a7f5287"
+      },
+      "starting": {
+        "call_count": 1,
+        "diagnostic_digest": "f90a373ef5fcc81a8c1c"
+      }
+    }
+  ],
+  "review_status": "reviewed",
+  "schema_version": 1
+}

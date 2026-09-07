@@ -371,15 +371,6 @@ TreeNode {
    These styles would need to be applied dynamically
    based on terminal size detection in Python code */
 
-/* For smaller terminals - apply these classes dynamically */
-.repo-window-small .repo-window-container {
-    width: 95%;
-    height: 95%;
-}
-
-.repo-window-small .main-content {
-    grid-columns: 1fr 1fr;
-}
 
 /* ========================================
  * Syntax Highlighting Support
@@ -387,27 +378,4 @@ TreeNode {
 
 #file-preview {
     /* monospace font style */
-}
-
-/* Code highlighting classes would be added here */
-.syntax-keyword {
-    color: $primary;
-    text-style: bold;
-}
-
-.syntax-string {
-    color: $success;
-}
-
-.syntax-comment {
-    color: $text-muted;
-    text-style: italic;
-}
-
-.syntax-function {
-    color: $accent;
-}
-
-.syntax-number {
-    color: $warning;
 }

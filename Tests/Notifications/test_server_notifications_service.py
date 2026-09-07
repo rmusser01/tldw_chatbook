@@ -41,7 +41,12 @@ class FakeServerNotificationsClient:
         return {"dismissed": True}
 
     async def create_reminder_task(self, request_data):
-        self.calls.append(("create_reminder_task", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_reminder_task",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return type(
             "Response",
             (),
@@ -68,7 +73,13 @@ class FakeServerNotificationsClient:
         )()
 
     async def update_reminder_task(self, task_id, request_data):
-        self.calls.append(("update_reminder_task", task_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_reminder_task",
+                task_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": task_id, "title": "Updated"}
 
     async def delete_reminder_task(self, task_id):
@@ -172,13 +183,23 @@ async def test_server_notifications_service_re_resolves_provider_without_service
     assert provider.clients[0].calls == [
         (
             "list_notifications",
-            {"limit": 25, "offset": 0, "include_archived": False, "only_snoozed": False},
+            {
+                "limit": 25,
+                "offset": 0,
+                "include_archived": False,
+                "only_snoozed": False,
+            },
         )
     ]
     assert provider.clients[1].calls == [
         (
             "list_notifications",
-            {"limit": 10, "offset": 0, "include_archived": False, "only_snoozed": False},
+            {
+                "limit": 10,
+                "offset": 0,
+                "include_archived": False,
+                "only_snoozed": False,
+            },
         )
     ]
     for built_client in provider.clients:
@@ -186,7 +207,9 @@ async def test_server_notifications_service_re_resolves_provider_without_service
 
 
 @pytest.mark.asyncio
-async def test_server_notifications_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_notifications_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakeServerNotificationsClient())
     build_provider_calls = []
 
@@ -194,7 +217,11 @@ async def test_server_notifications_service_from_config_returns_provider_backed_
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(notifications_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        notifications_module,
+        "build_runtime_api_client_provider_from_config",
+        build_provider,
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerNotificationsService.from_config(config)
@@ -237,7 +264,9 @@ async def test_server_notifications_service_routes_feed_and_reminders_with_polic
     assert reminders["total"] == 1
     assert updated["title"] == "Updated"
     assert deleted["deleted"] is True
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "notifications.feed.list.server",
         "notifications.feed.update.server",
         "notifications.feed.update.server",

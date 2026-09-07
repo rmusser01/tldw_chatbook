@@ -3,17 +3,16 @@
 # Provides quick access to Provider, Model, Temperature without opening the sidebar.
 #
 # Imports
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button, Select, Input, Static, Label
-from textual.reactive import reactive
+from textual.widgets import Button, Select, Input, Label
 from textual import on
 from textual.css.query import NoMatches
 
-from ..config import get_cli_providers_and_models, get_cli_setting, resolve_provider_name
+from ..config import get_cli_providers_and_models, resolve_provider_name
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -32,7 +31,7 @@ class CompactModelBar(Horizontal):
 
     def __init__(
         self,
-        app_instance: 'TldwCli',
+        app_instance: "TldwCli",
         on_sidebar_toggle_requested: Callable[[], Any] | None = None,
         **kwargs,
     ):
@@ -46,17 +45,26 @@ class CompactModelBar(Horizontal):
         defaults = config.get("chat_defaults", {})
         providers_models = get_cli_providers_and_models()
         available_providers = list(providers_models.keys())
+        # task-16474: no arbitrary first-provider fallback. When
+        # chat_defaults.provider is missing or unresolvable the select stays
+        # on its prompt until the user chooses -- the first [providers] key
+        # in file order is not a selection anyone made.
         default_provider = resolve_provider_name(
-            defaults.get("provider", available_providers[0] if available_providers else ""),
+            defaults.get("provider", ""),
             providers_models,
         )
 
-        # Provider select
+        # Provider select. allow_blank=True (task-16474): Textual's Select
+        # force-picks options[0] at mount and on set_options when blank is
+        # disallowed, which both fabricates a selection nobody made and fires
+        # a Changed event the provider mirror would treat as user intent.
+        # Blank now means "nothing chosen" and the screen handler already
+        # ignores empty values.
         provider_options = [(p, p) for p in available_providers]
         yield Select(
             options=provider_options,
             prompt="Provider",
-            allow_blank=False,
+            allow_blank=True,
             id="compact-api-provider",
         )
 
@@ -88,20 +96,28 @@ class CompactModelBar(Horizontal):
         )
 
     def on_mount(self) -> None:
-        """Set default values after widgets are mounted."""
+        """Set default values after widgets are mounted.
+
+        task-16474: population is programmatic, so every value set here is
+        wrapped in ``prevent(Select.Changed)`` -- the screen's provider/model
+        mirrors must only track genuine user selections, never the mount
+        burst (which used to write them on every recompose and silently
+        revert values the user had applied).
+        """
         config = self.app_instance.app_config
         defaults = config.get("chat_defaults", {})
         providers_models = get_cli_providers_and_models()
         available_providers = list(providers_models.keys())
         default_provider = resolve_provider_name(
-            defaults.get("provider", available_providers[0] if available_providers else ""),
+            defaults.get("provider", ""),
             providers_models,
         )
         # Set provider
         try:
             provider_select = self.query_one("#compact-api-provider", Select)
             if default_provider in available_providers:
-                provider_select.value = default_provider
+                with provider_select.prevent(Select.Changed):
+                    provider_select.value = default_provider
         except NoMatches:
             pass
         # Set model
@@ -110,15 +126,35 @@ class CompactModelBar(Horizontal):
         try:
             model_select = self.query_one("#compact-api-model", Select)
             if default_model in initial_models:
-                model_select.value = default_model
+                with model_select.prevent(Select.Changed):
+                    model_select.value = default_model
             elif initial_models:
-                model_select.value = initial_models[0]
+                with model_select.prevent(Select.Changed):
+                    model_select.value = initial_models[0]
         except NoMatches:
             pass
+        # The suppressed population events used to reach the screen's
+        # Select.Changed handler, whose coalesced control-bar sync kept the
+        # rail/inspector fresh after the bar (re)mounted. Population no
+        # longer carries user intent, so request that same sync explicitly
+        # instead of resurrecting the ambient events (task-16474).
+        screen = self.screen
+        request_sync = getattr(screen, "_request_console_control_bar_sync", None)
+        if callable(request_sync):
+            request_sync()
 
     @on(Select.Changed, "#compact-api-provider")
     async def handle_compact_provider_change(self, event: Select.Changed) -> None:
         """Handle provider change in compact bar and sync to sidebar."""
+        # task-16474: the provider select allows blank ("nothing chosen");
+        # a blank change carries no provider to sync. Covers Textual's
+        # BLANK and NULL sentinels the same way the screen's handler does.
+        if (
+            event.value is None
+            or event.value == Select.BLANK
+            or str(event.value).startswith("Select.")
+        ):
+            return
         new_provider = str(event.value)
         logger.info(f"Compact bar: provider changed to {new_provider}")
 
@@ -153,7 +189,9 @@ class CompactModelBar(Horizontal):
         except NoMatches:
             logger.debug("Sidebar model select not found for sync")
         except Exception as e:
-            logger.debug(f"Sidebar model select could not accept compact model value {event.value!r}: {e}")
+            logger.debug(
+                f"Sidebar model select could not accept compact model value {event.value!r}: {e}"
+            )
 
     @on(Input.Changed, "#compact-temperature")
     async def handle_compact_temp_change(self, event: Input.Changed) -> None:
@@ -166,32 +204,25 @@ class CompactModelBar(Horizontal):
 
     @on(Button.Pressed, "#compact-sidebar-toggle")
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
-        """Toggle the settings sidebar."""
+        """Toggle the settings sidebar.
+
+        ``ChatWindowEnhanced`` is retired, so the only live host wiring this
+        widget always passes ``on_sidebar_toggle_requested`` (the Console
+        control bar routes it to ``ChatScreen._toggle_console_chat_sidebar``);
+        the callback is the sole toggle path now.
+
+        Args:
+            event: The compact-bar sidebar-toggle button press.
+        """
         event.stop()
         if self.on_sidebar_toggle_requested:
             result = self.on_sidebar_toggle_requested()
             if hasattr(result, "__await__"):
                 await result
-            return
 
-        # Find the ChatWindowEnhanced parent and toggle via its handler
-        try:
-            from ..UI.Chat_Window_Enhanced import ChatWindowEnhanced
-            chat_window = self.ancestors_with_self
-            for ancestor in chat_window:
-                if isinstance(ancestor, ChatWindowEnhanced):
-                    ancestor._sidebar_collapsed = not ancestor._sidebar_collapsed
-                    ancestor.app_instance.chat_sidebar_collapsed = ancestor._sidebar_collapsed
-                    try:
-                        sidebar = ancestor.query_one("#chat-left-sidebar")
-                        sidebar.display = not ancestor._sidebar_collapsed
-                    except NoMatches:
-                        pass
-                    break
-        except Exception as e:
-            logger.error(f"Error toggling sidebar from compact bar: {e}")
-
-    def sync_from_sidebar(self, provider: str = None, model: str = None, temperature: str = None) -> None:
+    def sync_from_sidebar(
+        self, provider: str = None, model: str = None, temperature: str = None
+    ) -> None:
         """Sync values from sidebar to compact bar (called when sidebar values change)."""
         try:
             compact_model = None
@@ -200,29 +231,44 @@ class CompactModelBar(Horizontal):
             if provider is not None:
                 compact_provider = self.query_one("#compact-api-provider", Select)
                 if compact_provider.value != provider:
-                    compact_provider.value = provider
+                    with compact_provider.prevent(Select.Changed):
+                        compact_provider.value = provider
                 available_models = providers_models.get(provider, [])
                 compact_model = self.query_one("#compact-api-model", Select)
-                compact_model.set_options([(m, m) for m in available_models])
+                with compact_model.prevent(Select.Changed):
+                    compact_model.set_options([(m, m) for m in available_models])
             if model is not None:
                 if compact_model is None:
                     compact_model = self.query_one("#compact-api-model", Select)
                 if available_models is None:
                     try:
-                        compact_provider = self.query_one("#compact-api-provider", Select)
-                        current_provider = None if compact_provider.value == Select.BLANK else str(compact_provider.value)
+                        compact_provider = self.query_one(
+                            "#compact-api-provider", Select
+                        )
+                        current_provider = (
+                            None
+                            if compact_provider.value == Select.BLANK
+                            else str(compact_provider.value)
+                        )
                     except NoMatches:
                         current_provider = None
-                    available_models = providers_models.get(current_provider, []) if current_provider else []
+                    available_models = (
+                        providers_models.get(current_provider, [])
+                        if current_provider
+                        else []
+                    )
                 if model not in available_models:
                     available_models = [*available_models, model]
-                    compact_model.set_options([(m, m) for m in available_models])
+                    with compact_model.prevent(Select.Changed):
+                        compact_model.set_options([(m, m) for m in available_models])
                 if compact_model.value != model:
-                    compact_model.value = model
+                    with compact_model.prevent(Select.Changed):
+                        compact_model.value = model
             if temperature is not None:
                 compact_temp = self.query_one("#compact-temperature", Input)
                 if compact_temp.value != temperature:
-                    compact_temp.value = temperature
+                    with compact_temp.prevent(Input.Changed):
+                        compact_temp.value = temperature
         except NoMatches:
             pass
 

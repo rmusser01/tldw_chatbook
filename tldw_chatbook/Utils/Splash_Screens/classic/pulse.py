@@ -2,7 +2,7 @@
 
 import math
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, Tuple
 
 from ..base_effect import BaseEffect, register_effect
 
@@ -19,11 +19,13 @@ class PulseEffect(BaseEffect):
         min_brightness: int = 100,
         max_brightness: int = 255,
         color: Tuple[int, int, int] = (255, 255, 255),  # Default white
-        **kwargs
+        **kwargs,
     ):
         super().__init__(parent_widget, **kwargs)
         self.content = content
-        self.pulse_speed = pulse_speed  # Not directly used by time, but for step in cycle
+        self.pulse_speed = (
+            pulse_speed  # Not directly used by time, but for step in cycle
+        )
         self.min_brightness = min_brightness
         self.max_brightness = max_brightness
         self.base_color = color
@@ -47,8 +49,11 @@ class PulseEffect(BaseEffect):
         sin_value = (math.sin(2 * math.pi * elapsed_time * self.pulse_speed) + 1) / 2
 
         # Map the 0-1 sin_value to the brightness range
-        brightness = self.min_brightness + (self.max_brightness - self.min_brightness) * sin_value
-        brightness = int(max(0, min(255, brightness))) # Clamp
+        brightness = (
+            self.min_brightness
+            + (self.max_brightness - self.min_brightness) * sin_value
+        )
+        brightness = int(max(0, min(255, brightness)))  # Clamp
 
         # Apply brightness to the base color
         # Scale base color components by brightness/255
@@ -60,8 +65,8 @@ class PulseEffect(BaseEffect):
 
         # Apply style to content, escaping Rich markup
         output_lines = []
-        for line in self.content.split('\n'):
-            escaped_line = line.replace('[', r'\[').replace(']', r'\]')
+        for line in self.content.split("\n"):
+            escaped_line = line.replace("[", r"\[").replace("]", r"\]")
             output_lines.append(f"[{pulsing_style}]{escaped_line}[/{pulsing_style}]")
 
-        return '\n'.join(output_lines)
+        return "\n".join(output_lines)

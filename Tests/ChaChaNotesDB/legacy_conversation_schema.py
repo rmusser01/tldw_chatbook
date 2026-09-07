@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 
 
 _DB_SCHEMA_VERSION_TABLE_SQL = """
@@ -178,3 +184,31 @@ def create_legacy_v13_conversations_db(
         insert_columns=_LEGACY_V13_INSERT_COLUMNS,
         rows=rows,
     )
+
+
+@contextmanager
+def migrated_legacy_conversations_db(
+    db_path: Path,
+    migration: Callable[[CharactersRAGDB, sqlite3.Connection], None],
+) -> Iterator[sqlite3.Connection]:
+    """Run one conversation migration without initializing unrelated schemas."""
+    connection = sqlite3.connect(str(db_path))
+    connection.row_factory = sqlite3.Row
+    db = CharactersRAGDB.__new__(CharactersRAGDB)
+    db.db_path_str = str(db_path)
+    db._db_diagnostic_ref = content_fingerprint(db.db_path_str)
+    # task-19553: migration steps now run their DDL through
+    # ``self.transaction()`` (one ``cursor.execute`` per statement) instead of
+    # ``conn.executescript``, so this __new__-built stand-in has to expose the
+    # thread-local connection the transaction manager reaches for. Pointing it
+    # at the SAME raw connection keeps the fixture's "one migration, no
+    # unrelated schema init" property while giving the step a real,
+    # rollback-capable transaction.
+    db._local = threading.local()
+    db._local.conn = connection
+    db._local.transaction_depth = 0
+    try:
+        migration(db, connection)
+        yield connection
+    finally:
+        connection.close()

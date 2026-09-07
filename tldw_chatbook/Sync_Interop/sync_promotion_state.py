@@ -10,7 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority, SyncReadinessReport
+from tldw_chatbook.runtime_policy.server_parity_models import (
+    SourceAuthority,
+    SyncReadinessReport,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,12 +74,22 @@ def build_sync_promotion_state(
         A display state. `mutation_allowed` is always False in this tranche.
     """
 
-    reason_codes = tuple(getattr(readiness, "reason_codes", ()) or ()) if readiness else ()
-    conflicts_count = max(0, int(conflict_count)) if conflict_count is not None else len(tuple(conflict_reports or ()))
+    reason_codes = (
+        tuple(getattr(readiness, "reason_codes", ()) or ()) if readiness else ()
+    )
+    conflicts_count = (
+        max(0, int(conflict_count))
+        if conflict_count is not None
+        else len(tuple(conflict_reports or ()))
+    )
     profile = dict(profile_state or {})
     report = _mirror_report_payload(latest_mirror_report)
-    readiness_sync_eligible = bool(getattr(readiness, "sync_eligible", False)) if readiness else False
-    readiness_write_enabled = bool(getattr(readiness, "write_enabled", False)) if readiness else False
+    readiness_sync_eligible = (
+        bool(getattr(readiness, "sync_eligible", False)) if readiness else False
+    )
+    readiness_write_enabled = (
+        bool(getattr(readiness, "write_enabled", False)) if readiness else False
+    )
     rollback_required = _rollback_required(profile)
     attention_required = _attention_required(profile)
 
@@ -89,28 +102,36 @@ def build_sync_promotion_state(
         review_label = "Review: required before writes"
         conflict_label = _conflict_label(conflicts_count)
         rollback_label = "Rollback: required before writes"
-        primary_recovery = "Resolve the failed sync state and verify rollback before writes."
+        primary_recovery = (
+            "Resolve the failed sync state and verify rollback before writes."
+        )
     elif conflicts_count:
         status = "conflict"
         sync_label = "Sync: conflict review required"
         review_label = "Review: required before writes"
         conflict_label = _conflict_label(conflicts_count)
         rollback_label = "Rollback: not required"
-        primary_recovery = "Resolve sync conflicts before any write replay is available."
+        primary_recovery = (
+            "Resolve sync conflicts before any write replay is available."
+        )
     elif attention_required:
         status = "attention-required"
         sync_label = "Sync: attention required"
         review_label = "Review: required before writes"
         conflict_label = "Conflicts: none reported"
         rollback_label = "Rollback: not required"
-        primary_recovery = "Review the latest sync error before any write replay is available."
+        primary_recovery = (
+            "Review the latest sync error before any write replay is available."
+        )
     elif readiness_write_enabled:
         status = "review-gated"
         sync_label = "Sync: review gated"
         review_label = "Review: required before writes"
         conflict_label = "Conflicts: none reported"
         rollback_label = "Rollback: not required"
-        primary_recovery = "Writes stay blocked until review, conflict, and rollback gates are ready."
+        primary_recovery = (
+            "Writes stay blocked until review, conflict, and rollback gates are ready."
+        )
     elif readiness_sync_eligible:
         status = "dry-run"
         sync_label = "Sync: dry-run only"
@@ -155,7 +176,8 @@ def build_sync_promotion_summary(
         (
             state
             for state in state_tuple
-            if state.status in {"rollback-required", "conflict", "attention-required", "review-gated"}
+            if state.status
+            in {"rollback-required", "conflict", "attention-required", "review-gated"}
         ),
         None,
     )

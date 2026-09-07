@@ -37,22 +37,40 @@ class FakeSkillsClient:
 
     async def list_skills(self, **kwargs):
         self.calls.append(("list_skills", kwargs))
-        return {"skills": [_skill_payload()], "count": 1, "total": 1, "limit": 25, "offset": 5}
+        return {
+            "skills": [_skill_payload()],
+            "count": 1,
+            "total": 1,
+            "limit": 25,
+            "offset": 5,
+        }
 
     async def get_skills_context(self):
         self.calls.append(("get_skills_context",))
-        return {"available_skills": [_skill_payload()], "context_text": "- summarize-notes"}
+        return {
+            "available_skills": [_skill_payload()],
+            "context_text": "- summarize-notes",
+        }
 
     async def get_skill(self, skill_name):
         self.calls.append(("get_skill", skill_name))
         return _skill_payload(skill_name)
 
     async def create_skill(self, request_data):
-        self.calls.append(("create_skill", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("create_skill", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return _skill_payload(request_data.name)
 
     async def update_skill(self, skill_name, request_data, **kwargs):
-        self.calls.append(("update_skill", skill_name, request_data.model_dump(exclude_none=True, mode="json"), kwargs))
+        self.calls.append(
+            (
+                "update_skill",
+                skill_name,
+                request_data.model_dump(exclude_none=True, mode="json"),
+                kwargs,
+            )
+        )
         return _skill_payload(skill_name, content="# Updated", version=2)
 
     async def delete_skill(self, skill_name, **kwargs):
@@ -60,7 +78,9 @@ class FakeSkillsClient:
         return True
 
     async def import_skill(self, request_data):
-        self.calls.append(("import_skill", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("import_skill", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return _skill_payload(request_data.name or "imported-skill")
 
     async def import_skill_file(self, file_content, **kwargs):
@@ -72,8 +92,18 @@ class FakeSkillsClient:
         return {"content": b"zip-bytes", "filename": f"{skill_name}.zip"}
 
     async def execute_skill(self, skill_name, request_data=None):
-        self.calls.append(("execute_skill", skill_name, request_data.model_dump(exclude_none=True, mode="json")))
-        return {"skill_name": skill_name, "rendered_prompt": "Summarize note-1", "execution_mode": "inline"}
+        self.calls.append(
+            (
+                "execute_skill",
+                skill_name,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "skill_name": skill_name,
+            "rendered_prompt": "Summarize note-1",
+            "execution_mode": "inline",
+        }
 
     async def seed_builtin_skills(self, **kwargs):
         self.calls.append(("seed_builtin_skills", kwargs))
@@ -101,8 +131,12 @@ async def test_server_skills_service_routes_core_skill_surface_with_policy_actio
         expected_version=2,
     )
     await service.delete_skill("summarize-notes", expected_version=3)
-    await service.import_skill(name="rewrite-draft", content="# Skill\nRewrite draft", overwrite=True)
-    await service.import_skill_file(b"# Skill\nFile import", filename="file-skill.md", overwrite=True)
+    await service.import_skill(
+        name="rewrite-draft", content="# Skill\nRewrite draft", overwrite=True
+    )
+    await service.import_skill_file(
+        b"# Skill\nFile import", filename="file-skill.md", overwrite=True
+    )
     await service.export_skill("summarize-notes")
     await service.execute_skill("summarize-notes", args="note-1")
     await service.seed_builtin_skills(overwrite=True)
@@ -119,15 +153,37 @@ async def test_server_skills_service_routes_core_skill_surface_with_policy_actio
                 "supporting_files": {"reference.md": "Use concise bullets."},
             },
         ),
-        ("update_skill", "summarize-notes", {"content": "# Updated", "supporting_files": {"reference.md": None}}, {"expected_version": 2}),
+        (
+            "update_skill",
+            "summarize-notes",
+            {"content": "# Updated", "supporting_files": {"reference.md": None}},
+            {"expected_version": 2},
+        ),
         ("delete_skill", "summarize-notes", {"expected_version": 3}),
-        ("import_skill", {"name": "rewrite-draft", "content": "# Skill\nRewrite draft", "overwrite": True}),
-        ("import_skill_file", b"# Skill\nFile import", {"filename": "file-skill.md", "content_type": "text/markdown", "overwrite": True}),
+        (
+            "import_skill",
+            {
+                "name": "rewrite-draft",
+                "content": "# Skill\nRewrite draft",
+                "overwrite": True,
+            },
+        ),
+        (
+            "import_skill_file",
+            b"# Skill\nFile import",
+            {
+                "filename": "file-skill.md",
+                "content_type": "text/markdown",
+                "overwrite": True,
+            },
+        ),
         ("export_skill", "summarize-notes"),
         ("execute_skill", "summarize-notes", {"args": "note-1"}),
         ("seed_builtin_skills", {"overwrite": True}),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "skills.list.server",
         "skills.context.list.server",
         "skills.detail.server",

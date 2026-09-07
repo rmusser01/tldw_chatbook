@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 
 import pytest
-from textual.app import App
+
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
@@ -21,7 +22,10 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    ChatScreen,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,10 +33,14 @@ EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/"
     "2026-05-06-gate-1-core-product-loop-screen-adaptation.md"
 )
-AUDIT = Path("Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md")
+AUDIT = Path(
+    "Docs/superpowers/specs/2026-05-06-screen-design-adaptation-audit-design.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_5 = Path(
     "backlog/tasks/task-10.5 - Product-Maturity-Phase-3.5-Core-Product-Loop-Screen-Adaptation.md"
 )
@@ -61,7 +69,9 @@ def _visible_text(screen) -> str:
     return " ".join([*static_text, *button_text])
 
 
-async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 4.0) -> None:
+async def _wait_for_visible_text(
+    screen, pilot, expected: str, *, timeout: float = 4.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected in _visible_text(screen):
@@ -71,10 +81,17 @@ async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float
     if expected in _visible_text(screen):
         await pilot.pause()
         return
-    raise AssertionError(f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}"
+    )
 
 
-class ConsoleHarness(App[None]):
+class ConsoleHarness(ConsolidatedCSSApp):
+    # Hosts the real ChatScreen, so it needs the consolidated widget CSS the
+    # real app loads (TASK-15450) -- otherwise every widget whose DEFAULT_CSS
+    # moved into the generated sheets mounts unstyled here.
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -157,7 +174,9 @@ async def test_home_selected_item_matches_prioritized_details_control():
             ),
         ),
     )
-    app.open_active_home_item_details = lambda **kwargs: setattr(app, "last_home_details_kwargs", kwargs)
+    app.open_active_home_item_details = lambda **kwargs: setattr(
+        app, "last_home_details_kwargs", kwargs
+    )
     host = HomeHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -206,10 +225,24 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert len(console.query("#chat-window")) == 0
         text = _visible_text(console)
         assert "Console" in text
-        assert "Transcript / Event Stream" in text
-        assert "Staged Context" in text
-        assert "Choose model" in text or "Open Settings" in text
-        assert "Inspector" in text
+        assert "Conversation" in text
+        assert "Sources" in text
+        # Any of the three provider-recovery affordances counts; which one
+        # shows depends on config state. With the real test config
+        # (task-15270) a fresh profile has `[chat_defaults] provider =
+        # "OpenAI"` and no key, so the label is the configure-key one --
+        # asserted through the product constant rather than a copy of it.
+        assert (
+            "Choose provider" in text
+            or "Open Settings" in text
+            or CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
+        )
+        context_button = console.query_one("#console-context-rail-open", Button)
+        assert context_button.label == "Context ▸"
+        assert context_button.tooltip == "Open Context rail"
+        inspector_button = console.query_one("#console-inspector-rail-open", Button)
+        assert inspector_button.label == "◂ Inspect"
+        assert inspector_button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio
@@ -251,14 +284,15 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
         # Same screen instance, same rail + canvas shell -- the mode row
         # recomposed the canvas body in place rather than pushing a screen.
         assert _active_destination_screen(host) is screen
-        assert screen.query_one("#library-canvas") in screen.query_one(
-            "#library-collections-panel"
-        ).ancestors
+        assert (
+            screen.query_one("#library-canvas")
+            in screen.query_one("#library-collections-reader-shell").ancestors
+        )
         assert screen._library_selected_row_id == "browse-collections"
         assert screen.query_one("#library-row-browse-collections").has_class(
             "library-rail-row-selected"
@@ -266,12 +300,13 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         assert not seen_routes
 
         screen.query_one("#library-row-create-flashcards", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
 
         assert _active_destination_screen(host) is screen
-        assert screen.query_one("#library-canvas") in screen.query_one(
-            "#library-study-handoff-detail"
-        ).ancestors
+        assert (
+            screen.query_one("#library-canvas")
+            in screen.query_one("#library-study-handoff-canvas").ancestors
+        )
         assert screen._library_selected_row_id == "create-flashcards"
         assert screen.query_one("#library-row-create-flashcards").has_class(
             "library-rail-row-selected"

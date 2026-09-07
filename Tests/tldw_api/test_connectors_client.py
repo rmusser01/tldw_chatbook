@@ -36,7 +36,11 @@ def _source_payload(**overrides) -> dict:
         "remote_id": "root",
         "type": "folder",
         "path": "/Research",
-        "options": {"recursive": True, "include_types": ["pdf"], "exclude_patterns": []},
+        "options": {
+            "recursive": True,
+            "include_types": ["pdf"],
+            "exclude_patterns": [],
+        },
         "enabled": True,
         "last_synced_at": None,
         "sync": {
@@ -73,11 +77,19 @@ def _job_payload(job_id: str = "job-1") -> dict:
 
 
 @pytest.mark.asyncio
-async def test_connectors_client_routes_providers_accounts_sources_and_jobs(monkeypatch):
+async def test_connectors_client_routes_providers_accounts_sources_and_jobs(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            [{"name": "drive", "auth_type": "oauth2", "scopes_required": ["drive.readonly"]}],
+            [
+                {
+                    "name": "drive",
+                    "auth_type": "oauth2",
+                    "scopes_required": ["drive.readonly"],
+                }
+            ],
             {"auth_url": "https://accounts.example.test/oauth", "state": "state-1"},
             _account_payload(),
             [_account_payload()],
@@ -118,15 +130,24 @@ async def test_connectors_client_routes_providers_accounts_sources_and_jobs(monk
                 "duplicate_count": 0,
                 "metadata_only_count": 1,
             },
-            {"source_id": 11, "provider": "drive", "status": "queued", "job": _job_payload("sync-1")},
+            {
+                "source_id": 11,
+                "provider": "drive",
+                "status": "queued",
+                "job": _job_payload("sync-1"),
+            },
             {"id": 99, "status": "queued"},
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
 
     providers = await client.list_connector_providers()
-    authorize = await client.authorize_connector_provider("drive", state="state-1", scopes=["drive.readonly", "email"])
-    callback_account = await client.complete_connector_oauth_callback("drive", code="code-1", state="state-1")
+    authorize = await client.authorize_connector_provider(
+        "drive", state="state-1", scopes=["drive.readonly", "email"]
+    )
+    callback_account = await client.complete_connector_oauth_callback(
+        "drive", code="code-1", state="state-1"
+    )
     accounts = await client.list_connector_accounts()
     deleted = await client.delete_connector_account(7)
     browse = await client.browse_connector_sources(
@@ -157,13 +178,31 @@ async def test_connectors_client_routes_providers_accounts_sources_and_jobs(monk
     job_status = await client.get_connector_job_status(99)
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/connectors/providers")
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/connectors/providers/drive/authorize")
-    assert mocked.await_args_list[1].kwargs["params"] == {"state": "state-1", "scopes": "drive.readonly,email"}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/connectors/providers/drive/callback")
-    assert mocked.await_args_list[2].kwargs["params"] == {"code": "code-1", "state": "state-1"}
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/connectors/providers/drive/authorize",
+    )
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "state": "state-1",
+        "scopes": "drive.readonly,email",
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/connectors/providers/drive/callback",
+    )
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "code": "code-1",
+        "state": "state-1",
+    }
     assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/connectors/accounts")
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/connectors/accounts/7")
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/connectors/providers/drive/sources/browse")
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/connectors/accounts/7",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/connectors/providers/drive/sources/browse",
+    )
     assert mocked.await_args_list[5].kwargs["params"] == {
         "account_id": 7,
         "parent_remote_id": "root",
@@ -180,11 +219,26 @@ async def test_connectors_client_routes_providers_accounts_sources_and_jobs(monk
         "options": {"recursive": True},
     }
     assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/connectors/sources")
-    assert mocked.await_args_list[8].args[:2] == ("PATCH", "/api/v1/connectors/sources/11")
-    assert mocked.await_args_list[8].kwargs["json_data"] == {"enabled": False, "options": {"recursive": False}}
-    assert mocked.await_args_list[9].args[:2] == ("POST", "/api/v1/connectors/sources/11/import")
-    assert mocked.await_args_list[10].args[:2] == ("GET", "/api/v1/connectors/sources/11/sync")
-    assert mocked.await_args_list[11].args[:2] == ("POST", "/api/v1/connectors/sources/11/sync")
+    assert mocked.await_args_list[8].args[:2] == (
+        "PATCH",
+        "/api/v1/connectors/sources/11",
+    )
+    assert mocked.await_args_list[8].kwargs["json_data"] == {
+        "enabled": False,
+        "options": {"recursive": False},
+    }
+    assert mocked.await_args_list[9].args[:2] == (
+        "POST",
+        "/api/v1/connectors/sources/11/import",
+    )
+    assert mocked.await_args_list[10].args[:2] == (
+        "GET",
+        "/api/v1/connectors/sources/11/sync",
+    )
+    assert mocked.await_args_list[11].args[:2] == (
+        "POST",
+        "/api/v1/connectors/sources/11/sync",
+    )
     assert mocked.await_args_list[12].args[:2] == ("GET", "/api/v1/connectors/jobs/99")
 
     assert isinstance(providers[0], ConnectorProvider)

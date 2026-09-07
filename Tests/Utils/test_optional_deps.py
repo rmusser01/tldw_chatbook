@@ -1,23 +1,67 @@
 # test_optional_deps.py
 # Test cases for optional dependency handling
 #
-import pytest
+import subprocess
 import sys
+import textwrap
 import tomllib
 from pathlib import Path
-from unittest.mock import patch
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_mcp_contract_module_loads_without_optional_extra() -> None:
+    """Default test collection must not require the optional MCP runtime."""
+    contract_path = REPO_ROOT / "Tests/MCP/test_mcp_unified_public_contract.py"
+    probe = textwrap.dedent(
+        f"""
+        import runpy
+        import sys
+
+        class BlockMcpUnified:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "mcp_unified" or fullname.startswith("mcp_unified."):
+                    raise ModuleNotFoundError(
+                        "simulated missing mcp_unified", name=fullname
+                    )
+                return None
+
+        sys.meta_path.insert(0, BlockMcpUnified())
+        namespace = runpy.run_path(
+            {str(contract_path)!r}, run_name="mcp_contract_collection_probe"
+        )
+        assert namespace["MCP_UNIFIED_AVAILABLE"] is False
+        assert not any(
+            name == "mcp_unified" or name.startswith("mcp_unified.")
+            for name in sys.modules
+        )
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
 def test_optional_deps_import():
     """Test that the optional dependencies module can be imported."""
     from tldw_chatbook.Utils.optional_deps import (
-        DEPENDENCIES_AVAILABLE, check_dependency, get_safe_import, 
-        require_dependency, create_unavailable_feature_handler
+        DEPENDENCIES_AVAILABLE,
+        check_dependency,
+        get_safe_import,
+        require_dependency,
+        create_unavailable_feature_handler,
     )
-    
+
     assert isinstance(DEPENDENCIES_AVAILABLE, dict)
     assert callable(check_dependency)
     assert callable(get_safe_import)
@@ -49,9 +93,14 @@ def test_optional_feature_metadata_exposes_recovery_commands_and_capability_tier
 
 def test_optional_feature_metadata_covers_pyproject_extras():
     """Every declared optional extra has source-honest recovery metadata."""
-    from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES, get_optional_feature_info
+    from tldw_chatbook.Utils.optional_deps import (
+        OPTIONAL_FEATURES,
+        get_optional_feature_info,
+    )
 
-    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
     declared_extras = set(pyproject["project"]["optional-dependencies"])
 
     assert set(OPTIONAL_FEATURES) == declared_extras
@@ -83,6 +132,19 @@ def test_optional_feature_metadata_groups_release_capabilities_without_core_inst
     assert "web" in groups["Web access"]
 
 
+@pytest.mark.parametrize(
+    "extra", ("transcription_parakeet", "transcription_parakeet_onnx")
+)
+def test_parakeet_extras_describe_the_onnx_cpu_runtime(extra: str) -> None:
+    """The canonical and compatibility extras recover to the ONNX runtime."""
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    info = get_optional_feature_info(extra)
+
+    assert info.label == "Parakeet ONNX transcription"
+    assert info.package_dependencies == ("onnx-asr[cpu]",)
+
+
 def test_subscriptions_deps_require_beautifulsoup_for_route_import(monkeypatch):
     """The subscriptions route guard blocks imports when BeautifulSoup is absent."""
     from tldw_chatbook.Utils import optional_deps
@@ -90,7 +152,9 @@ def test_subscriptions_deps_require_beautifulsoup_for_route_import(monkeypatch):
     optional_deps.reset_dependency_checks()
     seen: list[tuple[str, str]] = []
 
-    def fake_check_dependency(module_name: str, feature_name: str | None = None) -> bool:
+    def fake_check_dependency(
+        module_name: str, feature_name: str | None = None
+    ) -> bool:
         dependency_key = feature_name or module_name
         seen.append((module_name, dependency_key))
         is_available = module_name != "bs4"
@@ -106,331 +170,458 @@ def test_subscriptions_deps_require_beautifulsoup_for_route_import(monkeypatch):
 
 def test_subscriptions_extra_declares_beautifulsoup_dependency():
     """The install extra matches the route guard's BeautifulSoup dependency."""
-    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
 
-    assert "beautifulsoup4" in pyproject["project"]["optional-dependencies"]["subscriptions"]
+    assert (
+        "beautifulsoup4"
+        in pyproject["project"]["optional-dependencies"]["subscriptions"]
+    )
 
 
 def test_unavailable_feature_handler():
     """Test that unavailable feature handlers work correctly."""
     from tldw_chatbook.Utils.optional_deps import create_unavailable_feature_handler
-    
-    handler = create_unavailable_feature_handler('test_feature', 'pip install test')
-    
+
+    handler = create_unavailable_feature_handler("test_feature", "pip install test")
+
     with pytest.raises(ImportError) as exc_info:
         handler()
-    
-    assert 'test_feature' in str(exc_info.value)
-    assert 'pip install test' in str(exc_info.value)
+
+    assert "test_feature" in str(exc_info.value)
+    assert "pip install test" in str(exc_info.value)
 
 
 def test_dependency_check_caching():
     """Test that dependency checks are cached."""
-    from tldw_chatbook.Utils.optional_deps import check_dependency, DEPENDENCIES_AVAILABLE
-    
+    from tldw_chatbook.Utils.optional_deps import (
+        check_dependency,
+        DEPENDENCIES_AVAILABLE,
+    )
+
     # Clear cache for this test
-    test_key = 'test_nonexistent_module'
+    test_key = "test_nonexistent_module"
     if test_key in DEPENDENCIES_AVAILABLE:
         del DEPENDENCIES_AVAILABLE[test_key]
-    
+
     # First call should check and cache the result
-    result1 = check_dependency('nonexistent_module_for_testing', test_key)
+    result1 = check_dependency("nonexistent_module_for_testing", test_key)
     assert result1 is False
     assert DEPENDENCIES_AVAILABLE[test_key] is False
-    
+
     # Second call should use cached result
-    result2 = check_dependency('nonexistent_module_for_testing', test_key)
+    result2 = check_dependency("nonexistent_module_for_testing", test_key)
     assert result2 is False
 
 
 def test_require_dependency_with_missing_module():
     """Test that require_dependency raises helpful error for missing modules."""
     from tldw_chatbook.Utils.optional_deps import require_dependency
-    
+
     with pytest.raises(ImportError) as exc_info:
-        require_dependency('nonexistent_module_for_testing')
-    
-    assert 'nonexistent_module_for_testing' in str(exc_info.value)
-    assert 'pip install' in str(exc_info.value)
+        require_dependency("nonexistent_module_for_testing")
+
+    assert "nonexistent_module_for_testing" in str(exc_info.value)
+    assert "pip install" in str(exc_info.value)
 
 
 def test_get_safe_import_with_missing_module():
     """Test that get_safe_import returns None for missing modules."""
     from tldw_chatbook.Utils.optional_deps import get_safe_import
-    
-    result = get_safe_import('nonexistent_module_for_testing')
+
+    result = get_safe_import("nonexistent_module_for_testing")
     assert result is None
 
 
 def test_get_safe_import_with_existing_module():
     """Test that get_safe_import returns module for existing modules."""
     from tldw_chatbook.Utils.optional_deps import get_safe_import
-    
+
     # Test with a built-in module that should always exist
-    result = get_safe_import('os')
+    result = get_safe_import("os")
     assert result is not None
-    assert hasattr(result, 'path')  # os module should have 'path' attribute
+    assert hasattr(result, "path")  # os module should have 'path' attribute
 
 
 def test_embeddings_rag_deps_missing():
     """Test embeddings/RAG dependency checking when dependencies are missing."""
     # Mock the __import__ function to simulate missing modules
-    modules_to_fail = {'torch', 'transformers', 'numpy', 'chromadb', 'sentence_transformers'}
-    original_import = __builtins__['__import__']
-    
+    modules_to_fail = {
+        "torch",
+        "transformers",
+        "numpy",
+        "chromadb",
+        "sentence_transformers",
+    }
+    original_import = __builtins__["__import__"]
+
     def mock_import(name, *args, **kwargs):
         if name in modules_to_fail:
             raise ModuleNotFoundError(f"No module named '{name}'")
         return original_import(name, *args, **kwargs)
-    
+
     try:
         # Re-import and re-initialize the optional_deps module
-        if 'tldw_chatbook.Utils.optional_deps' in sys.modules:
-            del sys.modules['tldw_chatbook.Utils.optional_deps']
-        
+        if "tldw_chatbook.Utils.optional_deps" in sys.modules:
+            del sys.modules["tldw_chatbook.Utils.optional_deps"]
+
         # Patch the import
-        __builtins__['__import__'] = mock_import
-        
-        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_embeddings_rag_deps, reset_dependency_checks
-        
+        __builtins__["__import__"] = mock_import
+
+        from tldw_chatbook.Utils.optional_deps import (
+            DEPENDENCIES_AVAILABLE,
+            check_embeddings_rag_deps,
+            reset_dependency_checks,
+        )
+
         # Reset the dependency checks to clear cached results
         reset_dependency_checks()
-        
+
         # Should detect missing dependencies
         result = check_embeddings_rag_deps()
         assert result is False
-        assert DEPENDENCIES_AVAILABLE.get('embeddings_rag', False) is False
-        
+        assert DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) is False
+
     finally:
         # Restore original import
-        __builtins__['__import__'] = original_import
+        __builtins__["__import__"] = original_import
 
 
-def test_embeddings_lib_graceful_failure():
+def test_embeddings_lib_graceful_failure(monkeypatch):
     """Test that Embeddings_Lib handles missing dependencies gracefully."""
     # This test verifies the module can be imported even if dependencies are missing
-    try:
-        # Clear optional dependency availability to simulate missing deps
-        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-        original_rag_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag')
-        DEPENDENCIES_AVAILABLE['embeddings_rag'] = False
-        
-        # Test that EmbeddingFactory raises helpful error
-        from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory
-        
-        with pytest.raises(ImportError) as exc_info:
-            EmbeddingFactory({})
-        
-        assert 'embeddings/RAG dependencies' in str(exc_info.value)
-        assert 'pip install' in str(exc_info.value)
-        
-    finally:
-        # Restore original state
-        if original_rag_available is not None:
-            DEPENDENCIES_AVAILABLE['embeddings_rag'] = original_rag_available
+    from tldw_chatbook.Utils import optional_deps
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+    # Clear optional dependency availability to simulate missing deps. A
+    # bare `DEPENDENCIES_AVAILABLE["embeddings_rag"] = False` is not enough
+    # on its own (task-657): EmbeddingFactory now runs the real dependency
+    # probe itself on a False reading (a genuine "first use", since nothing
+    # else in the app calls it under the default lazy-checking mode), so a
+    # merely-stale flag with the real packages present would get silently
+    # corrected back to True. Patching the underlying checker is what
+    # actually simulates "the real probe ran and found the packages
+    # missing".
+    monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+    monkeypatch.setattr(optional_deps, "check_embeddings_rag_deps", lambda: False)
+
+    # Test that EmbeddingFactory raises helpful error
+    from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory
+
+    with pytest.raises(ImportError) as exc_info:
+        EmbeddingFactory({})
+
+    assert "embeddings/RAG dependencies" in str(exc_info.value)
+    assert "pip install" in str(exc_info.value)
 
 
-def test_chroma_lib_graceful_failure():
-    """Test that Chroma_Lib handles missing dependencies gracefully."""
-    try:
-        # Clear optional dependency availability to simulate missing deps
-        from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-        original_rag_available = DEPENDENCIES_AVAILABLE.get('embeddings_rag')
-        DEPENDENCIES_AVAILABLE['embeddings_rag'] = False
-        
-        # Test that ChromaDBManager raises helpful error
-        from tldw_chatbook.Embeddings.Chroma_Lib import ChromaDBManager
-        
-        with pytest.raises(ImportError) as exc_info:
-            ChromaDBManager("test_user", {"test": "config"})
-        
-        assert 'embeddings/RAG dependencies' in str(exc_info.value)
-        assert 'pip install' in str(exc_info.value)
-        
-    finally:
-        # Restore original state
-        if original_rag_available is not None:
-            DEPENDENCIES_AVAILABLE['embeddings_rag'] = original_rag_available
+def test_audio_dependency_inventory_does_not_import_native_mlx_backends(monkeypatch):
+    """Eager inventory must not initialize native MLX runtimes."""
+    from tldw_chatbook.Utils import optional_deps
+
+    checked_dependencies: list[str] = []
+
+    def fake_check_dependency(
+        module_name: str, feature_name: str | None = None
+    ) -> bool:
+        checked_dependencies.append(module_name)
+        return True
+
+    probed_dependencies: list[str] = []
+
+    def fake_find_spec(module_name: str):
+        probed_dependencies.append(module_name)
+        return object() if module_name == "parakeet_mlx" else None
+
+    dependency_registry = dict(optional_deps.DEPENDENCIES_AVAILABLE)
+    monkeypatch.setattr(optional_deps.sys, "platform", "darwin")
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
+    monkeypatch.setattr(optional_deps.importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(optional_deps, "DEPENDENCIES_AVAILABLE", dependency_registry)
+
+    assert optional_deps.check_audio_processing_deps() is True
+
+    assert "parakeet_mlx" not in checked_dependencies
+    assert "lightning_whisper_mlx" not in checked_dependencies
+    assert probed_dependencies == ["lightning_whisper_mlx", "parakeet_mlx"]
+    assert dependency_registry["parakeet_mlx"] is True
+    assert dependency_registry["lightning_whisper_mlx"] is False
 
 
 def test_pdf_processing_deps():
     """Test PDF processing dependency checking."""
-    from tldw_chatbook.Utils.optional_deps import check_pdf_processing_deps, DEPENDENCIES_AVAILABLE
-    
+    from tldw_chatbook.Utils.optional_deps import (
+        check_pdf_processing_deps,
+        DEPENDENCIES_AVAILABLE,
+    )
+
     # The result depends on what's installed, but function should always run
     result = check_pdf_processing_deps()
     assert isinstance(result, bool)
-    assert 'pdf_processing' in DEPENDENCIES_AVAILABLE
-    assert 'pymupdf' in DEPENDENCIES_AVAILABLE
-    assert 'pymupdf4llm' in DEPENDENCIES_AVAILABLE
-    assert 'docling' in DEPENDENCIES_AVAILABLE
+    assert "pdf_processing" in DEPENDENCIES_AVAILABLE
+    assert "pymupdf" in DEPENDENCIES_AVAILABLE
+    assert "pymupdf4llm" in DEPENDENCIES_AVAILABLE
+    assert "docling" in DEPENDENCIES_AVAILABLE
 
 
 def test_ebook_processing_deps():
     """Test e-book processing dependency checking."""
-    from tldw_chatbook.Utils.optional_deps import check_ebook_processing_deps, DEPENDENCIES_AVAILABLE
-    
+    from tldw_chatbook.Utils.optional_deps import (
+        check_ebook_processing_deps,
+        DEPENDENCIES_AVAILABLE,
+    )
+
     result = check_ebook_processing_deps()
     assert isinstance(result, bool)
-    assert 'ebook_processing' in DEPENDENCIES_AVAILABLE
-    assert 'ebooklib' in DEPENDENCIES_AVAILABLE
-    assert 'html2text' in DEPENDENCIES_AVAILABLE
-    assert 'defusedxml' in DEPENDENCIES_AVAILABLE
+    assert "ebook_processing" in DEPENDENCIES_AVAILABLE
+    assert "ebooklib" in DEPENDENCIES_AVAILABLE
+    assert "html2text" in DEPENDENCIES_AVAILABLE
+    assert "defusedxml" in DEPENDENCIES_AVAILABLE
 
 
 def test_web_scraping_deps():
     """Test web scraping dependency checking."""
-    from tldw_chatbook.Utils.optional_deps import check_websearch_deps, DEPENDENCIES_AVAILABLE
-    
+    from tldw_chatbook.Utils.optional_deps import (
+        check_websearch_deps,
+        DEPENDENCIES_AVAILABLE,
+    )
+
     result = check_websearch_deps()
     assert isinstance(result, bool)
-    assert 'websearch' in DEPENDENCIES_AVAILABLE
-    assert 'websearch_core' in DEPENDENCIES_AVAILABLE
+    assert "websearch" in DEPENDENCIES_AVAILABLE
+    assert "websearch_core" in DEPENDENCIES_AVAILABLE
 
 
 def test_ocr_deps():
     """Test OCR dependency checking."""
     from tldw_chatbook.Utils.optional_deps import check_ocr_deps, DEPENDENCIES_AVAILABLE
-    
+
     result = check_ocr_deps()
     assert isinstance(result, bool)
-    assert 'ocr_processing' in DEPENDENCIES_AVAILABLE
+    assert "ocr_processing" in DEPENDENCIES_AVAILABLE
     # Individual dependencies are checked within the function
     # We just verify the main key is set
 
 
 def test_local_llm_deps():
     """Test local LLM dependency checking."""
-    from tldw_chatbook.Utils.optional_deps import check_local_llm_deps, DEPENDENCIES_AVAILABLE
-    
+    from tldw_chatbook.Utils.optional_deps import (
+        check_local_llm_deps,
+        DEPENDENCIES_AVAILABLE,
+    )
+
     result = check_local_llm_deps()
     assert isinstance(result, bool)
-    assert 'local_llm' in DEPENDENCIES_AVAILABLE
-    assert 'vllm' in DEPENDENCIES_AVAILABLE
-    assert 'onnxruntime' in DEPENDENCIES_AVAILABLE
-    assert 'mlx_lm' in DEPENDENCIES_AVAILABLE
+    assert "local_llm" in DEPENDENCIES_AVAILABLE
+    assert "vllm" in DEPENDENCIES_AVAILABLE
+    assert "onnxruntime" in DEPENDENCIES_AVAILABLE
+    assert "mlx_lm" in DEPENDENCIES_AVAILABLE
 
 
 def test_tts_deps():
     """Test TTS dependency checking."""
     from tldw_chatbook.Utils.optional_deps import check_tts_deps, DEPENDENCIES_AVAILABLE
-    
+
     result = check_tts_deps()
     assert isinstance(result, bool)
-    assert 'tts_processing' in DEPENDENCIES_AVAILABLE
+    assert "tts_processing" in DEPENDENCIES_AVAILABLE
     # Individual dependencies are checked within the function
     # We just verify the main key is set
+
+
+def test_tts_deps_probes_higgs_import_under_the_higgs_feature_key(monkeypatch):
+    """The installable module and the capability registry key are not reversed."""
+    from tldw_chatbook.Utils import optional_deps
+
+    calls = []
+
+    def check_dependency(module_name, feature_name=None):
+        calls.append((module_name, feature_name))
+        return module_name == "boson_multimodal"
+
+    monkeypatch.setattr(optional_deps, "check_dependency", check_dependency)
+
+    assert optional_deps.check_tts_deps() is True
+    assert ("boson_multimodal", "higgs_tts") in calls
 
 
 def test_stt_deps():
     """Test STT dependency checking."""
     from tldw_chatbook.Utils.optional_deps import check_stt_deps, DEPENDENCIES_AVAILABLE
-    
+
     result = check_stt_deps()
     assert isinstance(result, bool)
-    assert 'stt_processing' in DEPENDENCIES_AVAILABLE
+    assert "stt_processing" in DEPENDENCIES_AVAILABLE
     # Individual dependencies are checked within the function
     # We just verify the main key is set
 
 
 def test_image_processing_deps():
     """Test image processing dependency checking."""
-    from tldw_chatbook.Utils.optional_deps import check_image_processing_deps, DEPENDENCIES_AVAILABLE
-    
+    from tldw_chatbook.Utils.optional_deps import (
+        check_image_processing_deps,
+        DEPENDENCIES_AVAILABLE,
+    )
+
     result = check_image_processing_deps()
     assert isinstance(result, bool)
-    assert 'image_processing' in DEPENDENCIES_AVAILABLE
-    assert 'pillow' in DEPENDENCIES_AVAILABLE
-    assert 'textual_image' in DEPENDENCIES_AVAILABLE
-    assert 'rich_pixels' in DEPENDENCIES_AVAILABLE
+    assert "image_processing" in DEPENDENCIES_AVAILABLE
+    assert "pillow" in DEPENDENCIES_AVAILABLE
+    assert "textual_image" in DEPENDENCIES_AVAILABLE
+    assert "rich_pixels" in DEPENDENCIES_AVAILABLE
 
 
 def test_mcp_deps():
     """Test MCP dependency checking."""
     from tldw_chatbook.Utils.optional_deps import check_mcp_deps, DEPENDENCIES_AVAILABLE
-    
+
     result = check_mcp_deps()
     assert isinstance(result, bool)
-    assert 'mcp' in DEPENDENCIES_AVAILABLE
+    assert "mcp" in DEPENDENCIES_AVAILABLE
+
+
+@pytest.mark.parametrize(
+    "initial_mcp_state", [False, pytest.param(None, id="initially-absent")]
+)
+def test_mcp_deps_probes_mcp_unified_under_the_mcp_feature_key(
+    monkeypatch, initial_mcp_state
+):
+    """The distribution and its import name remain distinct at the live gate."""
+    from tldw_chatbook.Utils import optional_deps
+
+    if initial_mcp_state is None:
+        monkeypatch.delitem(optional_deps.DEPENDENCIES_AVAILABLE, "mcp", raising=False)
+    else:
+        monkeypatch.setitem(
+            optional_deps.DEPENDENCIES_AVAILABLE, "mcp", initial_mcp_state
+        )
+
+    missing = object()
+    original_mcp_state = optional_deps.DEPENDENCIES_AVAILABLE.get("mcp", missing)
+    calls = []
+
+    def fake_check_dependency(module_name, feature_name=None):
+        calls.append((module_name, feature_name))
+        return True
+
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
+
+    try:
+        assert optional_deps.check_mcp_deps() is True
+        assert calls == [("mcp_unified", "mcp")]
+    finally:
+        if original_mcp_state is missing:
+            optional_deps.DEPENDENCIES_AVAILABLE.pop("mcp", None)
+        else:
+            optional_deps.DEPENDENCIES_AVAILABLE["mcp"] = original_mcp_state
+
+    if original_mcp_state is missing:
+        assert "mcp" not in optional_deps.DEPENDENCIES_AVAILABLE
+    else:
+        assert optional_deps.DEPENDENCIES_AVAILABLE["mcp"] is original_mcp_state
+
+
+def test_mcp_optional_feature_names_the_mcp_unified_distribution():
+    """Recovery metadata names the package users install, not its import name."""
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    assert get_optional_feature_info("mcp").package_dependencies == ("mcp-unified",)
+    assert "mcp-unified" in get_optional_feature_info("all-tools").package_dependencies
 
 
 def test_initialize_dependency_checks():
     """Test that initialize_dependency_checks calls all check functions."""
-    from tldw_chatbook.Utils.optional_deps import initialize_dependency_checks, DEPENDENCIES_AVAILABLE
-    
-    # Clear all dependencies first
+    from tldw_chatbook.Utils.optional_deps import (
+        initialize_dependency_checks,
+        DEPENDENCIES_AVAILABLE,
+    )
+
+    # Clear all dependencies first — and restore afterwards: this module dict
+    # is shared process-global state, and initialize_dependency_checks() only
+    # repopulates the checked categories, not static registry keys (e.g.
+    # 'svg_rendering'), so leaving it cleared poisons later tests.
+    snapshot = dict(DEPENDENCIES_AVAILABLE)
     DEPENDENCIES_AVAILABLE.clear()
-    
-    # Initialize should populate all dependencies
-    initialize_dependency_checks()
-    
-    # Check that all major categories are present with the correct keys
-    assert 'embeddings_rag' in DEPENDENCIES_AVAILABLE
-    assert 'websearch' in DEPENDENCIES_AVAILABLE  # Changed from web_scraping
-    assert 'pdf_processing' in DEPENDENCIES_AVAILABLE
-    assert 'ebook_processing' in DEPENDENCIES_AVAILABLE
-    assert 'ocr_processing' in DEPENDENCIES_AVAILABLE  # Changed from ocr
-    assert 'local_llm' in DEPENDENCIES_AVAILABLE
-    assert 'tts_processing' in DEPENDENCIES_AVAILABLE  # Changed from tts
-    assert 'stt_processing' in DEPENDENCIES_AVAILABLE  # Changed from stt
-    assert 'image_processing' in DEPENDENCIES_AVAILABLE
-    assert 'mcp' in DEPENDENCIES_AVAILABLE
+    try:
+        # Initialize should populate all dependencies
+        initialize_dependency_checks()
+
+        # Check that all major categories are present with the correct keys
+        assert "embeddings_rag" in DEPENDENCIES_AVAILABLE
+        assert "websearch" in DEPENDENCIES_AVAILABLE  # Changed from web_scraping
+        assert "pdf_processing" in DEPENDENCIES_AVAILABLE
+        assert "ebook_processing" in DEPENDENCIES_AVAILABLE
+        assert "ocr_processing" in DEPENDENCIES_AVAILABLE  # Changed from ocr
+        assert "local_llm" in DEPENDENCIES_AVAILABLE
+        assert "tts_processing" in DEPENDENCIES_AVAILABLE  # Changed from tts
+        assert "stt_processing" in DEPENDENCIES_AVAILABLE  # Changed from stt
+        assert "image_processing" in DEPENDENCIES_AVAILABLE
+        assert "mcp" in DEPENDENCIES_AVAILABLE
+    finally:
+        DEPENDENCIES_AVAILABLE.update(snapshot)
 
 
 def test_pdf_processing_lib_import_handling():
     """Test that PDF_Processing_Lib handles missing dependencies gracefully."""
     # Save original state
     from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-    original_pdf_available = DEPENDENCIES_AVAILABLE.get('pdf_processing')
-    
+
+    original_pdf_available = DEPENDENCIES_AVAILABLE.get("pdf_processing")
+
     try:
         # Simulate missing PDF dependencies
-        DEPENDENCIES_AVAILABLE['pdf_processing'] = False
-        DEPENDENCIES_AVAILABLE['pymupdf'] = False
-        
+        DEPENDENCIES_AVAILABLE["pdf_processing"] = False
+        DEPENDENCIES_AVAILABLE["pymupdf"] = False
+
         # Clear module cache to force re-import
-        if 'tldw_chatbook.Local_Ingestion.PDF_Processing_Lib' in sys.modules:
-            del sys.modules['tldw_chatbook.Local_Ingestion.PDF_Processing_Lib']
-        
+        if "tldw_chatbook.Local_Ingestion.PDF_Processing_Lib" in sys.modules:
+            del sys.modules["tldw_chatbook.Local_Ingestion.PDF_Processing_Lib"]
+
         # Import should work but functions should raise errors
-        from tldw_chatbook.Local_Ingestion.PDF_Processing_Lib import PDF_PROCESSING_AVAILABLE
-        
+        from tldw_chatbook.Local_Ingestion.PDF_Processing_Lib import (
+            PDF_PROCESSING_AVAILABLE,
+        )
+
         # PDF_PROCESSING_AVAILABLE should reflect the actual import status
         # (not our mock, since the module was already imported)
         # So we just check it exists
         assert isinstance(PDF_PROCESSING_AVAILABLE, bool)
-        
+
     finally:
         # Restore original state
         if original_pdf_available is not None:
-            DEPENDENCIES_AVAILABLE['pdf_processing'] = original_pdf_available
+            DEPENDENCIES_AVAILABLE["pdf_processing"] = original_pdf_available
 
 
 def test_book_ingestion_lib_import_handling():
     """Test that Book_Ingestion_Lib handles missing dependencies gracefully."""
     # Save original state
     from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-    original_ebook_available = DEPENDENCIES_AVAILABLE.get('ebook_processing')
-    
+
+    original_ebook_available = DEPENDENCIES_AVAILABLE.get("ebook_processing")
+
     try:
         # Simulate missing ebook dependencies
-        DEPENDENCIES_AVAILABLE['ebook_processing'] = False
-        DEPENDENCIES_AVAILABLE['ebooklib'] = False
-        
+        DEPENDENCIES_AVAILABLE["ebook_processing"] = False
+        DEPENDENCIES_AVAILABLE["ebooklib"] = False
+
         # Clear module cache to force re-import
-        if 'tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib' in sys.modules:
-            del sys.modules['tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib']
-        
+        if "tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib" in sys.modules:
+            del sys.modules["tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib"]
+
         # Import should work but functions should handle missing deps
-        from tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib import EBOOK_PROCESSING_AVAILABLE
-        
+        from tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib import (
+            EBOOK_PROCESSING_AVAILABLE,
+        )
+
         # Check that the availability flag exists
         assert isinstance(EBOOK_PROCESSING_AVAILABLE, bool)
-        
+
     finally:
         # Restore original state
         if original_ebook_available is not None:
-            DEPENDENCIES_AVAILABLE['ebook_processing'] = original_ebook_available
+            DEPENDENCIES_AVAILABLE["ebook_processing"] = original_ebook_available
 
 
 if __name__ == "__main__":

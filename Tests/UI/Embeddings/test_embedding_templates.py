@@ -85,7 +85,10 @@ class TestEmbeddingTemplateManager(EmbeddingsTestBase):
 
         quick_start = manager.get_templates_by_category(TemplateCategory.QUICK_START)
         assert quick_start
-        assert all(template.category == TemplateCategory.QUICK_START for template in quick_start)
+        assert all(
+            template.category == TemplateCategory.QUICK_START
+            for template in quick_start
+        )
 
     def test_apply_template_merges_with_base_config(self):
         manager = EmbeddingTemplateManager()
@@ -147,7 +150,9 @@ class TestEmbeddingTemplateWidgets(EmbeddingsTestBase):
             await pilot.pause()
 
             title = pilot.app.query_one(".embedding-template-card-title", Static)
-            description = pilot.app.query_one(".embedding-template-card-description", Static)
+            description = pilot.app.query_one(
+                ".embedding-template-card-description", Static
+            )
             category = pilot.app.query_one(".embedding-template-card-category", Static)
             action = pilot.app.query_one("#select-test_template", Button)
 
@@ -164,10 +169,21 @@ class TestEmbeddingTemplateWidgets(EmbeddingsTestBase):
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            assert pilot.app.query_one("#template-quick_local", Button).label == "Quick Start"
-            assert pilot.app.query_one("#template-high_quality_local", Button).label == "High Quality"
-            assert pilot.app.query_one("#template-balanced_performance", Button).label == "Performance"
-            assert pilot.app.query_one("#template-browse", Button).label == "Browse All..."
+            assert (
+                pilot.app.query_one("#template-quick_local", Button).label
+                == "Quick Start"
+            )
+            assert (
+                pilot.app.query_one("#template-high_quality_local", Button).label
+                == "High Quality"
+            )
+            assert (
+                pilot.app.query_one("#template-balanced_performance", Button).label
+                == "Performance"
+            )
+            assert (
+                pilot.app.query_one("#template-browse", Button).label == "Browse All..."
+            )
 
     @pytest.mark.asyncio
     async def test_quick_select_apply_template_updates_state(self):

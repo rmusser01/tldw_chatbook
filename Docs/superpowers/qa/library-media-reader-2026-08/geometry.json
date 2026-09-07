@@ -1,0 +1,70 @@
+[
+  {
+    "terminal": [
+      160,
+      50
+    ],
+    "shell_width": 156,
+    "library_open": true,
+    "items_open": true,
+    "library_width": 28,
+    "items_width": 40,
+    "reader_width": 78,
+    "reader_inside_shell": true,
+    "grip_widths": [
+      5,
+      5
+    ]
+  },
+  {
+    "terminal": [
+      120,
+      35
+    ],
+    "shell_width": 116,
+    "library_open": false,
+    "items_open": true,
+    "library_width": 0,
+    "items_width": 40,
+    "reader_width": 66,
+    "reader_inside_shell": true,
+    "grip_widths": [
+      5,
+      5
+    ]
+  },
+  {
+    "terminal": [
+      100,
+      30
+    ],
+    "shell_width": 100,
+    "library_open": false,
+    "items_open": true,
+    "library_width": 0,
+    "items_width": 40,
+    "reader_width": 50,
+    "reader_inside_shell": true,
+    "grip_widths": [
+      5,
+      5
+    ]
+  },
+  {
+    "terminal": [
+      80,
+      24
+    ],
+    "shell_width": 80,
+    "library_open": false,
+    "items_open": false,
+    "library_width": 0,
+    "items_width": 0,
+    "reader_width": 70,
+    "reader_inside_shell": true,
+    "grip_widths": [
+      5,
+      5
+    ]
+  }
+]

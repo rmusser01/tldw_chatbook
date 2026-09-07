@@ -5,26 +5,6 @@
  * Based on original UX design specifications
  * ======================================== */
 
-/* --- Main Container --- */
-.evals-main-container {
-    layout: vertical;
-    height: 100%;
-}
-
-/* --- Scrollable Dashboard --- */
-.evals-unified-dashboard {
-    background: $background;
-    height: 1fr;
-}
-
-/* --- Quick Start Bar --- */
-.quick-start-bar {
-    height: auto;
-    background: $surface;
-    border-bottom: solid $primary;
-    padding: 1;
-    margin-bottom: 1;
-}
 
 .dashboard-title {
     text-style: bold;
@@ -36,11 +16,6 @@
     layout: horizontal;
     height: 3;
     margin-bottom: 1;
-}
-
-.quick-template-btn {
-    margin-right: 1;
-    min-width: 20;
 }
 
 /* Drop zone styling */
@@ -59,20 +34,6 @@
     border: solid $primary;
 }
 
-.drop-text {
-    margin-right: 1;
-}
-
-.inline-btn {
-    height: 2;
-    min-width: 10;
-}
-
-.suggestion-text {
-    color: $text-muted;
-    text-style: italic;
-    margin-top: 1;
-}
 
 /* --- Main Content Area --- */
 .main-content {
@@ -84,9 +45,6 @@
    app-wide and (because stylesheet rules always outrank widget DEFAULT_CSS
    in Textual, regardless of specificity) silently overrides every widget's
    own `height: 1fr` sizing, pushing follow-on siblings off-screen. */
-.evals-main-container VerticalScroll {
-    height: 100%;
-}
 
 /* Make sure the entire window uses available height */
 EvalsWindow {
@@ -108,70 +66,8 @@ Collapsible.-collapsed {
     margin-bottom: 1;
 }
 
-/* Task Creation Form */
-.task-creation-form {
-    padding: 1;
-}
-
-.template-editor {
-    height: 6;
-    margin: 1 0;
-}
-
-.metrics-selection {
-    layout: horizontal;
-    height: 3;
-    margin: 1 0;
-}
-
-.metrics-selection Checkbox {
-    margin-right: 2;
-}
-
-.task-actions {
-    layout: horizontal;
-    margin-top: 2;
-}
-
-.task-actions Button {
-    margin-right: 1;
-}
-
-/* Quick Setup Form */
-.quick-setup-form {
-    padding: 1;
-}
-
-.config-grid {
-    layout: grid;
-    grid-columns: 1fr 1fr;
-    grid-gutter: 1;
-    margin-bottom: 2;
-}
-
 /* Note: Textual doesn't support @media queries
    Use reactive attributes or resize events for responsive design */
-
-.cost-estimation-box {
-    background: $surface;
-    padding: 1;
-    margin: 1 0;
-    border: tall $secondary;
-}
-
-.cost-display {
-    text-style: bold;
-    color: $success;
-}
-
-.cost-warning {
-    color: $warning;
-    margin-top: 1;
-}
-
-.cost-warning.hidden {
-    display: none;
-}
 
 /* Template Grid */
 .template-grid {
@@ -192,43 +88,6 @@ Collapsible.-collapsed {
 .template-card:hover {
     background: $boost;
     border: thick $primary;
-}
-
-/* Advanced Configuration */
-.advanced-config-form {
-    padding: 1;
-}
-
-.param-grid {
-    layout: grid;
-    grid-columns: auto 1fr;
-    grid-gutter: 1;
-    margin-bottom: 2;
-}
-
-.system-prompt-editor {
-    height: 4;
-    margin: 1 0;
-}
-
-.config-toggles {
-    layout: horizontal;
-    margin-top: 1;
-}
-
-.config-toggles Checkbox {
-    margin-right: 2;
-}
-
-/* Active Evaluations */
-.active-eval-empty {
-    min-height: 10;
-    align: center middle;
-}
-
-.empty-message {
-    color: $text-muted;
-    text-align: center;
 }
 
 /* Action Bar */
@@ -257,19 +116,7 @@ Collapsible.-collapsed {
     text-style: bold;
 }
 
-.keyboard-hint {
-    color: $text-muted;
-    margin-left: 2;
-}
-
 /* Results Dashboard */
-.results-dashboard {
-    background: $panel;
-    padding: 2;
-    margin-top: 2;
-    border: tall $primary;
-}
-
 .section-title {
     text-style: bold;
     color: $primary;
@@ -298,13 +145,6 @@ Collapsible.-collapsed {
     margin-bottom: 2;
 }
 
-/* Quick Stats Grid */
-.quick-stats-grid {
-    layout: grid;
-    grid-columns: 1fr 1fr 1fr;
-    grid-gutter: 1;
-}
-
 .stat-card {
     background: $surface;
     padding: 1;
@@ -312,20 +152,9 @@ Collapsible.-collapsed {
     text-align: center;
 }
 
-.stat-title {
-    color: $text-muted;
-    margin-bottom: 1;
-}
-
 .stat-value {
     text-style: bold;
     color: $primary;
-}
-
-/* Model/Dataset Management Sections */
-.model-management-form,
-.dataset-management-form {
-    padding: 1;
 }
 
 .button-row {
@@ -335,14 +164,6 @@ Collapsible.-collapsed {
 
 .button-row Button {
     margin-right: 1;
-}
-
-.models-container,
-.datasets-container {
-    min-height: 10;
-    background: $surface;
-    border: tall $secondary;
-    padding: 1;
 }
 
 /* Status Bar */
@@ -357,11 +178,6 @@ Collapsible.-collapsed {
 
 .status-text {
     width: 1fr;
-}
-
-.connection-indicator {
-    width: 20;
-    text-align: right;
 }
 
 /* Responsive Adjustments - handled in Python code via resize events */

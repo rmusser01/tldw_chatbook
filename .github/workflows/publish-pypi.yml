@@ -87,6 +87,9 @@ jobs:
       - name: Run release metadata tests
         run: python -m pytest Tests/Packaging/test_release_metadata.py -q
 
+      - name: Run installed distribution regression
+        run: python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider
+
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:
@@ -146,8 +149,14 @@ jobs:
       - name: Check whether version should be published to PyPI
         id: check
         env:
-          PYTHONPATH: ${{ github.workspace }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          # `python Packaging/check_pypi_release.py` puts Packaging/ (not the
+          # repo root) at sys.path[0], and the job never installs the package,
+          # so the script's `from tldw_chatbook.Utils...` import needs the repo
+          # root on PYTHONPATH. Broke main's first two publish runs on
+          # 2026-09-04; hotfixed there as 943a0ef1f4 — this is that same line,
+          # backported so the dev→main merge hunk resolves without losing it.
+          PYTHONPATH: ${{ github.workspace }}
         run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"
 
   publish-pypi:

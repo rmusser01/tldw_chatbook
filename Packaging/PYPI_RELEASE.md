@@ -57,10 +57,11 @@ built artifacts and request the PyPI OIDC token.
    Packaging/build_dist.sh
    ```
 
-4. Run the focused metadata gate:
+4. Run the focused metadata and installed-distribution gates:
 
    ```bash
    python -m pytest Tests/Packaging/test_release_metadata.py -q
+   python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider
    ```
 
 5. Smoke-test the wheel in a disposable environment:

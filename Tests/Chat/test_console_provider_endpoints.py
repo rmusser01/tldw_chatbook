@@ -1,13 +1,19 @@
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
+from tldw_chatbook.Chat.local_server_discovery import endpoint_display
 
 
-def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens() -> None:
-    display = safe_endpoint_display("user:secret@127.0.0.1:9999/v1?token=unit-test-token")
+def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens() -> (
+    None
+):
+    display = safe_endpoint_display(
+        "user:secret@127.0.0.1:9999/v1?token=unit-test-token"
+    )
 
     assert display == "127.0.0.1:9999/v1"
     assert "user" not in display
@@ -17,7 +23,9 @@ def test_safe_endpoint_display_redacts_schemeless_credentials_and_query_tokens()
 
 
 def test_safe_endpoint_display_strips_query_secret_from_url() -> None:
-    display = safe_endpoint_display("https://api.example.test/v1?api_key=unit-test-token")
+    display = safe_endpoint_display(
+        "https://api.example.test/v1?api_key=unit-test-token"
+    )
 
     assert display == "https://api.example.test/v1"
     assert "api_key" not in display
@@ -31,7 +39,24 @@ def test_safe_endpoint_display_does_not_return_malformed_secret_input() -> None:
     assert "unit-test-token" not in display
 
 
-def test_normalize_generic_endpoint_for_compare_handles_schemeless_credentials() -> None:
+def test_safe_endpoint_display_never_echoes_contract_invalid_paths() -> None:
+    rejected_values = (
+        ("https://example.test/%ZZ-secret", "%ZZ-secret"),
+        ("https://example.test/proxy//secret", "proxy//secret"),
+        ("https://example.test/path\u202esecret", "\u202e"),
+        ("https://example.test/path\ud800secret", "\ud800"),
+    )
+
+    for entered, rejected_text in rejected_values:
+        display = safe_endpoint_display(entered)
+
+        assert display == "invalid endpoint"
+        assert rejected_text not in display
+
+
+def test_normalize_generic_endpoint_for_compare_handles_schemeless_credentials() -> (
+    None
+):
     normalized = normalize_generic_endpoint_for_compare(
         "user:secret@127.0.0.1:9999/v1?token=unit-test-token"
     )
@@ -84,3 +109,20 @@ def test_generic_endpoint_differs_accepts_api_base_url_alias() -> None:
     )
 
     assert differs is False
+
+
+def test_effective_custom_endpoint_is_the_chat_url_actually_used() -> None:
+    endpoint = effective_provider_endpoint(
+        "custom",
+        "https://api.example.test/proxy/v1",
+        {},
+    )
+
+    assert endpoint == "https://api.example.test/proxy/v1/chat/completions"
+
+
+def test_local_discovery_endpoint_display_never_echoes_malformed_input() -> None:
+    entered = "http://[::1?api_key=unit-test-token"
+
+    assert endpoint_display(entered) == "invalid endpoint"
+    assert "unit-test-token" not in endpoint_display(entered)

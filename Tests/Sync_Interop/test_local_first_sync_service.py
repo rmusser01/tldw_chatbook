@@ -1,12 +1,48 @@
 from __future__ import annotations
 
-import pytest
+from datetime import timedelta
+from pathlib import Path
 
+import pytest
+from tldw_profile_core import (
+    AgentVisibility,
+    PreferencePayload,
+    ProfileControls,
+    ProfileManifest,
+    ProfileProposal,
+    ProfileScope,
+    ProposalOperation,
+    ScopeKind,
+    SemanticKey,
+    SyncMode,
+)
+
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.notes_organization_repository import (
+    NotesOrganizationRepository,
+)
+from tldw_chatbook.Personal_Context.key_protector import InMemoryProfileKeyProtector
+from tldw_chatbook.Personal_Context.reconciliation import (
+    CanonicalBootstrapSnapshot,
+    build_reconciliation_plan,
+)
+from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.service import (
+    PersonalContextService,
+    RecordMutation,
+)
+from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.local_first_sync_service import LocalFirstSyncService
+from tldw_chatbook.Sync_Interop.personal_context_adapter import (
+    PersonalContextSyncAdapter,
+)
+from tldw_chatbook.Sync_Interop.personal_context_dispatcher import (
+    PersonalContextOutboxDispatcher,
+)
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.tldw_api import SyncV2Envelope, SyncV2PushResponse
 
 pytestmark = pytest.mark.asyncio
 
@@ -22,6 +58,8 @@ class FakeLocalFirstServer:
         pull_error: Exception | None = None,
     ) -> None:
         self.calls: list[tuple] = []
+        self.personal_context_complete_pushes = 0
+        self.personal_context_complete_pulls = 0
         self.pull_envelopes = pull_envelopes or []
         self.push_response = push_response
         self.pull_response = pull_response
@@ -39,7 +77,15 @@ class FakeLocalFirstServer:
         domains=None,
     ):
         self.calls.append(
-            ("push", dataset_id, device_id, envelopes, idempotency_key, last_known_cursor, domains)
+            (
+                "push",
+                dataset_id,
+                device_id,
+                envelopes,
+                idempotency_key,
+                last_known_cursor,
+                domains,
+            )
         )
         if self.push_error is not None:
             raise self.push_error
@@ -54,6 +100,10 @@ class FakeLocalFirstServer:
             "next_cursor": "8",
         }
 
+    async def _push_v2_personal_context_complete(self, **kwargs):
+        self.personal_context_complete_pushes += 1
+        return await self.push_v2_envelopes(**kwargs)
+
     async def pull_v2_envelopes(
         self,
         *,
@@ -65,7 +115,15 @@ class FakeLocalFirstServer:
         include_own_changes=False,
     ):
         self.calls.append(
-            ("pull", dataset_id, device_id, cursor, domains, page_size, include_own_changes)
+            (
+                "pull",
+                dataset_id,
+                device_id,
+                cursor,
+                domains,
+                page_size,
+                include_own_changes,
+            )
         )
         if self.pull_error is not None:
             raise self.pull_error
@@ -77,6 +135,10 @@ class FakeLocalFirstServer:
             "next_cursor": "9",
             "has_more": False,
         }
+
+    async def _pull_v2_personal_context_complete(self, **kwargs):
+        self.personal_context_complete_pulls += 1
+        return await self.pull_v2_envelopes(**kwargs)
 
 
 class RecordingLocalStore:
@@ -90,7 +152,9 @@ class RecordingLocalStore:
     def get_note_content_hash(self, note_id: str) -> str | None:
         return self.note_hashes.get(note_id)
 
-    def upsert_note_content(self, note_id: str, payload: dict, payload_hash: str) -> None:
+    def upsert_note_content(
+        self, note_id: str, payload: dict, payload_hash: str
+    ) -> None:
         self.note_content[note_id] = payload
         self.note_hashes[note_id] = payload_hash
 
@@ -99,6 +163,15 @@ class RecordingLocalStore:
 
     def record_conflict(self, conflict: dict) -> None:
         self.conflicts.append(conflict)
+
+
+class _Ids:
+    def __init__(self) -> None:
+        self.value = 0
+
+    def __call__(self, label: str) -> str:
+        self.value += 1
+        return f"{label}-{self.value}"
 
 
 def _repo_with_profile(
@@ -133,6 +206,229 @@ def _repo_with_profile(
     return repo
 
 
+async def test_local_first_sync_service_observes_key_added_to_empty_shared_cache(
+    tmp_path: Path,
+) -> None:
+    """Retain an empty shared key cache so later key loads reach Sync.
+
+    Args:
+        tmp_path: Private root for the real file-backed Sync repository.
+    """
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer()
+    shared_dataset_keys: dict[str, bytes] = {}
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys=shared_dataset_keys,
+    )
+
+    assert service.dataset_keys is shared_dataset_keys
+    shared_dataset_keys["dataset-1"] = dataset_key
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes"],
+    )
+
+    assert result["pulled_envelopes"] == 0
+    assert server.calls[0][0] == "pull"
+
+
+async def test_local_first_sync_service_injects_notes_organization_repository(
+    tmp_path: Path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    object_id = "00000000-0000-4000-8000-000000000101"
+    envelope = SyncV2Envelope(
+        client_envelope_id="remote:notes.keyword:101:1",
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        domain="notes.keyword",
+        object_id=object_id,
+        operation="upsert",
+        schema_version=1,
+        object_revision=1,
+        server_cursor=8,
+        payload={"keyword": "Research"},
+        payload_hash="a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    state = _repo_with_profile(
+        tmp_path, capabilities={"supported_domains": ["notes.keyword"]}
+    )
+    notes_db = CharactersRAGDB(
+        tmp_path / "notes.sqlite", client_id="local-first-tests"
+    )
+    try:
+        service = LocalFirstSyncService(
+            server_service=FakeLocalFirstServer(
+                pull_envelopes=[envelope.model_dump(mode="json")]
+            ),
+            state_repository=state,
+            local_store=None,
+            dataset_keys={"dataset-1": dataset_key},
+            notes_organization_repository=NotesOrganizationRepository(
+                notes_db, server_profile_id="server-a"
+            ),
+        )
+
+        result = await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+
+        assert result["applied_envelopes"] == 1
+        row = notes_db.get_connection().execute(
+            "SELECT keyword FROM keywords WHERE sync_id = ?", (object_id,)
+        ).fetchone()
+        assert row["keyword"] == "Research"
+    finally:
+        notes_db.close_connection()
+
+
+async def test_organization_only_sync_does_not_require_dataset_key(
+    tmp_path: Path,
+) -> None:
+    object_id = "00000000-0000-4000-8000-000000000102"
+    envelope = SyncV2Envelope(
+        client_envelope_id="remote:notes.keyword:102:1",
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        domain="notes.keyword",
+        object_id=object_id,
+        operation="upsert",
+        schema_version=1,
+        object_revision=1,
+        server_cursor=8,
+        payload={"keyword": "No key required"},
+        payload_hash="b" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    state = _repo_with_profile(tmp_path)
+    notes_db = CharactersRAGDB(tmp_path / "notes-no-key.sqlite", client_id="tests")
+    try:
+        service = LocalFirstSyncService(
+            server_service=FakeLocalFirstServer(
+                pull_envelopes=[envelope.model_dump(mode="json")]
+            ),
+            state_repository=state,
+            local_store=None,
+            dataset_keys={},
+            notes_organization_repository=NotesOrganizationRepository(notes_db),
+        )
+
+        result = await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+
+        assert result["applied_envelopes"] == 1
+    finally:
+        notes_db.close_connection()
+
+
+async def test_organization_sync_scopes_heads_and_reviews_by_runtime_profile(
+    tmp_path: Path,
+) -> None:
+    state = _repo_with_profile(tmp_path)
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-b",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-2",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "7"},
+        capabilities={"supported_domains": ["notes.keyword"]},
+    )
+    state.set_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-b",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+        cursor="7",
+    )
+    first_id = "00000000-0000-4000-8000-000000000103"
+    second_id = "00000000-0000-4000-8000-000000000104"
+
+    def envelope(
+        object_id: str, device_id: str, *, revision: int = 1, cursor: int = 8
+    ) -> SyncV2Envelope:
+        return SyncV2Envelope(
+            client_envelope_id=f"remote:notes.keyword:{object_id}:1",
+            dataset_id="dataset-1",
+            device_id=device_id,
+            domain="notes.keyword",
+            object_id=object_id,
+            operation="upsert",
+            schema_version=1,
+            object_revision=revision,
+            server_cursor=cursor,
+            payload={"keyword": "Profile collision"},
+            payload_hash=(object_id.replace("-", "") + f"{revision:032x}"),
+            encryption_policy="server_trusted_v1",
+        )
+
+    server = FakeLocalFirstServer(
+        pull_envelopes=[envelope(first_id, "remote-a").model_dump(mode="json")]
+    )
+    notes_db = CharactersRAGDB(tmp_path / "notes-profiles.sqlite", client_id="tests")
+    try:
+        service = LocalFirstSyncService(
+            server_service=server,
+            state_repository=state,
+            local_store=None,
+            dataset_keys={"dataset-1": generate_dataset_key()},
+            notes_organization_repository=NotesOrganizationRepository(notes_db),
+        )
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+        server.pull_envelopes = [
+            envelope(first_id, "remote-b", revision=2, cursor=9).model_dump(
+                mode="json"
+            ),
+            envelope(second_id, "remote-b", cursor=10).model_dump(mode="json"),
+        ]
+        result = await service.sync_once(
+            server_profile_id="server-b",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+
+        assert result["conflicts"][0]["conflict_type"] == "local_representation_collision"
+        heads = notes_db.get_connection().execute(
+            "SELECT server_profile_id, object_id FROM notes_organization_heads "
+            "ORDER BY server_profile_id"
+        ).fetchall()
+        assert [tuple(row) for row in heads] == [
+            ("server-a", first_id),
+            ("server-b", first_id),
+        ]
+        reviews = notes_db.get_connection().execute(
+            "SELECT server_profile_id, remote_object_id "
+            "FROM notes_organization_adoption_reviews"
+        ).fetchall()
+        assert [tuple(row) for row in reviews] == [("server-b", second_id)]
+    finally:
+        notes_db.close_connection()
+
+
 async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tmp_path):
     dataset_key = generate_dataset_key()
     local_builder = SyncEnvelopeBuilder(
@@ -151,7 +447,9 @@ async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tm
         body="remote private body",
         status="active",
     )
-    outgoing = local_builder.build_note_metadata_update(note_id="note-2", status="archived")
+    outgoing = local_builder.build_note_metadata_update(
+        note_id="note-2", status="archived"
+    )
     repo = _repo_with_profile(tmp_path)
     store = RecordingLocalStore()
     server = FakeLocalFirstServer(pull_envelopes=[incoming.model_dump(mode="json")])
@@ -181,20 +479,34 @@ async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tm
     }
     assert server.calls[0][0] == "push"
     assert server.calls[0][3][0]["client_envelope_id"] == outgoing.client_envelope_id
-    assert server.calls[1] == ("pull", "dataset-1", "device-1", "7", ["notes"], 25, False)
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "9"
-    assert repo.get_sync_v2_profile_state(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-    )["dataset_cursors"]["sync_v2"] == "9"
+    assert server.calls[1] == (
+        "pull",
+        "dataset-1",
+        "device-1",
+        "7",
+        ["notes"],
+        25,
+        False,
+    )
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "9"
+    )
+    assert (
+        repo.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )["dataset_cursors"]["sync_v2"]
+        == "9"
+    )
 
 
 async def test_local_first_sync_once_accepts_canonical_profile_mode(tmp_path):
@@ -258,7 +570,9 @@ async def test_local_first_sync_once_chunks_pushes_by_server_max_batch_size(tmp_
     assert result["pushed_envelopes"] == 5
 
 
-async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_failures(tmp_path):
+async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_failures(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -355,7 +669,9 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     assert result["outbox_retained"] == 2
     assert result["rejected_envelopes"][0]["error_code"] == "stale_base"
     assert result["push_conflicts"][0]["conflict_id"] == "conflict-1"
-    assert [entry["client_envelope_id"] for entry in dispatched] == [accepted.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in dispatched] == [
+        accepted.client_envelope_id
+    ]
     assert [entry["client_envelope_id"] for entry in pending_after] == [
         rejected.client_envelope_id,
         conflicted.client_envelope_id,
@@ -365,14 +681,96 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
     assert reviews[0]["source_conflict_key"] == conflicted.client_envelope_id
     assert reviews[0]["item_label"] == "notes note-3"
     assert reviews[0]["recovery_options"]["accept-remote"] == "available"
-    assert repo.get_sync_v2_profile_state(
+    assert (
+        repo.get_sync_v2_profile_state(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )["last_error"]
+        == "push_partial_failure: stale_base,conflict"
+    )
+
+
+async def test_local_first_sync_preserves_accepted_materialization_failure(
+    tmp_path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    pending = SyncV2Envelope(
+        client_envelope_id="organization-intent-1",
+        dataset_id="dataset-1",
+        domain="notes.keyword",
+        object_id="00000000-0000-4000-8000-000000000001",
+        operation="upsert",
+        device_id="device-1",
+        payload={"keyword": "Agent lesson"},
+        payload_hash="a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["notes.keyword"]},
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
         server_profile_id="server-a",
         authenticated_principal_id="user-a",
         workspace_scope="workspace-1",
-    )["last_error"] == "push_partial_failure: stale_base,conflict"
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    server = FakeLocalFirstServer(
+        push_response=SyncV2PushResponse.model_validate(
+            {
+                "dataset_id": "dataset-1",
+                "accepted": [
+                    {
+                        "client_envelope_id": pending.client_envelope_id,
+                        "server_cursor": 17,
+                        "object_revision": 1,
+                        "apply_status": "failed",
+                        "apply_error_code": "projection_failed",
+                        "apply_error_message": "folder parent is missing",
+                    }
+                ],
+                "next_cursor": "17",
+            }
+        )
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes.keyword"],
+    )
+
+    row = repo.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="pending",
+    )[0]
+    assert result["outbox_dispatched"] == 0
+    assert result["outbox_retained"] == 1
+    assert row["accepted_result"] == {
+        "client_envelope_id": pending.client_envelope_id,
+        "server_cursor": 17,
+        "object_revision": 1,
+        "apply_status": "failed",
+        "apply_error_code": "projection_failed",
+        "apply_error_message": "folder parent is missing",
+    }
 
 
-async def test_local_first_sync_once_rejects_duplicate_outgoing_ids_before_push(tmp_path):
+async def test_local_first_sync_once_rejects_duplicate_outgoing_ids_before_push(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -423,14 +821,17 @@ async def test_local_first_sync_once_rejects_duplicate_outgoing_ids_before_push(
         "push_failed: outgoing Sync v2 batch contained duplicate client_envelope_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
 async def test_local_first_sync_once_rejects_mismatched_push_response_dataset_before_dispatch(
@@ -494,7 +895,9 @@ async def test_local_first_sync_once_rejects_mismatched_push_response_dataset_be
     )
 
     assert [call[0] for call in server.calls] == ["push"]
-    assert [entry["client_envelope_id"] for entry in pending_after] == [pending.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        pending.client_envelope_id
+    ]
     assert pending_after[0]["attempt_count"] == 0
     assert pending_after[0]["last_error"] is None
     assert dispatched == []
@@ -502,14 +905,17 @@ async def test_local_first_sync_once_rejects_mismatched_push_response_dataset_be
         "push_failed: Sync v2 push response dataset_id must match requested dataset_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
 async def test_local_first_sync_once_rejects_unknown_push_response_envelope_ids_before_dispatch(
@@ -573,7 +979,9 @@ async def test_local_first_sync_once_rejects_unknown_push_response_envelope_ids_
     )
 
     assert [call[0] for call in server.calls] == ["push"]
-    assert [entry["client_envelope_id"] for entry in pending_after] == [pending.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        pending.client_envelope_id
+    ]
     assert pending_after[0]["attempt_count"] == 0
     assert pending_after[0]["last_error"] is None
     assert dispatched == []
@@ -581,14 +989,17 @@ async def test_local_first_sync_once_rejects_unknown_push_response_envelope_ids_
         "push_failed: Sync v2 push response referenced unknown client_envelope_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
 async def test_local_first_sync_once_rejects_incomplete_push_response_before_dispatch(
@@ -600,7 +1011,9 @@ async def test_local_first_sync_once_rejects_incomplete_push_response_before_dis
         device_id="device-1",
         dataset_key=dataset_key,
     )
-    acknowledged = builder.build_note_metadata_update(note_id="note-1", status="archived")
+    acknowledged = builder.build_note_metadata_update(
+        note_id="note-1", status="archived"
+    )
     omitted = builder.build_note_metadata_update(note_id="note-2", status="active")
     repo = _repo_with_profile(tmp_path)
     repo.enqueue_sync_v2_outbox_envelope(
@@ -672,14 +1085,17 @@ async def test_local_first_sync_once_rejects_incomplete_push_response_before_dis
         "push_failed: Sync v2 push response omitted submitted client_envelope_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
 async def test_local_first_sync_once_rejects_duplicate_push_response_envelope_ids_before_dispatch(
@@ -749,7 +1165,9 @@ async def test_local_first_sync_once_rejects_duplicate_push_response_envelope_id
     )
 
     assert [call[0] for call in server.calls] == ["push"]
-    assert [entry["client_envelope_id"] for entry in pending_after] == [pending.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        pending.client_envelope_id
+    ]
     assert pending_after[0]["attempt_count"] == 0
     assert pending_after[0]["last_error"] is None
     assert dispatched == []
@@ -757,17 +1175,22 @@ async def test_local_first_sync_once_rejects_duplicate_push_response_envelope_id
         "push_failed: Sync v2 push response contained duplicate client_envelope_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
-async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses(tmp_path):
+async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     local_builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -779,7 +1202,9 @@ async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses
         device_id="remote-device",
         dataset_key=dataset_key,
     )
-    pending = local_builder.build_note_metadata_update(note_id="note-1", status="archived")
+    pending = local_builder.build_note_metadata_update(
+        note_id="note-1", status="archived"
+    )
     incoming = remote_builder.build_note_upsert(
         note_id="note-2",
         title="Remote title",
@@ -890,7 +1315,9 @@ async def test_local_first_sync_apply_conflict_review_uses_safe_fallback_key(tmp
     assert reviews[0]["item_label"] != "notes None"
 
 
-async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(tmp_path):
+async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -982,7 +1409,9 @@ async def test_local_first_sync_once_records_outbox_transport_failure_attempt(tm
         dataset_id="dataset-1",
     )
 
-    assert [entry["client_envelope_id"] for entry in pending_after] == [pending.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in pending_after] == [
+        pending.client_envelope_id
+    ]
     assert pending_after[0]["attempt_count"] == 1
     assert pending_after[0]["last_error"] == {
         "client_envelope_id": pending.client_envelope_id,
@@ -992,7 +1421,9 @@ async def test_local_first_sync_once_records_outbox_transport_failure_attempt(tm
     }
 
 
-async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_changes(tmp_path):
+async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_changes(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     first = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1041,7 +1472,9 @@ async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_cha
     assert first_server.calls[0][4] != second_server.calls[0][4]
 
 
-async def test_local_first_sync_once_rejects_outgoing_domain_outside_requested_domains_before_push(tmp_path):
+async def test_local_first_sync_once_rejects_outgoing_domain_outside_requested_domains_before_push(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1082,17 +1515,22 @@ async def test_local_first_sync_once_rejects_outgoing_domain_outside_requested_d
         "push_failed: outgoing Sync v2 envelope domain must be included in requested domains"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
-async def test_local_first_sync_once_rejects_outgoing_dataset_mismatch_before_push(tmp_path):
+async def test_local_first_sync_once_rejects_outgoing_dataset_mismatch_before_push(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
         dataset_id="other-dataset",
@@ -1128,17 +1566,22 @@ async def test_local_first_sync_once_rejects_outgoing_dataset_mismatch_before_pu
         "push_failed: outgoing Sync v2 envelope dataset_id must match profile dataset_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
-async def test_local_first_sync_once_rejects_outgoing_device_mismatch_before_push(tmp_path):
+async def test_local_first_sync_once_rejects_outgoing_device_mismatch_before_push(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1174,17 +1617,22 @@ async def test_local_first_sync_once_rejects_outgoing_device_mismatch_before_pus
         "push_failed: outgoing Sync v2 envelope device_id must match profile device_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
-async def test_local_first_sync_once_records_push_failure_without_advancing_cursor(tmp_path):
+async def test_local_first_sync_once_records_push_failure_without_advancing_cursor(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1218,17 +1666,22 @@ async def test_local_first_sync_once_records_push_failure_without_advancing_curs
 
     assert profile["last_error"] == "push_failed: upstream unavailable"
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
-async def test_local_first_sync_once_records_pull_failure_without_advancing_cursor(tmp_path):
+async def test_local_first_sync_once_records_pull_failure_without_advancing_cursor(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     repo = _repo_with_profile(tmp_path)
     server = FakeLocalFirstServer(pull_error=RuntimeError("server offline"))
@@ -1255,17 +1708,22 @@ async def test_local_first_sync_once_records_pull_failure_without_advancing_curs
 
     assert profile["last_error"] == "pull_failed: server offline"
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
 
 
-async def test_local_first_sync_once_records_apply_failure_without_advancing_cursor(tmp_path):
+async def test_local_first_sync_once_records_apply_failure_without_advancing_cursor(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     wrong_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
@@ -1305,14 +1763,17 @@ async def test_local_first_sync_once_records_apply_failure_without_advancing_cur
 
     assert profile["last_error"] == "apply_failed: Failed to decrypt sync payload"
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_content == {}
 
 
@@ -1351,18 +1812,23 @@ async def test_local_first_sync_once_rejects_wrong_dataset_pull_before_apply(tmp
         "apply_failed: pulled Sync v2 envelope dataset_id must match requested dataset_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_metadata == {}
 
 
-async def test_local_first_sync_once_rejects_out_of_scope_pull_domain_before_apply(tmp_path):
+async def test_local_first_sync_once_rejects_out_of_scope_pull_domain_before_apply(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1402,19 +1868,24 @@ async def test_local_first_sync_once_rejects_out_of_scope_pull_domain_before_app
         "apply_failed: pulled Sync v2 envelope domain must be included in requested domains"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_content == {}
     assert store.note_metadata == {}
 
 
-async def test_local_first_sync_once_rejects_duplicate_pull_envelope_ids_before_apply(tmp_path):
+async def test_local_first_sync_once_rejects_duplicate_pull_envelope_ids_before_apply(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1454,18 +1925,23 @@ async def test_local_first_sync_once_rejects_duplicate_pull_envelope_ids_before_
         "apply_failed: pulled Sync v2 response contained duplicate client_envelope_id"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_metadata == {}
 
 
-async def test_local_first_sync_once_rejects_has_more_pull_without_next_cursor_before_apply(tmp_path):
+async def test_local_first_sync_once_rejects_has_more_pull_without_next_cursor_before_apply(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1507,18 +1983,23 @@ async def test_local_first_sync_once_rejects_has_more_pull_without_next_cursor_b
         "apply_failed: Sync v2 pull response has_more requires next_cursor"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_metadata == {}
 
 
-async def test_local_first_sync_once_rejects_nonempty_pull_without_next_cursor_before_apply(tmp_path):
+async def test_local_first_sync_once_rejects_nonempty_pull_without_next_cursor_before_apply(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1560,14 +2041,17 @@ async def test_local_first_sync_once_rejects_nonempty_pull_without_next_cursor_b
         "apply_failed: Sync v2 pull response with envelopes requires next_cursor"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_metadata == {}
 
 
@@ -1602,19 +2086,30 @@ async def test_local_first_sync_once_rejects_own_device_pull_before_apply(tmp_pa
         workspace_scope="workspace-1",
     )
 
-    assert server.calls[-1] == ("pull", "dataset-1", "device-1", "7", ["notes"], None, False)
+    assert server.calls[-1] == (
+        "pull",
+        "dataset-1",
+        "device-1",
+        "7",
+        ["notes"],
+        None,
+        False,
+    )
     assert profile["last_error"] == (
         "apply_failed: pulled Sync v2 envelope from own device is not allowed in incremental sync"
     )
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.note_metadata == {}
 
 
@@ -1660,18 +2155,23 @@ async def test_local_first_sync_once_treats_adapter_rejection_as_failed_apply(tm
 
     assert profile["last_error"] == "apply_rejected: missing_workspace_source_ref"
     assert profile["dataset_cursors"]["sync_v2"] == "7"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "7"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "7"
+    )
     assert store.workspace_links == set()
 
 
-async def test_local_first_sync_once_persists_apply_conflict_status_and_advances_cursor(tmp_path):
+async def test_local_first_sync_once_persists_apply_conflict_status_and_advances_cursor(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
         dataset_id="dataset-1",
@@ -1711,17 +2211,22 @@ async def test_local_first_sync_once_persists_apply_conflict_status_and_advances
     assert result["conflicts"][0]["conflict_type"] == "encrypted_content_edit"
     assert profile["last_error"] == "apply_conflict: encrypted_content_edit"
     assert profile["dataset_cursors"]["sync_v2"] == "9"
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="sync_v2",
-        remote_collection="dataset-1",
-    ).cursor == "9"
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="sync_v2",
+            remote_collection="dataset-1",
+        ).cursor
+        == "9"
+    )
 
 
-async def test_local_first_sync_once_success_clears_prior_last_error_without_new_cursor(tmp_path):
+async def test_local_first_sync_once_success_clears_prior_last_error_without_new_cursor(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     repo = _repo_with_profile(tmp_path, last_error="pull_failed: server offline")
     server = FakeLocalFirstServer(
@@ -1781,7 +2286,567 @@ async def test_local_first_sync_once_requires_local_first_profile(tmp_path):
     assert server.calls == []
 
 
-async def test_local_first_sync_once_requires_profile_device_dataset_and_dataset_key(tmp_path):
+async def test_local_first_personal_context_sync_fails_closed_without_composition(
+    tmp_path,
+):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(tmp_path)
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    with pytest.raises(
+        ValueError, match="personal_context_sync_transport_unavailable"
+    ):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["personal_context.record"],
+        )
+
+    assert server.calls == []
+
+
+async def test_personal_context_sync_once_lazy_loads_exact_dataset_key_after_restart(
+    tmp_path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "7"},
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_personal_context_link_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
+        confirmed_cursor="7",
+        bootstrap_heads={},
+        expected_heads={},
+        reviewed_lineage=[],
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+
+    class Dispatcher:
+        adapter = object()
+
+        @staticmethod
+        def dispatch_pending(**_kwargs):
+            return {"dispatched": 0, "quarantined": 0}
+
+    keys: dict[str, bytes] = {}
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys=keys,
+    )
+    loader_calls = []
+
+    def load_runtime(**binding) -> None:
+        loader_calls.append(binding)
+        keys["other-dataset"] = generate_dataset_key()
+        keys["dataset-1"] = dataset_key
+        service.personal_context_outbox_dispatcher = Dispatcher()
+        service.personal_context_service = object()
+
+    service.personal_context_runtime_loader = load_runtime
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=["personal_context.record"],
+    )
+
+    assert loader_calls == [
+        {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+        }
+    ]
+    assert result["pulled_envelopes"] == 0
+    assert server.personal_context_complete_pulls == 1
+
+
+async def test_sync_once_does_not_lazy_load_for_non_personal_context_dataset(
+    tmp_path,
+) -> None:
+    repo = _repo_with_profile(tmp_path)
+    calls = []
+    service = LocalFirstSyncService(
+        server_service=FakeLocalFirstServer(),
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={},
+        personal_context_runtime_loader=lambda **kwargs: calls.append(kwargs),
+    )
+
+    with pytest.raises(ValueError, match="dataset key is required"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    assert calls == []
+
+
+async def test_personal_context_sync_once_rejects_loader_key_for_other_dataset(
+    tmp_path,
+) -> None:
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    keys: dict[str, bytes] = {}
+    service = LocalFirstSyncService(
+        server_service=FakeLocalFirstServer(),
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys=keys,
+    )
+    loader_calls = []
+
+    def load_runtime(**binding) -> None:
+        loader_calls.append(binding)
+        keys["other-dataset"] = generate_dataset_key()
+        service.personal_context_outbox_dispatcher = object()
+        service.personal_context_service = object()
+
+    service.personal_context_runtime_loader = load_runtime
+
+    with pytest.raises(ValueError, match="dataset key is required"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["personal_context.record"],
+        )
+
+    assert loader_calls == [
+        {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+        }
+    ]
+
+
+async def test_local_first_complete_binding_uses_private_personal_context_transport(
+    tmp_path,
+):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "7"},
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_personal_context_link_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        confirmed_cursor="7",
+        bootstrap_heads={},
+        expected_heads={},
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+
+    class _Adapter:
+        @staticmethod
+        def restore_from_storage(envelope, *, storage_key):
+            return envelope
+
+    class _Dispatcher:
+        adapter = _Adapter()
+
+        @staticmethod
+        def dispatch_pending(**kwargs):
+            return {"dispatched": 0, "quarantined": 0}
+
+    envelope = SyncV2Envelope(
+        client_envelope_id="pc:record-1:v1",
+        dataset_id="dataset-1",
+        domain="personal_context.record",
+        object_id="record-1",
+        parent_id="scope-global",
+        operation="upsert",
+        device_id="device-1",
+        base_version=None,
+        entity_version="version-1",
+        payload={"schema_version": 1},
+        payload_hash="hmac-sha256-v1:" + "a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+        personal_context_outbox_dispatcher=_Dispatcher(),
+        personal_context_service=object(),
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["personal_context.record"],
+        outgoing_envelopes=[envelope],
+    )
+
+    assert result["pushed_envelopes"] == 1
+    assert server.personal_context_complete_pushes == 1
+    assert server.personal_context_complete_pulls == 1
+
+
+async def test_unlinked_workspace_edit_stays_local_until_explicitly_mapped(
+    tmp_path,
+) -> None:
+    profile_path = tmp_path / "profile.db"
+    protector = InMemoryProfileKeyProtector()
+    ids = _Ids()
+    profile_repository = PersonalContextRepository(
+        profile_path,
+        key_protector=protector,
+    )
+    profile = PersonalContextService(profile_repository, id_factory=ids)
+    local_manifest = profile.create_profile()
+    local_global = profile.list_scopes()[0]
+    local_workspace = profile.create_workspace_scope("workspace-local", "Project")
+    record = profile.create_manual_record(
+        scope_id=local_workspace.scope_id,
+        payload=PreferencePayload(
+            subject="project.goal",
+            polarity="like",
+            value="ship",
+        ),
+        semantic_key=SemanticKey(namespace="preference", subject="project.goal"),
+        controls=ProfileControls(
+            sync_mode=SyncMode.SYNCABLE,
+            agent_visibility=AgentVisibility.AGENT_VISIBLE,
+        ),
+    )
+    local_manifest = profile.get_manifest()
+    remote_manifest = ProfileManifest(
+        profile_id="profile-server",
+        revision=0,
+        purge_generation=0,
+        created_at=local_manifest.created_at,
+        updated_at=local_manifest.updated_at,
+        current_version_id="manifest-server-v1",
+    )
+    remote_global = ProfileScope(
+        profile_id=remote_manifest.profile_id,
+        scope_id="scope-server-global",
+        kind=ScopeKind.GLOBAL,
+        version_id="scope-server-global-v1",
+        created_at=local_global.created_at,
+        updated_at=local_global.updated_at,
+    )
+    remote = CanonicalBootstrapSnapshot(
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        manifest=remote_manifest,
+        scopes=(remote_global,),
+        records=(),
+        proposals=(),
+        purge_generation=0,
+        schema_version=1,
+        quotas={"max_record_bytes": 16_384},
+        cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        wrapped_key_blob="wrapped",
+    )
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=(local_global, local_workspace),
+        local_records=(record,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings=profile.list_workspace_bindings(),
+    )
+    profile.acquire_first_link_freeze(
+        plan_id=plan.plan_id,
+        snapshot_token=plan.local_snapshot_token,
+    )
+    profile.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={f"workspace:{local_workspace.scope_id}": "unlinked"},
+        integrity_key=b"i" * 32,
+    )
+    profile.release_first_link_freeze(plan_id=plan.plan_id)
+    profile_outbox = ProfileSyncOutbox(profile_repository)
+    for entry in profile_outbox.list_pending():
+        profile_outbox.acknowledge(entry.outbox_id, f"first-link:{entry.outbox_id}")
+    profile_repository.close()
+    profile_repository = PersonalContextRepository(
+        profile_path,
+        key_protector=protector,
+    )
+    profile = PersonalContextService(profile_repository, id_factory=ids)
+    profile_outbox = ProfileSyncOutbox(profile_repository)
+
+    retained = profile.get_record(record.record_id)
+    assert retained is not None
+    updated = profile.update_record(
+        retained.record_id,
+        RecordMutation(
+            payload=PreferencePayload(
+                subject="project.goal",
+                polarity="like",
+                value="ship safely",
+            )
+        ),
+        expected_version_id=retained.version_id,
+    )
+    retained_scope = next(
+        scope
+        for scope in profile.list_scopes()
+        if scope.scope_id == local_workspace.scope_id
+    )
+    updated_scope = retained_scope.model_copy(
+        update={
+            "version_id": "scope-unlinked-later-v2",
+            "updated_at": retained_scope.updated_at + timedelta(seconds=1),
+        }
+    )
+    profile_repository.commit_scope(
+        updated_scope,
+        expected_version_id=retained_scope.version_id,
+    )
+    profile_repository.commit_outbox_body(
+        object_type="scope",
+        object_id=updated_scope.scope_id,
+        version_id=updated_scope.version_id,
+        body={"version": 1, "scope": updated_scope.model_dump(mode="json")},
+    )
+    proposed_record = updated.model_copy(
+        update={
+            "record_id": "record-proposed-unlinked",
+            "version_id": "record-proposed-unlinked-v1",
+            "parent_version_id": None,
+            "payload": PreferencePayload(
+                subject="project.constraint",
+                polarity="like",
+                value="preserve local context",
+            ),
+            "semantic_key": SemanticKey(
+                namespace="preference",
+                subject="project.constraint",
+            ),
+        }
+    )
+    proposal = ProfileProposal(
+        proposal_id="proposal-unlinked-later",
+        profile_id=updated.profile_id,
+        scope_id=updated.scope_id,
+        operation=ProposalOperation.CREATE,
+        target_record_id=None,
+        base_version_id=None,
+        proposed_record=proposed_record,
+        provenance=updated.provenance,
+        confidence=0.8,
+        created_at=updated.updated_at,
+        expires_at=updated.updated_at + timedelta(days=90),
+    )
+    profile_repository.commit_proposal(proposal)
+    sync_repository = SyncStateRepository(tmp_path / "sync-state.db")
+    sync_repository.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "9"},
+        capabilities={
+            "supported_domains": [
+                "personal_context.manifest",
+                "personal_context.scope",
+                "personal_context.record",
+                "personal_context.proposal",
+            ]
+        },
+    )
+    sync_repository.set_personal_context_link_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id=remote_manifest.profile_id,
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        confirmed_cursor="9",
+        expected_heads=profile.first_link_sync_heads(),
+        plan_id=plan.plan_id,
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    adapter = PersonalContextSyncAdapter(
+        integrity_key=b"i" * 32,
+        integrity_key_id="integrity-1",
+    )
+    dispatcher = PersonalContextOutboxDispatcher(
+        profile_outbox=profile_outbox,
+        state_repository=sync_repository,
+        adapter=adapter,
+    )
+    server = FakeLocalFirstServer()
+    local_first = LocalFirstSyncService(
+        server_service=server,
+        state_repository=sync_repository,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": b"s" * 32},
+        personal_context_outbox_dispatcher=dispatcher,
+        personal_context_service=profile,
+    )
+    domains = [
+        "personal_context.manifest",
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+    ]
+
+    await local_first.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=domains,
+    )
+
+    pushed_domains = {
+        envelope["domain"]
+        for call in server.calls
+        if call[0] == "push"
+        for envelope in call[3]
+    }
+    assert pushed_domains.isdisjoint(
+        {
+            "personal_context.scope",
+            "personal_context.record",
+            "personal_context.proposal",
+        }
+    )
+    pending_unlinked = {
+        entry.object_type: entry
+        for entry in profile_outbox.list_pending()
+        if entry.object_type in {"scope", "record", "proposal"}
+    }
+    assert set(pending_unlinked) == {"scope", "record", "proposal"}
+    assert all(
+        profile_outbox.read_body(entry.outbox_id) is not None
+        for entry in pending_unlinked.values()
+    )
+    assert profile.get_record(record.record_id) == updated
+    assert updated_scope in profile.list_scopes()
+    assert proposal in profile_repository.list_proposals()
+
+    profile.map_workspace_scope("workspace-remapped", local_workspace.scope_id)
+    await local_first.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=domains,
+    )
+    retained_head_retry = next(
+        entry
+        for entry in profile_outbox.list_pending()
+        if entry.object_type == "record" and entry.version_id == updated.version_id
+    )
+    assert profile_outbox.read_body(retained_head_retry.outbox_id) is not None
+    await local_first.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=domains,
+    )
+
+    pushed_after_mapping = {
+        envelope["domain"]
+        for call in server.calls
+        if call[0] == "push"
+        for envelope in call[3]
+    }
+    assert {
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+    } <= pushed_after_mapping
+    pushed_record_versions = [
+        (envelope["base_version"], envelope["entity_version"])
+        for call in server.calls
+        if call[0] == "push"
+        for envelope in call[3]
+        if envelope["domain"] == "personal_context.record"
+        and envelope["object_id"] == record.record_id
+    ]
+    assert pushed_record_versions == [
+        (None, retained.version_id),
+        (retained.version_id, updated.version_id),
+    ]
+    assert all(
+        entry.object_type not in {"scope", "record", "proposal"}
+        for entry in profile_outbox.list_pending()
+    )
+
+
+async def test_local_first_sync_once_requires_profile_device_dataset_and_dataset_key(
+    tmp_path,
+):
     dataset_key = generate_dataset_key()
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(

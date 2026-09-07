@@ -10,13 +10,20 @@ from textual.containers import Container
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from tldw_chatbook.Chat.console_display_state import (
+    resolve_assistant_identity_label,
+)
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+
+
+_CHAT_SHELL_LABEL_MAX_CHARACTERS = 500
+
 
 @dataclass
 class ChatShellLabelResolver:
-    """Optional live label overrides for workspace/persona/character names."""
+    """Optional live label overrides for workspace and character names."""
 
     workspace_name: Optional[str] = None
-    persona_label: Optional[str] = None
     character_label: Optional[str] = None
 
 
@@ -55,30 +62,39 @@ class ChatShellContext:
         else:
             scope = "Global"
 
-        assistant_kind = getattr(session_data, "assistant_kind", None)
-        if assistant_kind == "character":
-            character_name = getattr(resolver, "character_label", None) if resolver else None
-            character_name = (
-                character_name
-                or getattr(session_data, "character_name", None)
-                or getattr(session_data, "character_id", None)
-            )
-            assistant = f"Character: {character_name}" if character_name else "Assistant: General"
-        elif assistant_kind == "persona":
-            persona_label = getattr(resolver, "persona_label", None) if resolver else None
-            persona_value = persona_label or getattr(session_data, "assistant_id", None)
-            assistant = f"Persona: {persona_value}" if persona_value else "Assistant: General"
-        else:
-            assistant = "Assistant: General"
+        character_candidates = (
+            getattr(resolver, "character_label", None) if resolver else None,
+            getattr(session_data, "character_name", None),
+            getattr(session_data, "character_id", None),
+        )
+        character = next(
+            (
+                candidate
+                for candidate in character_candidates
+                if candidate is not None and str(candidate).strip()
+            ),
+            None,
+        )
+        assistant = resolve_assistant_identity_label(
+            character=character,
+            assistant_kind=getattr(session_data, "assistant_kind", None),
+            assistant_name=getattr(session_data, "assistant_name", None),
+            assistant_id=getattr(session_data, "assistant_id", None),
+        )
 
-        title = getattr(session_data, "title", None) or "New chat"
+        title = sanitize_character_display_label(
+            getattr(session_data, "title", None),
+            max_characters=_CHAT_SHELL_LABEL_MAX_CHARACTERS,
+        ) or "New chat"
         return cls(backend, scope, assistant, f"Session: {title}")
 
     def prioritized_segments(self, max_width: int) -> list[str]:
         primary = [self.backend_label, self.scope_label, self.assistant_label]
         session = self.session_label
 
-        while len(" | ".join(primary + [session])) > max_width and len(session) > len("Session:"):
+        while len(" | ".join(primary + [session])) > max_width and len(session) > len(
+            "Session:"
+        ):
             session = session[:-1]
 
         if len(" | ".join(primary + [session])) <= max_width:
@@ -127,7 +143,9 @@ class ChatShellBar(Container):
         self.app_instance = app_instance
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
         self.show_compact_controls = show_compact_controls
-        self.context = ChatShellContext.from_session_data(self.session_data, resolver=resolver)
+        self.context = ChatShellContext.from_session_data(
+            self.session_data, resolver=resolver
+        )
 
     def compose(self) -> ComposeResult:
         from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
@@ -139,6 +157,7 @@ class ChatShellBar(Container):
             classes="chat-shell-context",
             expand=True,
             shrink=True,
+            markup=False,
         )
         if not self.show_compact_controls:
             return
@@ -162,7 +181,9 @@ class ChatShellBar(Container):
     ) -> None:
         self.session_data = session_data
         self.resolver = resolver
-        self.context = ChatShellContext.from_session_data(self.session_data, resolver=self.resolver)
+        self.context = ChatShellContext.from_session_data(
+            self.session_data, resolver=self.resolver
+        )
         self.refresh_context_label()
 
     def sync_from_tab_state(
@@ -172,7 +193,9 @@ class ChatShellBar(Container):
     ) -> None:
         self.session_data = tab_state
         self.resolver = resolver
-        self.context = ChatShellContext.from_tab_state(self.session_data, resolver=self.resolver)
+        self.context = ChatShellContext.from_tab_state(
+            self.session_data, resolver=self.resolver
+        )
         self.refresh_context_label()
 
     def refresh_context_label(self) -> None:

@@ -1,0 +1,59 @@
+{
+  "basic_default": true,
+  "effective": {
+    "items_open": true,
+    "library_open": true,
+    "priority_pane": null
+  },
+  "grip_names": [
+    "Collapse Library pane",
+    "Collapse Prompts pane"
+  ],
+  "regions": {
+    "items": {
+      "height": 43,
+      "width": 40,
+      "x": 36,
+      "y": 5
+    },
+    "items_grip": {
+      "height": 43,
+      "width": 5,
+      "x": 76,
+      "y": 5
+    },
+    "library": {
+      "height": 43,
+      "width": 29,
+      "x": 2,
+      "y": 5
+    },
+    "library_grip": {
+      "height": 43,
+      "width": 5,
+      "x": 31,
+      "y": 5
+    },
+    "shell": {
+      "height": 43,
+      "width": 156,
+      "x": 2,
+      "y": 5
+    },
+    "work": {
+      "height": 43,
+      "width": 77,
+      "x": 81,
+      "y": 5
+    }
+  },
+  "retained_roles": {
+    "items": true,
+    "work": true
+  },
+  "size": [
+    160,
+    50
+  ],
+  "svg": "prompts-160x50.svg"
+}

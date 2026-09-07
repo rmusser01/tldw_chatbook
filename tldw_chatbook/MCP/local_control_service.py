@@ -10,12 +10,23 @@ from uuid import uuid4
 
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.Library.library_tool_contract import (
+    LIBRARY_TOOL_DESCRIPTORS,
+    LibraryToolDescriptor,
+)
 
 from .client import MCPClient
 from .local_runtime_delegate import LocalMCPRuntimeDelegate
-from .local_store import LocalApprovalRequest, LocalExternalMCPProfile, LocalGovernanceRule, LocalMCPStore
+from .local_store import (
+    LocalApprovalRequest,
+    LocalExternalMCPProfile,
+    LocalGovernanceRule,
+    LocalMCPStore,
+)
 
-_ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))$")
+_ENV_PLACEHOLDER_PATTERN = re.compile(
+    r"^\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))$"
+)
 _SPAWN_ENV_BASELINE_KEYS = (
     "PATH",
     "HOME",
@@ -29,6 +40,56 @@ _SPAWN_ENV_BASELINE_KEYS = (
     "COMSPEC",
     "PATHEXT",
 )
+
+# task-1337 (plan Task 9): each descriptor-backed ``library_*`` tool resolves
+# to a read action owned by its Library item type. Media/Notes/Prompts/Skills/
+# Conversations reuse their registered local list/detail actions.
+_LIBRARY_ITEM_TYPE_ACTION_NAMESPACE = {
+    "media": "media.reading",
+    "note": "notes",
+    "prompt": "prompts",
+    "skill": "skills",
+    "conversation": "chat",
+}
+
+# chunking-agent-tools (Tasks 4-5, spec §6) + student-workflow (Task 1,
+# spec §4/§6): writing operations map to their OWN registered action
+# instead of the type-owned read. ``spec_save`` resolves to the dedicated
+# ``library.templates/save`` verb, ``rechunk`` to ``library.media/rechunk``,
+# and ``save`` to ``library.notes/save`` -- the Task-3 provisional derived
+# READ mapping had to stop the moment the save handler went live (a live
+# write resolving to a read action under policy would be wrong even though
+# the v7 CRUD validator still guards the write itself).
+_LIBRARY_TOOL_ACTION_OVERRIDES = {
+    "spec_save": "library.templates.save.local",
+    "rechunk": "library.media.rechunk.local",
+    "save": "library.notes.save.local",
+}
+
+
+# chunking-agent-tools (Qodo review, PR #1976): the two media chunk READ
+# tools are single-item detail reads (by id, exactly like ``get``), so their
+# operations derive the DETAIL action -- not the browse-level list the
+# provisional non-get fallback resolved them to.
+_DETAIL_READ_OPERATIONS = frozenset({"get", "structure", "chunk"})
+
+
+def _library_tool_action_id(descriptor: LibraryToolDescriptor) -> str:
+    """Map one Library descriptor to its policy action id.
+
+    list/search/spec_list are browse-level reads; get and the single-item
+    chunk reads (structure, chunk) are detail-level reads; writing
+    operations carry an explicit override above. Derived from the descriptor
+    table so the policy surface can never drift from the tool contract.
+    """
+    override = _LIBRARY_TOOL_ACTION_OVERRIDES.get(descriptor.operation)
+    if override is not None:
+        return override
+    action = "detail" if descriptor.operation in _DETAIL_READ_OPERATIONS else "list"
+    namespace = _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE[descriptor.item_type]
+    return f"{namespace}.{action}.local"
+
+
 _TOOL_ACTION_IDS = {
     "chat_with_llm": "chat.launch.local",
     "chat_with_character": "character.sessions.launch.local",
@@ -39,7 +100,10 @@ _TOOL_ACTION_IDS = {
     "list_characters": "character.persona.list.local",
     "get_conversation_history": "chat.detail.local",
     "export_conversation": "chat.detail.local",
-    "ingest_media": "media.ingestion_jobs.launch.local",
+    **{
+        name: _library_tool_action_id(descriptor)
+        for name, descriptor in LIBRARY_TOOL_DESCRIPTORS.items()
+    },
 }
 _RESOURCE_ACTION_IDS = (
     ("conversation://", "chat.detail.local"),
@@ -63,6 +127,27 @@ def _default_manifest_provider() -> dict[str, Any]:
     return describe_local_mcp_capabilities()
 
 
+class MCPGovernanceDenied(PermissionError):
+    """The in-process runtime-governance profile refused this call outright.
+
+    Raised ONLY by :meth:`LocalMCPControlService._require_runtime_
+    governance_allowed` -- the ONE seam where a governance RULE (a
+    different permission system from the Hub's own Allow/Ask/Off gate,
+    ``unified_control_plane_service.py``'s ``gate_tool_test()``) denies an
+    action before it ever reaches the tool. Subclasses ``PermissionError``
+    so any existing ``except PermissionError`` handler upstream keeps
+    working unchanged.
+
+    task-2537 (PR-T3 fix round B, item 3): exists so a caller
+    (``mcp_workbench._is_permission_refusal()``) can tell "governance
+    refused this call" apart from an unrelated ``PermissionError`` a
+    TOOL'S OWN body might raise (e.g. a genuine OS EACCES reading a
+    permission-denied path) -- both used to be plain ``PermissionError``,
+    indistinguishable by type, so a real per-tool failure risked
+    misrendering as a refusal that never reached the tool.
+    """
+
+
 class LocalMCPControlService:
     def __init__(
         self,
@@ -77,8 +162,13 @@ class LocalMCPControlService:
         self.client = client
         self.manifest_provider = manifest_provider or _default_manifest_provider
         self.policy_enforcer = policy_enforcer
+        # chunking-agent-tools (Task 5, spec §6): the default delegate rides
+        # the SAME enforcer so the lazily composed shared Library service
+        # (and through it the writing chunk tools) is service-level gated --
+        # exactly the handle the runtime-gate methods below enforce with.
         self.runtime_delegate = runtime_delegate or LocalMCPRuntimeDelegate(
             manifest_provider=self.manifest_provider,
+            policy_enforcer=self.policy_enforcer,
         )
         self._runtime_activity_limit = 50
 
@@ -95,7 +185,9 @@ class LocalMCPControlService:
             },
             "external_servers": {
                 "profiles": len(external_servers),
-                "discovery_snapshots": sum(1 for item in external_servers if item.get("discovery_snapshot")),
+                "discovery_snapshots": sum(
+                    1 for item in external_servers if item.get("discovery_snapshot")
+                ),
             },
             "governance": {
                 "rules": len(governance),
@@ -113,15 +205,36 @@ class LocalMCPControlService:
         return inventory
 
     def get_external_servers(self) -> list[dict[str, Any]]:
+        """List external server profiles with their discovery snapshots.
+
+        task-236: reads the whole catalog from ONE store load via
+        ``get_external_catalog`` (was 1 + N loads: ``list_profiles`` plus a
+        ``get_discovery_snapshot`` per profile). Governance gating and the
+        returned shape are unchanged.
+
+        Returns:
+            One dict per profile: the profile fields plus
+            ``discovery_snapshot`` and ``is_connected``.
+        """
         self._require_allowed("mcp.external_profiles.list.local")
         servers: list[dict[str, Any]] = []
         client = self.client
         active_sessions = getattr(client, "sessions", {}) if client is not None else {}
-        for profile in self.store.list_profiles():
+        catalog_reader = getattr(self.store, "get_external_catalog", None)
+        if catalog_reader is not None:
+            catalog = catalog_reader()
+        else:
+            # Duck-typed store double without the joined reader (the store is
+            # a constructor-injected dependency): legacy per-item reads.
+            catalog = [
+                (profile, self.store.get_discovery_snapshot(profile.profile_id))
+                for profile in self.store.list_profiles()
+            ]
+        for profile, snapshot in catalog:
             servers.append(
                 {
                     **profile.to_dict(),
-                    "discovery_snapshot": self.store.get_discovery_snapshot(profile.profile_id),
+                    "discovery_snapshot": snapshot,
                     "is_connected": profile.profile_id in active_sessions,
                 }
             )
@@ -160,7 +273,9 @@ class LocalMCPControlService:
         snapshot = await client.describe_server(profile.profile_id)
         if not self._has_capabilities(snapshot):
             await self._disconnect_best_effort(client, profile.profile_id)
-            raise RuntimeError(f"Connected profile '{profile.profile_id}' returned no discoverable capabilities")
+            raise RuntimeError(
+                f"Connected profile '{profile.profile_id}' returned no discoverable capabilities"
+            )
         self.store.save_discovery_snapshot(profile.profile_id, snapshot)
         return snapshot
 
@@ -179,6 +294,36 @@ class LocalMCPControlService:
             "resources": len(snapshot.get("resources", [])),
             "prompts": len(snapshot.get("prompts", [])),
         }
+
+    async def execute_external_tool(
+        self,
+        profile_id: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a tool on an external stdio profile, connecting if needed.
+
+        Args:
+            profile_id: Id of the stored external profile.
+            tool_name: Name of the tool to call on that server.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from ``MCPClient.call_tool``.
+
+        Raises:
+            PermissionError: If governance denies the trigger action.
+            RuntimeError: If the client reports an error payload.
+        """
+        self._require_allowed("mcp.external_profiles.trigger.local")
+        client = self._get_client()
+        sessions = getattr(client, "sessions", {})
+        if profile_id not in sessions:
+            await self.connect_profile(profile_id)
+        payload = await client.call_tool(profile_id, tool_name, arguments or {})
+        if isinstance(payload, dict) and "error" in payload:
+            raise RuntimeError(payload["error"])
+        return payload
 
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.observe.local")
@@ -200,7 +345,9 @@ class LocalMCPControlService:
         self._require_allowed("mcp.governance.observe.local")
         normalized_status = str(status or "").strip()
         normalized_resolved_action_id = str(resolved_action_id or "").strip()
-        requests = [request.to_dict() for request in self.store.list_approval_requests()]
+        requests = [
+            request.to_dict() for request in self.store.list_approval_requests()
+        ]
         if normalized_status:
             requests = [
                 request
@@ -221,11 +368,17 @@ class LocalMCPControlService:
         approval_requests = self.list_approval_requests()
         governance_summary = {
             "rules": len(governance),
-            "deny_rules": sum(1 for rule in governance if rule.get("decision") == "deny"),
-            "allow_rules": sum(1 for rule in governance if rule.get("decision") == "allow"),
+            "deny_rules": sum(
+                1 for rule in governance if rule.get("decision") == "deny"
+            ),
+            "allow_rules": sum(
+                1 for rule in governance if rule.get("decision") == "allow"
+            ),
         }
         ask_rules = sum(1 for rule in governance if rule.get("decision") == "ask")
-        pending_approvals = sum(1 for request in approval_requests if request.get("status") == "pending")
+        pending_approvals = sum(
+            1 for request in approval_requests if request.get("status") == "pending"
+        )
         if ask_rules:
             governance_summary["ask_rules"] = ask_rules
         if pending_approvals:
@@ -252,7 +405,11 @@ class LocalMCPControlService:
         rule: Mapping[str, Any] | LocalGovernanceRule,
     ) -> dict[str, Any]:
         self._require_allowed("mcp.governance.configure.local")
-        record = rule if isinstance(rule, LocalGovernanceRule) else LocalGovernanceRule.from_dict(rule)
+        record = (
+            rule
+            if isinstance(rule, LocalGovernanceRule)
+            else LocalGovernanceRule.from_dict(rule)
+        )
         return self.store.save_governance_rule(record).to_dict()
 
     def delete_governance_rule(self, rule_id: str) -> bool:
@@ -266,12 +423,18 @@ class LocalMCPControlService:
         return {
             "source": "local",
             "capability_id": normalized_capability_id,
-            "decision": matched_rule.decision if matched_rule is not None else "inherit",
-            "matched_rule_id": matched_rule.rule_id if matched_rule is not None else None,
+            "decision": matched_rule.decision
+            if matched_rule is not None
+            else "inherit",
+            "matched_rule_id": matched_rule.rule_id
+            if matched_rule is not None
+            else None,
             "notes": matched_rule.notes if matched_rule is not None else None,
         }
 
-    def preview_runtime_access(self, action_name: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def preview_runtime_access(
+        self, action_name: str, payload: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         self._require_allowed("mcp.governance.observe.local")
         normalized_action_name = str(action_name or "").strip()
         normalized_payload = dict(payload or {})
@@ -287,18 +450,24 @@ class LocalMCPControlService:
                         "runtime.request",
                         {
                             "method": request.get("method"),
-                            "params": request.get("params") if isinstance(request.get("params"), Mapping) else {},
+                            "params": request.get("params")
+                            if isinstance(request.get("params"), Mapping)
+                            else {},
                         },
                     )
                     for request in requests
                     if isinstance(request, Mapping)
                 ],
             }
-        return self._governance_preview_for_runtime_action(normalized_action_name, normalized_payload)
+        return self._governance_preview_for_runtime_action(
+            normalized_action_name, normalized_payload
+        )
 
     def approve_approval_request(self, request_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.governance.approve.local")
-        resolved = self.store.resolve_approval_request(str(request_id or ""), "approved")
+        resolved = self.store.resolve_approval_request(
+            str(request_id or ""), "approved"
+        )
         if resolved is None:
             raise KeyError(f"Unknown approval request: {request_id}")
         return resolved.to_dict()
@@ -344,7 +513,9 @@ class LocalMCPControlService:
             "diagnostics": self.runtime_delegate.get_protocol_diagnostics(),
         }
 
-    async def run_runtime_request(self, method: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    async def run_runtime_request(
+        self, method: str, params: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         self._require_allowed("mcp.runtime.trigger.local")
         normalized_method = str(method or "").strip()
         normalized_params = dict(params or {})
@@ -367,7 +538,9 @@ class LocalMCPControlService:
                 error=str(exc),
             )
             raise
-        result = await self.runtime_delegate.request(normalized_method, normalized_params)
+        result = await self.runtime_delegate.request(
+            normalized_method, normalized_params
+        )
         self._record_runtime_activity(
             action_name="runtime.request",
             target=normalized_method,
@@ -382,13 +555,19 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
-    async def run_runtime_batch(self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]) -> dict[str, Any]:
+    async def run_runtime_batch(
+        self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]
+    ) -> dict[str, Any]:
         self._require_allowed("mcp.runtime.trigger.local")
         normalized_requests = [dict(request) for request in requests]
         results: list[dict[str, Any]] = []
         for index, request in enumerate(normalized_requests):
             method = str(request.get("method") or "").strip()
-            params = request.get("params") if isinstance(request.get("params"), Mapping) else {}
+            params = (
+                request.get("params")
+                if isinstance(request.get("params"), Mapping)
+                else {}
+            )
             governance = self._governance_preview_for_runtime_action(
                 "runtime.request",
                 {"method": method, "params": params},
@@ -413,10 +592,17 @@ class LocalMCPControlService:
                     }
                 )
                 continue
-            if governance["decision"] == "ask" and governance.get("approval_status") != "approved":
+            if (
+                governance["decision"] == "ask"
+                and governance.get("approval_status") != "approved"
+            ):
                 if governance.get("approval_request_id") is None:
-                    governance = self._create_pending_runtime_approval("runtime.request", {"method": method, "params": params})
-                    error_message = f"Approval required: {governance.get('approval_request_id')}"
+                    governance = self._create_pending_runtime_approval(
+                        "runtime.request", {"method": method, "params": params}
+                    )
+                    error_message = (
+                        f"Approval required: {governance.get('approval_request_id')}"
+                    )
                 else:
                     error_message = self._approval_error_message(governance)
                 self._record_runtime_activity(
@@ -459,7 +645,9 @@ class LocalMCPControlService:
             "results": results,
         }
 
-    async def execute_tool(self, tool_name: str, arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    async def execute_tool(
+        self, tool_name: str, arguments: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         self._require_allowed("mcp.runtime.trigger.local")
         normalized_tool_name = str(tool_name or "").strip()
         normalized_arguments = dict(arguments or {})
@@ -482,7 +670,9 @@ class LocalMCPControlService:
                 error=str(exc),
             )
             raise
-        result = await self.runtime_delegate.execute_tool(normalized_tool_name, normalized_arguments)
+        result = await self.runtime_delegate.execute_tool(
+            normalized_tool_name, normalized_arguments
+        )
         self._record_runtime_activity(
             action_name="tool.execute",
             target=normalized_tool_name,
@@ -532,19 +722,27 @@ class LocalMCPControlService:
             "governance": self._compact_governance_preview(governance),
         }
 
-    async def get_prompt(self, prompt_name: str, arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    async def get_prompt(
+        self, prompt_name: str, arguments: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         self._require_allowed("mcp.inventory.observe.local")
         normalized_prompt_name = str(prompt_name or "").strip()
         normalized_arguments = dict(arguments or {})
         try:
             governance = self._require_runtime_governance_allowed(
                 "prompt.get",
-                {"prompt_name": normalized_prompt_name, "arguments": normalized_arguments},
+                {
+                    "prompt_name": normalized_prompt_name,
+                    "arguments": normalized_arguments,
+                },
             )
         except PermissionError as exc:
             governance = self._governance_preview_for_runtime_action(
                 "prompt.get",
-                {"prompt_name": normalized_prompt_name, "arguments": normalized_arguments},
+                {
+                    "prompt_name": normalized_prompt_name,
+                    "arguments": normalized_arguments,
+                },
             )
             self._record_runtime_activity(
                 action_name="prompt.get",
@@ -555,7 +753,9 @@ class LocalMCPControlService:
                 error=str(exc),
             )
             raise
-        messages = await self.runtime_delegate.get_prompt(normalized_prompt_name, normalized_arguments)
+        messages = await self.runtime_delegate.get_prompt(
+            normalized_prompt_name, normalized_arguments
+        )
         self._record_runtime_activity(
             action_name="prompt.get",
             target=normalized_prompt_name,
@@ -572,7 +772,25 @@ class LocalMCPControlService:
 
     def _get_client(self) -> MCPClient:
         if self.client is None:
-            self.client = MCPClient()
+            client = MCPClient()
+            # TASK-27019 (AC#4): every connection gets a per-server dispatcher
+            # for server-initiated sampling/elicitation -- policy from config
+            # (default deny), sampling through the live chat provider,
+            # elicitation as a confirmation through this store's approvals.
+            try:
+                from tldw_chatbook.MCP.live_server_request_wiring import (
+                    build_server_request_dispatcher_factory,
+                )
+
+                client._server_request_dispatcher_factory = (
+                    build_server_request_dispatcher_factory(self.store)
+                )
+            except Exception:  # noqa: BLE001 - wiring failure degrades to -32601
+                logger.opt(exception=True).warning(
+                    "could not wire MCP server-request handlers; "
+                    "server-initiated requests will get method-not-found"
+                )
+            self.client = client
         return self.client
 
     def _build_spawn_env(self, profile: LocalExternalMCPProfile) -> dict[str, str]:
@@ -586,16 +804,22 @@ class LocalMCPControlService:
         for key, placeholder in profile.env_placeholders.items():
             match = _ENV_PLACEHOLDER_PATTERN.fullmatch(placeholder)
             if not match:
-                raise RuntimeError(f"Invalid env placeholder for '{key}': {placeholder}")
+                raise RuntimeError(
+                    f"Invalid env placeholder for '{key}': {placeholder}"
+                )
             env_key = match.group("braced") or match.group("plain")
             env_value = os.environ.get(env_key)
             if env_value in (None, ""):
-                raise RuntimeError(f"Missing required environment variable '{env_key}' for profile '{profile.profile_id}'")
+                raise RuntimeError(
+                    f"Missing required environment variable '{env_key}' for profile '{profile.profile_id}'"
+                )
             resolved_env[key] = env_value
         return resolved_env
 
     def _has_capabilities(self, snapshot: Mapping[str, Any]) -> bool:
-        return any(snapshot.get(section) for section in ("tools", "resources", "prompts"))
+        return any(
+            snapshot.get(section) for section in ("tools", "resources", "prompts")
+        )
 
     async def _disconnect_best_effort(self, client: MCPClient, profile_id: str) -> None:
         disconnect = getattr(client, "disconnect_from_server", None)
@@ -606,7 +830,9 @@ class LocalMCPControlService:
         except Exception:
             return
 
-    async def _describe_profile(self, profile_id: str, *, keep_connected: bool) -> dict[str, Any]:
+    async def _describe_profile(
+        self, profile_id: str, *, keep_connected: bool
+    ) -> dict[str, Any]:
         profile = self.store.get_profile(profile_id)
         if profile is None:
             raise KeyError(f"Unknown profile_id: {profile_id}")
@@ -637,14 +863,17 @@ class LocalMCPControlService:
         action_name: str,
         payload: Mapping[str, Any],
     ) -> dict[str, Any]:
-        resolved_action_id, fallback_action_ids = self._resolve_runtime_action_ids(action_name, payload)
+        resolved_action_id, fallback_action_ids = self._resolve_runtime_action_ids(
+            action_name, payload
+        )
         matched_rule = self._find_governance_rule(resolved_action_id)
         if matched_rule is None:
             matched_rule = next(
                 (
                     rule
                     for fallback_action_id in fallback_action_ids
-                    if (rule := self._find_governance_rule(fallback_action_id)) is not None
+                    if (rule := self._find_governance_rule(fallback_action_id))
+                    is not None
                 ),
                 None,
             )
@@ -653,20 +882,34 @@ class LocalMCPControlService:
             "source": "local",
             "action_name": action_name,
             "resolved_action_id": resolved_action_id,
-            "registry_capability_id": capability_entry.capability_id if capability_entry is not None else None,
-            "decision": matched_rule.decision if matched_rule is not None else "inherit",
-            "matched_rule_id": matched_rule.rule_id if matched_rule is not None else None,
+            "registry_capability_id": capability_entry.capability_id
+            if capability_entry is not None
+            else None,
+            "decision": matched_rule.decision
+            if matched_rule is not None
+            else "inherit",
+            "matched_rule_id": matched_rule.rule_id
+            if matched_rule is not None
+            else None,
             "notes": matched_rule.notes if matched_rule is not None else None,
         }
         if governance["decision"] == "ask":
             approval_request = self._find_latest_approval_request(
-                self._approval_fingerprint(str(governance["resolved_action_id"]), payload)
+                self._approval_fingerprint(
+                    str(governance["resolved_action_id"]), payload
+                )
             )
-            governance["approval_request_id"] = approval_request.request_id if approval_request is not None else None
-            governance["approval_status"] = approval_request.status if approval_request is not None else None
+            governance["approval_request_id"] = (
+                approval_request.request_id if approval_request is not None else None
+            )
+            governance["approval_status"] = (
+                approval_request.status if approval_request is not None else None
+            )
         return governance
 
-    def _find_latest_approval_request(self, payload_fingerprint: str) -> LocalApprovalRequest | None:
+    def _find_latest_approval_request(
+        self, payload_fingerprint: str
+    ) -> LocalApprovalRequest | None:
         matches = [
             request
             for request in self.store.list_approval_requests()
@@ -676,7 +919,11 @@ class LocalMCPControlService:
             return None
         return max(
             matches,
-            key=lambda request: request.updated_at or request.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            key=lambda request: (
+                request.updated_at
+                or request.created_at
+                or datetime.min.replace(tzinfo=timezone.utc)
+            ),
         )
 
     def _create_pending_runtime_approval(
@@ -690,9 +937,12 @@ class LocalMCPControlService:
                 request_id=f"approval-{uuid4().hex[:12]}",
                 action_name=action_name,
                 resolved_action_id=str(governance["resolved_action_id"]),
-                registry_capability_id=str(governance["registry_capability_id"] or "") or None,
+                registry_capability_id=str(governance["registry_capability_id"] or "")
+                or None,
                 payload=dict(payload),
-                payload_fingerprint=self._approval_fingerprint(str(governance["resolved_action_id"]), payload),
+                payload_fingerprint=self._approval_fingerprint(
+                    str(governance["resolved_action_id"]), payload
+                ),
                 status="pending",
                 matched_rule_id=str(governance["matched_rule_id"] or "") or None,
                 notes=str(governance["notes"] or "") or None,
@@ -711,7 +961,9 @@ class LocalMCPControlService:
         return f"Approval required: {governance.get('approval_request_id')}"
 
     @staticmethod
-    def _approval_fingerprint(resolved_action_id: str, payload: Mapping[str, Any]) -> str:
+    def _approval_fingerprint(
+        resolved_action_id: str, payload: Mapping[str, Any]
+    ) -> str:
         canonical_payload = json.dumps(
             {
                 "resolved_action_id": resolved_action_id,
@@ -728,16 +980,26 @@ class LocalMCPControlService:
         action_name: str,
         payload: Mapping[str, Any],
     ) -> dict[str, Any]:
+        # task-2537 (fix round B, item 3): every raise below is
+        # `MCPGovernanceDenied`, not bare `PermissionError` -- this is the
+        # ONE seam that decides "governance refused this call outright",
+        # and callers (`mcp_workbench._is_permission_refusal()`) need to
+        # tell it apart from an unrelated `PermissionError` a tool's own
+        # body might raise.
         governance = self._governance_preview_for_runtime_action(action_name, payload)
         if governance["decision"] == "deny":
-            raise PermissionError(f"Denied by local governance: {governance['resolved_action_id']}")
+            raise MCPGovernanceDenied(
+                f"Denied by local governance: {governance['resolved_action_id']}"
+            )
         if governance["decision"] == "ask":
             if governance.get("approval_status") == "approved":
                 return governance
             if governance.get("approval_request_id") is None:
                 governance = self._create_pending_runtime_approval(action_name, payload)
-                raise PermissionError(f"Approval required: {governance.get('approval_request_id')}")
-            raise PermissionError(self._approval_error_message(governance))
+                raise MCPGovernanceDenied(
+                    f"Approval required: {governance.get('approval_request_id')}"
+                )
+            raise MCPGovernanceDenied(self._approval_error_message(governance))
         return governance
 
     @staticmethod
@@ -749,9 +1011,11 @@ class LocalMCPControlService:
             "matched_rule_id": governance.get("matched_rule_id"),
             "notes": governance.get("notes"),
         }
-        if governance.get("decision") == "ask" or governance.get("approval_request_id") is not None or governance.get(
-            "approval_status"
-        ) is not None:
+        if (
+            governance.get("decision") == "ask"
+            or governance.get("approval_request_id") is not None
+            or governance.get("approval_status") is not None
+        ):
             compact["approval_request_id"] = governance.get("approval_request_id")
             compact["approval_status"] = governance.get("approval_status")
         return compact
@@ -777,11 +1041,19 @@ class LocalMCPControlService:
             "ok": bool(ok),
             "blocked": bool(blocked),
             "error": str(error) if error is not None else None,
-            "resolved_action_id": governance.get("resolved_action_id") if governance is not None else None,
+            "resolved_action_id": governance.get("resolved_action_id")
+            if governance is not None
+            else None,
             "decision": governance.get("decision") if governance is not None else None,
-            "matched_rule_id": governance.get("matched_rule_id") if governance is not None else None,
-            "approval_request_id": governance.get("approval_request_id") if governance is not None else None,
-            "approval_status": governance.get("approval_status") if governance is not None else None,
+            "matched_rule_id": governance.get("matched_rule_id")
+            if governance is not None
+            else None,
+            "approval_request_id": governance.get("approval_request_id")
+            if governance is not None
+            else None,
+            "approval_status": governance.get("approval_status")
+            if governance is not None
+            else None,
         }
         self.store.record_runtime_activity(entry, limit=self._runtime_activity_limit)
 
@@ -792,12 +1064,18 @@ class LocalMCPControlService:
     ) -> tuple[str, tuple[str, ...]]:
         if action_name == "tool.execute":
             tool_name = str(payload.get("tool_name") or "").strip()
-            resolved_action_id = _TOOL_ACTION_IDS.get(tool_name, "mcp.runtime.trigger.local")
+            resolved_action_id = _TOOL_ACTION_IDS.get(
+                tool_name, "mcp.runtime.trigger.local"
+            )
             return resolved_action_id, ("mcp.runtime.trigger.local",)
         if action_name == "resource.read":
             resource_uri = str(payload.get("resource_uri") or "").strip()
             resolved_action_id = next(
-                (action_id for prefix, action_id in _RESOURCE_ACTION_IDS if resource_uri.startswith(prefix)),
+                (
+                    action_id
+                    for prefix, action_id in _RESOURCE_ACTION_IDS
+                    if resource_uri.startswith(prefix)
+                ),
                 "mcp.inventory.observe.local",
             )
             return resolved_action_id, ("mcp.inventory.observe.local",)
@@ -807,7 +1085,11 @@ class LocalMCPControlService:
             return "mcp.runtime.observe.local", ()
         if action_name == "runtime.request":
             method = str(payload.get("method") or "").strip()
-            params = payload.get("params") if isinstance(payload.get("params"), Mapping) else {}
+            params = (
+                payload.get("params")
+                if isinstance(payload.get("params"), Mapping)
+                else {}
+            )
             return self._resolve_runtime_request_action_ids(method, params)
         raise ValueError(f"Unsupported local runtime action preview: {action_name}")
 
@@ -820,12 +1102,20 @@ class LocalMCPControlService:
             return _REQUEST_METHOD_ACTION_IDS[method], ()
         if method == "tools/call":
             tool_name = str(params.get("name") or params.get("tool_name") or "").strip()
-            resolved_action_id = _TOOL_ACTION_IDS.get(tool_name, "mcp.runtime.trigger.local")
+            resolved_action_id = _TOOL_ACTION_IDS.get(
+                tool_name, "mcp.runtime.trigger.local"
+            )
             return resolved_action_id, ("mcp.runtime.trigger.local",)
         if method == "resources/read":
-            resource_uri = str(params.get("uri") or params.get("resource_uri") or "").strip()
+            resource_uri = str(
+                params.get("uri") or params.get("resource_uri") or ""
+            ).strip()
             resolved_action_id = next(
-                (action_id for prefix, action_id in _RESOURCE_ACTION_IDS if resource_uri.startswith(prefix)),
+                (
+                    action_id
+                    for prefix, action_id in _RESOURCE_ACTION_IDS
+                    if resource_uri.startswith(prefix)
+                ),
                 "mcp.inventory.observe.local",
             )
             return resolved_action_id, ("mcp.inventory.observe.local",)

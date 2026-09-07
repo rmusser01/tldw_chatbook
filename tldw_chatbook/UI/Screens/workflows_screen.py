@@ -17,6 +17,7 @@ from ...Home.dashboard_state import (
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.screen_state_store import RuntimeIdentity
 from .destination_recovery import DestinationRecoveryState
 
 
@@ -44,13 +45,24 @@ class WorkflowsScreen(BaseAppScreen):
         self._latest_console_context_loaded = False
 
     def on_mount(self) -> None:
-        super().on_mount()
-        self._refresh_latest_console_context()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        self._refresh_latest_console_context(has_recent_work)
 
-    @work(exclusive=True, thread=True)
-    def _refresh_latest_console_context(self) -> None:
-        latest_console_item = self._latest_console_follow_item_from_adapter()
-        self.app.call_from_thread(self._apply_latest_console_context, latest_console_item)
+    @work(exclusive=True, group="workflows-refresh-console-context", thread=True)
+    def _refresh_latest_console_context(self, has_recent_work: bool) -> None:
+        latest_console_item = self._latest_console_follow_item_from_adapter(
+            has_recent_work
+        )
+        self.app.call_from_thread(
+            self._apply_latest_console_context, latest_console_item
+        )
 
     def _apply_latest_console_context(self, latest_console_item) -> None:
         self._current_console_follow_item = latest_console_item
@@ -64,16 +76,21 @@ class WorkflowsScreen(BaseAppScreen):
             self.refresh(recompose=True)
 
     def _latest_console_follow_item(self):
-        return self._latest_console_follow_item_from_adapter()
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        return self._latest_console_follow_item_from_adapter(has_recent_work)
 
-    def _latest_console_follow_item_from_adapter(self):
+    def _latest_console_follow_item_from_adapter(self, has_recent_work: bool):
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         build_dashboard_input = getattr(adapter, "build_dashboard_input", None)
         if not callable(build_dashboard_input):
             return None
         try:
             providers = getattr(self.app_instance, "providers_models", {}) or {}
-            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
             dashboard_input = build_dashboard_input(
                 providers_models=providers,
                 has_recent_work=has_recent_work,
@@ -117,7 +134,9 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Approvals: no active run"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == APPROVAL_RUN_STATUS:
             return "Approvals: pending"
         return "Approvals: none pending"
@@ -128,7 +147,9 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Run control: no active run selected"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Run control: retry available"
         if status_category == RUNNING_RUN_STATUS:
@@ -143,7 +164,9 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Next action: start or select a workflow run"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Next action: retry or open in Console"
         if status_category == PAUSED_RUN_STATUS:
@@ -156,7 +179,9 @@ class WorkflowsScreen(BaseAppScreen):
         if latest_console_item is None:
             return "Recovery controls require an active workflow run"
 
-        status_category = categorize_run_status(getattr(latest_console_item, "status", None))
+        status_category = categorize_run_status(
+            getattr(latest_console_item, "status", None)
+        )
         if status_category == FAILED_RUN_STATUS:
             return "Retry controls are not wired yet"
         if status_category == RUNNING_RUN_STATUS:
@@ -180,14 +205,20 @@ class WorkflowsScreen(BaseAppScreen):
                 id="workflows-title",
                 classes="ds-destination-header",
             )
-            with DestinationModeStrip(id="workflows-mode-strip", classes="destination-filter-strip"):
+            with DestinationModeStrip(
+                id="workflows-mode-strip", classes="destination-filter-strip"
+            ):
                 yield Static(
                     "Modes: Recipes Inputs Steps Dry Run Approvals Outputs",
                     id="workflows-mode-label",
                     classes="destination-section",
                 )
-            with Horizontal(id="workflows-workbench", classes="ds-panel destination-workbench"):
-                with Vertical(id="workflows-list-pane", classes="destination-workbench-pane"):
+            with Horizontal(
+                id="workflows-workbench", classes="ds-panel destination-workbench"
+            ):
+                with Vertical(
+                    id="workflows-list-pane", classes="destination-workbench-pane"
+                ):
                     yield Static(
                         "Procedure Library",
                         classes="destination-section workflows-column-title",
@@ -198,9 +229,13 @@ class WorkflowsScreen(BaseAppScreen):
                     yield Static("Dry Run 0", classes="destination-section")
                     yield Static("Approvals 0", classes="destination-section")
                     yield Static("Outputs 0", classes="destination-section")
-                    yield Static("No workflow runs are active.", id="workflows-queue-empty")
+                    yield Static(
+                        "No workflow runs are active.", id="workflows-queue-empty"
+                    )
                 yield self._column_divider("workflows-list-detail-divider")
-                with Vertical(id="workflows-detail-pane", classes="destination-workbench-pane"):
+                with Vertical(
+                    id="workflows-detail-pane", classes="destination-workbench-pane"
+                ):
                     yield Static(
                         "Run Detail",
                         classes="destination-section workflows-column-title",
@@ -211,9 +246,15 @@ class WorkflowsScreen(BaseAppScreen):
                             id="workflows-loading-state",
                         )
                     elif latest_console_item is not None:
-                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
-                        status = str(getattr(latest_console_item, "status", None) or "unknown")
-                        yield Static("Console launch available", classes="destination-section")
+                        title = str(
+                            getattr(latest_console_item, "title", None) or "Untitled"
+                        )
+                        status = str(
+                            getattr(latest_console_item, "status", None) or "unknown"
+                        )
+                        yield Static(
+                            "Console launch available", classes="destination-section"
+                        )
                         yield Static(
                             f"Status: {escape_markup(status)}",
                             id="workflows-run-status",
@@ -226,15 +267,25 @@ class WorkflowsScreen(BaseAppScreen):
                             id="workflows-console-available",
                         )
                     else:
-                        yield Static("Console launch unavailable", classes="destination-section")
-                        yield Static("No active workflow run selected", id="workflows-empty-state")
-                        yield Static("Select a workflow run or start a procedure to enable controls.")
+                        yield Static(
+                            "Console launch unavailable", classes="destination-section"
+                        )
+                        yield Static(
+                            "No active workflow run selected",
+                            id="workflows-empty-state",
+                        )
+                        yield Static(
+                            "Select a workflow run or start a procedure to enable controls."
+                        )
                         yield Static(
                             WORKFLOWS_EMPTY_CONSOLE_RECOVERY.visible_copy,
                             id=WORKFLOWS_EMPTY_CONSOLE_RECOVERY.stable_selector,
                         )
                 yield self._column_divider("workflows-detail-inspector-divider")
-                with Vertical(id="workflows-inspector-pane", classes="destination-workbench-pane ds-inspector"):
+                with Vertical(
+                    id="workflows-inspector-pane",
+                    classes="destination-workbench-pane ds-inspector",
+                ):
                     yield Static(
                         "Run Inspector",
                         classes="destination-section workflows-column-title",
@@ -243,15 +294,23 @@ class WorkflowsScreen(BaseAppScreen):
                         self._inspector_state_summary(latest_console_item),
                         id="workflows-state-summary",
                     )
-                    yield Static("Inputs: required before run", id="workflows-inputs-summary")
-                    yield Static(self._approval_summary(latest_console_item), id="workflows-approval-summary")
+                    yield Static(
+                        "Inputs: required before run", id="workflows-inputs-summary"
+                    )
+                    yield Static(
+                        self._approval_summary(latest_console_item),
+                        id="workflows-approval-summary",
+                    )
                     yield Static(
                         self._run_control_summary(latest_console_item),
                         id="workflows-run-control-summary",
                     )
                     if latest_console_item is not None:
                         yield Static("Console: ready", id="workflows-console-state")
-                        yield Static(self._next_action_summary(latest_console_item), id="workflows-next-action")
+                        yield Static(
+                            self._next_action_summary(latest_console_item),
+                            id="workflows-next-action",
+                        )
                     else:
                         yield Static("Console: blocked", id="workflows-console-state")
                         yield Static(
@@ -289,9 +348,13 @@ class WorkflowsScreen(BaseAppScreen):
                             tooltip="Launch workflow context after Workflows finishes loading.",
                         )
                     elif latest_console_item is not None:
-                        title = str(getattr(latest_console_item, "title", None) or "Untitled")
+                        title = str(
+                            getattr(latest_console_item, "title", None) or "Untitled"
+                        )
                         yield Button(
-                            Text.from_markup(f"Launch {escape_markup(title)} in Console"),
+                            Text.from_markup(
+                                f"Launch {escape_markup(title)} in Console"
+                            ),
                             id="workflows-launch-in-console",
                             tooltip="Open the active workflow run in Console.",
                         )
@@ -314,7 +377,9 @@ class WorkflowsScreen(BaseAppScreen):
             )
             return
 
-        open_active_item_in_console = getattr(self.app_instance, "open_active_home_item_in_console", None)
+        open_active_item_in_console = getattr(
+            self.app_instance, "open_active_home_item_in_console", None
+        )
         if not callable(open_active_item_in_console):
             self.app_instance.notify(
                 "Console launch is unavailable for Workflows in this runtime.",

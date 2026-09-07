@@ -66,7 +66,9 @@ async def test_outputs_templates_client_routes_crud_and_preview(monkeypatch):
             body="# {{ title }}",
         )
     )
-    updated = await client.update_output_template(6, OutputTemplateUpdate(name="Briefing"))
+    updated = await client.update_output_template(
+        6, OutputTemplateUpdate(name="Briefing")
+    )
     deleted = await client.delete_output_template(6)
     preview = await client.preview_output_template(
         5,
@@ -74,7 +76,11 @@ async def test_outputs_templates_client_routes_crud_and_preview(monkeypatch):
     )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/outputs/templates")
-    assert mocked.await_args_list[0].kwargs["params"] == {"q": "news", "limit": 25, "offset": 5}
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "q": "news",
+        "limit": 25,
+        "offset": 5,
+    }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/outputs/templates/5")
     assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/outputs/templates")
     assert mocked.await_args_list[2].kwargs["json_data"] == {
@@ -84,11 +90,24 @@ async def test_outputs_templates_client_routes_crud_and_preview(monkeypatch):
         "body": "# {{ title }}",
         "is_default": False,
     }
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/outputs/templates/6")
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/outputs/templates/6",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {"name": "Briefing"}
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/outputs/templates/6")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/outputs/templates/5/preview")
-    assert mocked.await_args_list[5].kwargs["json_data"] == {"template_id": 5, "limit": 50, "data": {"title": "Digest"}}
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/outputs/templates/6",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/outputs/templates/5/preview",
+    )
+    assert mocked.await_args_list[5].kwargs["json_data"] == {
+        "template_id": 5,
+        "limit": 50,
+        "data": {"title": "Digest"},
+    }
 
     assert listed.total == 1
     assert fetched.id == 5
@@ -114,10 +133,14 @@ async def test_outputs_artifacts_client_routes_crud_and_purge(monkeypatch):
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    listed = await client.list_outputs(page=2, size=25, type="newsletter_markdown", workspace_tag="workspace:alpha")
+    listed = await client.list_outputs(
+        page=2, size=25, type="newsletter_markdown", workspace_tag="workspace:alpha"
+    )
     deleted_rows = await client.list_deleted_outputs(size=25)
     fetched = await client.get_output(9)
-    created = await client.create_output(OutputCreateRequest(template_id=5, data={"title": "Digest"}))
+    created = await client.create_output(
+        OutputCreateRequest(template_id=5, data={"title": "Digest"})
+    )
     updated = await client.update_output(9, OutputUpdateRequest(title="Digest 2"))
     deleted = await client.delete_output(9, hard=True, delete_file=False)
     purged = await client.purge_outputs(delete_files=True, soft_deleted_grace_days=7)
@@ -142,7 +165,10 @@ async def test_outputs_artifacts_client_routes_crud_and_purge(monkeypatch):
     assert mocked.await_args_list[4].args[:2] == ("PATCH", "/api/v1/outputs/9")
     assert mocked.await_args_list[4].kwargs["json_data"] == {"title": "Digest 2"}
     assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/outputs/9")
-    assert mocked.await_args_list[5].kwargs["params"] == {"hard": True, "delete_file": False}
+    assert mocked.await_args_list[5].kwargs["params"] == {
+        "hard": True,
+        "delete_file": False,
+    }
     assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/outputs/purge")
     assert mocked.await_args_list[6].kwargs["json_data"] == {
         "delete_files": True,

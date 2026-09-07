@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
+from ..DB.Prompts_DB import ConflictError
 from . import Prompts_Interop as prompts_interop
+from .prompt_normalizers import prepare_retained_snapshot_for_restore
+from .prompt_restore_errors import prompt_restore_error_from_conflict
+from .prompt_source_capabilities import local_prompt_capabilities
 
 
 class LocalPromptService:
@@ -14,74 +17,12 @@ class LocalPromptService:
     def __init__(self, interop_module: Any = prompts_interop):
         self.interop = interop_module
 
-    def _resolve_prompt(self, prompt_identifier: int | str, *, include_deleted: bool = True) -> dict[str, Any] | None:
-        return self.interop.fetch_prompt_details(prompt_identifier, include_deleted=include_deleted)
-
-    def _prompt_version_snapshots(self, prompt_identifier: int | str) -> list[dict[str, Any]]:
-        prompt = self._resolve_prompt(prompt_identifier, include_deleted=True)
-        if not prompt:
-            raise ValueError(f"Prompt '{prompt_identifier}' not found.")
-
-        prompt_uuid = prompt.get("uuid")
-        if not prompt_uuid:
-            return []
-
-        db = self.interop.get_db_instance()
-        snapshots_by_version: dict[int, dict[str, Any]] = {}
-        for entry in db.get_sync_log_entries(since_change_id=0):
-            if entry.get("entity") != "Prompts":
-                continue
-            if entry.get("entity_uuid") != prompt_uuid:
-                continue
-            if entry.get("operation") not in {"create", "update"}:
-                continue
-
-            payload = entry.get("payload")
-            if not isinstance(payload, Mapping):
-                continue
-
-            raw_version = payload.get("version", entry.get("version"))
-            try:
-                version = int(raw_version)
-            except (TypeError, ValueError):
-                continue
-
-            snapshots_by_version[version] = {
-                "version": version,
-                "prompt_uuid": prompt_uuid,
-                "operation": entry.get("operation"),
-                "change_id": entry.get("change_id"),
-                "created_at": entry.get("timestamp"),
-                "updated_at": payload.get("last_modified") or entry.get("timestamp"),
-                "name": payload.get("name"),
-                "author": payload.get("author"),
-                "details": payload.get("details"),
-                "system_prompt": payload.get("system_prompt"),
-                "user_prompt": payload.get("user_prompt"),
-                "prompt_format": payload.get("prompt_format"),
-                "prompt_schema_version": payload.get("prompt_schema_version"),
-                "prompt_definition": payload.get("prompt_definition"),
-            }
-
-        return sorted(
-            snapshots_by_version.values(),
-            key=lambda snapshot: snapshot["version"],
-            reverse=True,
+    def _resolve_prompt(
+        self, prompt_identifier: int | str, *, include_deleted: bool = True
+    ) -> dict[str, Any] | None:
+        return self.interop.fetch_prompt_details(
+            prompt_identifier, include_deleted=include_deleted
         )
-
-    @staticmethod
-    def _prompt_update_from_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-        fields = (
-            "name",
-            "author",
-            "details",
-            "system_prompt",
-            "user_prompt",
-            "prompt_format",
-            "prompt_schema_version",
-            "prompt_definition",
-        )
-        return {field: snapshot.get(field) for field in fields if field in snapshot}
 
     async def list_prompts(
         self,
@@ -99,6 +40,69 @@ class LocalPromptService:
         )
         return prompts
 
+    async def count_prompts(self) -> int:
+        """Count all non-deleted local prompts.
+
+        Mirrors ``list_prompts`` above: a direct, un-offloaded call into
+        the interop layer (this service's methods are all thin synchronous
+        wrappers, not backed by a thread pool), fetching a single row
+        (``per_page=1``) purely to read the paginated response's exact
+        total rather than materializing a full page.
+
+        Returns:
+            The exact number of non-deleted prompts, taken from
+            ``PromptsDatabase.list_prompts``'s ``total_items`` (the fourth
+            element of its return tuple).
+        """
+        _prompts, _total_pages, _current_page, total_items = self.interop.list_prompts(
+            page=1,
+            per_page=1,
+            include_deleted=False,
+        )
+        return int(total_items)
+
+    # --- Library read seams (task-1337) ---
+
+    async def list_library_prompts(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page the active local prompt library for agent-facing list tools."""
+        payload = self.interop.list_library_prompts_page(limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def search_library_prompts(
+        self, query: str, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search the local prompt library, forwarding totals and match fields."""
+        payload = self.interop.search_library_prompts_page(
+            query=query, limit=limit, offset=offset
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def get_library_prompt_overview(
+        self, prompt_uuid: str
+    ) -> dict[str, Any] | None:
+        """Return a bounded overview of one active prompt."""
+        return self.interop.get_library_prompt_overview(prompt_uuid)
+
+    async def get_library_prompt_section(
+        self, prompt_uuid: str, section: str, *, start: int = 0, max_chars: int = 8000
+    ) -> dict[str, Any] | None:
+        """Return a windowed section segment of one active prompt."""
+        return self.interop.get_library_prompt_section(
+            prompt_uuid, section=section, start=start, max_chars=max_chars
+        )
+
     async def create_prompt(
         self,
         *,
@@ -112,6 +116,7 @@ class LocalPromptService:
         prompt_format: str | None = "legacy",
         prompt_schema_version: int | None = None,
         prompt_definition: Any = None,
+        artifact_type: str | None = None,
     ) -> dict[str, Any]:
         prompt_id, prompt_uuid, message = self.interop.add_prompt(
             name=name,
@@ -124,9 +129,19 @@ class LocalPromptService:
             prompt_format=prompt_format,
             prompt_schema_version=prompt_schema_version,
             prompt_definition=prompt_definition,
+            artifact_type=artifact_type,
         )
-        created = self._resolve_prompt(prompt_uuid or prompt_id, include_deleted=True) if (prompt_uuid or prompt_id) else None
-        return created or {"id": prompt_id, "uuid": prompt_uuid, "name": name, "message": message}
+        created = (
+            self._resolve_prompt(prompt_uuid or prompt_id, include_deleted=True)
+            if (prompt_uuid or prompt_id)
+            else None
+        )
+        return created or {
+            "id": prompt_id,
+            "uuid": prompt_uuid,
+            "name": name,
+            "message": message,
+        }
 
     async def preview_prompt(self, **kwargs: Any) -> dict[str, Any]:
         return {
@@ -138,44 +153,124 @@ class LocalPromptService:
             "prompt_format": kwargs.get("prompt_format") or "legacy",
             "prompt_schema_version": kwargs.get("prompt_schema_version"),
             "prompt_definition": kwargs.get("prompt_definition"),
+            "artifact_type": kwargs.get("artifact_type", "prompt"),
         }
 
-    async def update_prompt(self, prompt_id: int | str, **kwargs: Any) -> dict[str, Any]:
+    async def update_prompt(
+        self, prompt_id: int | str, **kwargs: Any
+    ) -> dict[str, Any]:
         existing = self._resolve_prompt(prompt_id, include_deleted=True)
         if not existing:
             raise ValueError(f"Prompt '{prompt_id}' not found.")
 
         update_payload = dict(kwargs)
+        expected_version = update_payload.pop("expected_version", None)
         db = self.interop.get_db_instance()
-        prompt_uuid, message = db.update_prompt_by_id(existing["id"], update_payload)
-        updated = self._resolve_prompt(prompt_uuid or existing["id"], include_deleted=True)
-        return updated or {"id": existing["id"], "uuid": prompt_uuid, "message": message}
+        prompt_uuid, message = db.update_prompt_by_id(
+            existing["id"], update_payload, expected_version=expected_version
+        )
+        updated = self._resolve_prompt(
+            prompt_uuid or existing["id"], include_deleted=True
+        )
+        return updated or {
+            "id": existing["id"],
+            "uuid": prompt_uuid,
+            "message": message,
+        }
 
-    async def delete_prompt(self, prompt_id: int | str) -> bool:
-        return bool(self.interop.soft_delete_prompt(prompt_id))
+    async def delete_prompt(
+        self, prompt_id: int | str, *, expected_version: int | None = None
+    ) -> bool:
+        """Soft-delete one local Prompt/Recipe conditionally.
 
-    async def list_prompt_versions(self, prompt_id: int | str) -> list[dict[str, Any]]:
-        return self._prompt_version_snapshots(prompt_id)
+        Args:
+            prompt_id: Numeric id, UUID, or name of the artifact.
+            expected_version: Optional active-row version required for deletion.
 
-    async def restore_prompt_version(self, prompt_id: int | str, version: int) -> dict[str, Any]:
+        Returns:
+            ``True`` when the artifact is soft-deleted.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ConflictError: If no active artifact matches the identifier.
+            ExpectedVersionConflictError: If the expected version is stale.
+            DatabaseError: If persistence fails.
+        """
+        return bool(
+            self.interop.soft_delete_prompt(
+                prompt_id, expected_version=expected_version
+            )
+        )
+
+    async def restore_deleted_prompt(
+        self, prompt_id: int | str, *, expected_version: int
+    ) -> dict[str, Any]:
+        """Restore one exact local Prompt/Recipe tombstone.
+
+        Args:
+            prompt_id: Numeric id, UUID, or name of the tombstone.
+            expected_version: Exact deleted-row version required for restore.
+
+        Returns:
+            The restored Prompt/Recipe record with canonical keywords.
+
+        Raises:
+            InputError: If the identifier or expected version is invalid.
+            ExpectedVersionConflictError: If the tombstone version is stale.
+            DatabaseError: If recovery metadata is unavailable or persistence fails.
+        """
+        return self.interop.get_db_instance().restore_deleted_prompt(
+            prompt_id, expected_version=expected_version
+        )
+
+    async def list_prompt_versions(
+        self,
+        prompt_id: int | str,
+        *,
+        page_size: int = 25,
+        before_change_id: int | None = None,
+    ) -> dict[str, Any]:
         prompt = self._resolve_prompt(prompt_id, include_deleted=True)
         if not prompt:
             raise ValueError(f"Prompt '{prompt_id}' not found.")
+        prompt_uuid = prompt.get("uuid")
+        if not prompt_uuid:
+            raise ValueError(f"Prompt '{prompt_id}' has no UUID.")
+        return self.interop.get_db_instance().get_prompt_history_entries(
+            prompt_uuid,
+            page_size=page_size,
+            before_change_id=before_change_id,
+        )
 
-        for snapshot in self._prompt_version_snapshots(prompt_id):
-            if snapshot.get("version") != int(version):
-                continue
-            db = self.interop.get_db_instance()
-            prompt_uuid, message = db.update_prompt_by_id(
-                int(prompt["id"]),
-                self._prompt_update_from_snapshot(snapshot),
+    async def restore_prompt_version(
+        self,
+        prompt_id: int | str,
+        *,
+        change_id: int,
+        version: int,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        prompt = self._resolve_prompt(prompt_id, include_deleted=True)
+        if not prompt:
+            raise ValueError(f"Prompt '{prompt_id}' not found.")
+        prompt_uuid = prompt.get("uuid")
+        if not prompt_uuid:
+            raise ValueError(f"Prompt '{prompt_id}' has no UUID.")
+        try:
+            return self.interop.get_db_instance().restore_prompt_history_entry(
+                prompt_uuid,
+                change_id=change_id,
+                version=version,
+                expected_version=expected_version,
+                snapshot_validator=lambda snapshot: (
+                    prepare_retained_snapshot_for_restore(
+                        snapshot,
+                        capabilities=local_prompt_capabilities(),
+                    )
+                ),
             )
-            restored = self._resolve_prompt(prompt_uuid or prompt_id, include_deleted=True)
-            return restored or {
-                "id": prompt.get("id"),
-                "uuid": prompt_uuid or prompt.get("uuid"),
-                "name": snapshot.get("name") or prompt.get("name"),
-                "message": message,
-            }
-
-        raise ValueError(f"Local prompt version {version} was not found for prompt '{prompt_id}'.")
+        except ConflictError as exc:
+            classified = prompt_restore_error_from_conflict(exc)
+            if classified is not None:
+                raise classified from exc
+            raise

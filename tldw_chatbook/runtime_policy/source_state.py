@@ -6,16 +6,33 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from loguru import logger
+
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathResult,
+    PrivatePathStatus,
+    atomic_private_write_text,
+    lexical_path,
+    open_private_binary,
+)
+
 from .types import RuntimeSourceState
 
 POLICY_FRESHNESS_WINDOW = timedelta(minutes=5)
 
 _VALID_ACTIVE_SOURCES = {"local", "server"}
 _VALID_SERVER_REACHABILITY = {"unknown", "reachable", "unreachable"}
-_VALID_SERVER_AUTH_STATES = {"unknown", "authenticated", "auth_required", "session_invalid"}
+_VALID_SERVER_AUTH_STATES = {
+    "unknown",
+    "authenticated",
+    "auth_required",
+    "session_invalid",
+}
 
 
-def _is_fresh(checked_at: datetime | None, *, now: datetime, freshness_window: timedelta) -> bool:
+def _is_fresh(
+    checked_at: datetime | None, *, now: datetime, freshness_window: timedelta
+) -> bool:
     if checked_at is None:
         return False
     if checked_at.tzinfo is None:
@@ -72,7 +89,9 @@ def runtime_source_state_to_dict(state: RuntimeSourceState) -> dict:
         "active_server_id": state.active_server_id,
         "server_configured": state.server_configured,
         "server_reachability": state.server_reachability,
-        "server_reachability_checked_at": _datetime_to_iso(state.server_reachability_checked_at),
+        "server_reachability_checked_at": _datetime_to_iso(
+            state.server_reachability_checked_at
+        ),
         "server_auth_state": state.server_auth_state,
         "server_auth_checked_at": _datetime_to_iso(state.server_auth_checked_at),
         "last_known_server_label": state.last_known_server_label,
@@ -96,7 +115,9 @@ def runtime_source_state_from_dict(data) -> RuntimeSourceState:
             valid_values=_VALID_SERVER_REACHABILITY,
             default="unknown",
         ),
-        server_reachability_checked_at=_iso_to_datetime(data.get("server_reachability_checked_at")),
+        server_reachability_checked_at=_iso_to_datetime(
+            data.get("server_reachability_checked_at")
+        ),
         server_auth_state=_coerce_choice(
             data.get("server_auth_state", "unknown"),
             valid_values=_VALID_SERVER_AUTH_STATES,
@@ -138,17 +159,51 @@ def _coerce_choice(value, *, valid_values: set[str], default: str) -> str:
     return default
 
 
+def _report_runtime_policy_posture(
+    result: PrivatePathResult,
+    *,
+    operation: str,
+) -> None:
+    if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        logger.warning(
+            "Runtime policy permission verification is unavailable; "
+            "operation={} proceeded with posture={}; application continues.",
+            operation,
+            result.status.value,
+        )
+    elif result.status is PrivatePathStatus.HARDENED_PRIVATE:
+        logger.info(
+            "Runtime policy file posture was hardened (operation={}, posture={}).",
+            operation,
+            result.status.value,
+        )
+
+
 class RuntimeSourceStateStore:
-    def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        application_owned_directory: str | Path | None = None,
+    ) -> None:
+        self.path = lexical_path(path)
+        self.application_owned_directory = (
+            lexical_path(application_owned_directory)
+            if application_owned_directory is not None
+            else None
+        )
 
     def load(self) -> RuntimeSourceState:
         try:
-            with self.path.open("r", encoding="utf-8") as handle:
-                data = json.load(handle)
+            with open_private_binary(self.path) as opened:
+                _report_runtime_policy_posture(
+                    opened.result,
+                    operation="read",
+                )
+                data = json.load(opened.stream)
         except FileNotFoundError:
             return RuntimeSourceState()
-        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        except (TypeError, ValueError, json.JSONDecodeError):
             return RuntimeSourceState()
 
         if not isinstance(data, dict):
@@ -157,11 +212,14 @@ class RuntimeSourceStateStore:
         return RuntimeSourceState.from_dict(data)
 
     def save(self, state: RuntimeSourceState) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        payload = runtime_source_state_to_dict(state)
-
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-
-        temp_path.replace(self.path)
+        payload = json.dumps(
+            runtime_source_state_to_dict(state),
+            indent=2,
+            sort_keys=True,
+        )
+        result = atomic_private_write_text(
+            self.path,
+            payload,
+            application_owned_directory=self.application_owned_directory,
+        )
+        _report_runtime_policy_posture(result, operation="write")

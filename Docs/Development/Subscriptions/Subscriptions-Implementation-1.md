@@ -302,7 +302,7 @@ We have successfully implemented the core subscription system with:
 
 ### ADR-020: Visual Scraper Builder
 **Date**: 2025-08-01  
-**Status**: Accepted  
+**Status**: Retired (amended 2026-08-16, TASK-16846 — read the amendment)  
 **Context**: Users need to create custom scrapers without coding knowledge.  
 **Decision**: Build interactive UI for testing selectors and building extraction rules.  
 **Consequences**:
@@ -312,6 +312,22 @@ We have successfully implemented the core subscription system with:
 - ✅ Export to configuration or code
 - ✅ Integration with custom scraper
 - ⚠️ Complex UI implementation
+
+**Amendment (2026-08-16, TASK-16846)**: `UI/ScraperBuilderWindow.py` is retired and
+deleted. The window was never wired into navigation and never once composed until
+TASK-15991 fixed four stacked compose crashes in 2026-08 — proof no user ever reached
+it. Beyond the compose facade it was a stub: its "Save Configuration" wrote a JSON
+file to `~/Downloads` that nothing in the app reads, its "Load Configuration" button
+had no handler, four of its five key bindings named action methods that did not
+exist, and the per-rule Edit/Delete buttons were inert. The pipeline stack its
+exported code targeted (`Subscriptions/web_scraping_pipelines.py` +
+`Subscriptions/scrapers/`) has no production consumer either — the live watchlists
+path is `monitoring_engine.py`. The per-site extraction-configuration need this ADR
+describes is carried by `UI/SiteConfigSettings.py` + `SiteConfigManager`, which
+persist to the `site_configs` table (the store the pipelines were built to read);
+that sibling's own wire-or-retire fork is tracked separately (it is likewise
+nav-unreachable at the time of this amendment). A retirement pin lives in
+`Tests/Subscriptions/test_retired_modules_stay_retired.py`.
 
 ### ADR-005: Briefing Template System
 **Date**: 2025-07-31  

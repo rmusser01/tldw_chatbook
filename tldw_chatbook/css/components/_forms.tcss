@@ -128,16 +128,164 @@
 }
 
 Input:focus,
-TextArea:focus,
-Select:focus {
+TextArea:focus {
     border: solid $ds-input-focus-border;
     border-bottom: solid $ds-input-focus-accent;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
 }
 
+/* TASK-17961. Third member of the `*:focus { outline: solid ... }`
+ * (core/_reset.tcss) family that TASK-1160 (`DataTable:focus`,
+ * components/_lists.tcss) and TASK-2300 (`Select.-textual-compact:focus`,
+ * also components/_lists.tcss) already fixed: the outline paints OVER a
+ * widget's outermost rendered lines, and Textual pins `border: none
+ * !important` on `Input.-textual-compact` (textual/widgets/_input.py), so a
+ * compact Input is exactly ONE row tall and that row IS its value -- the
+ * outline overwrites it outright, turning a focused compact Input into an
+ * empty bordered box.
+ *
+ * The rule above (`Input:focus, TextArea:focus`) also reaches compact
+ * inputs, and its `border: solid ...` is app CSS -- app CSS always outranks
+ * a widget's own DEFAULT_CSS in Textual's cascade regardless of
+ * `!important` (`Styles.extract_rules`'s `default_rules` tier), so it
+ * re-adds a real border Textual's compact contract had removed. Left in
+ * place, that border alone (no outline needed) would still eat the
+ * compact input's one content row, so `border: none` is restated here too,
+ * not just `outline: none`. `background: $ds-focus-bg` is the
+ * non-obscuring replacement cue -- a colour, not geometry, so it costs
+ * nothing on a 1-row control. */
+Input.-textual-compact:focus {
+    border: none;
+    outline: none;
+    background: $ds-focus-bg;
+}
+
+/* TASK-14879: File Notes fields already use the stable border treatment
+ * above. Remove the global perimeter outline so it cannot repaint the first
+ * or last editor/search cells over meaningful content. */
+LibraryFileNotesWorkspace Input:focus,
+LibraryFileNotesWorkspace TextArea:focus {
+    outline: none;
+}
+
+/* Long-form Notes bodies keep their resting fill while typing. The heavy
+ * semantic perimeter is the focus cue; it costs no rows or columns and leaves
+ * compact fields and every unrelated TextArea on the shared focused fill. */
+#library-note-body:focus,
+#file-notes-editor:focus {
+    outline: heavy $ds-action-focus;
+    background: $ds-surface-raised;
+}
+
+/* Some decorative themes intentionally place `$primary` close to `$panel`
+ * (pastel_dreams measures 1.03:1). Keep the semantic outline, and make the
+ * existing TextArea border the contrast-safe second boundary without adding
+ * geometry. Textual's mode class is the reliable cross-theme lightness seam. */
+.-dark-mode #library-note-body:focus,
+.-dark-mode #file-notes-editor:focus {
+    border: solid white;
+}
+
+.-light-mode #library-note-body:focus,
+.-light-mode #file-notes-editor:focus {
+    border: solid black;
+}
+
+/* TASK-2300. `Select:focus` used to be in the rule above, and it is the one
+ * member of that list that does not draw its own border.
+ *
+ * `Input` and `TextArea` each carry `border: tall $border-blurred` on
+ * themselves, so the declaration above REPLACES a border that already exists
+ * and costs nothing. A `Select` draws its border on its child
+ * `SelectCurrent` (`Select` DEFAULT_CSS: `&:focus > SelectCurrent { border:
+ * tall $border; }`) and has none of its own -- so the same declaration ADDED
+ * a second one, two rows of chrome, around a widget whose three rows were
+ * already spoken for. Measured live at 235x52, the New Rule form's condition
+ * Select with focus on it:
+ *
+ *     ┌──────────────────────┐
+ *     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│     <- SelectCurrent's own top border
+ *     └──────────────────────┘
+ *
+ * Three rows of frame and no value. Clicking the control to open it is what
+ * focuses it, so this is the state of every Select the moment a user reaches
+ * for one -- the same "a bare border where a control should be" the 2026-08-04
+ * UAT reported for the Items filter, on a different Select for a different
+ * reason.
+ *
+ * Only the recolouring half is kept, on the `Select` itself where it always
+ * was. The border half is not re-homed onto `SelectCurrent` -- Textual's own
+ * `&:focus > SelectCurrent { border: tall $border; }` already recolours
+ * exactly that border on focus, at exactly the geometry it is already sized
+ * for, so re-stating it here in app colours would buy a shade and cost a
+ * fight: the re-homed rule (`Select:focus > SelectCurrent`, specificity
+ * (0,1,2)) also outranked `.settings-compact-select > SelectCurrent`'s
+ * deliberate `border: none` (0,1,1), putting the frame back INSIDE a control
+ * that draws its own frame outside. Review wave, Critical 1: this family of
+ * rules keeps losing to the fact that "a Select" is three different shapes,
+ * so the app now styles only what every shape has -- its colours.
+ *
+ * ROUND 2, O1 -- and how far even that reaches is worth stating, because the
+ * previous wording claimed more than it delivered ("the recolouring half is
+ * what marks focus now"). It is NOT, on its own. `SelectCurrent` is a child
+ * with an opaque `background: $surface` covering the whole parent, so on a
+ * borderless compact `Select` this declaration is painted over completely and
+ * only Textual's 5% `background-tint` survives (~1.10:1, measured). What
+ * actually marks focus is per shape:
+ *
+ *   three-row `Select`    Textual's own `&:focus > SelectCurrent { border:
+ *                         tall $border; }` -- a real, visible border swap
+ *   `.settings-compact-*` its own `:focus` rules, border AND background
+ *   borderless compact    `Select.-textual-compact:focus > SelectCurrent`
+ *                         in components/_lists.tcss, added by O1
+ *
+ * This rule is kept because it is the one that reaches a `Select` whose child
+ * does NOT cover it (padding, a themed variant), and because removing a
+ * pre-existing app-wide declaration on the strength of one shape's geometry
+ * is how this family of bugs started.
+ */
+Select:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+/* TASK-17961. `ToggleButton` (the base class behind `Checkbox`/
+ * `RadioButton` -- Textual type selectors match subclasses, same reasoning
+ * TASK-1160 used for `DataTable:focus`) half of the same
+ * `*:focus{outline:solid...}` family fixed by TASK-1160 (`DataTable:focus`,
+ * components/_lists.tcss) and TASK-2300 (`Select.-textual-compact:focus`,
+ * also components/_lists.tcss). Measured on the real regression --
+ * `workspace_create_modal.py`'s "Switch to this workspace" Checkbox
+ * (`compact=True`): blurred it renders `▐X▌ Switch to this workspace`
+ * fine; focused, before this fix, it collapsed to an empty bordered box.
+ *
+ * `outline: none` on the bare selector is necessary but not sufficient for
+ * the compact case: this app's own `border: solid $ds-focus-accent` above
+ * ALSO re-adds a real border on focus (compact toggles are borderless only
+ * via Textual's `border: none !important` on `.-textual-compact`, which
+ * cannot outrank this app's CSS -- app CSS always wins over a widget's own
+ * DEFAULT_CSS in Textual's cascade regardless of `!important`, same
+ * mechanism as the compact-Input fix above). Textual's own DEFAULT_CSS is
+ * a second, independent source: `ToggleButton`'s
+ * `&.-textual-compact { &:focus { border: tall $border; } }` reinstates a
+ * border on compact-focus even with no app CSS in play, so the restated
+ * `border: none` below neutralizes both. Either border alone, combined
+ * with this app's unscoped `Checkbox { height: 2; }` (features/
+ * _conversations.tcss), leaves zero rows for content -- so the compact
+ * variant restates `border: none` too. Focus stays visible either way via
+ * the existing `.toggle--label` recolour contract below (pinned by
+ * Tests/UI/test_non_obscuring_focus_contract.py) -- untouched by this
+ * fix. */
 ToggleButton:focus {
+    outline: none;
     border: solid $ds-focus-accent;
+    background: $surface;
+}
+
+ToggleButton.-textual-compact:focus {
+    outline: none;
+    border: none;
     background: $surface;
 }
 
@@ -183,14 +331,6 @@ Switch:focus {
 
 .form-checkbox {
     margin: 1 0;
-}
-
-.form-label-primary {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-    border-bottom: solid $primary;
-    padding-bottom: 1;
 }
 
 /* Responsive metadata columns */

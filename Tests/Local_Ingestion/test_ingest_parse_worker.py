@@ -25,13 +25,16 @@ import os
 import subprocess
 import sys
 import textwrap
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as document_processing
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
+    initialize_ingest_parse_worker,
     run_parse_job,
 )
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
@@ -42,6 +45,118 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _stt_provenance_document() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": None,
+        "retry_of_attempt_id": None,
+        "retry_of_job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "produced_capabilities": {
+            "timestamps": "none",
+            "punctuation": True,
+            "capitalization": True,
+            "vad": False,
+            "diarization": False,
+        },
+        "warnings": [],
+        "failed_attempt": None,
+    }
+
+
+def test_process_document_auto_falls_back_when_docling_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        calls.append("docling")
+        raise ImportError("broken transitive Docling dependency")
+
+    def native_docx(*args, **kwargs):
+        calls.append("native")
+        return {
+            "content": "Native content",
+            "title": "sample.docx",
+            "author": "tester",
+            "metadata": {"processing_method": "python-docx"},
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+    monkeypatch.setattr(document_processing, "process_docx", native_docx)
+
+    result = document_processing.process_document(
+        "sample.docx", processing_method="auto"
+    )
+
+    assert result["extraction_successful"] is True
+    assert result["content"] == "Native content"
+    assert calls == ["docling", "native"]
+
+
+def test_process_document_explicit_docling_preserves_import_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native_calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        raise ImportError("broken transitive Docling dependency")
+
+    def native_docx(*args, **kwargs):
+        native_calls.append("native")
+        return {"extraction_successful": True}
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+    monkeypatch.setattr(document_processing, "process_docx", native_docx)
+
+    result = document_processing.process_document(
+        "sample.docx", processing_method="docling"
+    )
+
+    assert result["extraction_successful"] is False
+    assert result["metadata"]["error"] == "broken transitive Docling dependency"
+    assert native_calls == []
+
+
+def test_process_document_auto_does_not_retry_broken_docling_without_native_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docling_calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        docling_calls.append("docling")
+        raise ImportError("broken transitive Docling dependency")
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", False)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+
+    result = document_processing.process_document(
+        "sample.docx", processing_method="auto"
+    )
+
+    assert result["extraction_successful"] is False
+    assert result["metadata"]["error"] == "No parser available for .docx"
+    assert docling_calls == ["docling"]
 
 
 # --- parse_local_file_for_ingest -------------------------------------------
@@ -73,6 +188,43 @@ def test_parse_returns_payload_without_touching_a_database(tmp_path: Path) -> No
     import pickle
 
     pickle.dumps(payload)
+
+
+def test_parse_pdf_success_with_present_but_none_error_key_does_not_raise(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """task-168(c): ``process_pdf``'s result dict always has an ``'error'``
+    key (initialized to ``None`` and only ever overwritten on a real
+    failure -- see ``PDF_Processing_Lib.process_pdf``'s initial ``result``
+    dict). ``'error' in result`` is therefore ALWAYS ``True``, even on a
+    clean success, so every real PDF parse incorrectly raised
+    ``FileIngestionError``. The check must key off truthiness
+    (``result.get('error')``) instead of key presence."""
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(
+        b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked)."
+    )
+
+    stub_result = {
+        "status": "Success",
+        "content": "Extracted PDF text.",
+        "title": "Doc title",
+        "author": "Some Author",
+        "keywords": [],
+        "chunks": [],
+        "analysis": "",
+        "metadata": {},
+        "error": None,  # present, falsy -- the real process_pdf shape on success
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+        lambda **kwargs: stub_result,
+    )
+
+    payload = parse_local_file_for_ingest(str(source), {"perform_analysis": False})
+
+    assert payload["content"] == "Extracted PDF text."
+    assert payload["title"] == "Doc title"
 
 
 def test_parse_missing_file_raises_filenotfounderror(tmp_path: Path) -> None:
@@ -109,6 +261,62 @@ def test_persist_writes_payload_and_returns_media_id(tmp_path: Path) -> None:
     assert row["type"] == "plaintext"
 
 
+def test_persist_url_payload_writes_article_row_no_filesystem() -> None:
+    """A URL-source payload (media_type=article, canonical url, URL string as
+    file_path) persists to a media row without any filesystem access -- the
+    payload's file_path is a URL that is not a real file, and persist never
+    stats/opens it (it only forwards url/content/etc. to the DB)."""
+    payload = {
+        "file_type": "article",
+        "media_type": "article",
+        "title": "Kept article",
+        "content": "Extracted article body.",
+        "keywords": [],
+        "url": "https://example.com/post",
+        "analysis_content": "",
+        "author": "Unknown",
+        "chunks": None,
+        "chunk_options": None,
+        "file_path": "https://example.com/post",  # a URL, NOT a real file -> never accessed
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-url-persist")
+    media_id, media_uuid, message = persist_parsed_media(payload, db)
+
+    assert isinstance(media_id, int)
+    assert isinstance(media_uuid, str) and media_uuid
+    row = db.get_media_by_id(media_id)
+    assert row is not None
+    assert row["url"] == "https://example.com/post"
+    assert row["type"] == "article"
+
+
+def test_persist_threads_optional_stt_model_and_provenance_into_media() -> None:
+    document = _stt_provenance_document()
+    payload = {
+        "file_type": "audio",
+        "media_type": "audio",
+        "title": "Transcribed audio",
+        "content": "hello",
+        "keywords": [],
+        "url": "local://audio/test",
+        "analysis_content": "",
+        "author": "Unknown",
+        "chunks": None,
+        "chunk_options": None,
+        "file_path": "/tmp/test.wav",
+        "transcription_model": "parakeet-v2",
+        "transcription_provenance": document,
+    }
+    db = MediaDatabase(":memory:", client_id="stt-persist")
+
+    media_id, _, _ = persist_parsed_media(payload, db)
+
+    row = db.get_media_by_id(media_id)
+    assert row["transcription_model"] == "parakeet-v2"
+    assert json.loads(row["transcription_provenance_json"]) == document
+
+
 def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -> None:
     source = tmp_path / "note.txt"
     source.write_text("content", encoding="utf-8")
@@ -120,6 +328,76 @@ def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -
 
     with pytest.raises(FileIngestionError, match="Failed to ingest plaintext file"):
         persist_parsed_media(payload, _ExplodingDB())
+
+
+def test_persist_reimport_without_keywords_preserves_curated_keywords_on_restore(
+    tmp_path: Path,
+) -> None:
+    """P1 re-critique finding 2 follow-through: ``parse_local_file_for_
+    ingest`` always normalizes an omitted ``keywords`` option to ``[]``
+    (never ``None``), so ``persist_parsed_media`` must convert that empty
+    list back to "not provided" before handing it to the DB layer -- which
+    now distinguishes "no keywords argument" (preserve existing curated
+    keywords on a trash-restore) from "explicit empty list" (clear them).
+    Without that conversion, plainly re-importing the same file (the
+    real-world "I deleted this by mistake, let me re-import it" flow, the
+    one production caller that passes ``restore_trashed=True``) would
+    silently wipe every curated keyword the row had, exactly the data loss
+    task-4022 was written to prevent. Uses a real file-backed
+    ``MediaDatabase`` (never a mock or ``:memory:``) since this is a
+    DB-layer keyword-persistence claim.
+    """
+    db_path = tmp_path / "media.db"
+    db = MediaDatabase(str(db_path), client_id="test-persist-restore-keywords")
+
+    source = tmp_path / "reimport-me.txt"
+    source.write_text("Original content.", encoding="utf-8")
+
+    # First import: the user explicitly curates keywords via the ingest
+    # options.
+    first_payload = parse_local_file_for_ingest(
+        str(source), {"keywords": ["curated", "mine"]}
+    )
+    # ``parse_local_file_for_ingest`` builds this via ``list(set(...))``
+    # internally, so its order is not guaranteed (varies with the
+    # process's hash seed, not with test order) -- compare unordered.
+    assert sorted(first_payload["keywords"]) == ["curated", "mine"]
+    media_id, _media_uuid, msg = persist_parsed_media(first_payload, db)
+    assert media_id is not None, msg
+
+    def _current_keywords() -> list[str]:
+        return sorted(
+            r["keyword"]
+            for r in db.execute_query(
+                "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk "
+                "ON k.id = mk.keyword_id WHERE mk.media_id = ? AND k.deleted = 0",
+                (media_id,),
+            ).fetchall()
+        )
+
+    assert _current_keywords() == ["curated", "mine"]
+    assert db.mark_as_trash(media_id) is True
+
+    # Re-import the SAME file with the SAME options object shape a real
+    # "just re-drop the file in" flow produces: no keywords typed this
+    # time, and no extraction gave any either -- the ingest options
+    # normalize that to an EMPTY list (``parse_local_file_for_ingest``'s
+    # own ``if keywords is None: keywords = []``), never ``None``.
+    second_payload = parse_local_file_for_ingest(str(source), {})
+    assert second_payload["keywords"] == []
+    reimported_id, _reimported_uuid, msg2 = persist_parsed_media(second_payload, db)
+
+    assert reimported_id == media_id, msg2
+    assert "restored" in msg2.lower(), msg2
+    row = db.get_media_by_id(media_id, include_trash=True)
+    assert row["is_trash"] == 0
+
+    assert _current_keywords() == ["curated", "mine"], (
+        "re-importing a restored file without retyping its keywords must "
+        "not wipe the curated keywords it already had"
+    )
+
+    db.close_connection()
 
 
 # --- ingest_local_file (compose) --------------------------------------------
@@ -289,6 +567,122 @@ def test_ingest_local_file_audio_returns_real_media_id(
     assert db.get_media_by_url(f"file://{source.absolute()}") is not None
 
 
+def test_audio_processor_uses_injected_transcription_runner_without_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import transcription_service
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def runner(audio_path: str, **kwargs: object) -> dict[str, object]:
+        calls.append((audio_path, kwargs))
+        return {"text": "resident transcript", "segments": []}
+
+    monkeypatch.setattr(
+        transcription_service,
+        "TranscriptionService",
+        lambda: (_ for _ in ()).throw(AssertionError("service constructed")),
+    )
+    processor = LocalAudioProcessor(None, transcription_runner=runner)
+
+    result = processor._transcribe_audio(
+        "/private/media.wav",
+        provider="parakeet-onnx",
+        model="nemo-parakeet-tdt-0.6b-v2",
+        language="en",
+    )
+
+    assert result == {"text": "resident transcript", "segments": []}
+    assert calls[0][0] == "/private/media.wav"
+    assert callable(calls[0][1]["progress_callback"])
+
+
+def test_faster_whisper_batch_provenance_records_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+
+    monkeypatch.setattr(
+        TranscriptionService,
+        "transcribe",
+        lambda self, audio_path, **kwargs: {
+            "text": "Translated transcript.",
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "Translated transcript."}
+            ],
+            "language": "fr",
+            "duration": 1.0,
+            "provider": "faster-whisper",
+            "model": "base",
+            "diarization_performed": False,
+        },
+    )
+
+    result = LocalAudioProcessor(None)._transcribe_audio(
+        "/private/media.wav",
+        provider="faster-whisper",
+        model="base",
+        language="fr",
+        target_lang="en",
+        diarize=True,
+        attempt_id="attempt-translation",
+        job_id="job-translation",
+        timestamps=True,
+    )
+
+    assert result["transcription_provenance"]["task"] == "translate"
+    assert result["transcription_provenance"]["requested_language"] == "fr"
+    assert not result["transcription_provenance"]["produced_capabilities"][
+        "diarization"
+    ]
+
+
+def test_video_processor_forwards_injected_transcription_runner() -> None:
+    from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+
+    def runner(*_args, **_kwargs):
+        return {"text": "hello", "segments": []}
+
+    processor = LocalVideoProcessor(None, transcription_runner=runner)
+
+    assert processor.audio_processor._transcription_runner is runner
+
+
+def test_parse_audio_for_ingest_passes_worker_owned_transcription_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion as lfi
+
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    def runner(*_args, **_kwargs):
+        return {"text": "hello", "segments": []}
+
+    observed: dict[str, object] = {}
+
+    class InjectedAudioProcessor(_StubAudioProcessor):
+        def __init__(self, media_db=None, *, transcription_runner=None):
+            super().__init__(media_db)
+            observed["runner"] = transcription_runner
+
+    monkeypatch.setattr(lfi, "LocalAudioProcessor", InjectedAudioProcessor)
+
+    payload = parse_local_file_for_ingest(
+        source,
+        {"perform_analysis": False},
+        transcription_runner=runner,
+    )
+
+    assert observed["runner"] is runner
+    assert payload["content"] == "Transcribed words from the stub."
+
+
 # --- classify_parse_failure ---------------------------------------------------
 
 
@@ -297,12 +691,18 @@ def test_classify_parse_failure_missing_file_is_permanent() -> None:
 
 
 def test_classify_parse_failure_unsupported_type_is_permanent() -> None:
-    assert classify_parse_failure(FileIngestionError("Unsupported file type: .xyz")) is True
+    assert (
+        classify_parse_failure(FileIngestionError("Unsupported file type: .xyz"))
+        is True
+    )
 
 
 def test_classify_parse_failure_generic_error_is_retryable() -> None:
     assert classify_parse_failure(RuntimeError("transient DB hiccup")) is False
-    assert classify_parse_failure(FileIngestionError("Failed to ingest pdf file: boom")) is False
+    assert (
+        classify_parse_failure(FileIngestionError("Failed to ingest pdf file: boom"))
+        is False
+    )
 
 
 # --- run_parse_job (pool entry point) ----------------------------------------
@@ -321,6 +721,45 @@ def test_run_parse_job_ok_for_txt(tmp_path: Path) -> None:
     import pickle
 
     pickle.dumps(result)
+
+
+def test_run_parse_job_emits_bound_progress_without_changing_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import ingest_parse_worker
+
+    events = []
+    monkeypatch.setattr(
+        ingest_parse_worker,
+        "emit_parse_progress",
+        lambda *args: events.append(args),
+    )
+    source = tmp_path / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+
+    result = run_parse_job(str(source), {}, (3, "ingest-job-9"))
+
+    assert result["ok"] is True
+    assert result["payload"]["content"] == "hello"
+    assert events[0][:3] == (3, "ingest-job-9", "inspecting")
+    assert any(event[2] == "processing" for event in events)
+
+
+def test_progress_callback_exception_never_fails_parse(tmp_path: Path) -> None:
+    source = tmp_path / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+
+    def fail_telemetry(*_args) -> None:
+        raise RuntimeError("telemetry failed")
+
+    payload = parse_local_file_for_ingest(
+        str(source),
+        {},
+        progress_callback=fail_telemetry,
+    )
+
+    assert payload["content"] == "hello"
 
 
 def test_run_parse_job_missing_file_is_permanent(tmp_path: Path) -> None:
@@ -403,7 +842,9 @@ def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProce
     )
 
 
-def test_ingest_parse_worker_import_excludes_local_file_ingestion(tmp_path: Path) -> None:
+def test_ingest_parse_worker_import_excludes_local_file_ingestion(
+    tmp_path: Path,
+) -> None:
     """Resolving ingest_parse_worker by its real dotted path (exactly how a
     spawned pool worker unpickles ``run_parse_job``) must not drag
     ``local_file_ingestion`` (or its heavy transitive parse-chain deps)
@@ -425,7 +866,14 @@ def test_ingest_parse_worker_import_excludes_local_file_ingestion(tmp_path: Path
             m for m in sys.modules
             if any(m == f"tldw_chatbook.Local_Ingestion.{g}" or m.split(".")[0] == g for g in guards)
         })
-        print(json.dumps({"loaded": loaded}))
+        local_ingestion_modules = sorted(
+            module for module in sys.modules
+            if module.startswith("tldw_chatbook.Local_Ingestion.")
+        )
+        print(json.dumps({
+            "loaded": loaded,
+            "local_ingestion_modules": local_ingestion_modules,
+        }))
         """,
     )
 
@@ -434,6 +882,10 @@ def test_ingest_parse_worker_import_excludes_local_file_ingestion(tmp_path: Path
     assert payload["loaded"] == [], (
         f"importing ingest_parse_worker pulled in unexpected modules: {payload['loaded']}"
     )
+    assert payload["local_ingestion_modules"] == [
+        "tldw_chatbook.Local_Ingestion.ingest_parse_progress",
+        "tldw_chatbook.Local_Ingestion.ingest_parse_worker",
+    ]
 
 
 # --- Real spawn-Pool integration ----------------------------------------------
@@ -448,10 +900,150 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
     source.write_text("Parsed inside a real spawned worker process.", encoding="utf-8")
 
     ctx = multiprocessing.get_context("spawn")
-    with ctx.Pool(1) as pool:
-        async_result = pool.apply_async(run_parse_job, (str(source), {"title": "Pool note"}))
-        result = async_result.get(timeout=120)
+    progress_queue = ctx.Queue()
+    try:
+        with ctx.Pool(
+            1,
+            initializer=initialize_ingest_parse_worker,
+            initargs=(progress_queue,),
+        ) as pool:
+            async_result = pool.apply_async(
+                run_parse_job,
+                (str(source), {"title": "Pool note"}, (1, "ingest-job-1")),
+            )
+            result = async_result.get(timeout=120)
+            event = progress_queue.get(timeout=120)
+    finally:
+        progress_queue.close()
+        progress_queue.join_thread()
 
     assert result["ok"] is True
     assert result["payload"]["title"] == "Pool note"
-    assert result["payload"]["content"] == "Parsed inside a real spawned worker process."
+    assert (
+        result["payload"]["content"] == "Parsed inside a real spawned worker process."
+    )
+    assert event.generation == 1
+    assert event.job_id == "ingest-job-1"
+    assert event.phase == "inspecting"
+
+
+@pytest.mark.integration
+def test_real_spawn_pool_rejects_epub_archive_before_extraction(
+    tmp_path: Path,
+) -> None:
+    """The production subprocess path enforces the EPUB admission guard."""
+    source = tmp_path / "compressed-bomb.epub"
+    with zipfile.ZipFile(
+        source,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        archive.writestr("chapter.xhtml", b"x" * 1_000_000)
+
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(1) as pool:
+        async_result = pool.apply_async(
+            run_parse_job,
+            (str(source), {"perform_analysis": False}),
+        )
+        result = async_result.get(timeout=120)
+
+    assert result["ok"] is False
+    assert "EPUB archive exceeds safety limits." in result["error"]
+    assert result["permanent"] is False
+
+
+# --- empty-extraction guard (task-677) --------------------------------------
+
+
+def test_persist_rejects_payload_with_no_extracted_content(tmp_path: Path) -> None:
+    """A parse that yielded nothing must fail, not quietly succeed.
+
+    A PDF whose extraction produced nothing was written as a media row with
+    empty content, reported as done in the queue and counted in the library
+    total. The user got an entry that looks imported but returns nothing from
+    search or RAG, with no signal anything went wrong (task-677).
+    """
+    source = tmp_path / "scanned.pdf"
+    source.write_bytes(b"%PDF-1.4 not really extractable")
+    payload = {
+        "file_path": str(source),
+        "file_type": "pdf",
+        "media_type": "pdf",
+        "title": "Scanned",
+        "content": "",
+        "keywords": [],
+        "url": None,
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-empty-guard")
+    with pytest.raises(FileIngestionError, match="No text could be extracted"):
+        persist_parsed_media(payload, db)
+
+    # No half-imported row is left behind for the user to trip over.
+    with db.get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM Media").fetchone()[0] == 0
+
+
+def test_persist_reports_an_empty_source_file_differently(tmp_path: Path) -> None:
+    """A genuinely empty file is not an extraction failure."""
+    source = tmp_path / "blank.txt"
+    source.write_text("", encoding="utf-8")
+    payload = {
+        "file_path": str(source),
+        "file_type": "plaintext",
+        "media_type": "plaintext",
+        "title": "Blank",
+        "content": "",
+        "keywords": [],
+        "url": None,
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-empty-source")
+    with pytest.raises(FileIngestionError, match="is empty"):
+        persist_parsed_media(payload, db)
+
+
+def test_persist_allows_whitespace_only_url_payload_to_fail_clearly() -> None:
+    """A URL payload with no content fails without touching the filesystem."""
+    payload = {
+        "file_path": "https://example.com/article",
+        "file_type": "article",
+        "media_type": "article",
+        "title": "Empty article",
+        "content": "   \n\t ",
+        "keywords": [],
+        "url": "https://example.com/article",
+        "analysis_content": None,
+        "author": None,
+        "chunks": None,
+        "chunk_options": None,
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-empty-url")
+    with pytest.raises(FileIngestionError, match="No text could be extracted"):
+        persist_parsed_media(payload, db)
+
+
+def test_parse_xml_raises_unsupported_not_not_yet_implemented(
+    tmp_path: Path,
+) -> None:
+    """task-3308: ``parse_local_file_for_ingest`` still carries an
+    ``elif file_type == "xml"`` branch that raises "XML file processing is
+    not yet implemented" -- but no queue path can reach it, because
+    ``detect_file_type`` (the only producer of ``file_type`` for local
+    files) refuses ``.xml`` first with the honest "Unsupported file type"
+    error. Pin the refusal AND that the placeholder text never surfaces."""
+    xml = tmp_path / "feed.xml"
+    xml.write_text("<rss/>", encoding="utf-8")
+    with pytest.raises(FileIngestionError, match="Unsupported file type") as exc:
+        parse_local_file_for_ingest(str(xml), {})
+    assert "not yet implemented" not in str(exc.value)

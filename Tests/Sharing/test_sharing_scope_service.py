@@ -10,7 +10,11 @@ class FakeSharingService:
 
     async def create_link(self, **kwargs):
         self.calls.append(("create_link", kwargs))
-        return {"id": 10, "resource_type": kwargs["resource_type"], "resource_id": kwargs["resource_id"]}
+        return {
+            "id": 10,
+            "resource_type": kwargs["resource_type"],
+            "resource_id": kwargs["resource_id"],
+        }
 
     async def list_links(self):
         self.calls.append(("list_links",))
@@ -68,11 +72,17 @@ async def test_sharing_scope_service_routes_server_operations_and_normalizes_rec
     scope = SharingScopeService(server_service=server, policy_enforcer=policy)
 
     links = await scope.list_links(mode="server")
-    created = await scope.create_link(mode="server", resource_type="workspace", resource_id="ws-1")
+    created = await scope.create_link(
+        mode="server", resource_type="workspace", resource_id="ws-1"
+    )
     shared = await scope.list_shared_with_me(mode="server")
     sources = await scope.list_shared_workspace_sources(mode="server", share_id=7)
-    chat = await scope.chat_with_shared_workspace(mode="server", share_id=7, query="summarize")
-    events = await scope.observe_link_events(mode="server", resource_type="workspace", resource_id="ws-1")
+    chat = await scope.chat_with_shared_workspace(
+        mode="server", share_id=7, query="summarize"
+    )
+    events = await scope.observe_link_events(
+        mode="server", resource_type="workspace", resource_id="ws-1"
+    )
 
     assert links["tokens"][0]["record_id"] == "server:sharing_token:9"
     assert links["tokens"][0]["backend"] == "server"
@@ -102,7 +112,9 @@ async def test_sharing_scope_service_routes_server_operations_and_normalizes_rec
 @pytest.mark.asyncio
 async def test_sharing_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeSharingService()
-    scope = SharingScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = SharingScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Sharing is a server-only capability"):
         await scope.list_links(mode="local")
@@ -119,7 +131,9 @@ async def test_sharing_scope_service_blocks_denied_server_action_before_dispatch
     )
 
     with pytest.raises(PolicyDeniedError) as exc:
-        await scope.create_link(mode="server", resource_type="workspace", resource_id="ws-1")
+        await scope.create_link(
+            mode="server", resource_type="workspace", resource_id="ws-1"
+        )
 
     assert exc.value.reason_code == "server_auth_required"
     assert server.calls == []

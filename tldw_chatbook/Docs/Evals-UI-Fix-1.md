@@ -1,5 +1,9 @@
 # Evals UI Fix Plan - Phase 1
 
+> **Retired (PR 1 of the Evals rebuild):** every module this document discusses (`eval_config_dialogs.py`,
+> `Event_Handlers/eval_events.py`, `Evals_Window.py` and the rest of the gen-2 Evals UI cluster) was deleted as
+> unreachable dead code. This plan is historical. See `Docs/superpowers/specs/2026-07-25-evals-console-rebuild-design.md`.
+
 ## Current State Analysis
 
 The Evals system has a fully functional backend with comprehensive testing, but the UI needs to be wired up to make it usable. The main issues are:

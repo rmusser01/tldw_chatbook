@@ -9,3 +9,55 @@ Screen { layout: vertical; }
 Header { dock: top; height: 1; background: $panel; }
 Footer { dock: bottom; height: 1; background: $panel; }
 #content { height: 1fr; width: 100%; }
+
+/* App-wide scrollbar defaults (TASK-394). Consolidated here -- a deliberate
+ * foundation rule -- from the two bare `VerticalScroll` selectors that had
+ * leaked out of feature modules (the splash/theme module and _conversations);
+ * this is the union of what both set, so the effective app-wide scrollbar is
+ * unchanged. */
+VerticalScroll {
+    scrollbar-background: $surface-darken-1;
+    scrollbar-color: $primary;
+    scrollbar-color-hover: $primary-lighten-1;
+    scrollbar-color-active: $primary-lighten-2;
+    scrollbar-size: 1 1;
+}
+
+/* task-1562: keep transient toasts off the right-hand inspector rails.
+ * The default bottom-right ToastRack stacks directly over the Scope
+ * Inspector (Settings) and Inspector (Console) -- the panes that carry
+ * recovery/boundary copy. Bottom-center floats over transient flowing
+ * content instead of persistent guidance. */
+Toast {
+    /* task-1562: keep transient toasts off the right-hand inspector rails
+     * (Scope Inspector in Settings, Inspector in Console) -- they carry
+     * recovery/boundary copy. The rack's built-in right-bottom align and
+     * its own margins resist app-tier overrides, but a margin on the
+     * Toast itself reliably offsets it from that anchor; 46 cells clears
+     * the inspector column at supported widths. */
+    margin-right: 46;
+    /* task-1625: full tinted border per severity instead of the stock
+       side-stripe -- DESIGN.md's Don'ts prohibit side-stripe-only
+       callouts (>1-cell colored border-left). */
+    border: round $ds-grid-line;
+    border-left: round $ds-grid-line;
+}
+Toast.-information {
+    border: round $ds-status-info;
+    border-left: round $ds-status-info;
+}
+Toast.-warning {
+    border: round $ds-status-warning;
+    border-left: round $ds-status-warning;
+}
+Toast.-error {
+    border: round $ds-status-error;
+    border-left: round $ds-status-error;
+}
+/* Qodo PR #1139: three call sites pass severity="success" -- not a
+   Textual SeverityLevel, but the Toast still gains a "-success" class,
+   which previously fell through unstyled. */
+Toast.-success {
+    border: round $ds-status-ready;
+    border-left: round $ds-status-ready;
+}

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import TLDWAPIClient, TranslateRequest
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient, TranslateRequest
 
 
 class ServerTranslationService:
@@ -54,13 +56,17 @@ class ServerTranslationService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server translation operations.")
+        raise ValueError(
+            "TLDW API client is required for server translation operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -69,10 +75,14 @@ class ServerTranslationService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server translation action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server translation action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -87,6 +97,9 @@ class ServerTranslationService:
 
     @staticmethod
     def _model(request_data: Any) -> TranslateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import TranslateRequest
+
         if isinstance(request_data, TranslateRequest):
             return request_data
         return TranslateRequest(**dict(request_data or {}))
@@ -101,5 +114,7 @@ class ServerTranslationService:
 
     async def translate_text(self, request_data: Any) -> dict[str, Any]:
         self._enforce("translation.text.launch.server")
-        response = await self._require_client().translate_text(self._model(request_data))
+        response = await self._require_client().translate_text(
+            self._model(request_data)
+        )
         return self._normalize_response(response)

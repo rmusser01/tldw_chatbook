@@ -105,6 +105,20 @@ def test_console_provider_selection_carries_sampling_settings() -> None:
     assert selection.streaming is False
 
 
+def test_console_provider_selection_system_prompt_defaults_to_none_and_can_be_set() -> (
+    None
+):
+    default_selection = ConsoleProviderSelection(provider="llama_cpp")
+    assert default_selection.system_prompt is None
+
+    selection = ConsoleProviderSelection(
+        provider="llama_cpp",
+        explicit_model="m",
+        system_prompt="Session system prompt.",
+    )
+    assert selection.system_prompt == "Session system prompt."
+
+
 def test_chat_message_defaults_to_complete_status():
     message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hello")
 
@@ -114,7 +128,7 @@ def test_chat_message_defaults_to_complete_status():
     assert message.id
 
 
-from tldw_chatbook.Chat.console_chat_models import (
+from tldw_chatbook.Chat.console_chat_models import (  # noqa: E402
     CONSOLE_AUTO_TITLE_MAX_LENGTH,
     derive_console_session_title,
     is_default_console_session_title,
@@ -131,7 +145,9 @@ def test_is_default_console_session_title_matches_chat_number_pattern():
 
 
 def test_derive_console_session_title_collapses_whitespace():
-    assert derive_console_session_title("  fix   the\nlogin  bug ") == "fix the login bug"
+    assert (
+        derive_console_session_title("  fix   the\nlogin  bug ") == "fix the login bug"
+    )
 
 
 def test_derive_console_session_title_truncates_long_drafts():
@@ -149,3 +165,19 @@ def test_derive_console_session_title_empty_draft_returns_empty():
 def test_derive_console_session_title_handles_max_length_below_ellipsis_width():
     assert derive_console_session_title("hello world", max_length=2) == "he"
     assert derive_console_session_title("hello world", max_length=0) == ""
+
+
+def test_console_chat_message_has_parent_message_id_default_none():
+    msg = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi")
+    assert msg.parent_message_id is None
+    assert (msg.sibling_index, msg.sibling_count) == (0, 1)
+
+    msg2 = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="yo",
+        parent_message_id="p1",
+        sibling_index=1,
+        sibling_count=3,
+    )
+    assert msg2.parent_message_id == "p1"
+    assert (msg2.sibling_index, msg2.sibling_count) == (1, 3)

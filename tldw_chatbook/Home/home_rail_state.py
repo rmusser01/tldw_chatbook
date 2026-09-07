@@ -55,7 +55,9 @@ def coerce_home_rail_preferences(raw: Any) -> HomeRailPreferences:
     )
 
 
-def serialize_home_rail_preferences(preferences: HomeRailPreferences) -> dict[str, bool]:
+def serialize_home_rail_preferences(
+    preferences: HomeRailPreferences,
+) -> dict[str, bool]:
     """Serialize Home rail preferences to the persistence shape."""
     return {
         "attention_open": bool(preferences.attention_open),

@@ -10,9 +10,24 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping
 
-from tldw_chatbook.runtime_policy.server_parity_models import FrozenJSONDict, SourceAuthority
+from tldw_chatbook.runtime_policy.server_parity_models import (
+    FrozenJSONDict,
+    SourceAuthority,
+)
 
 _SOURCE_AUTHORITIES = {"local", "server"}
+
+# Keep the domain census in this lightweight, already-resident state module so
+# startup orchestration can recognize Notes organization traffic without
+# importing the full wire-contract validator before the UI is ready (ADR-097).
+NOTES_ORGANIZATION_DOMAINS = (
+    "notes.keyword",
+    "notes.keyword_link",
+    "notes.keyword_collection",
+    "notes.keyword_collection_link",
+    "notes.folder",
+    "notes.folder_link",
+)
 
 
 class ConflictStrategy(str, Enum):
@@ -73,7 +88,9 @@ LOCAL_FIRST_SYNC_PROFILE_MODES = {
 }
 
 
-def is_local_first_sync_profile_mode(profile_mode: SyncV2ProfileMode | str | None) -> bool:
+def is_local_first_sync_profile_mode(
+    profile_mode: SyncV2ProfileMode | str | None,
+) -> bool:
     """Return whether a profile mode enables local-first Sync v2 behavior.
 
     Args:
@@ -134,7 +151,9 @@ class RemotePullCursor:
         if self.source_authority not in _SOURCE_AUTHORITIES:
             raise ValueError("source_authority must be one of: local, server")
         if self.source_authority == "server" and not self.server_profile_id:
-            raise ValueError("server_profile_id is required for server remote pull cursors")
+            raise ValueError(
+                "server_profile_id is required for server remote pull cursors"
+            )
         for field_name in ("domain", "remote_collection"):
             if not getattr(self, field_name):
                 raise ValueError(f"{field_name} is required")

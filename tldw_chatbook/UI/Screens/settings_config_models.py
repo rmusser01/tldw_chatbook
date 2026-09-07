@@ -12,9 +12,16 @@ class SettingsCategoryId(StrEnum):
 
     OVERVIEW = "overview"
     PROVIDERS_MODELS = "providers-models"
+    SPEECH_TTS = "speech-tts"
     APPEARANCE = "appearance"
+    THEME = "theme"
+    SPLASH_SCREEN = "splash_screen"
     STORAGE = "storage"
+    WORKSPACES = "workspaces"
+    TOOL_PROFILES = "tool-profiles"
     PRIVACY_SECURITY = "privacy-security"
+    NETWORK = "network"
+    PERSONAL_CONTEXT = "personal-context"
     CONSOLE_BEHAVIOR = "console-behavior"
     LIBRARY_RAG = "library-rag"
     ARTIFACTS = "artifacts"
@@ -26,7 +33,12 @@ class SettingsCategoryId(StrEnum):
     MCP_DEFAULTS = "mcp-defaults"
     ACP_DEFAULTS = "acp-defaults"
     DIAGNOSTICS = "diagnostics"
+    ABOUT = "about"
     ADVANCED_CONFIG = "advanced-config"
+    INTERNAL_PROMPTS = "internal-prompts"
+    IMAGE_GENERATION = "image_generation"
+    VIDEO_GENERATION = "video_generation"
+    AGENTS = "agents"
 
 
 class SettingsValidationState(StrEnum):
@@ -50,7 +62,9 @@ class SettingsValidationResult:
             object.__setattr__(
                 self,
                 "state",
-                SettingsValidationState.VALID if self.valid else SettingsValidationState.INVALID,
+                SettingsValidationState.VALID
+                if self.valid
+                else SettingsValidationState.INVALID,
             )
 
 

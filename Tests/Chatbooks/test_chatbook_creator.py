@@ -3,46 +3,107 @@
 
 import pytest
 import json
+import os
 import zipfile
-import tempfile
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import MagicMock, patch, mock_open, Mock
+from unittest.mock import MagicMock, patch
 import sqlite3
 
 import sys
+
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from tldw_chatbook.Chatbooks.chatbook_models import (
-    ContentType, ContentItem, Relationship, ChatbookManifest, 
-    ChatbookContent, Chatbook, ChatbookVersion
+    ContentType,
+    ContentItem,
+    ChatbookManifest,
+    ChatbookVersion,
 )
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
+import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 
 
 class TestChatbookCreator:
     """Test ChatbookCreator functionality."""
-    
+
+    def test_graph_projection_fails_closed_when_cursor_shape_is_unavailable(self):
+        database = MagicMock()
+        database.execute_query.return_value.fetchall.return_value = MagicMock()
+
+        with pytest.raises(RuntimeError, match="graph projection unavailable"):
+            ChatbookCreator._conversation_graph_messages(database, "conversation-1")
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    def test_v2_export_fails_when_graph_projection_is_unavailable(
+        self, mock_database, chatbook_creator, tmp_path
+    ):
+        database = mock_database.return_value
+        timestamp = datetime.now().isoformat()
+        database.get_conversation_by_id.return_value = {
+            "id": "conversation-1",
+            "title": "Graph",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "character_id": None,
+        }
+        database.execute_query.return_value.fetchall.return_value = MagicMock()
+        output = tmp_path / "must-not-exist.chatbook.zip"
+
+        success, _, _ = chatbook_creator.create_chatbook(
+            name="Graph",
+            description="Graph",
+            content_selections={ContentType.CONVERSATION: ["conversation-1"]},
+            output_path=output,
+        )
+
+        assert success is False
+        assert not output.exists()
+
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Keep unrelated chatbook unit tests on their existing mocked DB seam."""
+
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_creator.build_local_citation_conversation_service",
+            build_local,
+        )
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
+
     @pytest.fixture
     def temp_db_paths(self, tmp_path):
         """Create temporary database paths."""
         db_dir = tmp_path / "databases"
         db_dir.mkdir()
-        
+
         paths = {
-            'ChaChaNotes': str(db_dir / "ChaChaNotes.db"),
-            'Media': str(db_dir / "Client_Media_DB.db"),
-            'Prompts': str(db_dir / "Prompts_DB.db"),
-            'Evals': str(db_dir / "Evals_DB.db"),
-            'RAG': str(db_dir / "RAG_Indexing_DB.db"),
-            'Subscriptions': str(db_dir / "Subscriptions_DB.db")
+            "ChaChaNotes": str(db_dir / "ChaChaNotes.db"),
+            "Media": str(db_dir / "Client_Media_DB.db"),
+            "Prompts": str(db_dir / "Prompts_DB.db"),
+            "Evals": str(db_dir / "Evals_DB.db"),
+            "RAG": str(db_dir / "RAG_Indexing_DB.db"),
+            "Subscriptions": str(db_dir / "Subscriptions_DB.db"),
         }
-        
+
         # Create empty database files with minimal schema
         for name, path in paths.items():
             conn = sqlite3.connect(path)
-            if name == 'ChaChaNotes':
+            if name == "ChaChaNotes":
                 # Create minimal schema for ChaChaNotes
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS conversations (
@@ -85,7 +146,7 @@ class TestChatbookCreator:
                         example_messages TEXT
                     )
                 """)
-            elif name == 'Prompts':
+            elif name == "Prompts":
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS prompts (
                         id INTEGER PRIMARY KEY,
@@ -98,106 +159,372 @@ class TestChatbookCreator:
                 """)
             conn.commit()
             conn.close()
-            
+
         return paths
-    
+
     @pytest.fixture
     def chatbook_creator(self, temp_db_paths, tmp_path, monkeypatch):
         """Create a ChatbookCreator instance with test database paths."""
-        test_user_data_dir = tmp_path / "test_data" / "home" / ".local" / "share" / "tldw_cli" / "default_user"
+        test_user_data_dir = (
+            tmp_path
+            / "test_data"
+            / "home"
+            / ".local"
+            / "share"
+            / "tldw_cli"
+            / "default_user"
+        )
         monkeypatch.setattr(
             "tldw_chatbook.Chatbooks.chatbook_creator.get_user_data_dir",
             lambda: test_user_data_dir,
         )
         return ChatbookCreator(db_paths=temp_db_paths)
-    
+
     def test_creator_initialization(self, chatbook_creator, temp_db_paths):
         """Test ChatbookCreator initialization."""
         assert chatbook_creator.db_paths == temp_db_paths
         assert chatbook_creator.temp_dir.exists()
         assert "chatbooks" in str(chatbook_creator.temp_dir)
-    
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase')
-    def test_create_chatbook_minimal(self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path):
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX temp privacy contract")
+    def test_creator_hardens_existing_temp_directory(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        user_data_dir = tmp_path / "runtime-data"
+        user_data_dir.mkdir(mode=0o700)
+        temp_dir = user_data_dir / "temp" / "chatbooks"
+        temp_dir.mkdir(parents=True, mode=0o755)
+        monkeypatch.setattr(
+            creator_module,
+            "get_user_data_dir",
+            lambda: user_data_dir,
+        )
+
+        creator = ChatbookCreator(db_paths=temp_db_paths)
+
+        assert creator.temp_dir == temp_dir
+        assert creator.temp_dir.stat().st_mode & 0o777 == 0o700
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX fallback privacy contract")
+    def test_creator_uses_private_fallback_when_runtime_root_is_unavailable(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        fallback = tmp_path / "fallback"
+
+        def create_fallback(*_args, **_kwargs):
+            fallback.mkdir(mode=0o700)
+            return str(fallback)
+
+        monkeypatch.setattr(
+            creator_module,
+            "get_user_data_dir",
+            lambda: (_ for _ in ()).throw(OSError("runtime root unavailable")),
+        )
+        monkeypatch.setattr(creator_module.tempfile, "mkdtemp", create_fallback)
+
+        creator = ChatbookCreator(db_paths=temp_db_paths)
+
+        assert creator.temp_dir == fallback
+        assert creator.temp_dir.stat().st_mode & 0o777 == 0o700
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_minimal(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
         """Test creating a minimal chatbook."""
         # Setup mocks
         mock_chacha_db.return_value = MagicMock()
         mock_prompts_db.return_value = MagicMock()
-        
+
         output_path = tmp_path / "test_chatbook.zip"
-        
+
         # Create chatbook with empty content
         content_selections = {
             ContentType.CONVERSATION: [],
             ContentType.NOTE: [],
-            ContentType.CHARACTER: []
+            ContentType.CHARACTER: [],
         }
-        
+
         success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Test Chatbook",
             description="A test chatbook",
             content_selections=content_selections,
-            output_path=output_path
+            output_path=output_path,
         )
-        
+
         # Since we have empty databases, this should succeed but with no content
         assert success is True
         assert output_path.exists()
         assert dependency_info["missing_dependencies"] == []
         assert dependency_info["auto_included"] == []
-        
+
         # Verify contents
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            assert 'manifest.json' in zf.namelist()
-            
+        with zipfile.ZipFile(output_path, "r") as zf:
+            assert "manifest.json" in zf.namelist()
+
             # Check manifest
-            manifest_data = json.loads(zf.read('manifest.json'))
-            assert manifest_data['name'] == "Test Chatbook"
-            assert manifest_data['description'] == "A test chatbook"
-            assert manifest_data['version'] == "1.0"
-    
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase')
-    def test_create_chatbook_with_sample_data(self, mock_prompts_db, mock_chacha_db, chatbook_creator, temp_db_paths, tmp_path):
+            manifest_data = json.loads(zf.read("manifest.json"))
+            assert manifest_data["name"] == "Test Chatbook"
+            assert manifest_data["description"] == "A test chatbook"
+            assert manifest_data["version"] == "2.0"
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_reports_packaging_progress(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """progress_callback fires ExportProgress events; packaging counts are monotonic to total."""
+        from tldw_chatbook.Chatbooks.chatbook_creator import ExportProgress
+
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        events = []
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="P",
+            description="",
+            content_selections={
+                ContentType.CONVERSATION: [],
+                ContentType.NOTE: [],
+                ContentType.CHARACTER: [],
+            },
+            output_path=output_path,
+            progress_callback=events.append,
+        )
+        assert success is True
+        packaging = [e for e in events if e.phase == "packaging"]
+        assert packaging, "expected at least one packaging progress event"
+        assert all(isinstance(e, ExportProgress) for e in packaging)
+        currents = [e.current for e in packaging]
+        assert (
+            currents == sorted(currents)
+            and packaging[-1].current == packaging[-1].total
+        )
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_cancel_during_packaging_leaves_no_output(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """cancel_check True during packaging → cancelled result, no destination file, temp cleaned."""
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        calls = {"n": 0}
+
+        def cancel_after_first_package():
+            # allow collection to pass; trip on the first packaging checkpoint
+            calls["n"] += 1
+            return calls["n"] > 1
+
+        success, message, dep = chatbook_creator.create_chatbook(
+            name="C",
+            description="",
+            content_selections={
+                ContentType.CONVERSATION: [],
+                ContentType.NOTE: [],
+                ContentType.CHARACTER: [],
+            },
+            output_path=output_path,
+            cancel_check=cancel_after_first_package,
+        )
+        assert success is False
+        assert dep.get("cancelled") is True
+        assert message == "Export cancelled"
+        assert not output_path.exists()
+        assert not output_path.with_name(output_path.name + ".partial").exists()
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_success_leaves_no_partial(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """Atomic finalize: a successful export yields a valid zip and no .partial sibling."""
+        import zipfile
+
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="S",
+            description="",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+        assert success is True
+        assert output_path.exists() and zipfile.is_zipfile(output_path)
+        assert not output_path.with_name(output_path.name + ".partial").exists()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX archive privacy contract")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_archive_is_private_under_umask_zero(
+        self,
+        mock_prompts_db,
+        mock_chacha_db,
+        chatbook_creator,
+        tmp_path,
+    ):
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_dir = tmp_path / "selected-output"
+        output_dir.mkdir(mode=0o755)
+        output_path = output_dir / "private.zip"
+
+        previous = os.umask(0)
+        try:
+            success, _message, _details = chatbook_creator.create_chatbook(
+                name="Private",
+                description="Sensitive",
+                content_selections={ContentType.CONVERSATION: []},
+                output_path=output_path,
+            )
+        finally:
+            os.umask(previous)
+
+        assert success is True
+        assert output_dir.stat().st_mode & 0o777 == 0o755
+        assert output_path.stat().st_mode & 0o777 == 0o600
+        assert not output_path.with_name(output_path.name + ".partial").exists()
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_stat_failure_after_finalize_still_reports_success(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """A stat() failure AFTER the archive is os.replace'd into place must not
+        flip a genuinely-successful export into a reported failure."""
+        import zipfile
+
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        real_stat = Path.stat
+
+        def flaky_stat(self, *args, **kwargs):
+            if self == output_path:
+                raise OSError("simulated stat failure after finalize")
+            return real_stat(self, *args, **kwargs)
+
+        with patch.object(Path, "stat", flaky_stat):
+            success, _msg, _dep = chatbook_creator.create_chatbook(
+                name="S",
+                description="",
+                content_selections={ContentType.CONVERSATION: []},
+                output_path=output_path,
+            )
+        assert success is True
+        assert output_path.exists() and zipfile.is_zipfile(output_path)
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_cleanup_does_not_rmtree_directory_at_partial_path(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """If a directory unexpectedly sits at <dest>.partial, failure cleanup must
+        NOT recursively delete it — only the .partial FILE we create is removed."""
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        partial_dir = output_path.with_name(output_path.name + ".partial")
+        partial_dir.mkdir()
+        (partial_dir / "sentinel.txt").write_text("keep me", encoding="utf-8")
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="C",
+            description="",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+        # The zip write fails (partial path is a directory) → failure, but the
+        # pre-existing directory and its contents must survive untouched.
+        assert success is False
+        assert partial_dir.is_dir()
+        assert (partial_dir / "sentinel.txt").read_text(encoding="utf-8") == "keep me"
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_existing_partial_file_is_not_overwritten_or_deleted(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        partial_path = output_path.with_name(output_path.name + ".partial")
+        partial_path.write_bytes(b"belongs-to-another-export")
+
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="C",
+            description="",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert partial_path.read_bytes() == b"belongs-to-another-export"
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_with_sample_data(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, temp_db_paths, tmp_path
+    ):
         """Test creating a chatbook with sample data."""
         # Setup mocks
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
         mock_prompts_db.return_value = MagicMock()
-        
+
         # Mock conversation data
         mock_db_instance.get_conversation_by_id.return_value = {
-            'id': 1,
-            'conversation_name': 'Test Conversation',
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat(),
-            'character_id': 1
+            "id": 1,
+            "conversation_name": "Test Conversation",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "character_id": 1,
         }
         mock_db_instance.get_messages_for_conversation.return_value = [
-            {'id': 1, 'sender': 'user', 'message': 'Hello', 'timestamp': datetime.now().isoformat()},
-            {'id': 2, 'sender': 'assistant', 'message': 'Hi there!', 'timestamp': datetime.now().isoformat()}
+            {
+                "id": 1,
+                "sender": "user",
+                "message": "Hello",
+                "timestamp": datetime.now().isoformat(),
+            },
+            {
+                "id": 2,
+                "sender": "assistant",
+                "message": "Hi there!",
+                "timestamp": datetime.now().isoformat(),
+            },
         ]
-        
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
+
         # Mock note data
         mock_db_instance.get_note_by_id.return_value = {
-            'id': 1,
-            'title': 'Test Note',
-            'content': 'This is test content',
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat(),
-            'keywords': 'test,sample'
+            "id": 1,
+            "title": "Test Note",
+            "content": "This is test content",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "keywords": "test,sample",
         }
-        
+
         # Mock character data
         mock_db_instance.get_character_card_by_id.return_value = {
-            'id': 1,
-            'name': 'Test Character',
-            'description': 'A test character',
-            'personality': 'Helpful',
-            'avatar_path': None,
-            'created_at': datetime.now().isoformat(),
-            'updated_at': datetime.now().isoformat()
+            "id": 1,
+            "name": "Test Character",
+            "description": "A test character",
+            "personality": "Helpful",
+            "avatar_path": None,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
         }
 
         # Create chatbook
@@ -205,9 +532,9 @@ class TestChatbookCreator:
         content_selections = {
             ContentType.CONVERSATION: ["1"],
             ContentType.NOTE: ["1"],
-            ContentType.CHARACTER: ["1"]
+            ContentType.CHARACTER: ["1"],
         }
-        
+
         success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Test Chatbook with Data",
             description="A test chatbook containing sample data",
@@ -215,60 +542,64 @@ class TestChatbookCreator:
             output_path=output_path,
             author="Test Author",
             tags=["test", "sample"],
-            categories=["testing"]
+            categories=["testing"],
         )
 
         assert success is True
         assert output_path.exists()
         assert dependency_info["missing_dependencies"] == []
-        
+
         # Verify contents
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            manifest_data = json.loads(zf.read('manifest.json'))
-            
+        with zipfile.ZipFile(output_path, "r") as zf:
+            manifest_data = json.loads(zf.read("manifest.json"))
+
             # Check metadata
-            assert manifest_data['name'] == "Test Chatbook with Data"
-            assert manifest_data['author'] == "Test Author"
-            assert manifest_data['tags'] == ["test", "sample"]
-            assert manifest_data['categories'] == ["testing"]
-            
+            assert manifest_data["name"] == "Test Chatbook with Data"
+            assert manifest_data["author"] == "Test Author"
+            assert manifest_data["tags"] == ["test", "sample"]
+            assert manifest_data["categories"] == ["testing"]
+
             # Check content items
-            assert len(manifest_data['content_items']) >= 3
-            
+            assert len(manifest_data["content_items"]) >= 3
+
             # Verify content files exist
             namelist = zf.namelist()
-            assert any('conversations/' in name for name in namelist)
-            assert any('notes/' in name for name in namelist)
-            assert any('characters/' in name for name in namelist)
-    
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
-    def test_create_chatbook_error_handling(self, mock_chacha_db, chatbook_creator, tmp_path):
+            assert any("conversations/" in name for name in namelist)
+            assert any("notes/" in name for name in namelist)
+            assert any("characters/" in name for name in namelist)
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    def test_create_chatbook_error_handling(
+        self, mock_chacha_db, chatbook_creator, tmp_path
+    ):
         """Test error handling during chatbook creation."""
         # Setup mocks
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
-        mock_db_instance.get_conversation_by_id.return_value = None  # Conversation not found
-        
+        mock_db_instance.get_conversation_by_id.return_value = (
+            None  # Conversation not found
+        )
+
         output_path = tmp_path / "test_error.zip"
-        
+
         # Try with invalid content type
         content_selections = {
             ContentType.CONVERSATION: ["999"]  # Non-existent ID
         }
-        
+
         success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Error Test",
             description="Testing error handling",
             content_selections=content_selections,
-            output_path=output_path
+            output_path=output_path,
         )
-        
+
         # Should still succeed but with no conversations
         assert success is True
         assert output_path.exists()
         assert dependency_info["missing_dependencies"] == []
 
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     def test_create_chatbook_preserves_conversation_citation_artifacts(
         self,
         mock_chacha_db,
@@ -280,59 +611,62 @@ class TestChatbookCreator:
         mock_chacha_db.return_value = mock_db_instance
         timestamp = datetime.now().isoformat()
         mock_db_instance.get_conversation_by_id.return_value = {
-            'id': 'conv-1',
-            'title': 'Incident Chat',
-            'created_at': timestamp,
-            'updated_at': timestamp,
-            'character_id': None,
+            "id": "conv-1",
+            "title": "Incident Chat",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "character_id": None,
         }
         mock_db_instance.get_messages_for_conversation.return_value = [
             {
-                'id': 'm-user',
-                'sender': 'user',
-                'message': 'What caused the outage?',
-                'timestamp': timestamp,
+                "id": "m-user",
+                "sender": "user",
+                "message": "What caused the outage?",
+                "timestamp": timestamp,
             },
             {
-                'id': 'm-ai',
-                'sender': 'assistant',
-                'message': 'An expired credential caused the outage. [S1]',
-                'timestamp': timestamp,
-                'metadata': {
-                    'citation_validation': {
-                        'status': 'validated',
-                        'cited_evidence_ids': ['S1'],
-                        'unknown_citation_ids': [],
-                        'uncited_evidence_ids': [],
-                        'citations': [
+                "id": "m-ai",
+                "sender": "assistant",
+                "message": "An expired credential caused the outage. [S1]",
+                "timestamp": timestamp,
+                "metadata": {
+                    "citation_validation": {
+                        "status": "validated",
+                        "cited_evidence_ids": ["S1"],
+                        "unknown_citation_ids": [],
+                        "uncited_evidence_ids": [],
+                        "citations": [
                             {
-                                'evidence_id': 'S1',
-                                'source_id': 'note-incident',
-                                'status': 'validated',
-                                'quote': 'An expired credential caused the outage. [S1]',
+                                "evidence_id": "S1",
+                                "source_id": "note-incident",
+                                "status": "validated",
+                                "quote": "An expired credential caused the outage. [S1]",
                             }
                         ],
                     },
-                    'evidence_bundle': {
-                        'bundle_id': 'library-rag:incident',
-                        'query': 'What caused the outage?',
-                        'source': 'Library Search/RAG',
-                        'status': 'available',
-                        'references': [
+                    "evidence_bundle": {
+                        "bundle_id": "library-rag:incident",
+                        "query": "What caused the outage?",
+                        "source": "Library Search/RAG",
+                        "status": "available",
+                        "references": [
                             {
-                                'evidence_id': 'S1',
-                                'source_id': 'note-incident',
-                                'source_type': 'note',
-                                'title': 'Incident Review',
-                                'snippet': 'Expired credential caused the outage during deploy.',
-                                'authority_label': 'Local Library',
-                                'status': 'available',
+                                "evidence_id": "S1",
+                                "source_id": "note-incident",
+                                "source_type": "note",
+                                "title": "Incident Review",
+                                "snippet": "Expired credential caused the outage during deploy.",
+                                "authority_label": "Local Library",
+                                "status": "available",
                             }
                         ],
                     },
                 },
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         output_path = tmp_path / "incident_chatbook.zip"
 
@@ -346,25 +680,32 @@ class TestChatbookCreator:
         assert success is True
         assert dependency_info["missing_dependencies"] == []
 
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            conversation = json.loads(zf.read('content/conversations/conversation_conv-1.json'))
+        with zipfile.ZipFile(output_path, "r") as zf:
+            conversation = json.loads(
+                zf.read("content/conversations/conversation_conv-1.json")
+            )
             assistant_message = conversation["messages"][1]
             assert assistant_message["citation_validation"]["status"] == "validated"
-            assert assistant_message["citation_validation"]["cited_evidence_ids"] == ["S1"]
-            assert assistant_message["evidence_bundle"]["bundle_id"] == "library-rag:incident"
+            assert assistant_message["citation_validation"]["cited_evidence_ids"] == [
+                "S1"
+            ]
+            assert (
+                assistant_message["evidence_bundle"]["bundle_id"]
+                == "library-rag:incident"
+            )
             assert (
                 assistant_message["evidence_bundle"]["references"][0]["snippet"]
                 == "Expired credential caused the outage during deploy."
             )
 
             report_text = zf.read(
-                'content/conversations/conversation_conv-1_citations.md'
+                "content/conversations/conversation_conv-1_citations.md"
             ).decode("utf-8")
             assert "# Citations and Evidence: Incident Chat" in report_text
             assert "Citation status: validated" in report_text
             assert "Expired credential caused the outage during deploy." in report_text
 
-            manifest_data = json.loads(zf.read('manifest.json'))
+            manifest_data = json.loads(zf.read("manifest.json"))
             conversation_item = next(
                 item
                 for item in manifest_data["content_items"]
@@ -377,34 +718,62 @@ class TestChatbookCreator:
             assert conversation_item["metadata"]["evidence_source_count"] == 1
             assert conversation_item["metadata"]["evidence_snippet_count"] == 1
 
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     def test_create_chatbook_hydrates_citation_artifacts_from_rag_context_store(
         self,
         mock_chacha_db,
         chatbook_creator,
         tmp_path,
+        monkeypatch,
     ):
         """Production-shaped DB messages hydrate citation artifacts from the RAG context store."""
+        import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
+        compositions = []
+
+        def build_local(db, *, sidecar_path):
+            service = ChatConversationService(
+                db,
+                rag_context_store_path=sidecar_path,
+            )
+            compositions.append((db, sidecar_path))
+            return service, None, None
+
+        monkeypatch.setattr(
+            creator_module,
+            "build_local_citation_conversation_service",
+            build_local,
+            raising=False,
+        )
         timestamp = datetime.now().isoformat()
         mock_db_instance.get_conversation_by_id.return_value = {
-            'id': 'conv-rag',
-            'title': 'RAG Conversation',
-            'created_at': timestamp,
-            'updated_at': timestamp,
-            'character_id': None,
+            "id": "conv-rag",
+            "title": "RAG Conversation",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "character_id": None,
         }
         mock_db_instance.get_messages_for_conversation.return_value = [
             {
-                'id': 'msg-rag',
-                'conversation_id': 'conv-rag',
-                'sender': 'assistant',
-                'content': 'Answer grounded by an incident note. [S1]',
-                'timestamp': timestamp,
+                "id": "msg-rag",
+                "conversation_id": "conv-rag",
+                "sender": "assistant",
+                "content": "Answer grounded by an incident note. [S1]",
+                "timestamp": timestamp,
             },
         ]
-        rag_store_path = chatbook_creator.temp_dir.parent.parent / "tldw_chatbook_chat_rag_context.json"
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
+        rag_store_path = (
+            chatbook_creator.temp_dir.parent.parent
+            / "tldw_chatbook_chat_rag_context.json"
+        )
         rag_store_path.parent.mkdir(parents=True, exist_ok=True)
         rag_store_path.write_text(
             json.dumps(
@@ -462,14 +831,17 @@ class TestChatbookCreator:
         )
 
         assert success is True
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            conversation = json.loads(zf.read('content/conversations/conversation_conv-rag.json'))
+        assert compositions == [(mock_db_instance, rag_store_path)]
+        with zipfile.ZipFile(output_path, "r") as zf:
+            conversation = json.loads(
+                zf.read("content/conversations/conversation_conv-rag.json")
+            )
             exported = conversation["messages"][0]
             assert exported["citation_validation"]["status"] == "validated"
             assert exported["evidence_bundle"]["bundle_id"] == "library-rag:store"
             assert exported["citations"][0]["source_id"] == "note-store"
 
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     def test_create_chatbook_sanitizes_citation_report_path_and_markdown(
         self,
         mock_chacha_db,
@@ -482,39 +854,45 @@ class TestChatbookCreator:
         unsafe_conv_id = "../evil<script>"
         timestamp = datetime.now().isoformat()
         mock_db_instance.get_conversation_by_id.return_value = {
-            'id': unsafe_conv_id,
-            'title': '<script>alert(1)</script> [bad]',
-            'created_at': timestamp,
-            'updated_at': timestamp,
-            'character_id': None,
+            "id": unsafe_conv_id,
+            "title": "<script>alert(1)</script> [bad]",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "character_id": None,
         }
         mock_db_instance.get_messages_for_conversation.return_value = [
             {
-                'id': 'msg-unsafe',
-                'sender': 'assistant',
-                'message': 'Uses evidence. [S1]',
-                'timestamp': timestamp,
-                'metadata': {
-                    'citation_validation': {'status': '<b>validated</b>', 'cited_evidence_ids': ['S1']},
-                    'evidence_bundle': {
-                        'bundle_id': 'bundle<script>',
-                        'query': '<img src=x onerror=alert(1)>',
-                        'source': '<b>Library</b>',
-                        'references': [
+                "id": "msg-unsafe",
+                "sender": "assistant",
+                "message": "Uses evidence. [S1]",
+                "timestamp": timestamp,
+                "metadata": {
+                    "citation_validation": {
+                        "status": "<b>validated</b>",
+                        "cited_evidence_ids": ["S1"],
+                    },
+                    "evidence_bundle": {
+                        "bundle_id": "bundle<script>",
+                        "query": "<img src=x onerror=alert(1)>",
+                        "source": "<b>Library</b>",
+                        "references": [
                             {
-                                'evidence_id': 'S1',
-                                'source_id': 'note<script>',
-                                'source_type': 'note',
-                                'title': '<i>Incident</i>',
-                                'snippet': '<script>alert(1)</script> Root cause.',
-                                'authority_label': 'Local <Library>',
-                                'status': 'available',
+                                "evidence_id": "S1",
+                                "source_id": "note<script>",
+                                "source_type": "note",
+                                "title": "<i>Incident</i>",
+                                "snippet": "<script>alert(1)</script> Root cause.",
+                                "authority_label": "Local <Library>",
+                                "status": "available",
                             }
                         ],
                     },
                 },
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         output_path = tmp_path / "unsafe_chatbook.zip"
 
@@ -526,7 +904,7 @@ class TestChatbookCreator:
         )
 
         assert success is True
-        with zipfile.ZipFile(output_path, 'r') as zf:
+        with zipfile.ZipFile(output_path, "r") as zf:
             names = zf.namelist()
             assert all(".." not in name for name in names)
             assert all("<script>" not in name for name in names)
@@ -537,7 +915,7 @@ class TestChatbookCreator:
             assert "&lt;script&gt;alert(1)&lt;/script&gt;" in report_text
             assert "&lt;img src=x onerror=alert(1)&gt;" in report_text
 
-    @patch('tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB')
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     def test_create_chatbook_bounds_large_citation_reports(
         self,
         mock_chacha_db,
@@ -549,40 +927,46 @@ class TestChatbookCreator:
         mock_chacha_db.return_value = mock_db_instance
         timestamp = datetime.now().isoformat()
         mock_db_instance.get_conversation_by_id.return_value = {
-            'id': 'conv-large',
-            'title': 'Large Citation Chat',
-            'created_at': timestamp,
-            'updated_at': timestamp,
-            'character_id': None,
+            "id": "conv-large",
+            "title": "Large Citation Chat",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "character_id": None,
         }
         references = [
             {
-                'evidence_id': f'S{i}',
-                'source_id': f'note-{i}',
-                'source_type': 'note',
-                'title': f'Note {i}',
-                'snippet': f'Snippet {i}',
-                'authority_label': 'Local Library',
-                'status': 'available',
+                "evidence_id": f"S{i}",
+                "source_id": f"note-{i}",
+                "source_type": "note",
+                "title": f"Note {i}",
+                "snippet": f"Snippet {i}",
+                "authority_label": "Local Library",
+                "status": "available",
             }
             for i in range(1, 75)
         ]
         mock_db_instance.get_messages_for_conversation.return_value = [
             {
-                'id': 'msg-large',
-                'sender': 'assistant',
-                'message': 'Large answer. [S1]',
-                'timestamp': timestamp,
-                'metadata': {
-                    'citation_validation': {'status': 'validated', 'cited_evidence_ids': ['S1']},
-                    'evidence_bundle': {
-                        'bundle_id': 'library-rag:large',
-                        'query': 'large query',
-                        'references': references,
+                "id": "msg-large",
+                "sender": "assistant",
+                "message": "Large answer. [S1]",
+                "timestamp": timestamp,
+                "metadata": {
+                    "citation_validation": {
+                        "status": "validated",
+                        "cited_evidence_ids": ["S1"],
+                    },
+                    "evidence_bundle": {
+                        "bundle_id": "library-rag:large",
+                        "query": "large query",
+                        "references": references,
                     },
                 },
             },
         ]
+        mock_db_instance.execute_query.return_value.fetchall.return_value = (
+            mock_db_instance.get_messages_for_conversation.return_value
+        )
 
         output_path = tmp_path / "large_citations.zip"
 
@@ -594,55 +978,85 @@ class TestChatbookCreator:
         )
 
         assert success is True
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            conversation = json.loads(zf.read('content/conversations/conversation_conv-large.json'))
-            assert len(conversation["messages"][0]["evidence_bundle"]["references"]) == 74
+        with zipfile.ZipFile(output_path, "r") as zf:
+            conversation = json.loads(
+                zf.read("content/conversations/conversation_conv-large.json")
+            )
+            assert (
+                len(conversation["messages"][0]["evidence_bundle"]["references"]) == 74
+            )
             report_text = zf.read(
-                'content/conversations/conversation_conv-large_citations.md'
+                "content/conversations/conversation_conv-large_citations.md"
             ).decode("utf-8")
             assert "Report truncated:" in report_text
             assert "Snippet 1" in report_text
             assert "Snippet 74" not in report_text
-            manifest_data = json.loads(zf.read('manifest.json'))
-            item = next(item for item in manifest_data["content_items"] if item["id"] == "conv-large")
+            manifest_data = json.loads(zf.read("manifest.json"))
+            item = next(
+                item
+                for item in manifest_data["content_items"]
+                if item["id"] == "conv-large"
+            )
             assert item["metadata"]["citation_report_truncated"] is True
             assert item["metadata"]["evidence_source_count"] == 74
-    
-    @patch('zipfile.ZipFile')
+
+    @patch("zipfile.ZipFile")
     def test_create_chatbook_zip_error(self, mock_zipfile, chatbook_creator, tmp_path):
         """Test handling of ZIP creation errors."""
         # Mock ZIP file to raise error
         mock_zipfile.side_effect = Exception("ZIP creation failed")
-        
+
         output_path = tmp_path / "test_zip_error.zip"
         content_selections = {}
-        
+
         success, message, dependency_info = chatbook_creator.create_chatbook(
             name="ZIP Error Test",
             description="Testing ZIP error",
             content_selections=content_selections,
-            output_path=output_path
+            output_path=output_path,
         )
 
         assert success is False
         assert "error" in message.lower()
         assert dependency_info["auto_included"] == []
 
-    @patch('tldw_chatbook.Chatbooks.chatbook_importer.get_user_data_dir')
-    @patch('tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB')
+    @patch("tldw_chatbook.Chatbooks.chatbook_importer.get_user_data_dir")
+    @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_persists_conversation_citation_payloads(
         self,
         mock_chacha_db,
         mock_get_user_data_dir,
         temp_db_paths,
         tmp_path,
+        monkeypatch,
     ):
         """Import preserves exported citation fields in the conversation RAG context store."""
+        import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
         user_data_dir = tmp_path / "user-data"
         mock_get_user_data_dir.return_value = user_data_dir
 
         mock_db_instance = MagicMock()
         mock_chacha_db.return_value = mock_db_instance
+        compositions = []
+
+        def build_local(db, *, sidecar_path):
+            service = ChatConversationService(
+                db,
+                rag_context_store_path=sidecar_path,
+            )
+            compositions.append((db, sidecar_path))
+            return service, None, None
+
+        monkeypatch.setattr(
+            importer_module,
+            "build_local_citation_conversation_service",
+            build_local,
+            raising=False,
+        )
         mock_db_instance.get_conversation_by_name.return_value = []
         mock_db_instance.add_conversation.return_value = "new-conv"
         mock_db_instance.add_message.return_value = "new-msg"
@@ -709,7 +1123,7 @@ class TestChatbookCreator:
                 }
             ],
         }
-        with zipfile.ZipFile(chatbook_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(chatbook_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("manifest.json", json.dumps(manifest.to_dict()))
             zf.writestr(
                 "content/conversations/conversation_conv-import.json",
@@ -720,18 +1134,29 @@ class TestChatbookCreator:
         success, message = importer.import_chatbook(chatbook_path)
 
         assert success is True, message
+        assert compositions == [
+            (
+                mock_db_instance,
+                user_data_dir / "tldw_chatbook_chat_rag_context.json",
+            )
+        ]
         rag_store = json.loads(
-            (user_data_dir / "tldw_chatbook_chat_rag_context.json").read_text(encoding="utf-8")
+            (user_data_dir / "tldw_chatbook_chat_rag_context.json").read_text(
+                encoding="utf-8"
+            )
         )
         record = rag_store["conversations"]["new-conv"]["new-msg"]
         assert record["rag_context"]["citation_validation"]["status"] == "validated"
-        assert record["rag_context"]["evidence_bundle"]["bundle_id"] == "library-rag:import"
+        assert (
+            record["rag_context"]["evidence_bundle"]["bundle_id"]
+            == "library-rag:import"
+        )
         assert record["citations"][0]["source_id"] == "note-import"
-    
+
     def test_chatbook_with_media_settings(self, chatbook_creator, tmp_path):
         """Test creating chatbook with media settings."""
         output_path = tmp_path / "test_media.zip"
-        
+
         success, message, dependency_info = chatbook_creator.create_chatbook(
             name="Media Test",
             description="Testing media settings",
@@ -739,15 +1164,74 @@ class TestChatbookCreator:
             output_path=output_path,
             include_media=True,
             media_quality="original",
-            include_embeddings=True
+            include_embeddings=True,
         )
 
         assert success is True
         assert dependency_info["missing_dependencies"] == []
-        
+
         # Check manifest for media settings
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            manifest_data = json.loads(zf.read('manifest.json'))
-            assert manifest_data.get('include_media') is True
-            assert manifest_data.get('media_quality') == "original"
-            assert manifest_data.get('include_embeddings') is True
+        with zipfile.ZipFile(output_path, "r") as zf:
+            manifest_data = json.loads(zf.read("manifest.json"))
+            assert manifest_data.get("include_media") is True
+            assert manifest_data.get("media_quality") == "original"
+            assert manifest_data.get("include_embeddings") is True
+
+
+@pytest.mark.unit
+def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(
+    monkeypatch, tmp_path
+):
+    """The fallback must not die on the guard that protects it.
+
+    Args:
+        monkeypatch: Redirects `get_user_data_dir` into failure and points
+            `mkdtemp` at the symlinked root below.
+        tmp_path: Provides the real directory and the symlink to it.
+
+    `secure_private_directory` refuses to traverse a symlinked path
+    component. On macOS the system temp root is /var/folders/..., and /var
+    is a symlink to /private/var, so the raw `mkdtemp()` path is rejected
+    with `PrivatePathError: link_or_non_regular`.
+
+    That error subclasses OSError and is raised *inside* the `except OSError`
+    handler that reaches this branch, so it propagates straight out of
+    `__init__` rather than falling back to anything: on macOS every export
+    that hit this path died here, and the fallback that exists to keep
+    exporting working was the thing that broke it.
+
+    Simulated rather than macOS-only so it runs everywhere: a symlinked temp
+    root is the general shape of the bug, not an Apple quirk.
+    """
+    real_root = tmp_path / "real-tmp"
+    real_root.mkdir()
+    linked_root = tmp_path / "linked-tmp"
+    try:
+        linked_root.symlink_to(real_root, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        # Windows refuses symlink creation without developer mode or admin.
+        # This test is `unit`-marked so it runs in CI on every OS; skipping
+        # where the filesystem cannot express the precondition is honest,
+        # and the bug it guards is POSIX-shaped anyway (/var -> /private/var).
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
+
+    def failing_user_data_dir():
+        raise OSError("configured temp dir unavailable")
+
+    monkeypatch.setattr(creator_module, "get_user_data_dir", failing_user_data_dir)
+    monkeypatch.setattr(
+        creator_module.tempfile,
+        "mkdtemp",
+        lambda *a, **kw: str(linked_root / "chatbooks-work"),
+    )
+    (linked_root / "chatbooks-work").mkdir()
+
+    creator = ChatbookCreator(db_paths={})
+
+    # Landed on the real directory, with no symlinked component left in it.
+    assert creator.temp_dir.is_dir()
+    assert not any(
+        part.is_symlink()
+        for part in [creator.temp_dir, *creator.temp_dir.parents]
+        if str(part).startswith(str(tmp_path))
+    ), f"temp_dir still traverses a symlink: {creator.temp_dir}"

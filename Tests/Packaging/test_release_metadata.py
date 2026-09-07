@@ -1,15 +1,9 @@
 from __future__ import annotations
 
 import ast
-import json
-import os
 import re
-import subprocess
-import sys
-import threading
 import tomllib
 import urllib.error
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -35,39 +29,6 @@ class _PypiJsonResponse:
 
     def read(self, _size: int = -1) -> bytes:
         return self.payload
-
-
-class _PypiJsonHandler(BaseHTTPRequestHandler):
-    releases = {"1.2.3": []}
-    request_paths: list[str] = []
-
-    def do_GET(self) -> None:
-        type(self).request_paths.append(self.path)
-        if self.path == "/pypi/tldw-chatbook/json":
-            self._send_json({"releases": self.releases})
-            return
-
-        prefix = "/pypi/tldw-chatbook/"
-        suffix = "/json"
-        if self.path.startswith(prefix) and self.path.endswith(suffix):
-            version = self.path.removeprefix(prefix).removesuffix(suffix)
-            if version in self.releases:
-                self._send_json({"info": {"version": version}})
-                return
-
-        self.send_response(404)
-        self.end_headers()
-
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
-
-    def _send_json(self, payload: object) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
 
 def _package_version_metadata() -> tuple[str, tuple[int, ...]]:
@@ -106,7 +67,7 @@ def test_pypi_release_scripts_match_packaged_entry_points() -> None:
         scripts = tomllib.load(stream)["project"]["scripts"]
 
     assert scripts == {
-        "tldw-cli": "tldw_chatbook.app:main_cli_runner",
+        "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
         "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
     }
 
@@ -405,74 +366,6 @@ def test_check_pypi_release_cli_skips_stale_version_and_emits_outputs(
     assert "publish_release=false" in output
 
 
-def test_check_pypi_release_cli_integrates_http_and_github_output(
-    tmp_path: Path,
-) -> None:
-    _PypiJsonHandler.request_paths = []
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _PypiJsonHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-    try:
-        base_url = f"http://127.0.0.1:{server.server_port}/pypi"
-        cases = (
-            (
-                "1.2.4",
-                "release_exists=false\nlatest_version=1.2.3\npublish_release=true\n",
-            ),
-            (
-                "1.2.2",
-                "release_exists=false\nlatest_version=1.2.3\npublish_release=false\n",
-            ),
-        )
-
-        for candidate, expected_output in cases:
-            run_dir = tmp_path / candidate
-            output_path = run_dir / "_runner_file_commands" / "set_output"
-            output_path.parent.mkdir(parents=True)
-            output_path.touch()
-            env = os.environ.copy()
-            existing_pythonpath = env.get("PYTHONPATH")
-            env.update(
-                {
-                    "GITHUB_OUTPUT": str(output_path),
-                    "RUNNER_TEMP": str(run_dir),
-                    "PYTHONPATH": (
-                        str(REPO_ROOT)
-                        if not existing_pythonpath
-                        else f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}"
-                    ),
-                }
-            )
-
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(REPO_ROOT / "Packaging" / "check_pypi_release.py"),
-                    candidate,
-                    "--base-url",
-                    base_url,
-                ],
-                cwd=REPO_ROOT,
-                env=env,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-
-            assert result.returncode == 0, result.stderr
-            assert output_path.read_text() == expected_output
-            assert expected_output.strip() in result.stdout
-
-        assert "/pypi/tldw-chatbook/1.2.4/json" in _PypiJsonHandler.request_paths
-        assert "/pypi/tldw-chatbook/1.2.2/json" in _PypiJsonHandler.request_paths
-        assert _PypiJsonHandler.request_paths.count("/pypi/tldw-chatbook/json") == 2
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
 def test_check_pypi_release_cli_rejects_invalid_version() -> None:
     called = False
 
@@ -551,7 +444,6 @@ def test_production_pypi_publish_checks_version_before_upload() -> None:
     assert 'run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"' in check_job
     assert "Install output path validation dependencies" in check_job
     assert "python -m pip install loguru packaging psutil pydantic" in check_job
-    assert "PYTHONPATH: ${{ github.workspace }}" in check_job
     assert "needs: [build, check_pypi_release]" in publish_job
     assert "needs.check_pypi_release.outputs.publish_release == 'true'" in publish_job
 

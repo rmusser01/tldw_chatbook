@@ -42,7 +42,8 @@ CONSOLE_PARITY_MATRIX: dict[str, tuple[str, ...]] = {
         "Tests/UI/test_console_native_chat_flow.py::test_console_selected_message_feedback_action_records_rating",
     ),
     "attachments_images": (
-        "Tests/UI/test_chat_image_attachment.py",
+        "Tests/UI/test_console_native_chat_flow.py::test_console_attachment_worker_stages_image_and_inlines_text",
+        "Tests/UI/test_console_native_chat_flow.py::test_image_message_gets_inline_row_after_prep_and_toggle_cycles",
         "Tests/Chat/test_chat_functions.py::TestChatFunction::test_chat_with_image_and_rag",
     ),
     "tool_call_visibility": (

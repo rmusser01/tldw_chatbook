@@ -11,8 +11,6 @@ GENERATED_CSS = CSS_ROOT / "tldw_cli_modular.tcss"
 
 EXPECTED_HIGHLIGHT_SELECTORS = (
     "ListView ListItem.-highlight",
-    "#embeddings-model-list ModelListItem.-highlight",
-    "#embeddings-collection-list CollectionListItem.-highlight",
     "#chatbooks-list ListItem.-highlight",
     "ConfigSearchResult.-highlight",
 )

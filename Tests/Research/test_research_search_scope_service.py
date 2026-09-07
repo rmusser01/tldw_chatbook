@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.Research_Interop.research_search_scope_service import ResearchSearchScopeService
+from tldw_chatbook.Research_Interop.research_search_scope_service import (
+    ResearchSearchScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -22,7 +24,10 @@ class FakeSearchService:
 
     async def websearch(self, **kwargs):
         self.calls.append(("websearch", kwargs))
-        return {"web_search_results_dict": {"results": [{"source": self.source}]}, "sub_query_dict": {}}
+        return {
+            "web_search_results_dict": {"results": [{"source": self.source}]},
+            "sub_query_dict": {},
+        }
 
     async def search_arxiv(self, **kwargs):
         self.calls.append(("search_arxiv", kwargs))
@@ -54,7 +59,10 @@ class FakeSearchService:
 
     async def get_medrxiv_by_doi(self, **kwargs):
         self.calls.append(("get_medrxiv_by_doi", kwargs))
-        return {"doi": "10.1101/2026.02.02.000002", "title": "Clinical Preprint Governance"}
+        return {
+            "doi": "10.1101/2026.02.02.000002",
+            "title": "Clinical Preprint Governance",
+        }
 
     async def search_pubmed(self, **kwargs):
         self.calls.append(("search_pubmed", kwargs))
@@ -113,7 +121,9 @@ async def test_research_search_scope_service_builds_source_scoped_provider_catal
     ]
     assert local_catalog[-2]["capabilities"] == ["paper_search"]
     assert local_catalog[-1]["capabilities"] == ["paper_search"]
-    assert all("paper_detail" in record["capabilities"] for record in server_catalog[-5:])
+    assert all(
+        "paper_detail" in record["capabilities"] for record in server_catalog[-5:]
+    )
     assert server_catalog[-1]["backend"] == "server"
 
 
@@ -131,8 +141,12 @@ async def test_research_search_scope_service_routes_searches_by_backend_and_poli
     local_result = await scope.websearch(mode="local", query="mcp", engine="duckduckgo")
     local_papers = await scope.search_arxiv(mode="local", query="agents")
     server_result = await scope.search_arxiv(mode="server", query="agents")
-    server_biorxiv = await scope.search_biorxiv(mode="server", q="genomics", server="medrxiv")
-    server_pubmed = await scope.search_pubmed(mode="server", q="governance", free_full_text=True)
+    server_biorxiv = await scope.search_biorxiv(
+        mode="server", q="genomics", server="medrxiv"
+    )
+    server_pubmed = await scope.search_pubmed(
+        mode="server", q="governance", free_full_text=True
+    )
 
     assert local_result["backend"] == "local"
     assert local_papers["backend"] == "local"
@@ -173,9 +187,13 @@ async def test_research_search_scope_service_routes_server_only_provider_details
     )
     pubmed_detail = await scope.get_pubmed_by_id(mode="server", pmid="12345678")
     arxiv_detail = await scope.get_arxiv_by_id(mode="server", id="2401.00001")
-    semantic_detail = await scope.get_semantic_scholar_by_id(mode="server", paper_id="abc")
+    semantic_detail = await scope.get_semantic_scholar_by_id(
+        mode="server", paper_id="abc"
+    )
     medrxiv = await scope.search_medrxiv(mode="server", q="genomics")
-    medrxiv_detail = await scope.get_medrxiv_by_doi(mode="server", doi="10.1101/2026.02.02.000002")
+    medrxiv_detail = await scope.get_medrxiv_by_doi(
+        mode="server", doi="10.1101/2026.02.02.000002"
+    )
 
     assert biorxiv_detail["backend"] == "server"
     assert pubmed_detail["backend"] == "server"
@@ -184,7 +202,10 @@ async def test_research_search_scope_service_routes_server_only_provider_details
     assert medrxiv["backend"] == "server"
     assert medrxiv_detail["backend"] == "server"
     assert server.calls == [
-        ("get_biorxiv_by_doi", {"doi": "10.1101/2026.01.01.000001", "server": "biorxiv"}),
+        (
+            "get_biorxiv_by_doi",
+            {"doi": "10.1101/2026.01.01.000001", "server": "biorxiv"},
+        ),
         ("get_pubmed_by_id", {"pmid": "12345678"}),
         ("get_arxiv_by_id", {"id": "2401.00001"}),
         ("get_semantic_scholar_by_id", {"paper_id": "abc"}),

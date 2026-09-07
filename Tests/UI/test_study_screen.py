@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
 from textual.containers import Container
 from textual.widgets import Button, Static
 
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_study_dashboard import (
+    DashboardQuizScopeService,
+    DashboardStudyScopeService,
+)
+import tldw_chatbook.app as app_module
+from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
+from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Study_Modules.flashcards_handler import StudyFlashcardsController
 from tldw_chatbook.UI.Study_Modules.quizzes_handler import StudyQuizzesController
 from tldw_chatbook.UI.Study_Window import StudyWindow
@@ -38,13 +51,47 @@ def _build_window():
     )
 
 
-class StudyScreenMountTestApp(App[None]):
-    def __init__(self, screen: StudyScreen):
-        super().__init__()
-        self.screen_under_test = screen
+@pytest.fixture(autouse=True)
+def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_get_cli_setting = app_module.get_cli_setting
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self.screen_under_test)
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+
+
+def _pending_scope_store(scope_context=None) -> PendingHandoffStore:
+    store = PendingHandoffStore()
+    if scope_context is not None:
+        store.stage(HandoffChannel.STUDY_SCOPE, scope_context)
+    return store
+
+
+def _build_full_study_app(app_instance):
+    """Build the production application with deterministic Study collaborators."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app._initial_tab_value = "study"
+    app.study_scope_service = DashboardStudyScopeService()
+    app.study_quiz_scope_service = DashboardQuizScopeService()
+    app.notify = app_instance.notify
+    if hasattr(app_instance, "open_notes_workspace"):
+        app.open_notes_workspace = app_instance.open_notes_workspace
+    source = str(getattr(app_instance, "current_runtime_backend", "local"))
+    runtime_state = RuntimeSourceState(
+        active_source=source,
+        server_configured=source == "server",
+    )
+    app.runtime_policy.state = runtime_state
+    app._publish_runtime_policy_projection(runtime_state)
+    scope_context = getattr(app_instance, "scope_context", None)
+    if scope_context is not None:
+        app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
+    return app
 
 
 def _text(widget) -> str:
@@ -126,7 +173,11 @@ async def test_quizzes_controller_preflights_start_attempt_before_scope_service_
     window = SimpleNamespace(
         app_instance=app_instance,
         notify=Mock(),
-        query_one=Mock(side_effect=lambda selector, *args, **kwargs: select_widget if selector == "#quiz-select" else answer_widget),
+        query_one=Mock(
+            side_effect=lambda selector, *args, **kwargs: (
+                select_widget if selector == "#quiz-select" else answer_widget
+            )
+        ),
     )
     controller = StudyQuizzesController(window)
     controller._scope_service_cache = service
@@ -146,10 +197,12 @@ async def test_quizzes_controller_preflights_start_attempt_before_scope_service_
 async def test_pending_scope_context_overrides_restored_state_for_activation():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
-            scope_type=StudyScopeType.WORKSPACE,
-            workspace_id="workspace-9",
-            workspace_name="Biology",
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="workspace-9",
+                workspace_name="Biology",
+            )
         ),
         current_runtime_backend="server",
         runtime_backend="server",
@@ -166,17 +219,19 @@ async def test_pending_scope_context_overrides_restored_state_for_activation():
     window = _build_window()
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.workspace_id == "workspace-9"
     assert screen.current_scope.workspace_name == "Biology"
-    assert app_instance.pending_study_scope_context is None
+    assert not app_instance.pending_handoffs.has_pending(HandoffChannel.STUDY_SCOPE)
 
 
 def test_study_screen_prefers_authoritative_runtime_source_over_saved_screen_mode():
     app_instance = SimpleNamespace(
-        runtime_policy=SimpleNamespace(state=RuntimeSourceState(active_source="server")),
+        runtime_policy=SimpleNamespace(
+            state=RuntimeSourceState(active_source="server")
+        ),
         current_runtime_backend="local",
         runtime_backend="local",
         notify=Mock(),
@@ -192,7 +247,9 @@ def test_study_screen_prefers_authoritative_runtime_source_over_saved_screen_mod
 async def test_workspace_scope_missing_workspace_id_is_scoped_error_not_global_fallback():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(scope_type=StudyScopeType.WORKSPACE),
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(scope_type=StudyScopeType.WORKSPACE)
+        ),
         current_runtime_backend="server",
         runtime_backend="server",
         notify=Mock(),
@@ -200,7 +257,7 @@ async def test_workspace_scope_missing_workspace_id_is_scoped_error_not_global_f
     screen = StudyScreen(app_instance=app_instance)
     screen.query_one = Mock(return_value=_build_window())  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.workspace_id is None
@@ -213,10 +270,12 @@ async def test_workspace_scope_missing_workspace_id_is_scoped_error_not_global_f
 async def test_workspace_scope_derives_unavailable_in_local_mode():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
-            scope_type=StudyScopeType.WORKSPACE,
-            workspace_id="workspace-9",
-            workspace_name="Biology",
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="workspace-9",
+                workspace_name="Biology",
+            )
         ),
         current_runtime_backend="local",
         runtime_backend="local",
@@ -225,7 +284,7 @@ async def test_workspace_scope_derives_unavailable_in_local_mode():
     screen = StudyScreen(app_instance=app_instance)
     screen.query_one = Mock(return_value=_build_window())  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.workspace_scope_available is False
@@ -238,10 +297,12 @@ async def test_workspace_scope_derives_unavailable_in_local_mode():
 async def test_pending_scope_is_applied_before_initialize_on_mount():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
-            scope_type=StudyScopeType.WORKSPACE,
-            workspace_id="workspace-9",
-            workspace_name="Biology",
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="workspace-9",
+                workspace_name="Biology",
+            )
         ),
         current_runtime_backend="server",
         runtime_backend="server",
@@ -256,16 +317,22 @@ async def test_pending_scope_is_applied_before_initialize_on_mount():
         assert screen.current_scope.workspace_id == "workspace-9"
 
     window = SimpleNamespace(
-        load_saved_sessions=AsyncMock(side_effect=lambda: call_order.append("load_saved_sessions")),
+        load_saved_sessions=AsyncMock(
+            side_effect=lambda: call_order.append("load_saved_sessions")
+        ),
         initialize=AsyncMock(side_effect=initialize_side_effect),
-        flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
-        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        flashcards_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")
+        ),
+        quizzes_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")
+        ),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
         _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
     )
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert call_order.index("flashcards_scope_changed") < call_order.index("initialize")
     assert call_order.index("quizzes_scope_changed") < call_order.index("initialize")
@@ -275,10 +342,12 @@ async def test_pending_scope_is_applied_before_initialize_on_mount():
 async def test_scope_change_path_attaches_and_invokes_controller_seams():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
-            scope_type=StudyScopeType.WORKSPACE,
-            workspace_id="workspace-9",
-            workspace_name="Biology",
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="workspace-9",
+                workspace_name="Biology",
+            )
         ),
         current_runtime_backend="server",
         runtime_backend="server",
@@ -318,7 +387,7 @@ async def test_scope_change_path_attaches_and_invokes_controller_seams():
 
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
 
     assert callable(window.flashcards_controller.handle_scope_changed)
     assert callable(window.quizzes_controller.handle_scope_changed)
@@ -353,11 +422,15 @@ async def test_workspace_scope_mount_does_not_refresh_hidden_views(monkeypatch):
     def record_quizzes_refresh(self):
         call_order.append(f"quizzes:{self.current_view}")
 
-    monkeypatch.setattr(StudyWindow, "_schedule_flashcards_refresh", record_flashcards_refresh)
-    monkeypatch.setattr(StudyWindow, "_schedule_quizzes_refresh", record_quizzes_refresh)
+    monkeypatch.setattr(
+        StudyWindow, "_schedule_flashcards_refresh", record_flashcards_refresh
+    )
+    monkeypatch.setattr(
+        StudyWindow, "_schedule_quizzes_refresh", record_quizzes_refresh
+    )
 
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="workspace-9",
             workspace_name="Biology",
@@ -365,12 +438,8 @@ async def test_workspace_scope_mount_does_not_refresh_hidden_views(monkeypatch):
         current_runtime_backend="server",
         runtime_backend="server",
         notify=Mock(),
-        study_scope_service=SimpleNamespace(),
-        study_quiz_scope_service=SimpleNamespace(),
-        app_config={},
     )
-    screen = StudyScreen(app_instance=app_instance)
-    app = StudyScreenMountTestApp(screen)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
@@ -384,10 +453,12 @@ async def test_workspace_scope_mount_does_not_refresh_hidden_views(monkeypatch):
 async def test_scope_change_awaits_end_review_session_before_reset():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
-            scope_type=StudyScopeType.WORKSPACE,
-            workspace_id="workspace-9",
-            workspace_name="Biology",
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="workspace-9",
+                workspace_name="Biology",
+            )
         ),
         current_runtime_backend="server",
         runtime_backend="server",
@@ -409,28 +480,34 @@ async def test_scope_change_awaits_end_review_session_before_reset():
             end_review_session_if_needed=end_review_session_if_needed,
             handle_scope_changed=flashcards_scope_changed,
         ),
-        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        quizzes_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")
+        ),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
         _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
     )
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
     call_order.clear()
 
     await screen.handle_runtime_backend_changed("local")
 
-    assert call_order.index("end_review_session") < call_order.index("flashcards_scope_changed")
+    assert call_order.index("end_review_session") < call_order.index(
+        "flashcards_scope_changed"
+    )
 
 
 @pytest.mark.asyncio
 async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
-            scope_type=StudyScopeType.WORKSPACE,
-            workspace_id="workspace-9",
-            workspace_name="Biology",
+        pending_handoffs=_pending_scope_store(
+            StudyScopeContext(
+                scope_type=StudyScopeType.WORKSPACE,
+                workspace_id="workspace-9",
+                workspace_name="Biology",
+            )
         ),
         current_runtime_backend="server",
         runtime_backend="server",
@@ -442,19 +519,23 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
         load_saved_sessions=AsyncMock(),
         initialize=AsyncMock(),
         current_view="flashcards",
-        flashcards_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")),
-        quizzes_controller=SimpleNamespace(handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")),
+        flashcards_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("flashcards_scope_changed")
+        ),
+        quizzes_controller=SimpleNamespace(
+            handle_scope_changed=lambda: call_order.append("quizzes_scope_changed")
+        ),
         _schedule_flashcards_refresh=lambda: call_order.append("schedule_flashcards"),
         _schedule_quizzes_refresh=lambda: call_order.append("schedule_quizzes"),
     )
     screen.query_one = Mock(return_value=window)  # type: ignore[method-assign]
 
-    await screen.on_mount()
+    await screen._load_after_mount_inner()
     call_order.clear()
 
     await screen.handle_runtime_backend_changed("local")
 
-    assert app_instance.current_runtime_backend == "local"
+    assert app_instance.current_runtime_backend == "server"
     assert screen.current_scope.scope_type == StudyScopeType.WORKSPACE
     assert screen.current_scope.backend == "local"
     assert screen.current_scope.workspace_scope_available is False
@@ -467,32 +548,37 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
 
 
 @pytest.mark.asyncio
-async def test_app_level_runtime_backend_callback_updates_backend_and_forwards():
-    from tldw_chatbook.app import TldwCli
-
-    forwarded = []
-
-    async def screen_callback(runtime_backend: str) -> None:
-        forwarded.append(runtime_backend)
-
-    app_like = SimpleNamespace(
-        current_runtime_backend="server",
-        runtime_backend="server",
-        screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
+async def test_app_level_runtime_backend_callback_updates_backend_and_forwards(
+    tmp_path,
+):
+    app_instance = SimpleNamespace(
+        current_runtime_backend="local",
+        runtime_backend="local",
+        notify=Mock(),
     )
+    app = _build_full_study_app(app_instance)
+    app.runtime_policy = RuntimePolicyContext(
+        RuntimeSourceState(active_source="local"),
+        RuntimeSourceStateStore(tmp_path / "runtime_policy.json"),
+        publish=app._publish_runtime_policy_projection,
+    )
+    app._publish_runtime_policy_projection(app.runtime_policy.state)
 
-    await TldwCli.handle_runtime_backend_changed(app_like, "local")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen_callback = AsyncMock()
+        app.screen.handle_runtime_backend_changed = screen_callback
 
-    assert app_like.current_runtime_backend == "local"
-    assert app_like.runtime_backend == "local"
-    assert forwarded == ["local"]
+        assert await app.handle_runtime_backend_changed("local") is True
+
+        assert app.runtime_policy.state.active_source == "local"
+        screen_callback.assert_awaited_once_with("local")
 
 
 def test_return_to_workspace_routes_to_notes_details():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
         open_notes_workspace=Mock(),
-        pending_study_scope_context=None,
         current_runtime_backend="server",
         runtime_backend="server",
         notify=Mock(),
@@ -520,7 +606,7 @@ def test_return_to_workspace_routes_to_notes_details():
 async def test_study_window_renders_workspace_scope_banner_and_exit_controls():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="workspace-9",
             workspace_name="Biology",
@@ -531,12 +617,12 @@ async def test_study_window_renders_workspace_scope_banner_and_exit_controls():
         open_study_screen=Mock(),
         notify=Mock(),
     )
-    screen = StudyScreen(app_instance=app_instance)
-    app = StudyScreenMountTestApp(screen)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
+        screen = app.screen
         study_window = screen.query_one(StudyWindow)
         banner = study_window.query_one("#study-scope-banner", Container)
         scope_title = study_window.query_one("#study-scope-title", Static)
@@ -558,19 +644,19 @@ async def test_study_window_renders_workspace_scope_banner_and_exit_controls():
 async def test_study_window_hides_workspace_banner_for_global_scope():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
         current_runtime_backend="server",
         runtime_backend="server",
         open_notes_workspace=Mock(),
         open_study_screen=Mock(),
         notify=Mock(),
     )
-    screen = StudyScreen(app_instance=app_instance)
-    app = StudyScreenMountTestApp(screen)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
+        screen = app.screen
         study_window = screen.query_one(StudyWindow)
         banner = study_window.query_one("#study-scope-banner", Container)
 
@@ -582,7 +668,7 @@ async def test_study_window_back_to_workspace_button_routes_via_notes_details_se
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     open_notes_workspace = Mock()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="workspace-9",
             workspace_name="Biology",
@@ -593,12 +679,12 @@ async def test_study_window_back_to_workspace_button_routes_via_notes_details_se
         open_study_screen=Mock(),
         notify=Mock(),
     )
-    screen = StudyScreen(app_instance=app_instance)
-    app = StudyScreenMountTestApp(screen)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
+        screen = app.screen
         study_window = screen.query_one(StudyWindow)
         back_button = study_window.query_one("#study-back-to-workspace-button", Button)
         back_button.press()
@@ -614,7 +700,7 @@ async def test_study_window_back_to_workspace_button_routes_via_notes_details_se
 async def test_study_window_switch_to_global_button_clears_scope_and_hides_banner_in_place():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
     app_instance = SimpleNamespace(
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="workspace-9",
             workspace_name="Biology",
@@ -625,12 +711,12 @@ async def test_study_window_switch_to_global_button_clears_scope_and_hides_banne
         open_study_screen=Mock(),
         notify=Mock(),
     )
-    screen = StudyScreen(app_instance=app_instance)
-    app = StudyScreenMountTestApp(screen)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
+        screen = app.screen
         study_window = screen.query_one(StudyWindow)
         switch_button = study_window.query_one("#study-switch-global-button", Button)
         banner = study_window.query_one("#study-scope-banner", Container)
@@ -641,3 +727,296 @@ async def test_study_window_switch_to_global_button_clears_scope_and_hides_banne
         assert screen.current_scope.scope_type == StudyScopeType.GLOBAL
         assert banner.display is False
         app_instance.open_notes_workspace.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_structured_learning_pane_composes_no_orphaned_add_topic_controls():
+    """task-16195: the Study rebuild left the legacy add-topic flow without a
+    dispatcher, and nothing in the app reads the topics table, so the
+    Structured Learning pane must not render the dead 'Add New Topic'
+    affordance (button + title input) while still rendering its topic tree."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        study_window = app.screen.query_one(StudyWindow)
+        # ...the orphaned add-topic affordance is gone end-to-end.
+        assert not study_window.query("#add-topic-btn")
+        assert not study_window.query("#new-topic-title")
+        # task-16845: the pane's placeholder tree + disabled content preview
+        # were dead chrome too (topics have no read path, and nothing
+        # dispatches Tree.NodeSelected since task-16196 deleted the legacy
+        # module) -- replaced with an honest empty-state notice.
+        assert not study_window.query("#topic-tree")
+        assert not study_window.query("#topic-content")
+        empty_state = study_window.query_one("#structured-learning-empty-state", Static)
+        assert "no way to" in _text(empty_state).lower()
+
+
+# task-19041: the ids below were removed from the four placeholder Study panes
+# (Mindmaps, Course Creation, Study Guide, Learning Map) after the 16845 census
+# established their backing is placeholder-grade -- every button undispatched
+# (whole-tree grep per id hit only compose + tests), schema either write-only
+# (mindmaps, learning paths/topics) or nonexistent (courses, modules, guides,
+# concepts, milestones, SCORM), and every tree/list/progress display static
+# with no population code. The tuple also covers the controls that existed
+# solely to feed those buttons (16195 pattern). `export-md-btn` composed TWICE
+# (Mindmaps + Course panes) -- a duplicate id -- so the source-level pin also
+# forbids that duplicate from returning.
+REMOVED_STUDY_PANE_IDS = (
+    # Mindmaps pane
+    "add-child-btn",  # removed by task-16845
+    "add-sibling-btn",
+    "delete-node-btn",
+    "edit-node-btn",
+    "import-notes-btn",
+    "export-md-btn",
+    "generate-mindmap-btn",
+    "node-text",
+    "mindmap-tree",
+    # Course Creation pane
+    "create-course-btn",  # removed by task-16845 (with the course-* form)
+    "course-title",
+    "course-description",
+    "course-level",
+    "course-prerequisites",
+    "add-module-btn",
+    "module-name",
+    "module-list",
+    "export-pdf-btn",
+    "export-scorm-btn",
+    # Study Guide pane
+    "generate-guide-btn",  # removed by task-16845
+    "guide-topic-select",
+    "guide-title",
+    "guide-content",
+    "concept-input",
+    "add-concept-btn",
+    "key-concepts-list",
+    "practice-questions-list",
+    "generate-questions-btn",
+    "save-guide-btn",
+    # Learning Map pane
+    "add-milestone-btn",  # removed by task-16845
+    "learning-map-tree",
+    "overall-progress",
+    "current-topic",
+    "mark-complete-btn",
+    "set-dependencies-btn",
+    "import-course-btn",
+    "export-path-btn",
+    "generate-suggestions-btn",
+)
+
+
+def test_removed_study_pane_affordances_do_not_return_in_source():
+    """task-19041 source-level pin: none of the removed pane affordances may
+    compose again in `UI/Study_Window.py`. Matching `id=` assignments (not
+    bare substrings) keeps the removal-site comments, which cite the ids in
+    `#id` form, out of the match. Zero occurrences of `export-md-btn` also
+    pins away its old duplicate composition (Mindmaps :451 + Course :512)."""
+    import tldw_chatbook.UI.Study_Window as study_window_module
+
+    source = Path(study_window_module.__file__).read_text(encoding="utf-8")
+    offenders = [
+        removed_id
+        for removed_id in REMOVED_STUDY_PANE_IDS
+        if re.search(rf'id=["\']{re.escape(removed_id)}["\']', source)
+    ]
+    assert not offenders, (
+        f"removed Study pane affordances compose again in Study_Window.py: {offenders}"
+    )
+
+
+async def _pane_assertions(pilot, app, nav_button_id, removed_ids, empty_state_id):
+    app.screen.query_one(nav_button_id, Button).press()
+    await pilot.pause()
+
+    study_window = app.screen.query_one(StudyWindow)
+    for removed in removed_ids:
+        assert not study_window.query(f"#{removed}"), (
+            f"removed affordance #{removed} composes again"
+        )
+    empty_state = study_window.query_one(f"#{empty_state_id}", Static)
+    assert "no way to" in _text(empty_state).lower()
+
+
+@pytest.mark.asyncio
+async def test_mindmaps_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#add-child-btn`; task-19041 finished the pane.
+    Every remaining control was equally undispatched (add-sibling /
+    delete-node / edit-node / import-notes / export-md / generate-mindmap),
+    ChaChaNotes_DB's `create_mindmap`/`add_mindmap_node` are write-only with
+    no read/list method, and `#mindmap-tree` was a static "Root Topic"
+    skeleton nothing populates -- so `#node-text` (which fed only the dead
+    add buttons) and the tree went with the buttons, replaced by an honest
+    empty-state notice. (The mindmap SUBSYSTEM -- Tools/Mind_Map,
+    MindmapViewer -- is task-19042's scope; this pane never composed it.)"""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-mindmaps-btn",
+            (
+                "add-child-btn",
+                "add-sibling-btn",
+                "delete-node-btn",
+                "edit-node-btn",
+                "import-notes-btn",
+                "export-md-btn",
+                "generate-mindmap-btn",
+                "node-text",
+                "mindmap-tree",
+            ),
+            "mindmaps-empty-state",
+        )
+
+
+@pytest.mark.asyncio
+async def test_course_creation_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#create-course-btn` and the course-* form (no
+    `course`/`courses` table exists in ChaChaNotes_DB at all); task-19041
+    finished the pane: `#add-module-btn` (no module concept in any schema,
+    `#module-list` never populated), and the three export buttons
+    (`export-pdf-btn`/`export-md-btn`/`export-scorm-btn` -- no exportable
+    course exists, and no SCORM code exists anywhere in the tree) were all
+    equally undispatched. `#module-name` fed only the dead add button. The
+    pane now presents an honest empty-state notice."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-course-btn",
+            (
+                "create-course-btn",
+                "course-title",
+                "course-description",
+                "course-level",
+                "course-prerequisites",
+                "add-module-btn",
+                "module-name",
+                "module-list",
+                "export-pdf-btn",
+                "export-md-btn",
+                "export-scorm-btn",
+            ),
+            "course-creation-empty-state",
+        )
+
+
+@pytest.mark.asyncio
+async def test_study_guide_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#generate-guide-btn`; task-19041 finished the
+    pane: no guide/concept schema exists anywhere, `#guide-topic-select` was
+    hard-coded to one static option (its `.value` had no consumer -- the
+    TASK-16841 sweep's finding), `#add-concept-btn` could only feed an
+    in-session list nothing persists, and `#save-guide-btn` had no table to
+    save to -- so the whole dead-end form (title/content/concepts/practice
+    questions) went with its buttons, replaced by an honest empty-state
+    notice."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-study-guide-btn",
+            (
+                "generate-guide-btn",
+                "guide-topic-select",
+                "guide-title",
+                "guide-content",
+                "concept-input",
+                "add-concept-btn",
+                "key-concepts-list",
+                "practice-questions-list",
+                "generate-questions-btn",
+                "save-guide-btn",
+            ),
+            "study-guide-empty-state",
+        )
+
+
+@pytest.mark.asyncio
+async def test_learning_map_pane_composes_only_the_honest_empty_state():
+    """task-16845 removed `#add-milestone-btn`; task-19041 finished the
+    pane: `#mark-complete-btn` had only the write-only
+    `update_topic_progress` sink, no dependency/suggestion/import/export
+    concept exists in any schema or service, `#learning-map-tree` was a
+    static skeleton nothing populates, and `#overall-progress`/
+    `#current-topic` were hard-coded statics nothing updates. All replaced
+    by an honest empty-state notice."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _pane_assertions(
+            pilot,
+            app,
+            "#view-learning-map-btn",
+            (
+                "add-milestone-btn",
+                "learning-map-tree",
+                "overall-progress",
+                "current-topic",
+                "mark-complete-btn",
+                "set-dependencies-btn",
+                "import-course-btn",
+                "export-path-btn",
+                "generate-suggestions-btn",
+            ),
+            "learning-map-empty-state",
+        )

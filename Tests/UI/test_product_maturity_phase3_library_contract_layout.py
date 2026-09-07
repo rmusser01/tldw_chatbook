@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -25,7 +26,9 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_3_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-3-library-contract-layout.md"
 )
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_3 = Path(
     "backlog/tasks/task-10.3 - Product-Maturity-Phase-3.3-Library-Contract-Layout-Shell.md"
 )
@@ -36,8 +39,13 @@ def _text(path: Path) -> str:
 
 
 def _css_block(text: str, selector: str) -> str:
-    start = text.index(selector)
-    block_start = text.index("{", start)
+    match = re.search(
+        rf"(?m)^{re.escape(selector)}(?:\s*,[^{{]*)?\s*\{{",
+        text,
+    )
+    if match is None:
+        raise ValueError(f"CSS selector not found: {selector}")
+    block_start = match.end() - 1
     block_end = text.index("}", block_start)
     return text[block_start:block_end]
 
@@ -82,8 +90,14 @@ async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) 
 
 def test_library_source_actions_use_console_text_control_style() -> None:
     variables = _text(Path("tldw_chatbook/css/core/_variables.tcss"))
-    agentic_terminal = _text(Path("tldw_chatbook/css/components/_agentic_terminal.tcss"))
-    bundled_stylesheet = _text(Path("tldw_chatbook/css/tldw_cli_modular.tcss"))
+    agentic_terminal = _text(
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
+    )
+    # TASK-25812: the library-owned rules (and the variables preamble that
+    # carries the $ds-library-* defs) live in the split library sheet.
+    bundled_stylesheet = _text(
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss")
+    ) + _text(Path("tldw_chatbook/css/screen_agentic_library.tcss"))
 
     assert "$ds-library-source-action-width: auto;" in variables
     assert "$ds-library-source-action-min-width: 0;" in variables
@@ -93,7 +107,9 @@ def test_library_source_actions_use_console_text_control_style() -> None:
     assert "$ds-library-source-action-height: 1;" in bundled_stylesheet
     assert ".library-source-action {" in agentic_terminal
     source_action_block = _css_block(agentic_terminal, ".library-source-action")
-    bundled_source_action_block = _css_block(bundled_stylesheet, ".library-source-action")
+    bundled_source_action_block = _css_block(
+        bundled_stylesheet, ".library-source-action"
+    )
     assert "background: transparent;" in source_action_block
     assert "background: transparent;" in bundled_source_action_block
     assert "border: none;" in source_action_block
@@ -103,10 +119,18 @@ def test_library_source_actions_use_console_text_control_style() -> None:
     assert "text-style: none;" in agentic_terminal
     assert "text-style: none;" in bundled_stylesheet
     assert ".library-source-action:focus {" in agentic_terminal
-    assert "background: transparent;" in _css_block(agentic_terminal, ".library-source-action:focus")
-    assert "text-style: bold underline;" in _css_block(agentic_terminal, ".library-source-action:focus")
-    assert "background: transparent;" in _css_block(bundled_stylesheet, ".library-source-action:focus")
-    assert "text-style: bold underline;" in _css_block(bundled_stylesheet, ".library-source-action:focus")
+    assert "background: transparent;" in _css_block(
+        agentic_terminal, ".library-source-action:focus"
+    )
+    assert "text-style: bold underline;" in _css_block(
+        agentic_terminal, ".library-source-action:focus"
+    )
+    assert "background: transparent;" in _css_block(
+        bundled_stylesheet, ".library-source-action:focus"
+    )
+    assert "text-style: bold underline;" in _css_block(
+        bundled_stylesheet, ".library-source-action:focus"
+    )
     assert "color: $ds-focus-fg;" in _css_block(
         agentic_terminal,
         ".library-source-action.is-active",
@@ -200,7 +224,7 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
         for label in (
             "Collections",
             "Search / RAG",
-            "Import media",
+            "Import…",
             "Study decks",
             "Flashcards",
             "Quizzes",
@@ -227,7 +251,7 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
 
 @pytest.mark.asyncio
 async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
-    """"Unavailable" (vs. policy-denied "Wrong source") taxonomy must survive;
+    """ "Unavailable" (vs. policy-denied "Wrong source") taxonomy must survive;
     it now surfaces via the Details rail lookup-error line instead of a
     dedicated status row."""
     app = _build_test_app()
@@ -247,7 +271,9 @@ async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
         screen.query_one("#console-rail-section-toggle-library-details", Button).press()
         await pilot.pause()
         await pilot.pause()
-        details_body = _rendered_static_text(screen.query_one("#library-details-body", Static))
+        details_body = _rendered_static_text(
+            screen.query_one("#library-details-body", Static)
+        )
         assert lookup_error in details_body
 
 
@@ -272,5 +298,7 @@ async def test_library_status_row_preserves_policy_recovery_status() -> None:
         screen.query_one("#console-rail-section-toggle-library-details", Button).press()
         await pilot.pause()
         await pilot.pause()
-        details_body = _rendered_static_text(screen.query_one("#library-details-body", Static))
+        details_body = _rendered_static_text(
+            screen.query_one("#library-details-body", Static)
+        )
         assert "Wrong source" in details_body

@@ -156,7 +156,9 @@ async def test_audiobook_routes_wire_jobs_projects_profiles_and_subtitles(monkey
     monkeypatch.setattr(client, "_binary_request", binary)
 
     source = SourceRef(input_type="txt", raw_text="Chapter 1\nHello")
-    parsed = await client.parse_audiobook_source(AudiobookParseRequest(source=source, detect_chapters=True))
+    parsed = await client.parse_audiobook_source(
+        AudiobookParseRequest(source=source, detect_chapters=True)
+    )
     job = await client.create_audiobook_job(
         AudiobookJobRequest(
             project_title="Book",
@@ -172,9 +174,13 @@ async def test_audiobook_routes_wire_jobs_projects_profiles_and_subtitles(monkey
     projects = await client.list_audiobook_projects(limit=10, offset=5)
     project = await client.get_audiobook_project("abk_1")
     chapters = await client.list_audiobook_project_chapters("abk_1", limit=25, offset=0)
-    project_artifacts = await client.list_audiobook_project_artifacts("abk_1", limit=25, offset=0)
+    project_artifacts = await client.list_audiobook_project_artifacts(
+        "abk_1", limit=25, offset=0
+    )
     profile = await client.create_audiobook_voice_profile(
-        VoiceProfileCreateRequest(name="Narrator", default_voice="af_heart", default_speed=1.0)
+        VoiceProfileCreateRequest(
+            name="Narrator", default_voice="af_heart", default_speed=1.0
+        )
     )
     profiles = await client.list_audiobook_voice_profiles()
     deleted = await client.delete_audiobook_voice_profile("vp_1")
@@ -193,19 +199,46 @@ async def test_audiobook_routes_wire_jobs_projects_profiles_and_subtitles(monkey
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/audiobooks/parse")
     assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/audiobooks/jobs")
-    assert mocked.await_args_list[1].kwargs["json_data"]["queue"] == {"priority": 6, "batch_group": "batch-1"}
+    assert mocked.await_args_list[1].kwargs["json_data"]["queue"] == {
+        "priority": 6,
+        "batch_group": "batch-1",
+    }
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/audiobooks/jobs/77")
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/audiobooks/jobs/77/artifacts")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/audiobooks/jobs/77/artifacts",
+    )
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/audiobooks/projects")
     assert mocked.await_args_list[4].kwargs["params"] == {"limit": 10, "offset": 5}
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/audiobooks/projects/abk_1")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/audiobooks/projects/abk_1/chapters")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/audiobooks/projects/abk_1",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/audiobooks/projects/abk_1/chapters",
+    )
     assert mocked.await_args_list[6].kwargs["params"] == {"limit": 25, "offset": 0}
-    assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/audiobooks/projects/abk_1/artifacts")
-    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/audiobooks/voices/profiles")
-    assert mocked.await_args_list[9].args[:2] == ("GET", "/api/v1/audiobooks/voices/profiles")
-    assert mocked.await_args_list[10].args[:2] == ("DELETE", "/api/v1/audiobooks/voices/profiles/vp_1")
-    assert binary.await_args_list[0].args[:2] == ("POST", "/api/v1/audiobooks/subtitles")
+    assert mocked.await_args_list[7].args[:2] == (
+        "GET",
+        "/api/v1/audiobooks/projects/abk_1/artifacts",
+    )
+    assert mocked.await_args_list[8].args[:2] == (
+        "POST",
+        "/api/v1/audiobooks/voices/profiles",
+    )
+    assert mocked.await_args_list[9].args[:2] == (
+        "GET",
+        "/api/v1/audiobooks/voices/profiles",
+    )
+    assert mocked.await_args_list[10].args[:2] == (
+        "DELETE",
+        "/api/v1/audiobooks/voices/profiles/vp_1",
+    )
+    assert binary.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/audiobooks/subtitles",
+    )
     assert isinstance(parsed, AudiobookParseResponse)
     assert parsed.chapters[0].chapter_id == "ch_001"
     assert isinstance(job, AudiobookJobCreateResponse)

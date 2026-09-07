@@ -8,8 +8,10 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
-class ConsoleRenameSessionModal(ModalScreen[str | None]):
+
+class ConsoleRenameSessionModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Edit the display title for the active Console chat tab."""
 
     DEFAULT_CSS = """
@@ -52,7 +54,8 @@ class ConsoleRenameSessionModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-rename-session-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     def __init__(self, *, title: str) -> None:
         super().__init__()
@@ -80,13 +83,10 @@ class ConsoleRenameSessionModal(ModalScreen[str | None]):
         rename_input.focus()
         rename_input.select_all()
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     @on(Button.Pressed, "#console-rename-session-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#console-rename-session-save")
     def _save_button(self, event: Button.Pressed) -> None:

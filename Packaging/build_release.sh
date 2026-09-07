@@ -16,21 +16,14 @@ if ! "$PYTHON" -c "import build, setuptools, twine, wheel" >/dev/null 2>&1; then
     exit 1
 fi
 
-VERSION=$("$PYTHON" - <<'PY'
-from pathlib import Path
-import tomllib
-
-with Path("pyproject.toml").open("rb") as stream:
-    print(tomllib.load(stream)["project"]["version"])
-PY
-)
+VERSION=$("$PYTHON" -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
 
 echo "Building tldw_chatbook ${VERSION} for PyPI release..."
 PYTHON="$PYTHON" Packaging/build_dist.sh
 
 echo
 echo "Next steps:"
-echo "1. Smoke-test the built wheel in a disposable environment."
+echo "1. Run the installed-wheel regression printed above."
 echo "2. Use the publish-pypi GitHub Actions workflow for TestPyPI."
 echo "3. Merge the approved release commit to protected main for production PyPI."
 echo

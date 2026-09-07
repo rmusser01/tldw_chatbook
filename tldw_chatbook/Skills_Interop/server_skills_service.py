@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SkillCreate,
-    SkillExecuteRequest,
-    SkillImportRequest,
-    SkillUpdate,
-    TLDWAPIClient,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerSkillsService:
@@ -66,7 +62,9 @@ class ServerSkillsService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -75,10 +73,14 @@ class ServerSkillsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server skill action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server skill action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -122,8 +124,13 @@ class ServerSkillsService:
         content: str,
         supporting_files: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillCreate
+
         self._enforce("skills.create.server")
-        request = SkillCreate(name=name, content=content, supporting_files=supporting_files)
+        request = SkillCreate(
+            name=name, content=content, supporting_files=supporting_files
+        )
         return self._dump(await self._require_client().create_skill(request))
 
     async def update_skill(
@@ -134,15 +141,26 @@ class ServerSkillsService:
         supporting_files: dict[str, str | None] | None = None,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillUpdate
+
         self._enforce("skills.update.server")
         request = SkillUpdate(content=content, supporting_files=supporting_files)
         return self._dump(
-            await self._require_client().update_skill(skill_name, request, expected_version=expected_version)
+            await self._require_client().update_skill(
+                skill_name, request, expected_version=expected_version
+            )
         )
 
-    async def delete_skill(self, skill_name: str, *, expected_version: int | None = None) -> bool:
+    async def delete_skill(
+        self, skill_name: str, *, expected_version: int | None = None
+    ) -> bool:
         self._enforce("skills.delete.server")
-        return bool(await self._require_client().delete_skill(skill_name, expected_version=expected_version))
+        return bool(
+            await self._require_client().delete_skill(
+                skill_name, expected_version=expected_version
+            )
+        )
 
     async def import_skill(
         self,
@@ -152,6 +170,9 @@ class ServerSkillsService:
         supporting_files: dict[str, str] | None = None,
         overwrite: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+
         self._enforce("skills.import.launch.server")
         request = SkillImportRequest(
             name=name,
@@ -183,11 +204,20 @@ class ServerSkillsService:
         self._enforce("skills.export.launch.server")
         return await self._require_client().export_skill(skill_name)
 
-    async def execute_skill(self, skill_name: str, *, args: str | None = None) -> dict[str, Any]:
+    async def execute_skill(
+        self, skill_name: str, *, args: str | None = None
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillExecuteRequest
+
         self._enforce("skills.execute.launch.server")
         request = SkillExecuteRequest(args=args)
-        return self._dump(await self._require_client().execute_skill(skill_name, request))
+        return self._dump(
+            await self._require_client().execute_skill(skill_name, request)
+        )
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.server")
-        return self._dump(await self._require_client().seed_builtin_skills(overwrite=overwrite))
+        return self._dump(
+            await self._require_client().seed_builtin_skills(overwrite=overwrite)
+        )

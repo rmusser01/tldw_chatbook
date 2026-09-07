@@ -16,11 +16,11 @@ from .simplified.config import RAGConfig
 
 class PipelineManager:
     """Manages the integration of TOML-based pipelines with the RAG system."""
-    
+
     def __init__(self, config: Optional[RAGConfig] = None):
         self.config = config or RAGConfig.from_settings()
         self.loader = get_pipeline_loader()
-        
+
         # Map legacy search modes to pipeline IDs
         self.legacy_mode_mapping = {
             "plain": "plain",
@@ -33,38 +33,40 @@ class PipelineManager:
             "hybrid_v2": "hybrid_v2",
             "research_focused_v2": "research_focused_v2",
             "speed_optimized_v2": "speed_optimized_v2",
-            "adaptive_v2": "adaptive_v2"
+            "adaptive_v2": "adaptive_v2",
         }
-    
+
     def get_pipeline_by_mode(self, search_mode: str) -> Optional[Callable]:
         """Get a pipeline function by search mode (for backward compatibility)."""
         pipeline_id = self.legacy_mode_mapping.get(search_mode, search_mode)
         return self.get_pipeline(pipeline_id)
-    
+
     def get_pipeline(self, pipeline_id: str) -> Optional[Callable]:
         """Get a pipeline function by ID."""
         # Check if pipeline is configured in TOML
         func = get_pipeline_function(pipeline_id)
         if func:
             return func
-        
+
         # Fallback to default pipelines
         if pipeline_id in self.legacy_mode_mapping.values():
-            logger.warning(f"Pipeline '{pipeline_id}' not found in TOML, using built-in")
+            logger.warning(
+                f"Pipeline '{pipeline_id}' not found in TOML, using built-in"
+            )
             # Return None to signal fallback to existing implementation
             return None
-        
+
         logger.error(f"Unknown pipeline ID: {pipeline_id}")
         return None
-    
+
     def get_default_pipeline(self) -> str:
         """Get the default pipeline ID from configuration."""
         return self.config.pipeline.default_pipeline
-    
+
     def list_available_pipelines(self) -> List[Dict[str, Any]]:
         """List all available pipelines."""
         return self.loader.list_pipelines()
-    
+
     def get_pipeline_config(self, pipeline_id: str) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific pipeline."""
         pipeline_config = self.loader.get_pipeline_config(pipeline_id)
@@ -76,26 +78,21 @@ class PipelineManager:
                 "type": pipeline_config.type,
                 "enabled": pipeline_config.enabled,
                 "parameters": pipeline_config.parameters,
-                "tags": pipeline_config.tags
+                "tags": pipeline_config.tags,
             }
         return None
-    
+
     def reload_pipelines(self) -> None:
         """Reload pipeline configurations from TOML files."""
         self.loader.reload_configs()
         logger.info("Pipeline configurations reloaded")
-    
+
     async def execute_pipeline(
-        self,
-        pipeline_id: str,
-        app: Any,
-        query: str,
-        sources: Dict[str, bool],
-        **kwargs
+        self, pipeline_id: str, app: Any, query: str, sources: Dict[str, bool], **kwargs
     ) -> Tuple[List[Dict[str, Any]], str]:
         """Execute a pipeline by ID."""
         func = self.get_pipeline(pipeline_id)
-        
+
         if func:
             # Use TOML-configured pipeline
             try:
@@ -106,7 +103,7 @@ class PipelineManager:
         else:
             # Fallback to legacy implementation
             from ..Event_Handlers.Chat_Events import chat_rag_events
-            
+
             if pipeline_id == "plain":
                 return await chat_rag_events.perform_plain_rag_search(
                     app, query, sources, **kwargs
@@ -120,33 +117,36 @@ class PipelineManager:
                     app, query, sources, **kwargs
                 )
             # Check if it's a v2 pipeline
-            elif pipeline_id.endswith('_v2'):
+            elif pipeline_id.endswith("_v2"):
                 # Use the simplified pipeline system
-                from ..Event_Handlers.Chat_Events.chat_rag_events_simplified import perform_search_with_pipeline
+                from ..Event_Handlers.Chat_Events.chat_rag_events_simplified import (
+                    perform_search_with_pipeline,
+                )
+
                 return await perform_search_with_pipeline(
                     app, query, sources, pipeline_id, **kwargs
                 )
             else:
                 raise ValueError(f"Unknown pipeline: {pipeline_id}")
-    
+
     def get_pipeline_parameters(self, pipeline_id: str) -> Dict[str, Any]:
         """Get default parameters for a pipeline."""
         config = self.loader.get_pipeline_config(pipeline_id)
         if config:
             return config.parameters
-        
+
         # Return empty dict for legacy pipelines
         return {}
-    
+
     def validate_pipeline_id(self, pipeline_id: str) -> bool:
         """Check if a pipeline ID is valid."""
         # Check TOML pipelines
         if self.loader.get_pipeline_config(pipeline_id):
             return True
-        
+
         # Check legacy modes
         return pipeline_id in self.legacy_mode_mapping.values()
-    
+
     def get_pipelines_by_tag(self, tag: str) -> List[str]:
         """Get all pipeline IDs that have a specific tag."""
         pipelines = []
@@ -154,7 +154,7 @@ class PipelineManager:
             if tag in config.tags and config.enabled:
                 pipelines.append(pipeline_id)
         return pipelines
-    
+
     def export_pipeline(self, pipeline_id: str, output_file: Path) -> bool:
         """Export a pipeline configuration to a TOML file."""
         return self.loader.export_pipeline_config(pipeline_id, output_file)

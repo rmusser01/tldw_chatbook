@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import queue
+import sys
+import threading
 from dataclasses import dataclass
 import time
 
@@ -33,6 +36,11 @@ class UIResponsivenessSnapshot:
 class UIResponsivenessMonitor:
     """Collect low-cost counters that make UI stalls diagnosable."""
 
+    #: One stall record at a time in the dispatch queue: a wedged loop cannot
+    #: pile up records faster than a background thread drains them, and the
+    #: queue itself is bounded so enqueueing can never fail noisily.
+    _STALL_QUEUE_DEPTH = 4
+
     def __init__(
         self,
         *,
@@ -49,6 +57,74 @@ class UIResponsivenessMonitor:
         self._removes = 0
         self._max_heartbeat_lag_ms = 0
         self._last_heartbeat = time.perf_counter()
+        self._stall_persisted = False
+        # TASK-18908 review: the persistent sink is a synchronous rotating
+        # file handler, so writing from the heartbeat callback would perform
+        # filesystem I/O ON the event loop being measured -- the exact
+        # contract this class exists to protect. Records are handed to a
+        # bounded queue drained by a daemon thread instead; the loop-side
+        # cost is an enqueue.
+        self._stall_queue: queue.SimpleQueue[dict[str, object] | None] = (
+            queue.SimpleQueue()
+        )
+        self._stall_thread: threading.Thread | None = None
+        #: Records the drain thread has fully processed (persisted or
+        #: failed-and-reported); lets tests and future callers synchronize
+        #: with the background dispatch without sleeping.
+        self._stall_records_processed = 0
+
+    def _drain_stalls(self) -> None:
+        """Background drain loop: persist queued stall records off the loop."""
+        while True:
+            record = self._stall_queue.get()
+            try:
+                if record is None:
+                    return
+                from .persistent_diagnostics import persist_event
+
+                persist_event("ui", "event_loop_stall", **record)  # type: ignore[arg-type]
+            except Exception as exc:  # noqa: BLE001 -- never raise from diagnostics
+                lag = record.get("lag_ms") if isinstance(record, dict) else "?"
+                print(
+                    "ui_responsiveness: stall persist failed "
+                    f"(op=persist_event lag_ms={lag} "
+                    f"threshold_ms={self.stall_threshold_ms} "
+                    f"error={type(exc).__name__})",
+                    file=sys.stderr,
+                )
+            finally:
+                self._stall_records_processed += 1
+
+    def _persist_stall(self, lag_ms: int) -> None:
+        """Queue one diagnostics record for an observed event-loop stall.
+
+        The record is persisted by the daemon drain thread; this method only
+        enqueues (loop-safe by construction) and starts the drainer lazily.
+        """
+        record: dict[str, object] = {
+            "lag_ms": lag_ms,
+            "threshold_ms": self.stall_threshold_ms,
+            "active_timers": sorted(self._active_timers),
+            "active_workers": sorted(self._active_workers),
+            "mounts": self._mounts,
+            "removes": self._removes,
+        }
+        if self._stall_thread is None:
+            self._stall_thread = threading.Thread(
+                target=self._drain_stalls,
+                name="ui-stall-persist",
+                daemon=True,
+            )
+            self._stall_thread.start()
+        try:
+            self._stall_queue.put(record)
+        except Exception as exc:  # noqa: BLE001 -- never raise from diagnostics
+            print(
+                "ui_responsiveness: stall enqueue failed "
+                f"(lag_ms={lag_ms} threshold_ms={self.stall_threshold_ms} "
+                f"error={type(exc).__name__})",
+                file=sys.stderr,
+            )
 
     def record_timer_created(self, name: str) -> None:
         """Record a timer as active by stable diagnostic name."""
@@ -76,13 +152,33 @@ class UIResponsivenessMonitor:
         self._removes += max(0, removed)
 
     def record_heartbeat_delta(self, delta_seconds: float) -> None:
-        """Record event-loop drift beyond the configured heartbeat cadence."""
+        """Record event-loop drift beyond the configured heartbeat cadence.
+
+        A drift past the stall threshold is persisted to the diagnostics
+        sink (TASK-18908): the 2026-08 lag reports arrived with no evidence,
+        so the first question every future report must answer -- "did the
+        loop actually stall, and how badly" -- is answered by the log line
+        the drain thread writes. Persisted once per breach (edge-triggered,
+        not level-triggered) so a session that stays wedged writes one
+        record, not one per heartbeat; a below-threshold heartbeat re-arms
+        persistence so a stall AFTER a recovered one is a new incident.
+
+        Args:
+            delta_seconds: Loop drift beyond the heartbeat cadence, in
+                seconds; non-negative.
+        """
         if not self.enabled:
             return
-        self._max_heartbeat_lag_ms = max(
-            self._max_heartbeat_lag_ms,
-            int(round(delta_seconds * 1000)),
-        )
+        lag_ms = int(round(delta_seconds * 1000))
+        self._max_heartbeat_lag_ms = max(self._max_heartbeat_lag_ms, lag_ms)
+        if lag_ms >= self.stall_threshold_ms:
+            if not self._stall_persisted:
+                self._stall_persisted = True
+                self._persist_stall(lag_ms)
+        else:
+            # A healthy heartbeat demonstrates recovery: re-arm so the next
+            # threshold crossing is recorded as its own incident.
+            self._stall_persisted = False
 
     def heartbeat(self) -> None:
         """Record drift since the previous heartbeat tick."""

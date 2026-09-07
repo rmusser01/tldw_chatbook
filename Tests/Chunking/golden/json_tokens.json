@@ -1,0 +1,124 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "bc5887ab33606185f079b3e7ce6152ef",
+        "chunk_index": 1,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.14285714285714285,
+        "total_chunks": 7
+      },
+      "text": "{\"data\": [{\"item\": 0, \"text\": \"value 0\"}, {\"item\": 1, \"text\": \"value 1\"}, {\"item\": 2, \"text\": \"value 2\"}, {\"item\": 3, \"text\": \"value"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "215de06452d9b46ebe3ef41cc8fd0561",
+        "chunk_index": 2,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.2857142857142857,
+        "total_chunks": 7
+      },
+      "text": " {\"item\": 3, \"text\": \"value 3\"}, {\"item\": 4, \"text\": \"value 4\"}, {\"item\": 5, \"text\": \"value 5\"}, {\"item\": 6, \"text\": \"value 6\"}, {\"item"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "5aafd839036c88600de56e1921c5432a",
+        "chunk_index": 3,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.42857142857142855,
+        "total_chunks": 7
+      },
+      "text": ", \"text\": \"value 6\"}, {\"item\": 7, \"text\": \"value 7\"}, {\"item\": 8, \"text\": \"value 8\"}, {\"item\": 9, \"text\": \"value 9\"}, {\"item\": 10, \""
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "1eb24517e64b1d1660fa9be145e11421",
+        "chunk_index": 4,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5714285714285714,
+        "total_chunks": 7
+      },
+      "text": " \"value 9\"}, {\"item\": 10, \"text\": \"value 10\"}, {\"item\": 11, \"text\": \"value 11\"}, {\"item\": 12, \"text\": \"value 12\"}, {\"item\": 13, \"text\": \"value"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "abc50c42c1793354029c779de3063706",
+        "chunk_index": 5,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.7142857142857143,
+        "total_chunks": 7
+      },
+      "text": " {\"item\": 13, \"text\": \"value 13\"}, {\"item\": 14, \"text\": \"value 14\"}, {\"item\": 15, \"text\": \"value 15\"}, {\"item\": 16, \"text\": \"value 16\"}, {\"item"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "260a3d9965715e8fa4b9026cad9c71cf",
+        "chunk_index": 6,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.8571428571428571,
+        "total_chunks": 7
+      },
+      "text": ", \"text\": \"value 16\"}, {\"item\": 17, \"text\": \"value 17\"}, {\"item\": 18, \"text\": \"value 18\"}, {\"item\": 19, \"text\": \"value 19\"}]}"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "73ff6000497b0b093da134aa5a1c5134",
+        "chunk_index": 7,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 7
+      },
+      "text": " \"value 19\"}]}"
+    }
+  ],
+  "outcome": "ok"
+}

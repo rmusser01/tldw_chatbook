@@ -9,6 +9,7 @@ maintainer checklist.
 python -m pip install "setuptools>=77.0" build twine wheel
 Packaging/build_dist.sh
 python -m pytest Tests/Packaging/test_release_metadata.py -q
+python -m pytest Tests/Packaging/test_installed_distribution.py -m integration -q -p no:cacheprovider
 ```
 
 `Packaging/build_dist.sh` builds a fresh sdist and wheel, runs `twine check`,

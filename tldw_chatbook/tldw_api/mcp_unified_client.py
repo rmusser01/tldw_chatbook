@@ -149,23 +149,33 @@ class MCPUnifiedClient:
         return params or None
 
     async def get_status(self) -> MCPStatusResponse:
-        payload = await self.root_client._request("GET", "/api/v1/mcp/status", params=None)
+        payload = await self.root_client._request(
+            "GET", "/api/v1/mcp/status", params=None
+        )
         return MCPStatusResponse.from_payload(payload)
 
     async def get_health(self) -> MCPHealthResponse:
-        payload = await self.root_client._request("GET", "/api/v1/mcp/health", params=None)
+        payload = await self.root_client._request(
+            "GET", "/api/v1/mcp/health", params=None
+        )
         return MCPHealthResponse.from_payload(payload)
 
     async def get_metrics(self) -> MCPMetricsResponse:
-        payload = await self.root_client._request("GET", "/api/v1/mcp/metrics", params=None)
+        payload = await self.root_client._request(
+            "GET", "/api/v1/mcp/metrics", params=None
+        )
         return MCPMetricsResponse.from_payload(payload)
 
     async def get_prometheus_metrics(self) -> str:
         request_bytes = getattr(self.root_client, "_request_bytes", None)
         if callable(request_bytes):
             payload = await request_bytes("GET", "/api/v1/mcp/metrics/prometheus")
-            return payload.decode("utf-8") if isinstance(payload, bytes) else str(payload)
-        payload = await self.root_client._request("GET", "/api/v1/mcp/metrics/prometheus", params=None)
+            return (
+                payload.decode("utf-8") if isinstance(payload, bytes) else str(payload)
+            )
+        payload = await self.root_client._request(
+            "GET", "/api/v1/mcp/metrics/prometheus", params=None
+        )
         return payload if isinstance(payload, str) else str(payload)
 
     async def create_auth_token(
@@ -216,7 +226,9 @@ class MCPUnifiedClient:
             params["client_id"] = client_id
         if config is not None:
             params["config"] = config
-        headers = {"mcp-session-id": mcp_session_id} if mcp_session_id is not None else None
+        headers = (
+            {"mcp-session-id": mcp_session_id} if mcp_session_id is not None else None
+        )
         payload = await self.root_client._request(
             "POST",
             "/api/v1/mcp/request",
@@ -239,7 +251,9 @@ class MCPUnifiedClient:
             params["client_id"] = client_id
         if config is not None:
             params["config"] = config
-        headers = {"mcp-session-id": mcp_session_id} if mcp_session_id is not None else None
+        headers = (
+            {"mcp-session-id": mcp_session_id} if mcp_session_id is not None else None
+        )
         payload = await self.root_client._request(
             "POST",
             "/api/v1/mcp/request/batch",
@@ -249,9 +263,13 @@ class MCPUnifiedClient:
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def list_catalog(self, *, archetype_key: Optional[str] = None) -> MCPListEnvelope:
+    async def list_catalog(
+        self, *, archetype_key: Optional[str] = None
+    ) -> MCPListEnvelope:
         params = {"archetype_key": archetype_key} if archetype_key is not None else None
-        payload = await self.root_client._request("GET", "/api/v1/mcp/catalog", params=params)
+        payload = await self.root_client._request(
+            "GET", "/api/v1/mcp/catalog", params=params
+        )
         return MCPListEnvelope.from_payload(payload)
 
     async def list_modules(
@@ -439,7 +457,9 @@ class MCPUnifiedClient:
         owner_scope_id: Optional[int] = None,
     ) -> MCPListEnvelope:
         if access_context is not None and owner_scope_type is None:
-            owner_scope_type, owner_scope_id = self._owner_scope_from_access_context(access_context)
+            owner_scope_type, owner_scope_id = self._owner_scope_from_access_context(
+                access_context
+            )
         params: Dict[str, Any] = {}
         if owner_scope_type is not None:
             params["owner_scope_type"] = owner_scope_type
@@ -521,7 +541,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def get_external_server_auth_template(self, *, server_id: str) -> MCPPayloadEnvelope:
+    async def get_external_server_auth_template(
+        self, *, server_id: str
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "GET",
             f"/api/v1/mcp/hub/external-servers/{server_id}/auth-template",
@@ -542,7 +564,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def list_external_server_credential_slots(self, *, server_id: str) -> MCPListEnvelope:
+    async def list_external_server_credential_slots(
+        self, *, server_id: str
+    ) -> MCPListEnvelope:
         payload = await self.root_client._request(
             "GET",
             f"/api/v1/mcp/hub/external-servers/{server_id}/credential-slots",
@@ -645,7 +669,9 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/permission-profiles",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
@@ -673,7 +699,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def delete_permission_profile(self, *, profile_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_permission_profile(
+        self, *, profile_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/permission-profiles/{profile_id}",
@@ -695,7 +723,12 @@ class MCPUnifiedClient:
             owner_scope_type=owner_scope_type,
             owner_scope_id=owner_scope_id,
         )
-        params = self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id) or {}
+        params = (
+            self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            )
+            or {}
+        )
         if target_type is not None:
             params["target_type"] = target_type
         if target_id is not None:
@@ -731,7 +764,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def delete_policy_assignment(self, *, assignment_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_policy_assignment(
+        self, *, assignment_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/policy-assignments/{assignment_id}",
@@ -739,7 +774,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def get_policy_assignment_override(self, *, assignment_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def get_policy_assignment_override(
+        self, *, assignment_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "GET",
             f"/api/v1/mcp/hub/policy-assignments/{assignment_id}/override",
@@ -760,7 +797,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def delete_policy_assignment_override(self, *, assignment_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_policy_assignment_override(
+        self, *, assignment_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/policy-assignments/{assignment_id}/override",
@@ -783,7 +822,9 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/approval-policies",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
@@ -811,7 +852,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def delete_approval_policy(self, *, approval_policy_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_approval_policy(
+        self, *, approval_policy_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/approval-policies/{approval_policy_id}",
@@ -869,11 +912,15 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/acp-profiles",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def create_acp_profile(self, request: ACPProfileCreateRequest) -> MCPPayloadEnvelope:
+    async def create_acp_profile(
+        self, request: ACPProfileCreateRequest
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/acp-profiles",
@@ -894,7 +941,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def delete_acp_profile(self, *, profile_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_acp_profile(
+        self, *, profile_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         payload = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/acp-profiles/{profile_id}",
@@ -985,11 +1034,15 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/capability-mappings",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def preview_capability_mapping(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def preview_capability_mapping(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/capability-mappings/preview",
@@ -997,7 +1050,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def create_capability_mapping(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def create_capability_mapping(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/capability-mappings",
@@ -1039,11 +1094,15 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/governance-packs",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def dry_run_governance_pack(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def dry_run_governance_pack(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/dry-run",
@@ -1051,7 +1110,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def prepare_governance_pack_source(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def prepare_governance_pack_source(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/source/prepare",
@@ -1059,7 +1120,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def dry_run_governance_pack_source(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def dry_run_governance_pack_source(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/source/dry-run",
@@ -1091,7 +1154,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def dry_run_governance_pack_upgrade(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def dry_run_governance_pack_upgrade(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/dry-run-upgrade",
@@ -1099,7 +1164,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def dry_run_governance_pack_source_upgrade(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def dry_run_governance_pack_source_upgrade(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/source/dry-run-upgrade",
@@ -1107,7 +1174,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def import_governance_pack(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def import_governance_pack(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/import",
@@ -1115,7 +1184,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def execute_governance_pack_source_upgrade(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def execute_governance_pack_source_upgrade(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/source/execute-upgrade",
@@ -1123,7 +1194,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def import_governance_pack_source(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def import_governance_pack_source(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/source/import",
@@ -1131,7 +1204,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def execute_governance_pack_upgrade(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def execute_governance_pack_upgrade(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/governance-packs/execute-upgrade",
@@ -1171,7 +1246,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(payload)
 
-    async def update_governance_pack_trust_policy(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def update_governance_pack_trust_policy(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "PUT",
             "/api/v1/mcp/hub/governance-packs/trust-policy",
@@ -1188,11 +1265,15 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/path-scope-objects",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def create_path_scope_object(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def create_path_scope_object(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/path-scope-objects",
@@ -1213,7 +1294,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def delete_path_scope_object(self, *, path_scope_object_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_path_scope_object(
+        self, *, path_scope_object_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/path-scope-objects/{path_scope_object_id}",
@@ -1230,11 +1313,15 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/workspace-set-objects",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def create_workspace_set_object(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def create_workspace_set_object(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/workspace-set-objects",
@@ -1255,7 +1342,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def delete_workspace_set_object(self, *, workspace_set_object_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_workspace_set_object(
+        self, *, workspace_set_object_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/workspace-set-objects/{workspace_set_object_id}",
@@ -1310,11 +1399,15 @@ class MCPUnifiedClient:
         payload = await self.root_client._request(
             "GET",
             "/api/v1/mcp/hub/shared-workspaces",
-            params=self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id),
+            params=self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            ),
         )
         return MCPListEnvelope.from_payload(payload)
 
-    async def create_shared_workspace(self, payload: dict[str, Any]) -> MCPPayloadEnvelope:
+    async def create_shared_workspace(
+        self, payload: dict[str, Any]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "POST",
             "/api/v1/mcp/hub/shared-workspaces",
@@ -1335,7 +1428,9 @@ class MCPUnifiedClient:
         )
         return MCPPayloadEnvelope.from_payload(response)
 
-    async def delete_shared_workspace(self, *, shared_workspace_id: Union[str, int]) -> MCPPayloadEnvelope:
+    async def delete_shared_workspace(
+        self, *, shared_workspace_id: Union[str, int]
+    ) -> MCPPayloadEnvelope:
         response = await self.root_client._request(
             "DELETE",
             f"/api/v1/mcp/hub/shared-workspaces/{shared_workspace_id}",
@@ -1353,7 +1448,12 @@ class MCPUnifiedClient:
         object_kind: Optional[str] = None,
         scope_type: Optional[str] = None,
     ) -> MCPPayloadEnvelope:
-        params = self._owner_scope_params(owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id) or {}
+        params = (
+            self._owner_scope_params(
+                owner_scope_type=owner_scope_type, owner_scope_id=owner_scope_id
+            )
+            or {}
+        )
         if severity is not None:
             params["severity"] = severity
         if finding_type is not None:
@@ -1574,7 +1674,9 @@ class MCPUnifiedClient:
         user = profile.user or MCPUserProfileIdentity()
         memberships = profile.memberships or MCPUserProfileMemberships()
         manageable_org_ids = _coerce_manageable_ids(memberships.orgs, id_field="org_id")
-        manageable_team_ids = _coerce_manageable_ids(memberships.teams, id_field="team_id")
+        manageable_team_ids = _coerce_manageable_ids(
+            memberships.teams, id_field="team_id"
+        )
         principal = MCPAccessBootstrapPrincipal(
             user_id=user.id,
             username=user.username,
@@ -1600,12 +1702,16 @@ class MCPUnifiedClient:
         if scope_kind == "team":
             normalized_scope_ref = _coerce_identifier(scope_ref)
             if normalized_scope_ref is None:
-                raise ValueError("team-scoped catalog operations require a team identifier")
+                raise ValueError(
+                    "team-scoped catalog operations require a team identifier"
+                )
             return f"/api/v1/teams/{normalized_scope_ref}/mcp/tool_catalogs"
         if scope_kind == "org":
             normalized_scope_ref = _coerce_identifier(scope_ref)
             if normalized_scope_ref is None:
-                raise ValueError("org-scoped catalog operations require an org identifier")
+                raise ValueError(
+                    "org-scoped catalog operations require an org identifier"
+                )
             return f"/api/v1/orgs/{normalized_scope_ref}/mcp/tool_catalogs"
         if scope_kind == "system_admin":
             return "/api/v1/admin/mcp/tool_catalogs"
@@ -1634,7 +1740,9 @@ class MCPUnifiedClient:
         owner_scope_id: Optional[int],
     ) -> tuple[Optional[MCPHubOwnerScopeType], Optional[int]]:
         if access_context is not None and owner_scope_type is None:
-            derived_scope_type, derived_scope_id = cls._owner_scope_from_access_context(access_context)
+            derived_scope_type, derived_scope_id = cls._owner_scope_from_access_context(
+                access_context
+            )
             return derived_scope_type, derived_scope_id
         return owner_scope_type, owner_scope_id
 

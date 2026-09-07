@@ -49,10 +49,8 @@ Changed the PyPI workflow so production publishing is triggered by protected `ma
 
 Extracted the PyPI version-exists guard into `Packaging/check_pypi_release.py`, added executable coverage for existing releases, missing releases, unexpected HTTP errors, validated output-path writes, workflow-facing output emission, and serialized same-ref workflow runs. Updated PyPI release documentation and the release build wrapper output so maintainers no longer follow the old tag-driven production path. Verified the live GitHub `pypi` environment deployment policy now permits only the `main` branch.
 
-Main activation note: this branch keeps `main`'s current `tldw-cli` entry point expectation and removes the nonfunctional installed-distribution workflow step that referenced `Tests/Packaging/test_installed_distribution.py`, which is not present on `main`. The release metadata tests now cover the production trigger, publish guard, output wiring, and stale-version behavior that this PR changes.
-
 Verification:
-- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q` -> 24 passed
+- `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Packaging/test_release_metadata.py -q` -> 15 passed, 1 existing dependency warning
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m py_compile Packaging/check_pypi_release.py Tests/Packaging/test_release_metadata.py` -> passed
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check Packaging/check_pypi_release.py Tests/Packaging/test_release_metadata.py` -> passed
 - `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c "from pathlib import Path; import yaml; yaml.safe_load(Path('.github/workflows/publish-pypi.yml').read_text()); print('yaml ok')"` -> yaml ok

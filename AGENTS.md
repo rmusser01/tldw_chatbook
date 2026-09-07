@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Codex (Codex.ai/code) when working 
 
 **tldw_chatbook** - TUI application built with Textual for LLM interactions. Features: conversation management, character chat, notes with file sync, media ingestion, RAG capabilities.
 
-**Tech Stack**: Python ≥3.11, Textual ≥3.3.0, SQLite with FTS5, AGPLv3+  
+**Tech Stack**: Python ≥3.11, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
 **Key Dependencies**: httpx, loguru, rich, pydantic, toml, keyring, aiofiles, jinja2
 
 ## Quick Commands
@@ -44,8 +44,10 @@ pytest --cov=tldw_chatbook  # With coverage
 - `SearchRAGWindow.py` - RAG search interface
 - `Evals_Window_v3.py` - LLM benchmarking
 - `MediaWindow.py` - Media management hub
-- `Coding_Window.py` - Code-focused chat interface
+- `Screens/chat_screen.py` - The Console: live agent work, approvals, tools, and RAG
 - `IngestTldwApiWindow.py` - Media ingestion forms
+
+**Settings**: `UI/Screens/settings_screen.py` (F9 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` and `Widgets/enhanced_settings_sidebar.py` (legacy Chat window only) are deprecated parallels — do not add new settings there.
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
@@ -62,10 +64,11 @@ pytest --cov=tldw_chatbook  # With coverage
 - **`Tools/`** - `tool_executor.py`, built-in: DateTimeTool, CalculatorTool
 - **`Evals/`** - `eval_orchestrator.py`, `eval_runner.py`, task-specific runners
 - **`LLM_Calls/`** - Provider integrations, unified `chat_with_provider()` interface
+- **`Image_Generation/`** / **`Video_Generation/`** - Media-generation packages: adapter registry, config with secrets precedence, single validation choke point (`worker.run_generation`). Video mirrors image per ADR-044; `Video_Generation/video_store.py` is the ephemeral message-keyed video file store (task-3401.4); video backends land in task-3401.3/.6/.7
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v7
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v37
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
 - Other DBs: Evals, Prompts, Subscriptions
@@ -150,7 +153,8 @@ Key sections:
 
 ### Testing
 
-- Run full suite before PRs
+- **Ask before full sweeps**: before running the full test suite, ask whether a full sweep is wanted. Unless the user opts in, verify with targeted runs only — the tests touching the modified files/functionality
+- Run the full suite only when the user asks for it (e.g. pre-PR/pre-merge verification they explicitly request)
 - Use real SQLite in-memory for DB tests
 - Property-based testing with Hypothesis
 - Markers: unit, integration, optional, asyncio
@@ -158,10 +162,17 @@ Key sections:
 ## Special Systems
 
 ### Tool Calling
-- Schema v7 adds tool messages
-- `tool_executor.py` handles execution
-- Provider parsing implemented
-- Status: Detection works, execution pending
+- Schema v7 adds tool messages; `tool_executor.py` runs the builtin tools
+- `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
+- Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
+- Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
+- Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access.
+
+### Console Project Instructions
+- `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
+- Registry ownership and path targets feed one shared activation ledger before normal tool review; read-only bindings do not advertise mutating tools.
+- UI, persistence, and logs keep automatic bodies out of metadata surfaces; the explicit disposable Context **Next Send** preview is the only automatic UI body view.
+- Governance: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md` and `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
 
 ### Config Encryption
 - AES-256 with PBKDF2
@@ -183,6 +194,18 @@ Key sections:
 - Reviews diffs with LLM
 - Exit 0 = pass, 2 = fail
 
+### Model Catalog Auto-Refresh
+- Startup background refresh of cloud-provider model lists (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, ZAI) via `LLM_Provider_Catalog/`
+- Disk TTL cache: `model_catalog_cache.json` in the user data dir (IDs + timestamps only)
+- Capped merge (50) into model selectors; full catalog searchable in the Alt+M popover
+- Config: `[model_catalog]` in config.toml; per-provider opt-in write-through appends new models to `[providers]`
+- Governance: ADR-020 (amends ADR-002), spec/plan in Docs/superpowers/{specs,plans}/2026-07-17-model-catalog-auto-refresh*
+
+### Workspace Assistant Defaults
+- Explicit workspaces carry reference-backed `assistant_defaults` (persona + permission profile); Default/global stay unset.
+- Persona policy rules narrow only (deny-by-default advertising, ask floors, per-run call caps); profiles inherit unset keys from `default`; all existing gates/floors apply first.
+- Governance: `backlog/decisions/079-workspace-assistant-defaults.md` and `Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md`.
+
 ## Project-Specific Gotchas
 
 1. **No localStorage** in artifacts - use React state or JS variables
@@ -195,6 +218,7 @@ Key sections:
 8. **FTS5** - Triggers auto-update on text columns
 9. **Workers** - Mark exclusive=True to prevent duplicates
 10. **Reactive** - recompose=True rebuilds, default just refreshes
+11. **Keybindings** - Screens must not bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) or shadow the globals ctrl+p/ctrl+q/f1/f6; screen actions use single-letter htop-style bindings; footer hints may only advertise implemented actions — see `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`
 
 ## File Reference
 
@@ -230,6 +254,13 @@ Critical files for common tasks:
 - Every implementation decision starts with reading the corresponding Markdown task file.
 - Project documentation is in **`backlog/docs/`**.
 - Project decisions are in **`backlog/decisions/`**.
+- Hard-won working knowledge is in **`backlog/docs/lessons-*.md`** -- traps that have
+  actually cost time in this repo, each recorded with the incident that produced it.
+  **Read the one covering your area before starting**; they are short, and they exist
+  because these mistakes recur:
+  - `lessons-testing-evidence.md` -- what actually counts as evidence a change works
+  - `lessons-live-verification.md` -- running the app and talking to a real server
+  - `lessons-backlog-hygiene.md` -- task IDs, CLI quirks, git plumbing
 - Canonical Architecture Decision Records (ADRs) live in **`backlog/decisions/`**. Historical ADR-like material elsewhere is reference-only unless a canonical ADR imports or supersedes it.
 - Before implementation planning, read relevant ADRs and decide whether the task requires a new ADR.
 
@@ -415,7 +446,13 @@ A task is **Done** only when **ALL** of the following are complete:
 6. **Review**: self review code.
 7. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
 8. **No regressions**: performance, security and licence checks green.
-9. **ADR hygiene**: ADR check completed; any new or superseded ADRs are linked from the task Implementation Plan and Implementation Notes.
+9. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
+   trap, a wrong assumption that cost time, a verification that only worked one way —
+   add or update an entry in `backlog/docs/lessons-*.md`. **State the incident, not
+   just the rule**: a lesson without the evidence that produced it decays into folklore
+   and gets ignored. Most tasks produce nothing here, and that is fine; do not invent
+   one to fill the slot.
+10. **ADR hygiene**: ADR check completed; any new or superseded ADRs are linked from the task Implementation Plan and Implementation Notes.
 
 ⚠️ **IMPORTANT**: Never mark a task as Done without completing ALL items above.
 

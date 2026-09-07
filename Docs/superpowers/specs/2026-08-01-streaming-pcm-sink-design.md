@@ -1,0 +1,172 @@
+# Streaming PCM Sink — design
+
+**Date:** 2026-08-01
+**Programme:** Console voice2voice, V3 phase 1 of 2 (user-decided split: sink first, then the
+hands-free loop as its own spec). V1 = PR #1085, V2 = PR #1171.
+**Decided with the user:** sink-first decomposition; PCM-capable providers only (no decode
+adapter this phase); proving consumer = Console spoken feedback.
+
+## Why
+
+`TTS/audio_player.py` plays complete files through a subprocess (`afplay`/`mpv`/`ffplay`,
+verified on dev at :65-88). It cannot begin speaking before generation finishes and cannot be
+interrupted mid-utterance with any latency guarantee. V3's hands-free loop needs both:
+spoken replies that start while the LLM is still streaming, and barge-in that silences
+playback in tens of milliseconds. V4 (realtime API) cannot exist without the same sink.
+`sounddevice` is used today only for input (`Audio/recording_service.py`).
+
+## Verified code facts this design builds on
+
+- `TTS/backends/openai.py` already streams: `generate_speech_stream` (:135) with `"pcm"` a
+  valid `response_format` (:184) chunked via `aiter_bytes` (:229-234). OpenAI PCM is 24 kHz
+  mono int16 LE.
+- `TTS/backends/kokoro.py` already yields int16 PCM chunks with an explicit sample rate
+  (:551-582, `np.int16(samples * 32767).tobytes()`).
+- The shared TTS generation path now routes through the ADAPTER layer
+  (`TTS_Generation.py` :332, `lease.adapter.synthesize(...)`), and the adapter contract
+  already returns a stream: `TTSAudioResponse` (adapter_types.py :352) carries
+  `byte_stream: AsyncIterator[bytes]`, `audio_format`, and `sample_rate`. audio.cpp is a
+  first-class adapter whose response is a VALIDATED PCM16 WAV delivered as a
+  complete-WAV stream (`TTS/adapters/audio_cpp.py` :42/:498-:508). (An earlier draft of
+  this spec excluded audio.cpp on stale evidence -- a pre-merge boot log; corrected.)
+- Console spoken feedback (`ChatScreen._speak_status`, chat_screen.py :5219) posts
+  `TTSRequestEvent(text)`; capture-start silencing posts `TTSPlaybackEvent(action="stop")`
+  (:6395). The conversion point is therefore the `TTSRequestEvent` consumer and the existing
+  stop handler — `chat_screen.py` itself does not change.
+
+## Architecture
+
+One new headless module and one new seam module; one consumer converted.
+
+```
+shared TTS path ──► TTSAudioResponse ──► TTS/pcm_stream.py (seam) ──► Audio/streaming_sink.py
+ (adapters and        byte_stream +        "is THIS RESPONSE sink-        StreamingPcmSink
+  backends, the        audio_format +       eligible PCM? at what          (sounddevice
+  normal request       sample_rate          rate/offset?"                   OutputStream)
+  path, untouched)                              │ not eligible → legacy whole-file path
+```
+
+### `Audio/streaming_sink.py` — `StreamingPcmSink`
+
+- **No Textual imports.** State reaches callers through an `on_event` callable injected at
+  construction (the dictation controller's proven thread-safe emit pattern; callers hand in
+  something `post_message`-shaped).
+- **`sounddevice` is imported lazily inside `open()`**, never at module scope — the repo's
+  optional-dependency import rule (`speech_recording` extra; `recording_service.py`'s
+  guarded-import precedent). A module-level `sink_available() -> bool` probe uses
+  `find_spec` only.
+- The `OutputStream` audio callback pulls int16 frames from a thread-safe buffer
+  (`deque` + lock). Buffer empty → zero-fill (silence) + throttled underrun accounting.
+  **The callback never raises**: any exception is swallowed into a `SinkFailed` event and
+  the stream is torn down from the caller side.
+- **One-voice rule:** constructing/opening a sink while another is open `stop()`s the
+  previous one (module-level registry of the single live sink). The legacy file player is
+  silenced through the existing `TTSPlaybackEvent("stop")` handler, which this phase extends
+  to also stop the live sink — no new global.
+
+### API contract
+
+```python
+sink = StreamingPcmSink(on_event=emit, blocksize_ms=20)
+sink.open(sample_rate=24000, channels=1)   # device opens; SILENT until prebuffer met
+accepted = sink.feed(pcm_bytes)            # non-blocking; False when buffer full
+sink.close()                                # no more feeds; plays out; emits SinkDrained
+sink.stop()                                 # immediate; emits SinkStopped
+```
+
+- **Prebuffer:** audible playback begins only once `PREBUFFER_MS` (300 ms) of audio is
+  buffered **or** `close()` has been called (short utterances that arrive whole play
+  immediately, exactly like today). Rationale: slower-than-realtime generation without a
+  prebuffer produces mid-utterance stutter gaps that sound broken — worse than the current
+  wait-then-play. Constant, documented, both sides contract-tested.
+- **`stop()` uses `stream.abort()`, never `stream.stop()`** — sounddevice's `stop()` drains
+  buffered audio, which would silently violate the latency contract. **Contract: audible
+  silence within 2 audio blocks (≤ ~40 ms at the default blocksize) of `stop()` returning.**
+  This number is what barge-in will rely on; it is pinned by test against the fake stream's
+  deterministic clock. `stop()` is idempotent and thread-safe from any thread.
+- **`feed()` never blocks.** Bounded buffer (60 s of audio at the opened rate); when full,
+  returns `False` and emits `SinkBufferFull` once per episode. Async callers do not poll:
+  the module provides **`async pump(sink, chunk_aiter) -> PumpResult`**, which feeds an
+  async iterator, backs off briefly on `False`, and exits cleanly (cancelling iteration)
+  the moment the sink reports stopped/failed. `PumpResult` is a frozen dataclass:
+  `outcome` (`"drained" | "stopped" | "failed" | "source_error"`) and `bytes_fed: int`.
+  `pump` is what the seam and the future V3 loop call; the sink itself stays synchronous.
+- **Events** (frozen dataclasses, no Textual): `SinkStarted` (first audible block),
+  `SinkDrained`, `SinkStopped`, `SinkBufferFull`, `SinkUnderrun(count)` (throttled, at most
+  one per second), `SinkFailed(reason)`.
+- No pause, no ducking, no resampling this phase (loop spec decides whether barge-in wants
+  duck; the seam supplies the true provider rate so resampling has no caller).
+
+### `TTS/pcm_stream.py` — the response-eligibility seam
+
+```python
+plan = sink_plan(response)   # SinkPlan(sample_rate, channels, skip_bytes) | None
+```
+
+- The seam inspects the RESPONSE the normal generation path already produced, never the
+  provider: a `TTSAudioResponse` (or the backend path's equivalent stream + format
+  metadata) is sink-eligible when its audio is raw PCM int16 (`audio_format == "pcm"`,
+  e.g. openai with `response_format="pcm"` at 24 kHz; kokoro's native int16 chunks) or a
+  validated PCM16 WAV (audio.cpp's complete-WAV delivery -- `skip_bytes` covers the
+  44-byte header; rate/channels come from the response metadata). Anything else --
+  mp3/opus/aac, unknown formats, missing sample rate -- returns `None` and the caller
+  takes the legacy whole-file path unchanged.
+- Branching AFTER synthesis means the request path (voice/character resolution,
+  admission, cooldowns) is byte-identical for both branches, and providers are never
+  enumerated: a future decode adapter extends `sink_plan`, and any adapter that starts
+  returning PCM becomes sink-eligible with zero seam changes.
+- The one request-side change: when the configured provider ADVERTISES pcm as a valid
+  response format (openai does, :184), the spoken-feedback request asks for it --
+  otherwise the request is what it always was.
+
+## Proving consumer: Console spoken feedback
+
+The `TTSRequestEvent` consumer (`handle_tts_request`, an async `@on` handler on the App
+-- tts_events.py :392/:1477, app.py :6490) gains a streaming branch: after the shared
+path produces its response, if `sink_available()` and `sink_plan(response)` is not
+`None`, the branch first silences any legacy file playback through the existing stop
+routine (closing one-voice's opening-side hole), then opens a sink at the plan's
+rate/channels and `pump`s `byte_stream` through it (skipping `skip_bytes`). The whole branch --
+`open()` included (device init costs tens of ms) -- runs INSIDE the same shared
+TTS-generation worker the legacy path already uses, never inline in the handler: this
+repo has already been burned by App-handler work holding the message pump. Otherwise the
+current whole-file path runs byte-identically. The existing `TTSPlaybackEvent("stop")` handler additionally calls
+`stop()` on the live sink, making capture-start silencing immediate (V2 checklist item 7's
+"no self-transcription" window shrinks from file-player kill latency to ≤2 blocks).
+No new config keys. `dictation.spoken_feedback` semantics unchanged.
+
+## Error handling
+
+- `sounddevice` missing (extra not installed): `sink_available()` False → legacy path;
+  nothing imports the package.
+- No output device / device refuses to open: `SinkFailed` at `open()` → caller falls back
+  to the legacy path for that utterance.
+- Device vanishes mid-utterance (Bluetooth walk-off): guarded callback → `SinkFailed` →
+  utterance lost, existing playback-failure toast copy reused. No crash, no retry loop.
+- Underruns after prebuffer: zero-filled, counted, throttled event — expected during slow
+  generation, never an error.
+- A `pump` whose iterator raises: sink `stop()`ed, failure surfaced once through the
+  existing spoken-feedback error path.
+
+## Testing
+
+- **Contract tests** against an injected fake OutputStream with a deterministic clock
+  (constructor takes a stream factory; production default is sounddevice): stop-to-silence
+  ≤ 2 blocks, prebuffer both sides (threshold met vs `close()` before threshold), drain
+  ordering, callback-never-raises (fault-injecting fake), buffer cap + `SinkBufferFull`
+  once, event sequences, one-voice displacement. Mutation-checked per repo discipline.
+- **`pump` tests**: backpressure retry, cancel-on-stop mid-iteration, iterator-raise path.
+- **Seam tests** with fake responses: pcm eligibility, PCM16-WAV eligibility with header
+  skip, `None` for compressed/unknown formats and missing rates -- no provider names
+  anywhere in the seam tests.
+- **Consumer tests**: spoken feedback through a fake sink (streaming branch), fallback
+  branch byte-identical to today, capture-start stops the sink. Existing spoken-feedback
+  suites keep passing unmodified where they pin the legacy path.
+- **Live gate (human, one check):** read-back audibly plays, and starting a capture
+  mid-read-back cuts the audio instantly.
+
+## Out of scope (this phase)
+
+Streaming decode for compressed-format providers; the hands-free loop itself (VAD
+turn-taking, auto-send, barge-in — next spec, builds on this sink); briefings/other
+playback adoption; pause/duck; resampling; any settings UI.

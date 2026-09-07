@@ -13,7 +13,6 @@ from tldw_chatbook.tldw_api import (
     ManuscriptCharacterUpdate,
     ManuscriptChapterCreate,
     ManuscriptChapterResponse,
-    ManuscriptChapterUpdate,
     ManuscriptCitationCreate,
     ManuscriptCitationResponse,
     ManuscriptPartCreate,
@@ -354,13 +353,32 @@ async def test_writing_project_routes_wire_and_return_typed_models(monkeypatch):
     )
     deleted = await client.delete_manuscript_project("project-1", expected_version=2)
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/writing/manuscripts/projects")
-    assert mocked.await_args_list[0].kwargs["params"] == {"status": "draft", "limit": 10, "offset": 5}
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/writing/manuscripts/projects")
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/writing/manuscripts/projects/project-1")
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/writing/manuscripts/projects/project-1")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/writing/manuscripts/projects",
+    )
+    assert mocked.await_args_list[0].kwargs["params"] == {
+        "status": "draft",
+        "limit": 10,
+        "offset": 5,
+    }
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/writing/manuscripts/projects",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/writing/manuscripts/projects/project-1",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/writing/manuscripts/projects/project-1",
+    )
     assert mocked.await_args_list[3].kwargs["headers"] == {"expected-version": "1"}
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/writing/manuscripts/projects/project-1")
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/writing/manuscripts/projects/project-1",
+    )
     assert mocked.await_args_list[4].kwargs["headers"] == {"expected-version": "2"}
     assert isinstance(listed, ManuscriptProjectListResponse)
     assert isinstance(created, ManuscriptProjectResponse)
@@ -370,7 +388,9 @@ async def test_writing_project_routes_wire_and_return_typed_models(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_writing_namespace_gateway_routes_server_only_writing_suite_surfaces(monkeypatch):
+async def test_writing_namespace_gateway_routes_server_only_writing_suite_surfaces(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
@@ -389,15 +409,27 @@ async def test_writing_namespace_gateway_routes_server_only_writing_suite_surfac
     )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/writing/capabilities")
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/writing/snapshot/import")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/writing/snapshot/import",
+    )
     assert mocked.await_args_list[1].kwargs["json_data"] == {"projects": []}
-    assert mocked.await_args_list[1].kwargs["headers"] == {"Idempotency-Key": "writing-import-1"}
-    assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/writing/templates/three-act")
-    assert mocked.await_args_list[2].kwargs["json_data"] == {"description": "Updated template"}
+    assert mocked.await_args_list[1].kwargs["headers"] == {
+        "Idempotency-Key": "writing-import-1"
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "PATCH",
+        "/api/v1/writing/templates/three-act",
+    )
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "description": "Updated template"
+    }
 
 
 @pytest.mark.asyncio
-async def test_writing_namespace_gateway_rejects_cross_namespace_and_unsafe_routes(monkeypatch):
+async def test_writing_namespace_gateway_rejects_cross_namespace_and_unsafe_routes(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
@@ -476,7 +508,9 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
         "project-1",
         ManuscriptChapterCreate(title="Chapter 1", part_id="manuscript-1"),
     )
-    chapters = await client.list_manuscript_chapters("project-1", part_id="manuscript-1")
+    chapters = await client.list_manuscript_chapters(
+        "project-1", part_id="manuscript-1"
+    )
     scene = await client.create_manuscript_scene(
         "chapter-1",
         ManuscriptSceneCreate(title="Scene 1", content_plain="Opening line."),
@@ -492,22 +526,56 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
         "project-1",
         ReorderRequest(
             entity_type="chapters",
-            items=[ReorderItem(id="chapter-1", sort_order=2.0, version=1, new_parent_id="manuscript-1")],
+            items=[
+                ReorderItem(
+                    id="chapter-1",
+                    sort_order=2.0,
+                    version=1,
+                    new_parent_id="manuscript-1",
+                )
+            ],
         ),
     )
     deleted_scene = await client.delete_manuscript_scene("scene-1", expected_version=2)
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/writing/manuscripts/projects/project-1/parts")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/writing/manuscripts/projects/project-1/parts")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/writing/manuscripts/projects/project-1/chapters")
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/writing/manuscripts/projects/project-1/chapters")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/writing/manuscripts/projects/project-1/parts",
+    )
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/writing/manuscripts/projects/project-1/parts",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/writing/manuscripts/projects/project-1/chapters",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/writing/manuscripts/projects/project-1/chapters",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {"part_id": "manuscript-1"}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/writing/manuscripts/chapters/chapter-1/scenes")
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/writing/manuscripts/chapters/chapter-1/scenes")
-    assert mocked.await_args_list[6].args[:2] == ("PATCH", "/api/v1/writing/manuscripts/scenes/scene-1")
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/writing/manuscripts/chapters/chapter-1/scenes",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/writing/manuscripts/chapters/chapter-1/scenes",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "PATCH",
+        "/api/v1/writing/manuscripts/scenes/scene-1",
+    )
     assert mocked.await_args_list[6].kwargs["headers"] == {"expected-version": "1"}
-    assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/writing/manuscripts/projects/project-1/structure")
-    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/writing/manuscripts/projects/project-1/reorder")
+    assert mocked.await_args_list[7].args[:2] == (
+        "GET",
+        "/api/v1/writing/manuscripts/projects/project-1/structure",
+    )
+    assert mocked.await_args_list[8].args[:2] == (
+        "POST",
+        "/api/v1/writing/manuscripts/projects/project-1/reorder",
+    )
     assert mocked.await_args_list[8].kwargs["json_data"] == {
         "entity_type": "chapters",
         "items": [
@@ -519,7 +587,10 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
             }
         ],
     }
-    assert mocked.await_args_list[9].args[:2] == ("DELETE", "/api/v1/writing/manuscripts/scenes/scene-1")
+    assert mocked.await_args_list[9].args[:2] == (
+        "DELETE",
+        "/api/v1/writing/manuscripts/scenes/scene-1",
+    )
     assert isinstance(manuscript, ManuscriptPartResponse)
     assert isinstance(manuscripts[0], ManuscriptPartResponse)
     assert isinstance(chapter, ManuscriptChapterResponse)
@@ -533,7 +604,9 @@ async def test_writing_hierarchy_routes_wire_and_return_typed_models(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_writing_version_and_trash_routes_wire_and_return_typed_models(monkeypatch):
+async def test_writing_version_and_trash_routes_wire_and_return_typed_models(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -561,7 +634,9 @@ async def test_writing_version_and_trash_routes_wire_and_return_typed_models(mon
         expected_version=2,
     )
     trash = await client.list_manuscript_trash(entity_type="scene")
-    restored_trash = await client.restore_manuscript_trash("scene", "scene-1", expected_version=4)
+    restored_trash = await client.restore_manuscript_trash(
+        "scene", "scene-1", expected_version=4
+    )
 
     assert [call.args[:2] for call in mocked.await_args_list] == [
         ("POST", "/api/v1/writing/manuscripts/scene/scene-1/versions"),
@@ -613,20 +688,68 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
             [_plot_hole_payload()],
             _plot_hole_payload(status="resolved", version=2),
             None,
-            [{"scene_id": "scene-1", "character_id": "character-1", "is_pov": True, "name": "Ada", "role": "protagonist"}],
-            [{"scene_id": "scene-1", "character_id": "character-1", "is_pov": True, "name": "Ada", "role": "protagonist"}],
+            [
+                {
+                    "scene_id": "scene-1",
+                    "character_id": "character-1",
+                    "is_pov": True,
+                    "name": "Ada",
+                    "role": "protagonist",
+                }
+            ],
+            [
+                {
+                    "scene_id": "scene-1",
+                    "character_id": "character-1",
+                    "is_pov": True,
+                    "name": "Ada",
+                    "role": "protagonist",
+                }
+            ],
             None,
-            [{"scene_id": "scene-1", "world_info_id": "world-1", "name": "Capital", "kind": "location"}],
-            [{"scene_id": "scene-1", "world_info_id": "world-1", "name": "Capital", "kind": "location"}],
+            [
+                {
+                    "scene_id": "scene-1",
+                    "world_info_id": "world-1",
+                    "name": "Capital",
+                    "kind": "location",
+                }
+            ],
+            [
+                {
+                    "scene_id": "scene-1",
+                    "world_info_id": "world-1",
+                    "name": "Capital",
+                    "kind": "location",
+                }
+            ],
             None,
             _citation_payload(),
             [_citation_payload()],
             None,
-            {"query": "airships", "results": [{"source_id": "media-1", "title": "Source", "excerpt": "Text"}]},
+            {
+                "query": "airships",
+                "results": [
+                    {"source_id": "media-1", "title": "Source", "excerpt": "Text"}
+                ],
+            },
             [_analysis_payload()],
             [_analysis_payload(scope_type="chapter", scope_id="chapter-1")],
-            [_analysis_payload(scope_type="project", scope_id="project-1", analysis_type="plot_holes", score=None)],
-            [_analysis_payload(scope_type="project", scope_id="project-1", analysis_type="consistency")],
+            [
+                _analysis_payload(
+                    scope_type="project",
+                    scope_id="project-1",
+                    analysis_type="plot_holes",
+                    score=None,
+                )
+            ],
+            [
+                _analysis_payload(
+                    scope_type="project",
+                    scope_id="project-1",
+                    analysis_type="consistency",
+                )
+            ],
             {"analyses": [_analysis_payload()], "total": 1},
         ]
     )
@@ -636,14 +759,18 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         "project-1",
         ManuscriptCharacterCreate(name="Ada", role="protagonist", cast_group="heroes"),
     )
-    characters = await client.list_manuscript_characters("project-1", role="protagonist", cast_group="heroes")
+    characters = await client.list_manuscript_characters(
+        "project-1", role="protagonist", cast_group="heroes"
+    )
     fetched_character = await client.get_manuscript_character("character-1")
     updated_character = await client.update_manuscript_character(
         "character-1",
         ManuscriptCharacterUpdate(name="Ada v2"),
         expected_version=1,
     )
-    deleted_character = await client.delete_manuscript_character("character-1", expected_version=2)
+    deleted_character = await client.delete_manuscript_character(
+        "character-1", expected_version=2
+    )
     relationship = await client.create_manuscript_relationship(
         "project-1",
         ManuscriptRelationshipCreate(
@@ -653,7 +780,9 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ),
     )
     relationships = await client.list_manuscript_relationships("project-1")
-    deleted_relationship = await client.delete_manuscript_relationship("relationship-1", expected_version=1)
+    deleted_relationship = await client.delete_manuscript_relationship(
+        "relationship-1", expected_version=1
+    )
     world_info = await client.create_manuscript_world_info(
         "project-1",
         ManuscriptWorldInfoCreate(kind="location", name="Capital"),
@@ -665,7 +794,9 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ManuscriptWorldInfoUpdate(name="Capital v2"),
         expected_version=1,
     )
-    deleted_world_info = await client.delete_manuscript_world_info("world-1", expected_version=2)
+    deleted_world_info = await client.delete_manuscript_world_info(
+        "world-1", expected_version=2
+    )
     plot_line = await client.create_manuscript_plot_line(
         "project-1",
         ManuscriptPlotLineCreate(title="Main Plot"),
@@ -676,10 +807,14 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ManuscriptPlotLineUpdate(title="Main Plot v2"),
         expected_version=1,
     )
-    deleted_plot_line = await client.delete_manuscript_plot_line("plot-line-1", expected_version=2)
+    deleted_plot_line = await client.delete_manuscript_plot_line(
+        "plot-line-1", expected_version=2
+    )
     plot_event = await client.create_manuscript_plot_event(
         "plot-line-1",
-        ManuscriptPlotEventCreate(title="Inciting Incident", scene_id="scene-1", chapter_id="chapter-1"),
+        ManuscriptPlotEventCreate(
+            title="Inciting Incident", scene_id="scene-1", chapter_id="chapter-1"
+        ),
     )
     plot_events = await client.list_manuscript_plot_events("plot-line-1")
     updated_plot_event = await client.update_manuscript_plot_event(
@@ -687,10 +822,14 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ManuscriptPlotEventUpdate(title="Incident v2"),
         expected_version=1,
     )
-    deleted_plot_event = await client.delete_manuscript_plot_event("plot-event-1", expected_version=2)
+    deleted_plot_event = await client.delete_manuscript_plot_event(
+        "plot-event-1", expected_version=2
+    )
     plot_hole = await client.create_manuscript_plot_hole(
         "project-1",
-        ManuscriptPlotHoleCreate(title="Continuity Issue", scene_id="scene-1", chapter_id="chapter-1"),
+        ManuscriptPlotHoleCreate(
+            title="Continuity Issue", scene_id="scene-1", chapter_id="chapter-1"
+        ),
     )
     plot_holes = await client.list_manuscript_plot_holes("project-1", status="open")
     updated_plot_hole = await client.update_manuscript_plot_hole(
@@ -698,25 +837,35 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ManuscriptPlotHoleUpdate(status="resolved"),
         expected_version=1,
     )
-    deleted_plot_hole = await client.delete_manuscript_plot_hole("plot-hole-1", expected_version=2)
+    deleted_plot_hole = await client.delete_manuscript_plot_hole(
+        "plot-hole-1", expected_version=2
+    )
     linked_characters = await client.link_manuscript_scene_character(
         "scene-1",
         SceneCharacterLink(character_id="character-1", is_pov=True),
     )
     scene_characters = await client.list_manuscript_scene_characters("scene-1")
-    unlinked_character = await client.unlink_manuscript_scene_character("scene-1", "character-1")
+    unlinked_character = await client.unlink_manuscript_scene_character(
+        "scene-1", "character-1"
+    )
     linked_world_info = await client.link_manuscript_scene_world_info(
         "scene-1",
         SceneWorldInfoLink(world_info_id="world-1"),
     )
     scene_world_info = await client.list_manuscript_scene_world_info("scene-1")
-    unlinked_world_info = await client.unlink_manuscript_scene_world_info("scene-1", "world-1")
+    unlinked_world_info = await client.unlink_manuscript_scene_world_info(
+        "scene-1", "world-1"
+    )
     citation = await client.create_manuscript_citation(
         "scene-1",
-        ManuscriptCitationCreate(source_type="manual", source_title="Reference", excerpt="Quote"),
+        ManuscriptCitationCreate(
+            source_type="manual", source_title="Reference", excerpt="Quote"
+        ),
     )
     citations = await client.list_manuscript_citations("scene-1")
-    deleted_citation = await client.delete_manuscript_citation("citation-1", expected_version=1)
+    deleted_citation = await client.delete_manuscript_citation(
+        "citation-1", expected_version=1
+    )
     research = await client.research_manuscript_scene(
         "scene-1",
         ManuscriptResearchRequest(query="airships", top_k=3),
@@ -750,9 +899,18 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ("GET", "/api/v1/writing/manuscripts/characters/character-1"),
         ("PATCH", "/api/v1/writing/manuscripts/characters/character-1"),
         ("DELETE", "/api/v1/writing/manuscripts/characters/character-1"),
-        ("POST", "/api/v1/writing/manuscripts/projects/project-1/characters/relationships"),
-        ("GET", "/api/v1/writing/manuscripts/projects/project-1/characters/relationships"),
-        ("DELETE", "/api/v1/writing/manuscripts/characters/relationships/relationship-1"),
+        (
+            "POST",
+            "/api/v1/writing/manuscripts/projects/project-1/characters/relationships",
+        ),
+        (
+            "GET",
+            "/api/v1/writing/manuscripts/projects/project-1/characters/relationships",
+        ),
+        (
+            "DELETE",
+            "/api/v1/writing/manuscripts/characters/relationships/relationship-1",
+        ),
         ("POST", "/api/v1/writing/manuscripts/projects/project-1/world-info"),
         ("GET", "/api/v1/writing/manuscripts/projects/project-1/world-info"),
         ("GET", "/api/v1/writing/manuscripts/world-info/world-1"),
@@ -787,7 +945,10 @@ async def test_writing_auxiliary_routes_wire_and_return_typed_models(monkeypatch
         ("GET", "/api/v1/writing/manuscripts/projects/project-1/analyses"),
     ]
     assert [call.args[:2] for call in mocked.await_args_list] == expected_routes
-    assert mocked.await_args_list[1].kwargs["params"] == {"role": "protagonist", "cast_group": "heroes"}
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "role": "protagonist",
+        "cast_group": "heroes",
+    }
     assert mocked.await_args_list[3].kwargs["headers"] == {"expected-version": "1"}
     assert mocked.await_args_list[9].kwargs["params"] == {"kind": "location"}
     assert mocked.await_args_list[22].kwargs["params"] == {"status": "open"}

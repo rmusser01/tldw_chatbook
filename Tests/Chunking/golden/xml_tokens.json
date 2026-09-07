@@ -1,0 +1,107 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "d1c7dd1a2f25fa5018a43ee8fac90443",
+        "chunk_index": 1,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.16666666666666666,
+        "total_chunks": 6
+      },
+      "text": "<root><item id='0'>text 0</item><item id='1'>text 1</item><item id='2'>text 2</item><item id='3'>text 3</item><item id='4'>text 4"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "07371213d5395b2dcaceeba49298dae3",
+        "chunk_index": 2,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.3333333333333333,
+        "total_chunks": 6
+      },
+      "text": "</item><item id='4'>text 4</item><item id='5'>text 5</item><item id='6'>text 6</item><item id='7'>text 7</item><item id='8'>text 8"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "7f198c38301d0cc012856d0e383e2a68",
+        "chunk_index": 3,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.5,
+        "total_chunks": 6
+      },
+      "text": "</item><item id='8'>text 8</item><item id='9'>text 9</item><item id='10'>text 10</item><item id='11'>text 11</item><item id='12'>text 12"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "28ef5453204ab9588e72fe6aea98b578",
+        "chunk_index": 4,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.6666666666666666,
+        "total_chunks": 6
+      },
+      "text": "</item><item id='12'>text 12</item><item id='13'>text 13</item><item id='14'>text 14</item><item id='15'>text 15</item><item id='16'>text 16"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "9be4ebcd9288a6292cb12d05fd428f62",
+        "chunk_index": 5,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 0.8333333333333334,
+        "total_chunks": 6
+      },
+      "text": "</item><item id='16'>text 16</item><item id='17'>text 17</item><item id='18'>text 18</item><item id='19'>text 19</item></root>"
+    },
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "07db2749005bc0e827116b142151fdeb",
+        "chunk_index": 6,
+        "chunk_method": "tokens",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 6
+      },
+      "text": "</item></root>"
+    }
+  ],
+  "outcome": "ok"
+}

@@ -1,18 +1,19 @@
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.1.8.0"
+version = "0.2.0"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "AGPL-3.0-or-later"}
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -38,13 +39,30 @@ dependencies = [
     "chardet",
     "httpx",
     "loguru",
-    "textual>=3.3.0",
+    "textual==8.2.8",  # exact pin: UI framework, bump deliberately (TASK-1353)
+    "textual-diff-view==0.1.5",  # exact pin: diff widget, bump deliberately (TASK-1351)
     "requests",
     "rich",
+    "pyte==0.8.2",
+    "regex==2026.4.4",
+    "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
-    "pillow",
+    # TASK-18606: was pinned to ==11.2.1 for ADR-054 renderer identity. The
+    # renderer now owns its own determinism (fixed-cell font pinned and metric-
+    # verified, identity hashed from pixels not PNG bytes), so the identity no
+    # longer rides on this version. Freezing an image PARSER that this app
+    # points at untrusted input was too high a price for reproducibility that
+    # belongs in the renderer. Floor is 10.4, which introduced
+    # `ImageFont.load_default_imagefont()` (10.1 is what changed
+    # `load_default()` to the proportional TrueType face -- the very break
+    # this renderer pins its way out of -- but the explicit legacy-font
+    # accessor the renderer needs did not exist until 10.4).
+    "pillow>=10.4",
     "PyYAML",
     "pydantic>=2.4,<3",
+    "rfc8785==0.1.4",  # exact pin: shared profile JCS contract (ADR-102)
+    "cryptography",  # AES-GCM Personal Context envelopes and key wrapping
+    "portalocker==3.2.0",
     "psutil",
     "toml",
     "tomli; python_version < '3.11'",
@@ -55,8 +73,13 @@ dependencies = [
     "keyring",
     "markdownify",
     "aiofiles",
+    "croniter>=1.4.0",
     "textual-image",
-    "anytree",
+    "tiktoken==0.14.0",  # exact pin: reviewed offline encoding bundle/runtime seam
+    "defusedxml",    # engine xml security parsing (Q9: core)
+    "html5lib>=1.1,<2",
+    "tinycss2>=1.4,<2",
+    "aiohttp>=3.9,<4",
 ]
 
 # --- Optional Dependencies ---
@@ -106,11 +129,17 @@ local_mlx = ["mlx-lm"]
 transcription_faster_whisper = [
     "faster-whisper",  # CPU/CUDA optimized Whisper
 ]
+transcription_parakeet_onnx = [
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
+]
+transcription_transcribe_cpp = [
+    "transcribe-cpp==0.1.3",  # Optional direct-local GGUF runtime
+]
 transcription_lightning_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
 ]
 transcription_parakeet = [
-    "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
 ]
 # Legacy alias for backward compatibility
 mlx_whisper = [
@@ -119,7 +148,30 @@ mlx_whisper = [
 ]
 local_transformers = ["transformers"]
 mcp = [
-    "mcp[cli]>=1.0.0",
+    "mcp-unified==0.2.1",
+]
+image_generation = [
+    # SwarmUI API client (Media_Creation/swarmui_client.py). aiohttp previously
+    # shipped only in [websearch] -- for the article scraper -- so wanting image
+    # generation meant installing the web-search stack (playwright, trafilatura,
+    # pandas, nltk, scikit-learn, ...) to obtain one HTTP client (task-1262).
+    "aiohttp",
+]
+video_playback = [
+    # In-app video playback (task-3401.9/.10): PyAV decodes frames for the
+    # in-transcript silent preview; textual-canvas backs the full player
+    # screen's scrubber. Both are optional -- surfaces degrade to guidance
+    # (or the OS player) when absent, and video generation never needs them.
+    "av",
+    "textual-canvas",
+]
+svg = [
+    "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
+]
+frontmatter = [
+    # YAML front matter consumed (not rendered as noise) in note/README
+    # markdown previews (TASK-1993); absence falls back to default parsing.
+    "mdit-py-plugins",
 ]
 pdf = [
     "pymupdf",
@@ -140,20 +192,33 @@ audio = [
     "yt-dlp",
     "numpy",
     "pydub",
-    "faster-whisper",  # Default transcription provider
-    # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[audio,transcription_lightning_whisper]" or
-    # pip install -e ".[audio,transcription_parakeet]"
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
+    # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
+    # ship it there rather than leaving the preferred engine uninstalled: the
+    # preference could never engage on a normal macOS install, and audio ingest
+    # failed with "faster-whisper is not installed" instead (task-839).
+    "parakeet-mlx; sys_platform == 'darwin'",
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
+    # Fallback everywhere, and the default off darwin.
+    "faster-whisper",
+    # For the other Apple Silicon engine:
+    # pip install -e ".[audio,transcription_lightning_whisper]"
 ]
 video = [
     "soundfile",
     "scipy",
     "yt-dlp",
     "numpy",
-    "faster-whisper",  # Default transcription provider
-    # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[video,transcription_lightning_whisper]" or
-    # pip install -e ".[video,transcription_parakeet]"
+    # macOS prefers parakeet-mlx at runtime (see config.py's darwin branch), so
+    # ship it there rather than leaving the preferred engine uninstalled: the
+    # preference could never engage on a normal macOS install, and audio ingest
+    # failed with "faster-whisper is not installed" instead (task-839).
+    "parakeet-mlx; sys_platform == 'darwin'",
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
+    # Fallback everywhere, and the default off darwin.
+    "faster-whisper",
+    # For the other Apple Silicon engine:
+    # pip install -e ".[video,transcription_lightning_whisper]"
 ]
 media_processing = [
     "soundfile",
@@ -161,6 +226,7 @@ media_processing = [
     "yt-dlp",
     "numpy",
     "faster-whisper",  # Default transcription provider
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Note: For Apple Silicon optimized transcription, also install:
     # pip install -e ".[media_processing,transcription_lightning_whisper]" or
     # pip install -e ".[media_processing,transcription_parakeet]"
@@ -171,10 +237,6 @@ chatterbox = [
     "torch",
     "faster-whisper",  # For validation of generated audio
 ]
-mindmap = [
-    # anytree is already in base dependencies
-    # No additional dependencies needed for basic functionality
-]
 local_tts = [
     "kokoro-onnx",
     "scipy",
@@ -182,6 +244,7 @@ local_tts = [
     "nltk",
     "pyaudio",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "transformers",  # For tokenization
     "torch",  # For PyTorch-based models
     "onnxruntime",  # For ONNX models
@@ -218,7 +281,12 @@ nemo = [
 speech_recording = [
     "pyaudio>=0.2.14",  # Primary audio backend
     "sounddevice>=0.4.6",  # Fallback audio backend
-    "webrtcvad>=2.0.10",  # Voice activity detection
+    "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
+]
+realtime = [
+    "websockets>=14.0",  # Transport for the realtime voice engine (LLM_Calls/realtime); imported lazily by transport/session modules, never at package-import time. Floor is 14.0, NOT 12: `transport.py` calls `connect(additional_headers=...)`, which only the asyncio client accepts, and 14.0 is the release where the top-level `connect` resolves to it -- on 12/13 the legacy client takes `extra_headers` and raises TypeError at connect time
+    "sounddevice>=0.4.6",  # Reply-audio output (Audio/streaming_sink.py) AND the realtime mic tap's capture backend -- nothing else a realtime-only install pulls in provides an audio device
+    "numpy",  # Required by AudioRecordingService (the mic tap refuses to construct without it) and by the sink's frame handling
 ]
 ocr_docext = [
     "docext",  # NanoNets document extraction toolkit
@@ -231,10 +299,19 @@ ocr_docext = [
 dev = [
     "pytest",
     "pytest-timeout",  # For handling hanging tests
+    "pytest-xdist",  # Parallel test execution: pytest -n auto --dist loadscope
+    "pytest-mock",  # Used throughout Tests/; was only in requirements-test.txt
+    # Tests/Agents/test_local_tool_provider.py imports Draft202012Validator at
+    # module level. It reached environments only TRANSITIVELY (chromadb,
+    # docling-core, mcp-unified -- all optional extras), so a plain
+    # `.[dev]` install could not collect that module at all.
+    "jsonschema",
+    "pytest-cov",  # Coverage runs documented in Tests/README.md
     "textual-dev", # For Textual development tools
     "hypothesis",
     "pytest-asyncio",
     "build",  # For building distributions
+    "uv>=0.8.0,<1",  # Isolated wheel/sdist test environments
     "twine",  # For uploading to PyPI
     "wheel",  # For building wheel distributions
     "prometheus_client",  # For metrics collection during development
@@ -254,14 +331,19 @@ diarization = [
     "numpy",  # Numerical operations (already in base deps)
 ]
 subscriptions = [
-    "markdown",  # For HTML generation from markdown
-    "schedule",  # For scheduled tasks
-    "feedparser",  # For RSS feed parsing
-    "beautifulsoup4", # HTML parsing for subscription monitors
-    "cryptography", # Security.py
-    "defusedxml",  # For safe XML parsing
+    # markdown/schedule/feedparser were dropped in TASK-1221: nothing imported
+    # them, and because the feature gate requires every listed package to
+    # import, their absence disabled Watchlists for no reason. Feeds are parsed
+    # by defusedxml/ElementTree plus bs4, never feedparser.
+    "beautifulsoup4", # HTML parsing for subscription monitors (hard import)
+    "cryptography", # Security.py -- without it credentials are stored plaintext
+    "defusedxml",  # Safe XML parsing; falls back to stdlib xml.etree if absent
     "tqdm",
 ]
+# Note: defusedxml is shipped in this extra but is not part of the availability
+# gate in Utils/optional_deps.py because it has a stdlib fallback. Cryptography
+# is also listed here for compatibility but is now a base Personal Context
+# dependency; subscription credential storage still must not use plaintext.
 web = [
     "textual-serve",  # Web server for running Textual apps in browser
 ]
@@ -301,11 +383,14 @@ all-tools = [
     "pandas",
     "playwright",
     "trafilatura",
+    # Serves both [websearch] (article scraper) and [image_generation]
+    # (SwarmUI client); listed once here since all-tools enumerates packages.
     "aiohttp",
     "defusedxml",
     
     # === Transcription and Audio ===
     "faster-whisper",  # CPU/CUDA optimized Whisper
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
     
@@ -314,9 +399,10 @@ all-tools = [
     "scipy",
     "yt-dlp",
     "pydub",
+    "audioop-lts; python_version >= '3.13'",  # stdlib audioop removed in 3.13; pydub needs it
     "pyaudio>=0.2.14",
     "sounddevice>=0.4.6",
-    "webrtcvad>=2.0.10",
+    "webrtcvad-wheels>=2.0.14",  # drop-in `webrtcvad` fork; see speech_recording extra note
     "librosa",
     
     # === TTS (Text-to-Speech) ===
@@ -349,7 +435,7 @@ all-tools = [
     "Pillow",
     
     # === MCP and Integrations ===
-    "mcp[cli]>=1.0.0",
+    "mcp-unified==0.2.1",
     
     # === Subscriptions and Scheduling ===
     "markdown",
@@ -385,50 +471,192 @@ all-tools = [
 "Source Code" = "https://github.com/rmusser01/tldw_chatbook"
 "Changelog" = "https://github.com/rmusser01/tldw_chatbook/blob/main/CHANGELOG.md"
 
-# This creates a command-line script called 'tldw-chatbook'
+# Console scripts installed by the PyPI package.
 [project.scripts]
-# Points to the main function in your tldw_chatbook package's app module.
-# Structure: project_root/tldw_chatbook/app.py, function main_cli_runner
-tldw-cli = "tldw_chatbook.app:main_cli_runner"
+# Loads the full app only when the command is invoked.
+tldw-cli = "tldw_chatbook.cli:main_cli_runner"
 # Direct web server entry point
 tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+tldw_profile_core = "packages/tldw_profile_core/src/tldw_profile_core"
+
 [tool.setuptools.packages.find]
-where = ["."]  # Look for packages in the current directory (where pyproject.toml is)
+where = [".", "packages/tldw_profile_core/src"]
 # Include the 'tldw_chatbook' package and its submodules
-include = ["tldw_chatbook*"]
-exclude = ["Tests*", ".venv*"]
+include = ["tldw_chatbook*", "tldw_profile_core*"]
+exclude = [
+    "Tests*",
+    ".venv*",
+]
 
 [tool.setuptools.package-data]
+# Bundle only the reviewed character, Buddy and tiktoken runtime inventories.
+"tldw_chatbook" = [
+    "assets/characters/samira/*.json",
+    "assets/characters/samira/*.png",
+    "assets/characters/samira/*.md",
+    "assets/characters/samira/expressions/*.webp",
+    "assets/characters/pixel_migu/*.json",
+    "assets/characters/pixel_migu/*.png",
+    "assets/characters/pixel_migu/*.md",
+    "assets/characters/pixel_migu/expressions/*.png",
+    "assets/persona_visual/pixel_migu/*.json",
+    "assets/persona_visual/pixel_migu/*.png",
+    "assets/persona_visual/pixel_migu/*.md",
+    "assets/tiktoken_cache/0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
+    "assets/tiktoken_cache/6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
+    "assets/tiktoken_cache/6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
+    "assets/tiktoken_cache/9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+    "assets/tiktoken_cache/ec7223a39ce59f226a68acc30dc1af2788490e15",
+    "assets/tiktoken_cache/fb374d419588a4632f3f557e76b4b70aebbca790",
+    "assets/tiktoken_cache/LICENSE.txt",
+    "assets/tiktoken_cache/NOTICE.txt",
+    "assets/tiktoken_cache/manifest.json",
+]
+"tldw_chatbook.Canvas" = [
+    "static/canvas_shell.html",
+    "static/canvas_shell.css",
+    "static/canvas_shell.js",
+    "static/quickjs-runtime.js",
+    "static/canvas_renderer.js",
+    "static/canvas_runtime_worker.js",
+    "static/runtime-manifest.json",
+    "static/THIRD_PARTY_LICENSES.txt",
+]
+"tldw_chatbook.Web_Server" = [
+    "static/served_shell.html",
+    "static/served_shell.css",
+    "static/served_shell.js",
+]
+"tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
 "tldw_chatbook.css.Themes" = ["*.tcss"]
-# Include JSON template files and guides
-"tldw_chatbook.Config_Files" = ["*.json", "*.md"]
+# Include JSON configuration, guides, and the RAG pipeline defaults.
+# `rag_pipelines.toml` stays a literal ON PURPOSE (audited in task-19860): a
+# `*.toml` glob would also ship `embedding_configs_examples.toml`, which
+# `Packaging/check_manifest.py` forbids in the wheel. Adding a *runtime*
+# `.toml` here means adding its name here too.
+"tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
+# Runtime chunking templates are DB rows now (spec §8.1.2): the deleted
+# Chunking/templates/ file store ships in neither artifact.
+# `eval_datasets/*.json` is RUNTIME data, not a sample: `Evals/eval_templates/
+# research.py` hands its absolute path to the runner as `dataset_name`, and
+# `eval_runner.py` does `Path(dataset_name).exists()` -- absent from the
+# artifact, the bundled "Research Report Self-Eval" template silently loses its
+# dataset. Found by the task-19860 reviewer sweep for runtime reads of non-.py
+# assets; it was the second instance of the same defect class.
+"tldw_chatbook.Evals" = ["config/*.yaml", "eval_datasets/*.json"]
+"tldw_chatbook.Image_Generation" = ["workflows/*.json"]
+"tldw_chatbook.Video_Generation" = ["workflows/*.json"]
+# One pinned artifact manifest, named ON PURPOSE (audited in task-19860):
+# `Tests/Packaging` pins its repository, commit and package count, so a second
+# TTS `.json` appearing in the wheel is a decision, not a glob's side effect.
+"tldw_chatbook.TTS" = ["audio_cpp_artifact_manifest.json"]
+# Every migration script, matched -- never enumerated (task-19860). The
+# hand-written list this replaced held 13 of the 32 files that existed;
+# `chachanotes_v40_to_v41_persona_visual.sql` and
+# `chachanotes_v45_to_v46_sync_log_retention.sql` are both read by
+# `_initialize_schema`'s v4->current chain, so a PyPI install died with a
+# SchemaError before the app could start. A new migration must ship the
+# moment it lands, and only the author of the migration knows it exists;
+# `*.sql` is the only rule that cannot go stale. README.md stays out: the
+# wheel forbids development Markdown.
+"tldw_chatbook.DB" = [
+    "migrations/chachanotes_v55_to_v56_console_semantic_trace.sql",
+    "migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql",
+    "migrations/*.sql",
+]
+# Preserve the licenses for vendored packages. Named ON PURPOSE (audited in
+# task-19860): a licence notice is a fixed legal obligation per vendored
+# package, not a growing asset directory. The obligation is what makes the
+# list's COMPLETENESS load-bearing -- `LLM_Calls/` and `tldw_api/` re-license
+# their own modules under Apache-2.0 (see the README in each), those modules
+# ship in the wheel, and §4(a) requires the licence text to travel with them;
+# both were missing until the task-19860 reviewer diffed the tree against the
+# artifact.
+"tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
+"tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
+"tldw_chatbook.LLM_Calls" = ["LICENSE"]
+"tldw_chatbook.tldw_api" = ["LICENSE"]
+# Engine is vendored from tldw_server (GPL-3.0-only): GPLv3 §4 requires the
+# licence text itself to ship, so the scope map and the GPL text both travel
+# with the package.
+"tldw_chatbook.Chunking.engine" = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]
 # Include CSS files in subdirectories
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
 "tldw_chatbook.css.layout" = ["*.tcss"]
+# Ship the macOS system-audio helper's Swift source: `ensure_helper()` compiles
+# it with swiftc on first use when no prebuilt binary is bundled.
+"tldw_chatbook.Audio.audiotap" = ["*.swift"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
 [tool.pytest.ini_options]
+# THE single pytest config (task-1457). Tests/UI/pytest.ini used to shadow this
+# whenever pytest was invoked as `pytest Tests/UI` (different rootdir, its own
+# asyncio mode, NO timeout, root conftest not loaded); every invocation now
+# resolves here.
 testpaths = ["Tests"]
-# Exclude server tests that don't belong in the TUI
-addopts = "--ignore=STests --import-mode=importlib"
+# Exclude server tests that don't belong in the TUI.
+# --durations: always report the slowest tests (>=1s) so wall-clock regressions are visible in every run.
+# --strict-markers: an unregistered marker is a collection error, not a silent no-op.
+addopts = "--ignore=STests --import-mode=importlib --durations=25 --durations-min=1.0 --strict-markers -ra"
+# Auto mode suite-wide: async tests execute without per-function marks. Under
+# the old split config, unmarked async tests silently DID NOT RUN in full runs
+# from the repo root (pytest-asyncio strict mode skips unmarked coroutines).
+asyncio_mode = "auto"
 # Default timeout for all tests (in seconds)
 timeout = 300
-# Timeout method: thread (default) or signal
-timeout_method = "thread"
+# Timeout method: DELIBERATELY UNSET (TASK-22062). pytest-timeout picks
+# `signal` where SIGALRM exists (Linux, macOS) and falls back to `thread` on
+# Windows. The previous explicit `thread` was set on the belief -- recorded in
+# the comment it replaced -- that thread was the library default. It is not.
+#
+# It matters because `thread` cannot interrupt a blocked thread: when the
+# timeout fires it destroys the pytest process, so no JUnit is written, no test
+# is named as failing, and under xdist the worker dies and takes its queued
+# tests with it as setup errors. Measured on one real hang in
+# `test_console_local_citation_boundary`: with `thread` no JUnit file was
+# produced at all; with `signal` the same hang reported as exactly one failure.
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
     "ui: marks tests as UI/Textual tests",
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
-    "optional: marks tests that require optional dependencies",
+    "optional: marks tests that require optional dependencies (skipped unless --run-optional)",
     "performance: marks tests as performance tests",
     "property: marks tests as property-based tests",
-    "slow: marks tests that take a long time to run",
+    "slow: marks tests that take a long time to run (skipped unless --run-slow)",
+    "smoke: fast sanity checks of core imports and wiring",
+    "production_path: opts the test into the production sanitization path (Tests/Chunking/conftest.py disables PYTEST_CURRENT_TEST/TLDW_TEST_MODE so the engine's relaxed test-mode branch stays off, spec §10.2)",
+    "benchmark: performance-measurement tests (labeling only; pytest-benchmark is not installed)",
+    "snapshot: visual regression tests using snapshots",
+    "notes: Notes feature tests",
+    "requires_display: tests that require a display (may fail in CI)",
+    "requires_cleanup: tests that need a gc pass immediately after running",
+    "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream, or a mocked input recorder loop",
+    "allow_network: opts out of the autouse _no_network_io guard (Tests/conftest.py) to open a real socket; justify it in the test's docstring",
+    "loopback_network: permits only numeric IPv4 127.0.0.0/8 and IPv6 ::1 sockets under the autouse _no_network_io guard (Tests/conftest.py)",
+    "local_server_probe: opts out of the autouse _no_local_server_probes guard (Tests/conftest.py) to exercise the real /v1/models probe against an injected httpx.MockTransport client",
+    "owned_http_client: opts out of the autouse _console_gateway_http_client_is_offline guard (Tests/conftest.py) for tests that are ABOUT the gateway's real owned httpx client",
+    "live: marks tests that call real paid external APIs (require key files + TLDW_LIVE_SEARCH_TESTS=1 + --run-live)",
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_configs = true
+follow_imports = "skip"
+disable_error_code = ["annotation-unchecked"]
+exclude = [
+    "tldw_chatbook/Local_Ingestion/API_Endpoint_Sample.py",
 ]

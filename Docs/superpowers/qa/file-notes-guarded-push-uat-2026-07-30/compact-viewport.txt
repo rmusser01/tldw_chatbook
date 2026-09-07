@@ -1,0 +1,13 @@
+SANITIZED 40x20 ACCEPTANCE
+
+- Narrow File Notes switched between Navigator and Editor instead of squeezing
+  both panes.
+- Session Git remained reachable from Navigator.
+- Review Details and terminal result copy remained scrollable.
+- Tab, Shift+Tab, Enter, Escape, PageDown, and PageUp did not crash or trap the
+  operator.
+- A delayed operation could be left and revisited without a duplicate request.
+- The uncertain result exposed Back and query-only Check remote again actions.
+- Compact coverage was performed in the primary full-app run. The remediation
+  repeated the affected reopen path at 120x40; mounted regression coverage also
+  exercises both 40x20 and 120x40.

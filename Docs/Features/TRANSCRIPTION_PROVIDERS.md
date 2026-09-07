@@ -2,9 +2,26 @@
 
 This guide helps you choose the right transcription provider for your use case.
 
+## Current Library Batch Route
+
+See the canonical [Library Batch Routing](TRANSCRIPTION.md#library-batch-routing)
+policy for the exact routing table, supported Parakeet ONNX v3 languages,
+installation, cache recovery, and artifact limitations.
+
+The current form exposes semantic `default`, exact `parakeet-onnx`, and exact
+`faster-whisper`. Exact faster-whisper supports ordinary transcription,
+including explicit languages or `auto`, and is the only selection that enables
+the model picker. The form has no translation-target control; the
+translation-to-English contract applies only to stored or programmatic
+options. Parakeet ONNX is distinct from Parakeet-MLX and Legacy NeMo Parakeet
+(`parakeet`).
+
 ## Quick Comparison Table
 
-| Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Parakeet | Canary |
+The comparison below covers the older general and real-time providers; use the
+canonical routing link above for the current Parakeet ONNX Library batch path.
+
+| Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Legacy NeMo Parakeet | Canary |
 |---------|--------------|----------------------|----------------|------------|----------|---------|
 | **Speed** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | **Accuracy** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
@@ -136,7 +153,7 @@ This guide helps you choose the right transcription provider for your use case.
 - Research applications
 - When context understanding is critical
 
-### Parakeet
+### Legacy NeMo Parakeet (`parakeet`)
 
 **Best for:** Real-time English transcription
 
@@ -168,6 +185,9 @@ This guide helps you choose the right transcription provider for your use case.
 ### Canary
 
 **Best for:** Multilingual transcription and translation
+
+This is a legacy provider capability, not a workflow exposed by the current
+Library audio/video form.
 
 **Strengths:**
 - Supports 4 languages (en, de, es, fr)
@@ -202,7 +222,7 @@ This guide helps you choose the right transcription provider for your use case.
 
 **Real-time/Streaming:**
 - First choice: Parakeet-MLX (macOS)
-- Alternative: Parakeet (tdt models)
+- Alternative: Legacy NeMo Parakeet (TDT models)
 - Fallback: Canary with small chunks
 
 **Multilingual Content:**
@@ -211,7 +231,7 @@ This guide helps you choose the right transcription provider for your use case.
 
 **Quick Drafts:**
 - Faster-Whisper (tiny or base)
-- Parakeet (0.6b models)
+- Legacy NeMo Parakeet (0.6b models)
 
 **Best Quality:**
 - Faster-Whisper (large-v3)
@@ -228,12 +248,12 @@ This guide helps you choose the right transcription provider for your use case.
 
 **CPU Only:**
 - Faster-Whisper with int8 compute
-- Small Parakeet models
+- Small Legacy NeMo Parakeet models
 - Avoid Qwen2Audio
 
 **Limited GPU (4-8GB):**
 - Faster-Whisper (all models)
-- Parakeet (all models)
+- Legacy NeMo Parakeet (all models)
 - Canary (may need reduced batch size)
 
 **Powerful GPU (16GB+):**
@@ -244,7 +264,7 @@ This guide helps you choose the right transcription provider for your use case.
 ### By Language
 
 **English Only:**
-- Parakeet for speed
+- Legacy NeMo Parakeet for speed
 - Faster-Whisper for accuracy
 
 **European Languages:**
@@ -265,7 +285,7 @@ This guide helps you choose the right transcription provider for your use case.
 2. Enable GPU acceleration if available
 3. Use int8 compute type for CPU
 4. Disable VAD if not needed
-5. Use Parakeet for English-only content
+5. Use Legacy NeMo Parakeet for English-only content
 
 ### for Accuracy
 1. Use larger models (large-v3, 1.1b variants)
@@ -305,7 +325,7 @@ This guide helps you choose the right transcription provider for your use case.
 - Settings: GPU acceleration
 
 ### "Real-time English"
-- Provider: Parakeet
+- Provider: `parakeet` (Legacy NeMo Parakeet)
 - Model: parakeet-tdt-0.6b-v2
 - Settings: GPU if available
 
@@ -319,7 +339,7 @@ This guide helps you choose the right transcription provider for your use case.
 ### "Transcription is too slow"
 - Switch to smaller model
 - Enable GPU acceleration
-- Use Parakeet for English
+- Use Legacy NeMo Parakeet for English
 - Check CPU/GPU usage
 
 ### "Poor accuracy"

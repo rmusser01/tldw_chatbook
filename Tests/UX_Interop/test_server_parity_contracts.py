@@ -62,7 +62,9 @@ def test_source_selector_state_marks_unavailable_server_from_runtime_policy_stat
     assert contract.active_server_profile_id == "srv-down"
     assert contract.server_reachability == "unreachable"
     assert contract.server_auth_state == "session_invalid"
-    server_option = [option for option in contract.source_options if option["source"] == "server"][0]
+    server_option = [
+        option for option in contract.source_options if option["source"] == "server"
+    ][0]
     assert server_option["enabled"] is False
     assert server_option["reason_code"] == "server_unreachable"
 
@@ -93,7 +95,10 @@ def test_unsupported_action_presentation_contracts_consume_unsupported_reports()
     assert contract.capability_id == "chat"
     assert contract.action_id == "chat.create.server"
     assert contract.unsupported_reason_code == "server_contract_missing"
-    assert contract.unsupported_user_message == "Server first-class conversation creation is not available."
+    assert (
+        contract.unsupported_user_message
+        == "Server first-class conversation creation is not available."
+    )
     assert contract.workspace_scope_id == "workspace-a"
     assert contract.server_reachability == "reachable"
     assert contract.server_auth_state == "authenticated"
@@ -200,7 +205,10 @@ def test_fixture_payload_helpers_cover_required_ux_handoff_cases():
     assert fixtures["source_selector"]["source_options"][1]["source"] == "server"
     assert fixtures["unavailable_server"]["server_reachability"] == "unreachable"
     assert fixtures["auth_failure"]["kind"] == "auth_failure"
-    assert fixtures["unsupported_action"]["unsupported_reason_code"] == "server_contract_missing"
+    assert (
+        fixtures["unsupported_action"]["unsupported_reason_code"]
+        == "server_contract_missing"
+    )
     assert fixtures["workspace_isolation"]["workspace_scope_id"] == "workspace-a"
     assert fixtures["notification_presentation"]["notification_id"] == "notif-1"
     assert fixtures["event_replay_gap"]["replay"]["state"] == "retention_gap"
@@ -266,16 +274,36 @@ def test_server_parity_handoff_packet_aggregates_backend_contract_sections():
         "error_contracts",
         "unsupported_reason_codes",
     }
-    assert packet["sections"]["active_server"]["active_server_profile_id"] == "srv-primary"
-    assert packet["sections"]["source_selector"]["source_options"][1]["source"] == "server"
-    assert packet["sections"]["unsupported_actions"][0]["reason_code"] == "server_required"
+    assert (
+        packet["sections"]["active_server"]["active_server_profile_id"] == "srv-primary"
+    )
+    assert (
+        packet["sections"]["source_selector"]["source_options"][1]["source"] == "server"
+    )
+    assert (
+        packet["sections"]["unsupported_actions"][0]["reason_code"] == "server_required"
+    )
     assert packet["sections"]["notification_feed"][0]["notification_id"] == "notif-1"
     assert packet["sections"]["sync"]["reports"][0]["write_enabled"] is False
-    assert packet["sections"]["remote_utility_local_parity_matrix"]["translation"]["state"] == "pilot"
-    assert packet["sections"]["domain_capability_matrix"]["sharing"]["authority"] == "remote_only"
-    assert packet["sections"]["workspace_isolation"][0]["workspace_scope_id"] == "workspace-a"
-    assert packet["sections"]["mcp_control_plane"]["source_panes"] == ("local", "server")
-    assert packet["sections"]["error_contracts"]["auth_required"]["kind"] == "auth_failure"
+    assert (
+        packet["sections"]["remote_utility_local_parity_matrix"]["translation"]["state"]
+        == "pilot"
+    )
+    assert (
+        packet["sections"]["domain_capability_matrix"]["sharing"]["authority"]
+        == "remote_only"
+    )
+    assert (
+        packet["sections"]["workspace_isolation"][0]["workspace_scope_id"]
+        == "workspace-a"
+    )
+    assert packet["sections"]["mcp_control_plane"]["source_panes"] == (
+        "local",
+        "server",
+    )
+    assert (
+        packet["sections"]["error_contracts"]["auth_required"]["kind"] == "auth_failure"
+    )
 
 
 def test_server_parity_handoff_packet_is_ui_free_and_secret_free():

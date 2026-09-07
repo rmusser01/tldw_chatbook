@@ -86,7 +86,10 @@ async def test_web_clipper_client_routes_save_status_and_enrichment(monkeypatch)
         "capture_metadata": {},
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/web-clipper/clip-1")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/web-clipper/clip-1/enrichments")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/web-clipper/clip-1/enrichments",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {
         "clip_id": "clip-1",
         "enrichment_type": "ocr",

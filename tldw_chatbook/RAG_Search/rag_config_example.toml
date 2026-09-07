@@ -15,7 +15,7 @@ log_performance_metrics = false
 # Retriever configuration
 fts_top_k = 10  # Number of results from full-text search
 vector_top_k = 10  # Number of results from vector search
-hybrid_alpha = 0.5  # Balance between FTS and vector (0=FTS only, 1=vector only)
+hybrid_alpha = 0.7  # Hybrid RRF fusion: vector-leg weight (0=FTS only, 1=vector only); 0.7 = tldw_server default
 
 # Collection names in ChromaDB
 media_collection = "media_embeddings"
@@ -53,8 +53,8 @@ frequency_penalty = 0.0
 presence_penalty = 0.0
 
 # System prompt for RAG responses
-system_prompt = """You are a helpful assistant with access to a knowledge base. 
-Use the provided context to answer questions accurately. If the context doesn't 
+system_prompt = """You are a helpful assistant with access to a knowledge base.
+Use the provided context to answer questions accurately. If the context doesn't
 contain relevant information, say so clearly."""
 
 # Citation style
@@ -68,6 +68,13 @@ cache_ttl = 3600  # 1 hour
 max_cache_size = 1000  # Maximum number of cached queries
 cache_search_results = true
 cache_embeddings = true
+
+# NOTE: embedding model, max_length, every chunking setting, and the vector
+# store distance_metric are "index-determining": changing any of them makes
+# the RAG engine use a SEPARATE vector collection (fingerprinted), which is
+# empty until re-indexed. Query-time settings (top_k, hybrid_alpha,
+# reranking, citations) share one index. See
+# Docs/superpowers/specs/2026-07-21-rag-index-isolation-design.md
 
 [rag.embeddings]
 # Embeddings configuration

@@ -50,7 +50,6 @@ tldw_chatbook/css/
 │   ├── _conversations.tcss      # Conv/Char/Prompts tab
 │   ├── _notes.tcss              # Notes tab specific
 │   ├── _media.tcss              # Media tab specific
-│   ├── _search-rag.tcss         # Search/RAG tab
 │   ├── _llm-management.tcss     # LLM Management tab
 │   ├── _tools-settings.tcss     # Tools & Settings tab
 │   ├── _ingest.tcss             # Ingest tab
@@ -141,7 +140,6 @@ Estimated duplication found:
 @import "./features/_conversations.tcss";
 @import "./features/_notes.tcss";
 @import "./features/_media.tcss";
-@import "./features/_search-rag.tcss";
 @import "./features/_llm-management.tcss";
 @import "./features/_tools-settings.tcss";
 @import "./features/_ingest.tcss";

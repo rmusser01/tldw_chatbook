@@ -55,7 +55,13 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
 class OutputsScopeService:
     """Route output/template actions to the selected backend and normalize records."""
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -95,7 +101,9 @@ class OutputsScopeService:
         return f"outputs.{resource}.{action}.{mode.value}"
 
     @staticmethod
-    def _normalize_record(mode: OutputsBackend, kind: str, value: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_record(
+        mode: OutputsBackend, kind: str, value: dict[str, Any]
+    ) -> dict[str, Any]:
         payload = dict(value or {})
         payload.setdefault("backend", mode.value)
         source_id = payload.get("id") or payload.get(f"{kind}_id")
@@ -103,14 +111,18 @@ class OutputsScopeService:
             payload.setdefault("record_id", f"{mode.value}:output_{kind}:{source_id}")
         return payload
 
-    def _normalize_response(self, mode: OutputsBackend, kind: str | None, value: Any) -> Any:
+    def _normalize_response(
+        self, mode: OutputsBackend, kind: str | None, value: Any
+    ) -> Any:
         if not isinstance(value, dict):
             return value
         payload = dict(value)
         payload.setdefault("backend", mode.value)
         if kind and "items" in payload and isinstance(payload["items"], list):
             payload["items"] = [
-                self._normalize_record(mode, kind, item) if isinstance(item, dict) else item
+                self._normalize_record(mode, kind, item)
+                if isinstance(item, dict)
+                else item
                 for item in payload["items"]
             ]
             return payload
@@ -142,10 +154,14 @@ class OutputsScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id(resource, action, normalized_mode))
         service = self._service_for_mode(normalized_mode)
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(normalized_mode, normalize_kind, result)
 
-    async def list_templates(self, *, mode: OutputsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_templates(
+        self, *, mode: OutputsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="templates",
@@ -155,7 +171,9 @@ class OutputsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_template(self, *, mode: OutputsBackend | str | None = None, template_id: int) -> dict[str, Any]:
+    async def get_template(
+        self, *, mode: OutputsBackend | str | None = None, template_id: int
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="templates",
@@ -165,7 +183,9 @@ class OutputsScopeService:
             args=(template_id,),
         )
 
-    async def create_template(self, *, mode: OutputsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_template(
+        self, *, mode: OutputsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="templates",
@@ -192,7 +212,9 @@ class OutputsScopeService:
             kwargs=kwargs,
         )
 
-    async def delete_template(self, template_id: int, *, mode: OutputsBackend | str | None = None) -> dict[str, Any]:
+    async def delete_template(
+        self, template_id: int, *, mode: OutputsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="templates",
@@ -217,7 +239,9 @@ class OutputsScopeService:
             kwargs=kwargs,
         )
 
-    async def list_artifacts(self, *, mode: OutputsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_artifacts(
+        self, *, mode: OutputsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="artifacts",
@@ -242,7 +266,9 @@ class OutputsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_artifact(self, *, mode: OutputsBackend | str | None = None, output_id: int) -> dict[str, Any]:
+    async def get_artifact(
+        self, *, mode: OutputsBackend | str | None = None, output_id: int
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="artifacts",
@@ -252,7 +278,9 @@ class OutputsScopeService:
             args=(output_id,),
         )
 
-    async def create_artifact(self, *, mode: OutputsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_artifact(
+        self, *, mode: OutputsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="artifacts",
@@ -295,7 +323,9 @@ class OutputsScopeService:
             kwargs=kwargs,
         )
 
-    async def purge_artifacts(self, *, mode: OutputsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def purge_artifacts(
+        self, *, mode: OutputsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             resource="artifacts",

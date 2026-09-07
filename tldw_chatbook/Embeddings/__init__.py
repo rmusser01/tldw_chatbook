@@ -12,9 +12,9 @@ EmbeddingFactoryCompat = EmbeddingFactory
 
 # Re-export main classes for backward compatibility
 __all__ = [
-    'EmbeddingFactory', 
-    'EmbeddingFactoryCompat',  # Alias for backward compatibility
-    'EmbeddingConfigSchema'
+    "EmbeddingFactory",
+    "EmbeddingFactoryCompat",  # Alias for backward compatibility
+    "EmbeddingConfigSchema",
 ]
 
 # Note: InMemoryVectorStore and ChromaVectorStore have been moved to RAG_Search.simplified

@@ -14,6 +14,27 @@ STUDY_SOURCE_ITEMS_LIMIT = 25
 STUDY_MATERIAL_TITLE_LENGTH_LIMIT = 160
 STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT = 1000
 STUDY_SOURCE_ID_LENGTH_LIMIT = 128
+STUDY_INITIAL_SECTIONS = frozenset(
+    {
+        "dashboard",
+        "paths",
+        "flashcards",
+        "quizzes",
+        "mindmaps",
+        "course",
+        "guides",
+        "learning_map",
+    }
+)
+
+#: task-4011: the screens that hand off INTO Study, threaded through
+#: ``HandoffChannel.STUDY_ORIGIN`` so the breadcrumb and Escape target can
+#: name where the user actually came from. "library" is the default when no
+#: origin is staged (every pre-task-4011 entry path was Library's staging
+#: canvas, task-2854).
+STUDY_ORIGIN_HOME = "home"
+STUDY_ORIGIN_LIBRARY = "library"
+STUDY_ORIGINS = frozenset({STUDY_ORIGIN_HOME, STUDY_ORIGIN_LIBRARY})
 
 
 class StudyScopeType(str, Enum):

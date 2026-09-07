@@ -1,0 +1,16 @@
+Full-app PTY transcript excerpt, 120x40 and 160x45
+
+Library > Notes source strip:
+
+    Database |
+
+Expected second source choice:
+
+    Files
+
+Result: FAIL. File Notes was not reachable through the visible interface.
+
+With a process-local diagnostic layout override (no repository edit), the same
+strip rendered:
+
+    Database | Files

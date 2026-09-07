@@ -9,8 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 
 ##############################################################################
+# Textual imports.
+from textual.widgets import Input
+
+##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel
+from .base_dialog import ButtonLabel, InputBar
 from .file_dialog import BaseFileDialog
 from .path_filters import Filters
 
@@ -59,6 +63,19 @@ class FileSave(BaseFileDialog):
         )
         self._can_overwrite = can_overwrite
         """Can an existing file be overwritten?"""
+
+    def _focus_initial_widget(self) -> None:
+        """Focus the filename input instead of the directory listing.
+
+        The Input already carries the seeded default filename
+        (``BaseFileDialog._input_bar``), so a keyboard-only export/save
+        flow just needs to press Enter once the dialog mounts. Without
+        this, focus lands on the directory listing (the base class's
+        default) and that first Enter instead activates the highlighted
+        row -- usually ``..`` -- silently navigating up instead of saving
+        (task-1479).
+        """
+        self.query_one(InputBar).query_one(Input).focus()
 
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.

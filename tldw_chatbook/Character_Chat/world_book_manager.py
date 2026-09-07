@@ -6,36 +6,159 @@ independently of characters, allowing shared lorebooks across conversations.
 """
 
 import json
-import logging
 import sqlite3
-from typing import List, Dict, Any, Optional, Tuple, Union
-from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional, Set
 
 from loguru import logger
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError, CharactersRAGDBError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    InputError,
+    ConflictError,
+    CharactersRAGDBError,
+)
+
+# Shared key for the embedded-snapshot list under a character's
+# ``extensions`` dict. Centralized so the write side (attach/detach) and the
+# read side (resolver, editor sync) can never drift into a typo mismatch.
+CHARACTER_WORLD_BOOKS_KEY = "character_world_books"
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion for loosely-typed entry fields.
+
+    Import/duplicate flows forward external ``priority``/``insertion_order``
+    values straight into DB writes; a non-numeric value (e.g. ``"high"`` from a
+    hand-edited export) must default rather than raise ``ValueError`` and abort
+    the operation.
+
+    Args:
+        value: Raw value from a payload or imported JSON.
+        default: Fallback when the value is missing or malformed.
+
+    Returns:
+        The coerced int, or ``default`` on None/non-numeric input.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Best-effort bool coercion for loosely-typed / imported embedded fields.
+
+    Accepts real bools, and the strings ``"true"/"false"/"1"/"0"/"yes"/"no"``
+    (case-insensitive). Anything else falls back to ``default``. Mirrors the
+    processor's ``_coerce_bool`` so a hand-edited/imported ``enabled`` never
+    misreads (e.g. the string ``"false"`` must not be truthy).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1", "yes", "on"):
+            return True
+        if s in ("false", "0", "no", "off"):
+            return False
+    return default
+
+
+def resolve_character_world_books(
+    char_data: Optional[Dict[str, Any]],
+    exclude_names: Set[str],
+) -> List[Dict[str, Any]]:
+    """Character-attached world books to apply on the send path.
+
+    Reads snapshot blocks from ``char_data['extensions']['character_world_books']``,
+    dedups by name (first wins), drops any whose name is in ``exclude_names``
+    (an enabled conversation-attached book already covers it — conversation
+    wins) or whose book-level ``enabled`` is false, and returns the survivors
+    as ``WorldInfoProcessor._process_world_books``-ready book dicts. Never
+    raises on malformed embedded/imported card content: each surviving block
+    is returned as a sanitized copy (numeric ``scan_depth``/``token_budget``/
+    ``priority``, list-of-dicts ``entries``) so a hostile/hand-edited snapshot
+    can never make the processor's ``max()``/arithmetic/iteration choke and
+    silently disable world-info injection for the whole send.
+
+    Args:
+        char_data: The character record (as returned by
+            ``get_character_card_by_id``), or ``None``.
+        exclude_names: Book names already covered by an enabled
+            conversation-attached world book; conversation wins on a name
+            collision so these are excluded from the result.
+
+    Returns:
+        Sanitized, deduped, enabled-only book dicts ready to pass as the
+        ``world_books`` argument to ``WorldInfoProcessor``.
+    """
+    if not isinstance(char_data, dict):
+        return []
+    ext = char_data.get("extensions")
+    if isinstance(ext, str):
+        try:
+            ext = json.loads(ext or "{}")
+        except (TypeError, ValueError):
+            ext = {}
+    if not isinstance(ext, dict):
+        return []
+    raw = ext.get(CHARACTER_WORLD_BOOKS_KEY)
+    if not isinstance(raw, list):
+        return []
+    resolved: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for block in raw:
+        if not isinstance(block, dict) or not block.get("name"):
+            continue
+        name = str(block.get("name"))
+        if name in seen or name in exclude_names:
+            continue
+        seen.add(name)
+        if not _coerce_bool(block.get("enabled"), True):
+            continue
+        entries = block.get("entries")
+        if not isinstance(entries, list):
+            entries = []
+        resolved.append(
+            {
+                **block,
+                "scan_depth": _coerce_int(block.get("scan_depth"), 3),
+                "token_budget": _coerce_int(block.get("token_budget"), 500),
+                "priority": _coerce_int(block.get("priority"), 0),
+                "entries": [e for e in entries if isinstance(e, dict)],
+            }
+        )
+    return resolved
 
 
 class WorldBookManager:
     """Manages world books and their entries in the database."""
-    
+
     def __init__(self, db: CharactersRAGDB):
         """
         Initialize the WorldBookManager with a database connection.
-        
+
         Args:
             db: CharactersRAGDB instance for database operations
         """
         self.db = db
-    
+
     # --- World Book CRUD Operations ---
-    
-    def create_world_book(self, name: str, description: Optional[str] = None,
-                         scan_depth: int = 3, token_budget: int = 500,
-                         recursive_scanning: bool = False, enabled: bool = True) -> int:
+
+    def create_world_book(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        scan_depth: int = 3,
+        token_budget: int = 500,
+        recursive_scanning: bool = False,
+        enabled: bool = True,
+    ) -> int:
         """
         Create a new world book.
-        
+
         Args:
             name: Unique name for the world book
             description: Optional description
@@ -43,29 +166,37 @@ class WorldBookManager:
             token_budget: Maximum tokens to use for world info
             recursive_scanning: Whether to scan matched entries for more keywords
             enabled: Whether the world book is active
-            
+
         Returns:
             The ID of the created world book
-            
+
         Raises:
             InputError: If name is empty or invalid
             ConflictError: If a world book with this name already exists
         """
         if not name or not name.strip():
             raise InputError("World book name cannot be empty")
-        
+
         query = """
         INSERT INTO world_books (name, description, scan_depth, token_budget, 
                                 recursive_scanning, enabled, client_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """
-        
+
         try:
             with self.db.transaction() as cursor:
-                cursor.execute(query, (
-                    name.strip(), description, scan_depth, token_budget,
-                    recursive_scanning, enabled, self.db.client_id
-                ))
+                cursor.execute(
+                    query,
+                    (
+                        name.strip(),
+                        description,
+                        scan_depth,
+                        token_budget,
+                        recursive_scanning,
+                        enabled,
+                        self.db.client_id,
+                    ),
+                )
                 world_book_id = cursor.lastrowid
                 logger.info(f"Created world book '{name}' with ID {world_book_id}")
                 return world_book_id
@@ -73,14 +204,14 @@ class WorldBookManager:
             if "UNIQUE constraint failed" in str(e):
                 raise ConflictError(f"World book with name '{name}' already exists")
             raise CharactersRAGDBError(f"Database error creating world book: {e}")
-    
+
     def get_world_book(self, world_book_id: int) -> Optional[Dict[str, Any]]:
         """
         Get a world book by ID.
-        
+
         Args:
             world_book_id: The ID of the world book
-            
+
         Returns:
             Dictionary with world book data or None if not found
         """
@@ -90,35 +221,35 @@ class WorldBookManager:
         FROM world_books
         WHERE id = ? AND deleted = 0
         """
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (world_book_id,))
             row = cursor.fetchone()
-            
+
             if row:
                 return {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'scan_depth': row[3],
-                    'token_budget': row[4],
-                    'recursive_scanning': bool(row[5]),
-                    'enabled': bool(row[6]),
-                    'created_at': row[7],
-                    'last_modified': row[8],
-                    'deleted': bool(row[9]),
-                    'client_id': row[10],
-                    'version': row[11]
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "scan_depth": row[3],
+                    "token_budget": row[4],
+                    "recursive_scanning": bool(row[5]),
+                    "enabled": bool(row[6]),
+                    "created_at": row[7],
+                    "last_modified": row[8],
+                    "deleted": bool(row[9]),
+                    "client_id": row[10],
+                    "version": row[11],
                 }
             return None
-    
+
     def get_world_book_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """
         Get a world book by name.
-        
+
         Args:
             name: The name of the world book
-            
+
         Returns:
             Dictionary with world book data or None if not found
         """
@@ -128,35 +259,35 @@ class WorldBookManager:
         FROM world_books
         WHERE name = ? AND deleted = 0
         """
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (name,))
             row = cursor.fetchone()
-            
+
             if row:
                 return {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'scan_depth': row[3],
-                    'token_budget': row[4],
-                    'recursive_scanning': bool(row[5]),
-                    'enabled': bool(row[6]),
-                    'created_at': row[7],
-                    'last_modified': row[8],
-                    'deleted': bool(row[9]),
-                    'client_id': row[10],
-                    'version': row[11]
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "scan_depth": row[3],
+                    "token_budget": row[4],
+                    "recursive_scanning": bool(row[5]),
+                    "enabled": bool(row[6]),
+                    "created_at": row[7],
+                    "last_modified": row[8],
+                    "deleted": bool(row[9]),
+                    "client_id": row[10],
+                    "version": row[11],
                 }
             return None
-    
+
     def list_world_books(self, include_disabled: bool = False) -> List[Dict[str, Any]]:
         """
         List all world books.
-        
+
         Args:
             include_disabled: Whether to include disabled world books
-            
+
         Returns:
             List of world book dictionaries
         """
@@ -166,41 +297,50 @@ class WorldBookManager:
         FROM world_books
         WHERE deleted = 0
         """
-        
+
         if not include_disabled:
             query += " AND enabled = 1"
-        
+
         query += " ORDER BY name"
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query)
-            
+
             world_books = []
             for row in cursor.fetchall():
-                world_books.append({
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'scan_depth': row[3],
-                    'token_budget': row[4],
-                    'recursive_scanning': bool(row[5]),
-                    'enabled': bool(row[6]),
-                    'created_at': row[7],
-                    'last_modified': row[8],
-                    'deleted': bool(row[9]),
-                    'client_id': row[10],
-                    'version': row[11]
-                })
-            
+                world_books.append(
+                    {
+                        "id": row[0],
+                        "name": row[1],
+                        "description": row[2],
+                        "scan_depth": row[3],
+                        "token_budget": row[4],
+                        "recursive_scanning": bool(row[5]),
+                        "enabled": bool(row[6]),
+                        "created_at": row[7],
+                        "last_modified": row[8],
+                        "deleted": bool(row[9]),
+                        "client_id": row[10],
+                        "version": row[11],
+                    }
+                )
+
             return world_books
-    
-    def update_world_book(self, world_book_id: int, name: Optional[str] = None,
-                         description: Optional[str] = None, scan_depth: Optional[int] = None,
-                         token_budget: Optional[int] = None, recursive_scanning: Optional[bool] = None,
-                         enabled: Optional[bool] = None, expected_version: Optional[int] = None) -> bool:
+
+    def update_world_book(
+        self,
+        world_book_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        scan_depth: Optional[int] = None,
+        token_budget: Optional[int] = None,
+        recursive_scanning: Optional[bool] = None,
+        enabled: Optional[bool] = None,
+        expected_version: Optional[int] = None,
+    ) -> bool:
         """
         Update a world book.
-        
+
         Args:
             world_book_id: The ID of the world book to update
             name: New name (optional)
@@ -210,17 +350,17 @@ class WorldBookManager:
             recursive_scanning: New recursive scanning setting (optional)
             enabled: New enabled status (optional)
             expected_version: Expected version for optimistic locking (optional)
-            
+
         Returns:
             True if updated successfully
-            
+
         Raises:
             ConflictError: If version mismatch or name already exists
         """
         # Build update query dynamically
         updates = []
         params = []
-        
+
         if name is not None:
             updates.append("name = ?")
             params.append(name.strip())
@@ -239,45 +379,57 @@ class WorldBookManager:
         if enabled is not None:
             updates.append("enabled = ?")
             params.append(enabled)
-        
+
         if not updates:
             return True  # Nothing to update
-        
+
         # Add standard update fields
-        updates.extend(["last_modified = CURRENT_TIMESTAMP", "version = version + 1", "client_id = ?"])
+        updates.extend(
+            [
+                "last_modified = CURRENT_TIMESTAMP",
+                "version = version + 1",
+                "client_id = ?",
+            ]
+        )
         params.append(self.db.client_id)
-        
-        query = f"UPDATE world_books SET {', '.join(updates)} WHERE id = ? AND deleted = 0"
+
+        query = (
+            f"UPDATE world_books SET {', '.join(updates)} WHERE id = ? AND deleted = 0"
+        )
         params.append(world_book_id)
-        
+
         if expected_version is not None:
             query += " AND version = ?"
             params.append(expected_version)
-        
+
         try:
             with self.db.transaction() as cursor:
                 cursor.execute(query, params)
                 if cursor.rowcount == 0:
                     if expected_version is not None:
-                        raise ConflictError(f"Version mismatch updating world book {world_book_id}")
+                        raise ConflictError(
+                            f"Version mismatch updating world book {world_book_id}"
+                        )
                     return False
                 return True
         except sqlite3.IntegrityError as e:
             if "UNIQUE constraint failed" in str(e):
                 raise ConflictError(f"World book with name '{name}' already exists")
             raise
-    
-    def delete_world_book(self, world_book_id: int, expected_version: Optional[int] = None) -> bool:
+
+    def delete_world_book(
+        self, world_book_id: int, expected_version: Optional[int] = None
+    ) -> bool:
         """
         Soft delete a world book.
-        
+
         Args:
             world_book_id: The ID of the world book to delete
             expected_version: Expected version for optimistic locking (optional)
-            
+
         Returns:
             True if deleted successfully
-            
+
         Raises:
             ConflictError: If version mismatch
         """
@@ -286,32 +438,43 @@ class WorldBookManager:
         SET deleted = 1, last_modified = CURRENT_TIMESTAMP, version = version + 1, client_id = ?
         WHERE id = ? AND deleted = 0
         """
-        
+
         params = [self.db.client_id, world_book_id]
-        
+
         if expected_version is not None:
             query += " AND version = ?"
             params.append(expected_version)
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, params)
             if cursor.rowcount == 0:
                 if expected_version is not None:
-                    raise ConflictError(f"Version mismatch deleting world book {world_book_id}")
+                    raise ConflictError(
+                        f"Version mismatch deleting world book {world_book_id}"
+                    )
                 return False
             return True
-    
+
     # --- World Book Entry CRUD Operations ---
-    
-    def create_world_book_entry(self, world_book_id: int, keys: List[str], content: str,
-                               enabled: bool = True, position: str = 'before_char',
-                               insertion_order: int = 0, selective: bool = False,
-                               secondary_keys: Optional[List[str]] = None,
-                               case_sensitive: bool = False,
-                               extensions: Optional[Dict[str, Any]] = None) -> int:
+
+    def create_world_book_entry(
+        self,
+        world_book_id: int,
+        keys: List[str],
+        content: str,
+        enabled: bool = True,
+        position: str = "before_char",
+        insertion_order: int = 0,
+        selective: bool = False,
+        secondary_keys: Optional[List[str]] = None,
+        case_sensitive: bool = False,
+        extensions: Optional[Dict[str, Any]] = None,
+        priority: int = 0,
+        regex: bool = False,
+    ) -> int:
         """
         Create a new world book entry.
-        
+
         Args:
             world_book_id: The ID of the world book this entry belongs to
             keys: List of keywords that trigger this entry
@@ -323,10 +486,12 @@ class WorldBookManager:
             secondary_keys: Additional keys required if selective
             case_sensitive: Whether keyword matching is case sensitive
             extensions: Additional data for future features
-            
+            priority: Priority for budget-aware inclusion (higher wins under token pressure)
+            regex: Whether keys/secondary_keys are regex patterns instead of literal keywords
+
         Returns:
             The ID of the created entry
-            
+
         Raises:
             InputError: If keys or content are empty
         """
@@ -334,147 +499,177 @@ class WorldBookManager:
             raise InputError("Entry must have at least one non-empty key")
         if not content or not content.strip():
             raise InputError("Entry content cannot be empty")
-        
+
         # Clean and validate keys
         clean_keys = [k.strip() for k in keys if k.strip()]
-        clean_secondary = [k.strip() for k in (secondary_keys or [])] if secondary_keys else []
-        
+        clean_secondary = (
+            [k.strip() for k in (secondary_keys or [])] if secondary_keys else []
+        )
+
         query = """
         INSERT INTO world_book_entries (world_book_id, keys, content, enabled, position,
                                        insertion_order, selective, secondary_keys,
-                                       case_sensitive, extensions)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       case_sensitive, extensions, priority, regex)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        
+
         with self.db.transaction() as cursor:
-            cursor.execute(query, (
-                world_book_id,
-                json.dumps(clean_keys),
-                content.strip(),
-                enabled,
-                position,
-                insertion_order,
-                selective,
-                json.dumps(clean_secondary) if clean_secondary else None,
-                case_sensitive,
-                json.dumps(extensions) if extensions else None
-            ))
+            cursor.execute(
+                query,
+                (
+                    world_book_id,
+                    json.dumps(clean_keys),
+                    content.strip(),
+                    enabled,
+                    position,
+                    _coerce_int(insertion_order, 0),
+                    selective,
+                    json.dumps(clean_secondary) if clean_secondary else None,
+                    case_sensitive,
+                    json.dumps(extensions) if extensions else None,
+                    _coerce_int(priority, 0),
+                    bool(regex),
+                ),
+            )
             entry_id = cursor.lastrowid
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
             return entry_id
-    
-    def get_world_book_entries(self, world_book_id: int, enabled_only: bool = False) -> List[Dict[str, Any]]:
+
+    def get_world_book_entries(
+        self, world_book_id: int, enabled_only: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         Get all entries for a world book.
-        
+
         Args:
             world_book_id: The ID of the world book
             enabled_only: Whether to return only enabled entries
-            
+
         Returns:
             List of entry dictionaries
         """
         query = """
         SELECT id, world_book_id, keys, content, enabled, position, insertion_order,
-               selective, secondary_keys, case_sensitive, extensions, created_at, last_modified
+               selective, secondary_keys, case_sensitive, extensions, created_at, last_modified,
+               priority, regex
         FROM world_book_entries
         WHERE world_book_id = ?
         """
-        
+
         if enabled_only:
             query += " AND enabled = 1"
-        
+
         query += " ORDER BY insertion_order, id"
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (world_book_id,))
-            
+
             entries = []
             for row in cursor.fetchall():
-                entries.append({
-                    'id': row[0],
-                    'world_book_id': row[1],
-                    'keys': json.loads(row[2]) if row[2] else [],
-                    'content': row[3],
-                    'enabled': bool(row[4]),
-                    'position': row[5],
-                    'insertion_order': row[6],
-                    'selective': bool(row[7]),
-                    'secondary_keys': json.loads(row[8]) if row[8] else [],
-                    'case_sensitive': bool(row[9]),
-                    'extensions': json.loads(row[10]) if row[10] else {},
-                    'created_at': row[11],
-                    'last_modified': row[12]
-                })
-            
+                entries.append(
+                    {
+                        "id": row[0],
+                        "world_book_id": row[1],
+                        "keys": json.loads(row[2]) if row[2] else [],
+                        "content": row[3],
+                        "enabled": bool(row[4]),
+                        "position": row[5],
+                        "insertion_order": row[6],
+                        "selective": bool(row[7]),
+                        "secondary_keys": json.loads(row[8]) if row[8] else [],
+                        "case_sensitive": bool(row[9]),
+                        "extensions": json.loads(row[10]) if row[10] else {},
+                        "created_at": row[11],
+                        "last_modified": row[12],
+                        "priority": row[13],
+                        "regex": bool(row[14]),
+                    }
+                )
+
             return entries
-    
+
     def update_world_book_entry(self, entry_id: int, **kwargs) -> bool:
         """
         Update a world book entry.
-        
+
         Args:
             entry_id: The ID of the entry to update
             **kwargs: Fields to update (keys, content, enabled, position, etc.)
-            
+
         Returns:
             True if updated successfully
         """
         # Build update query dynamically
         updates = []
         params = []
-        
+
         # Handle each possible field
-        for field in ['keys', 'content', 'enabled', 'position', 'insertion_order',
-                     'selective', 'secondary_keys', 'case_sensitive', 'extensions']:
+        for field in [
+            "keys",
+            "content",
+            "enabled",
+            "position",
+            "insertion_order",
+            "selective",
+            "secondary_keys",
+            "case_sensitive",
+            "extensions",
+            "priority",
+            "regex",
+        ]:
             if field in kwargs:
                 value = kwargs[field]
-                if field in ['keys', 'secondary_keys', 'extensions']:
+                if field in ["keys", "secondary_keys", "extensions"]:
                     value = json.dumps(value) if value else None
+                elif field in ("priority", "insertion_order"):
+                    value = _coerce_int(value, 0)
+                elif field == 'regex':
+                    value = bool(value)  # symmetry with create's bool(regex) write
                 updates.append(f"{field} = ?")
                 params.append(value)
-        
+
         if not updates:
             return True  # Nothing to update
-        
+
         # Add last_modified update
         updates.append("last_modified = CURRENT_TIMESTAMP")
-        
+
         query = f"UPDATE world_book_entries SET {', '.join(updates)} WHERE id = ?"
         params.append(entry_id)
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, params)
             return cursor.rowcount > 0
-    
+
     def delete_world_book_entry(self, entry_id: int) -> bool:
         """
         Delete a world book entry.
-        
+
         Args:
             entry_id: The ID of the entry to delete
-            
+
         Returns:
             True if deleted successfully
         """
         query = "DELETE FROM world_book_entries WHERE id = ?"
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (entry_id,))
             return cursor.rowcount > 0
-    
+
     # --- Conversation Association Functions ---
-    
-    def associate_world_book_with_conversation(self, conversation_id: int, world_book_id: int,
-                                              priority: int = 0) -> bool:
+
+    def associate_world_book_with_conversation(
+        self, conversation_id: int, world_book_id: int, priority: int = 0
+    ) -> bool:
         """
         Associate a world book with a conversation.
-        
+
         Args:
             conversation_id: The ID of the conversation
             world_book_id: The ID of the world book
             priority: Priority for ordering multiple world books
-            
+
         Returns:
             True if associated successfully
         """
@@ -482,19 +677,21 @@ class WorldBookManager:
         INSERT OR REPLACE INTO conversation_world_books (conversation_id, world_book_id, priority)
         VALUES (?, ?, ?)
         """
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id, priority))
             return True
-    
-    def disassociate_world_book_from_conversation(self, conversation_id: int, world_book_id: int) -> bool:
+
+    def disassociate_world_book_from_conversation(
+        self, conversation_id: int, world_book_id: int
+    ) -> bool:
         """
         Remove association between a world book and conversation.
-        
+
         Args:
             conversation_id: The ID of the conversation
             world_book_id: The ID of the world book
-            
+
         Returns:
             True if disassociated successfully
         """
@@ -502,19 +699,21 @@ class WorldBookManager:
         DELETE FROM conversation_world_books
         WHERE conversation_id = ? AND world_book_id = ?
         """
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id))
             return cursor.rowcount > 0
-    
-    def get_world_books_for_conversation(self, conversation_id: int, enabled_only: bool = True) -> List[Dict[str, Any]]:
+
+    def get_world_books_for_conversation(
+        self, conversation_id: int, enabled_only: bool = True
+    ) -> List[Dict[str, Any]]:
         """
         Get all world books associated with a conversation.
-        
+
         Args:
             conversation_id: The ID of the conversation
             enabled_only: Whether to return only enabled world books
-            
+
         Returns:
             List of world book dictionaries with their entries
         """
@@ -525,117 +724,307 @@ class WorldBookManager:
         JOIN conversation_world_books cwb ON wb.id = cwb.world_book_id
         WHERE cwb.conversation_id = ? AND wb.deleted = 0
         """
-        
+
         if enabled_only:
             query += " AND wb.enabled = 1"
-        
+
         query += " ORDER BY cwb.priority DESC, wb.name"
-        
+
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id,))
-            
+
             world_books = []
             for row in cursor.fetchall():
                 world_book = {
-                    'id': row[0],
-                    'name': row[1],
-                    'description': row[2],
-                    'scan_depth': row[3],
-                    'token_budget': row[4],
-                    'recursive_scanning': bool(row[5]),
-                    'enabled': bool(row[6]),
-                    'priority': row[7],
-                    'entries': self.get_world_book_entries(row[0], enabled_only=enabled_only)
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "scan_depth": row[3],
+                    "token_budget": row[4],
+                    "recursive_scanning": bool(row[5]),
+                    "enabled": bool(row[6]),
+                    "priority": row[7],
+                    "entries": self.get_world_book_entries(
+                        row[0], enabled_only=enabled_only
+                    ),
                 }
                 world_books.append(world_book)
-            
+
             return world_books
-    
+
+    def get_conversations_for_world_book(
+        self, world_book_id: int
+    ) -> List[Dict[str, Any]]:
+        """Conversations this world book is attached to (reverse of
+        get_world_books_for_conversation).
+
+        Args:
+            world_book_id: The world book to find attachments for.
+
+        Returns:
+            ``[{"conversation_id": str, "title": str}]`` (NULL title → "(untitled)").
+        """
+        query = """
+        SELECT cwb.conversation_id, c.title
+        FROM conversation_world_books cwb
+        JOIN conversations c ON c.id = cwb.conversation_id
+        WHERE cwb.world_book_id = ? AND c.deleted = 0
+        ORDER BY c.last_modified DESC
+        """
+        with self.db.transaction() as cursor:
+            cursor.execute(query, (world_book_id,))
+            return [
+                {"conversation_id": str(row[0]), "title": row[1] or "(untitled)"}
+                for row in cursor.fetchall()
+            ]
+
+    # --- Character Association Functions (embedded snapshots) ---
+
+    @staticmethod
+    def _normalize_extensions(record: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a character record's ``extensions`` as a dict (defensive)."""
+        ext = record.get("extensions")
+        if isinstance(ext, str):
+            try:
+                ext = json.loads(ext or "{}")
+            except (TypeError, ValueError):
+                ext = {}
+        if not isinstance(ext, dict):
+            ext = {}
+        return ext
+
+    @staticmethod
+    def _embedded_character_world_books(
+        record: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        ext = WorldBookManager._normalize_extensions(record)
+        raw = ext.get(CHARACTER_WORLD_BOOKS_KEY) or []
+        if not isinstance(raw, list):
+            raw = []
+        return [b for b in raw if isinstance(b, dict) and b.get("name")]
+
+    def _load_character_or_raise(self, character_id: int) -> Dict[str, Any]:
+        record = self.db.get_character_card_by_id(int(character_id))
+        if record is None:
+            raise InputError(f"Character '{character_id}' was not found.")
+        return record
+
+    def _write_character_world_books(
+        self, record: Dict[str, Any], character_id: int, blocks: List[Dict[str, Any]]
+    ) -> None:
+        ext = self._normalize_extensions(record)
+        ext[CHARACTER_WORLD_BOOKS_KEY] = blocks
+        self.db.update_character_card(
+            int(character_id),
+            {"extensions": ext},
+            expected_version=record["version"],
+        )
+
+    def attach_world_book_to_character(
+        self, world_book_id: int, character_id: int
+    ) -> Dict[str, Any]:
+        """Embed a world book's content snapshot into a character (idempotent by name).
+
+        The snapshot is ``export_world_book`` output augmented with the source
+        book's ``enabled`` (export omits book-level ``enabled``). Names are
+        compared as strings so a hostile/imported card whose embedded name is a
+        non-str still dedups against the freshly exported (always-str) name.
+
+        Args:
+            world_book_id: The standalone world book to snapshot and embed.
+            character_id: The character to embed the snapshot into.
+
+        Returns:
+            ``{"world_book_id": int, "character_id": int, "name": str,
+            "attached": bool}`` — ``attached`` is ``False`` when a block with
+            this name was already embedded (no-op, idempotent).
+
+        Raises:
+            InputError: If the world book or the character does not exist.
+            ConflictError: If the character's version is stale at write time.
+        """
+        book = self.get_world_book(int(world_book_id))
+        if book is None:
+            raise InputError(f"World book {world_book_id} not found")
+        block = self.export_world_book(int(world_book_id))
+        block["enabled"] = bool(book.get("enabled", True))
+        name = block.get("name")
+        record = self._load_character_or_raise(character_id)
+        blocks = self._embedded_character_world_books(record)
+        attached = False
+        if not any(str(b.get("name")) == str(name) for b in blocks):
+            blocks = blocks + [block]
+            self._write_character_world_books(record, character_id, blocks)
+            attached = True
+        return {
+            "world_book_id": int(world_book_id),
+            "character_id": int(character_id),
+            "name": name,
+            "attached": attached,
+        }
+
+    def detach_world_book_from_character(
+        self, character_id: int, name: str
+    ) -> Dict[str, Any]:
+        """Remove an embedded world book from a character by name (no-op when absent).
+
+        Args:
+            character_id: The character to remove the embedded snapshot from.
+            name: The embedded block's ``name`` to remove (string-compared).
+
+        Returns:
+            ``{"character_id": int, "name": str, "detached": bool}`` —
+            ``detached`` is ``False`` when no block with this name was found
+            (no-op).
+
+        Raises:
+            InputError: If the character does not exist.
+            ConflictError: If the character's version is stale at write time.
+        """
+        record = self._load_character_or_raise(character_id)
+        blocks = self._embedded_character_world_books(record)
+        detached = False
+        if any(str(b.get("name")) == str(name) for b in blocks):
+            blocks = [b for b in blocks if str(b.get("name")) != str(name)]
+            self._write_character_world_books(record, character_id, blocks)
+            detached = True
+        return {
+            "character_id": int(character_id),
+            "name": str(name),
+            "detached": detached,
+        }
+
+    def get_world_books_for_character(
+        self, character_id: int
+    ) -> List[Dict[str, Any]]:
+        """Summarize a character's embedded world books (from snapshots only).
+
+        Deduped by name (a hostile card can carry two same-named blocks; the
+        panel keys DataTable rows by name and would ``DuplicateKey``-crash on a
+        dup). Entry counts degrade to 0 for a malformed non-list ``entries``.
+
+        Args:
+            character_id: The character to summarize embedded world books for.
+
+        Returns:
+            ``[{"name": str, "entry_count": int, "enabled": bool}, ...]``,
+            deduped by name (first occurrence wins).
+
+        Raises:
+            InputError: If the character does not exist.
+        """
+        record = self._load_character_or_raise(character_id)
+        result: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for b in self._embedded_character_world_books(record):
+            name = str(b.get("name"))
+            if name in seen:
+                continue
+            seen.add(name)
+            raw_entries = b.get("entries")
+            entry_count = len(raw_entries) if isinstance(raw_entries, list) else 0
+            result.append(
+                {
+                    "name": name,
+                    "entry_count": entry_count,
+                    "enabled": _coerce_bool(b.get("enabled"), True),
+                }
+            )
+        return result
+
     # --- Import/Export Functions ---
-    
+
     def export_world_book(self, world_book_id: int) -> Dict[str, Any]:
         """
         Export a world book in a format compatible with other tools.
-        
+
         Args:
             world_book_id: The ID of the world book to export
-            
+
         Returns:
             Dictionary with world book data in standard format
         """
         world_book = self.get_world_book(world_book_id)
         if not world_book:
             raise InputError(f"World book {world_book_id} not found")
-        
+
         entries = self.get_world_book_entries(world_book_id)
-        
+
         # Format for export (compatible with SillyTavern character book format)
         export_data = {
-            'name': world_book['name'],
-            'description': world_book['description'],
-            'scan_depth': world_book['scan_depth'],
-            'token_budget': world_book['token_budget'],
-            'recursive_scanning': world_book['recursive_scanning'],
-            'entries': []
+            "name": world_book["name"],
+            "description": world_book["description"],
+            "scan_depth": world_book["scan_depth"],
+            "token_budget": world_book["token_budget"],
+            "recursive_scanning": world_book["recursive_scanning"],
+            "entries": [],
         }
-        
+
         for entry in entries:
-            export_data['entries'].append({
-                'keys': entry['keys'],
-                'content': entry['content'],
-                'enabled': entry['enabled'],
-                'position': entry['position'],
-                'insertion_order': entry['insertion_order'],
-                'selective': entry['selective'],
-                'secondary_keys': entry['secondary_keys'],
-                'case_sensitive': entry['case_sensitive'],
-                'extensions': entry['extensions']
-            })
-        
+            export_data["entries"].append(
+                {
+                    "keys": entry["keys"],
+                    "content": entry["content"],
+                    "enabled": entry["enabled"],
+                    "position": entry["position"],
+                    "insertion_order": entry["insertion_order"],
+                    "selective": entry["selective"],
+                    "secondary_keys": entry["secondary_keys"],
+                    "case_sensitive": entry["case_sensitive"],
+                    "extensions": entry["extensions"],
+                    "priority": entry["priority"],
+                    "regex": entry["regex"],
+                }
+            )
+
         return export_data
-    
-    def import_world_book(self, data: Dict[str, Any], name_override: Optional[str] = None) -> int:
+
+    def import_world_book(
+        self, data: Dict[str, Any], name_override: Optional[str] = None
+    ) -> int:
         """
         Import a world book from external data.
-        
+
         Args:
             data: World book data in standard format
             name_override: Override the name to avoid conflicts
-            
+
         Returns:
             The ID of the imported world book
         """
         # Extract world book metadata
-        name = name_override or data.get('name', 'Imported World Book')
-        description = data.get('description', '')
-        scan_depth = data.get('scan_depth', 3)
-        token_budget = data.get('token_budget', 500)
-        recursive_scanning = data.get('recursive_scanning', False)
-        
+        name = name_override or data.get("name", "Imported World Book")
+        description = data.get("description", "")
+        scan_depth = data.get("scan_depth", 3)
+        token_budget = data.get("token_budget", 500)
+        recursive_scanning = data.get("recursive_scanning", False)
+
         # Create the world book
         world_book_id = self.create_world_book(
             name=name,
             description=description,
             scan_depth=scan_depth,
             token_budget=token_budget,
-            recursive_scanning=recursive_scanning
+            recursive_scanning=recursive_scanning,
         )
-        
+
         # Import entries
-        entries = data.get('entries', [])
+        entries = data.get("entries", [])
         for i, entry in enumerate(entries):
             self.create_world_book_entry(
                 world_book_id=world_book_id,
-                keys=entry.get('keys', []),
-                content=entry.get('content', ''),
-                enabled=entry.get('enabled', True),
-                position=entry.get('position', 'before_char'),
-                insertion_order=entry.get('insertion_order', i),
-                selective=entry.get('selective', False),
-                secondary_keys=entry.get('secondary_keys', []),
-                case_sensitive=entry.get('case_sensitive', False),
-                extensions=entry.get('extensions', {})
+                keys=entry.get("keys", []),
+                content=entry.get("content", ""),
+                enabled=entry.get("enabled", True),
+                position=entry.get("position", "before_char"),
+                insertion_order=entry.get("insertion_order", i),
+                selective=entry.get("selective", False),
+                secondary_keys=entry.get("secondary_keys", []),
+                case_sensitive=entry.get("case_sensitive", False),
+                extensions=entry.get("extensions", {}),
+                priority=entry.get("priority", 0),
+                regex=entry.get("regex", False),
             )
-        
+
         logger.info(f"Imported world book '{name}' with {len(entries)} entries")
         return world_book_id

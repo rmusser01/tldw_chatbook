@@ -1,0 +1,312 @@
+{
+  "cleanup_owner_counts": {
+    "host_task_leaks": 0,
+    "host_thread_worker_leaks": 0,
+    "host_worker_leaks": 0,
+    "host_workers_before": 0,
+    "host_workers_owned": 0
+  },
+  "compositor_text": "                     \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                             \n \u23031 Home  \u23032 Console \u2502 \u23033 Library \u2502 F10 Research  \u23034 Artifacts  \u23035 Rol  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n Library | Local                                                                \n     Skills (2)                            \u2503   Overview   \u2503       Edit          \n     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e     review-skill                          \n     \u258a Filter skills\u2026 (Enter)       \u258e     Review skill                          \n     \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e     You and the agent can invoke this     \n                                          Skill.                                \n         sort: Name        Import\u2026        Version: 1                            \n      \u2713 release-notes                     Trust: trusted                        \n     invocable: user & agent \u00b7                                                  \n     Release notes                                                              \n--->                                 <---                                       \n      \u203a \u2713 review-skill                                                          \n     invocable: user & agent \u00b7 Review                                           \n     skill                                                                      \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n  / focus search | F6 next pane | F1 \u00b7 Ctrl+P \u00b7 Ctrl+Q                          ",
+  "contained": true,
+  "destination": "skills",
+  "f6_route": [
+    "library-skill-work-pane:library-skill-mode-overview",
+    "library-skill-work-pane:library-skill-mode-overview"
+  ],
+  "final_destination": "skills",
+  "focus_owner": "library-skill-mode-overview",
+  "footer_shortcuts": [
+    [
+      "/",
+      "focus search"
+    ],
+    [
+      "F6",
+      "next pane"
+    ],
+    [
+      "esc",
+      "back to skills list"
+    ]
+  ],
+  "grips": {
+    "items": {
+      "focusable": true,
+      "id": "library-skills-items-grip",
+      "painted": true
+    },
+    "library": {
+      "focusable": true,
+      "id": "library-skills-library-grip",
+      "painted": true
+    }
+  },
+  "host_worker_groups": [],
+  "identities": {
+    "items": "library-canvas",
+    "shell": "library-skills-reader-shell",
+    "work": "library-skill-work-pane"
+  },
+  "items_comfort_expansion": {
+    "before": 0,
+    "while_library_collapsed": 0
+  },
+  "kind": "live",
+  "preferences": {
+    "effective_items_open": true,
+    "effective_items_width": 32,
+    "effective_library_open": false,
+    "effective_library_width": 0,
+    "effective_priority_pane": "items",
+    "effective_reader_width": 38,
+    "requested_custom_widths_enabled": false,
+    "requested_items_open": true,
+    "requested_items_width": 40,
+    "requested_library_open": true,
+    "requested_library_width": 31
+  },
+  "primary_actions": [
+    {
+      "disabled": false,
+      "id": "library-skills-library-grip",
+      "label": "--->",
+      "region": {
+        "bottom": 23,
+        "height": 19,
+        "right": 5,
+        "width": 5,
+        "x": 0,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skills-sort",
+      "label": "sort: Name",
+      "region": {
+        "bottom": 10,
+        "height": 1,
+        "right": 22,
+        "width": 16,
+        "x": 6,
+        "y": 9
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skills-import",
+      "label": "Import\u2026",
+      "region": {
+        "bottom": 10,
+        "height": 1,
+        "right": 39,
+        "width": 16,
+        "x": 23,
+        "y": 9
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skill-row-release-notes",
+      "label": "\u2713 release-notes",
+      "region": {
+        "bottom": 11,
+        "height": 1,
+        "right": 37,
+        "width": 32,
+        "x": 5,
+        "y": 10
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skill-row-review-skill",
+      "label": "\u203a \u2713 review-skill",
+      "region": {
+        "bottom": 15,
+        "height": 1,
+        "right": 37,
+        "width": 32,
+        "x": 5,
+        "y": 14
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skills-items-grip",
+      "label": "<---",
+      "region": {
+        "bottom": 23,
+        "height": 19,
+        "right": 42,
+        "width": 5,
+        "x": 37,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skill-mode-overview",
+      "label": "Overview",
+      "region": {
+        "bottom": 5,
+        "height": 1,
+        "right": 59,
+        "width": 16,
+        "x": 43,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skill-mode-edit",
+      "label": "Edit",
+      "region": {
+        "bottom": 5,
+        "height": 1,
+        "right": 76,
+        "width": 16,
+        "x": 60,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skill-mode-trust",
+      "label": "Trust",
+      "region": {
+        "bottom": 5,
+        "height": 1,
+        "right": 93,
+        "width": 16,
+        "x": 77,
+        "y": 4
+      }
+    },
+    {
+      "disabled": false,
+      "id": "library-skill-mode-files",
+      "label": "Files",
+      "region": {
+        "bottom": 5,
+        "height": 1,
+        "right": 110,
+        "width": 16,
+        "x": 94,
+        "y": 4
+      }
+    }
+  ],
+  "record": {
+    "loaded": "review-skill",
+    "mode": "overview",
+    "pending": null,
+    "selected": "review-skill"
+  },
+  "regions": {
+    "items": {
+      "bottom": 23,
+      "height": 19,
+      "right": 37,
+      "width": 32,
+      "x": 5,
+      "y": 4
+    },
+    "items_grip": {
+      "bottom": 23,
+      "height": 19,
+      "right": 42,
+      "width": 5,
+      "x": 37,
+      "y": 4
+    },
+    "library": {
+      "bottom": 0,
+      "height": 0,
+      "right": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "library_grip": {
+      "bottom": 23,
+      "height": 19,
+      "right": 5,
+      "width": 5,
+      "x": 0,
+      "y": 4
+    },
+    "work": {
+      "bottom": 23,
+      "height": 19,
+      "right": 80,
+      "width": 38,
+      "x": 42,
+      "y": 4
+    }
+  },
+  "regions_do_not_intersect": true,
+  "restoration_paths": {
+    "items": [
+      {
+        "effective": false,
+        "requested": true
+      },
+      {
+        "effective": true,
+        "requested": true
+      },
+      {
+        "effective": false,
+        "requested": false
+      },
+      {
+        "effective": true,
+        "requested": true
+      }
+    ],
+    "library": [
+      {
+        "effective": false,
+        "requested": true
+      },
+      {
+        "effective": true,
+        "requested": true
+      },
+      {
+        "effective": false,
+        "requested": false
+      },
+      {
+        "effective": true,
+        "requested": true
+      }
+    ]
+  },
+  "result_name": "skills-80x24",
+  "selected_row": {
+    "identity": "review-skill",
+    "region": {
+      "bottom": 15,
+      "height": 1,
+      "right": 37,
+      "width": 32,
+      "x": 5,
+      "y": 14
+    },
+    "selected": true,
+    "widget_id": "library-skill-row-review-skill"
+  },
+  "status": "PASS",
+  "terminal_size": [
+    80,
+    24
+  ],
+  "visible_controls": [
+    "#library-skill-mode-edit",
+    "#library-skill-mode-trust",
+    "#library-skill-mode-files",
+    "#library-skill-mode-overview"
+  ]
+}

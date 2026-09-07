@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tldw_chatbook.tldw_api import ExecuteToolRequest, ExecuteToolResult, TLDWAPIClient, ToolListResponse
+from tldw_chatbook.tldw_api import (
+    ExecuteToolRequest,
+    ExecuteToolResult,
+    TLDWAPIClient,
+    ToolListResponse,
+)
 
 
 @pytest.mark.asyncio
@@ -16,7 +21,10 @@ async def test_server_tools_client_routes_list_and_execute(monkeypatch):
                         "name": "web_search",
                         "description": "Search the web",
                         "module": "search",
-                        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                        },
                         "canExecute": True,
                     }
                 ]

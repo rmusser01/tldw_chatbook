@@ -1,6 +1,9 @@
 import pytest
 
-from tldw_chatbook.Research_Interop import ResearchSearchScopeService, ServerResearchSearchService
+from tldw_chatbook.Research_Interop import (
+    ResearchSearchScopeService,
+    ServerResearchSearchService,
+)
 
 
 class FakeResearchSearchClient:
@@ -47,13 +50,21 @@ async def test_server_research_search_service_wraps_websearch_client():
     client = FakeResearchSearchClient()
     service = ServerResearchSearchService(client=client)
 
-    result = await service.websearch(query="chatbook sync", engine="duckduckgo", result_count=5)
+    result = await service.websearch(
+        query="chatbook sync", engine="duckduckgo", result_count=5
+    )
 
     assert result["web_search_results_dict"]["results"][0]["title"] == "One"
     request_data = client.calls[0][1]
     assert client.calls[0][0] == "run_research_websearch"
-    assert request_data.model_dump(exclude_none=True, mode="json")["query"] == "chatbook sync"
-    assert request_data.model_dump(exclude_none=True, mode="json")["engine"] == "duckduckgo"
+    assert (
+        request_data.model_dump(exclude_none=True, mode="json")["query"]
+        == "chatbook sync"
+    )
+    assert (
+        request_data.model_dump(exclude_none=True, mode="json")["engine"]
+        == "duckduckgo"
+    )
 
 
 @pytest.mark.asyncio
@@ -62,7 +73,9 @@ async def test_research_search_scope_service_routes_websearch_to_server_only():
     service = ServerResearchSearchService(client=client)
     scope = ResearchSearchScopeService(server_service=service)
 
-    result = await scope.websearch(mode="server", query="chatbook sync", engine="duckduckgo", result_count=5)
+    result = await scope.websearch(
+        mode="server", query="chatbook sync", engine="duckduckgo", result_count=5
+    )
 
     assert result["backend"] == "server"
     assert result["entity_kind"] == "research_websearch"
@@ -78,7 +91,9 @@ async def test_server_research_search_service_wraps_paper_search_client():
     client = FakeResearchSearchClient()
     service = ServerResearchSearchService(client=client)
 
-    listing = await service.paper_search(endpoint="semantic-scholar", query="agent sync")
+    listing = await service.paper_search(
+        endpoint="semantic-scholar", query="agent sync"
+    )
     detail = await service.paper_detail(endpoint="arxiv/by-id", id="1706.03762")
     ingest = await service.paper_ingest(endpoint="ingest/by-doi", doi="10.1000/test")
 
@@ -99,9 +114,15 @@ async def test_research_search_scope_service_routes_paper_search_with_policy():
     policy = FakePolicyEnforcer()
     scope = ResearchSearchScopeService(server_service=service, policy_enforcer=policy)
 
-    listing = await scope.paper_search(mode="server", endpoint="semantic-scholar", query="agent sync")
-    detail = await scope.paper_detail(mode="server", endpoint="arxiv/by-id", id="1706.03762")
-    ingest = await scope.paper_ingest(mode="server", endpoint="ingest/by-doi", doi="10.1000/test")
+    listing = await scope.paper_search(
+        mode="server", endpoint="semantic-scholar", query="agent sync"
+    )
+    detail = await scope.paper_detail(
+        mode="server", endpoint="arxiv/by-id", id="1706.03762"
+    )
+    ingest = await scope.paper_ingest(
+        mode="server", endpoint="ingest/by-doi", doi="10.1000/test"
+    )
 
     assert listing["backend"] == "server"
     assert listing["entity_kind"] == "paper_search"
@@ -114,4 +135,6 @@ async def test_research_search_scope_service_routes_paper_search_with_policy():
     ]
 
     with pytest.raises(ValueError, match="server-only"):
-        await scope.paper_search(mode="local", endpoint="semantic-scholar", query="agent sync")
+        await scope.paper_search(
+            mode="local", endpoint="semantic-scholar", query="agent sync"
+        )

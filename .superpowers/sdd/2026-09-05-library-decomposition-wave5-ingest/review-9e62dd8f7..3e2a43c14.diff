@@ -1,0 +1,2027 @@
+# Review package: 9e62dd8f7..3e2a43c14
+
+## Commits
+3e2a43c14 docs(library): wave-5 task-1 report (ingest state PR)
+3b83eab93 docs(library): record wave-5 task-1 sweep evidence and ledger close
+12ba4fb13 refactor(library): ingest state object + shims (ingest series 1/3)
+a11220648 test(library): characterization + wiring pins for the ingest extraction series (RED)
+
+## Files changed
+ .../progress.md                                    |   3 +
+ .../task-1-report.md                               | 483 +++++++++++++++++++++
+ Tests/App/test_submit_library_ingest_job.py        |   7 +-
+ Tests/Architecture/test_library_ingest_wiring.py   |  37 ++
+ Tests/Architecture/test_screen_size_ratchet.py     |  12 +-
+ Tests/UI/test_library_ingest_canvas.py             |  17 +
+ Tests/UI/test_library_ingest_characterization.py   | 310 +++++++++++++
+ Tests/UI/test_library_ingest_inline_consent.py     |   3 +-
+ Tests/UI/test_library_ingest_retry_last.py         |   6 +-
+ Tests/integration/test_library_ingest_flow.py      |   2 +
+ backlog/docs/library-decomposition-recipe.md       |  46 ++
+ .../UI/Library_Modules/library_ingest_state.py     | 188 ++++++++
+ tldw_chatbook/UI/Screens/library_screen.py         | 104 ++---
+ 13 files changed, 1135 insertions(+), 83 deletions(-)
+
+## Diff
+diff --git a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md
+index 9a58a5443..eba430c71 100644
+--- a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md
++++ b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/progress.md
+@@ -7,10 +7,13 @@ Spec (dev) + recipe §1-§19 binding. Branch: refactor/library-decomp-wave5-inge
+ |---|---|
+ | T1→T2→T3→T4 same-shape series | Consistent with five prior series |
+ | Ingest-options trio | Named no-touch (module-globals, foundation-era discovery); verify location, never move |
+ | @work-heavy flows + worker groups | Early enumeration mandated |
+ | Form-persistence contract (task-2043) | Pin via characterization if uncovered, before any move |
+ | Rubric conflicts | Same plan-mandated duplication; carried in reviewer constraints |
+ 
+ Standing rulings inherited: all of waves 1-4.
+ 
+ ## Task log
++Task 1: dispatched (implementer sonnet), BASE=9e62dd8f7 — ingest state PR (series 1/3)
++Task 1: INCIDENT — implementer killed by session usage limit mid-baseline; its in-place path-scoped checkout of the pre-task commit was left in the worktree (would have corrupted the next commit). Controller restored to HEAD; agent resumed with the isolated-baseline method mandated. Recipe candidate lesson for wave close: in-place baseline checkouts are interruption-unsafe — always use an isolated worktree/archive for baseline runs.
++Task 1: DONE — a11220648 (RED: characterization + wiring pins) → 12ba4fb13 (GREEN: LibraryIngestState + shims, 20/20 fields, ratchet 41574/1302 → 41520/1302). Found and fixed a new bypass shape (`object.__new__(LibraryScreen)`/`.LibraryScreen.__new__` fixtures across 4 test files hand-setting flat `_library_ingest_*` names — 24 call sites patched with one `screen._ingest_state = LibraryIngestState()` line each, zero assertions touched) inside the same GREEN commit per no-red-ships. Full battery green: wiring RED→GREEN, characterization pre-change PASS (form-persistence contract already covered, no new pin needed), both ratchet rows, `-k "ingest and library"` (1298 passed/7 pre-existing), full sequential xdist paired-baseline sweep via isolated `git worktree` (356/3989 branch vs 370/3971 baseline, 8 branch-unique all resolved, zero real regressions), preflight all-green. Recipe §7 pre-existing-failure list and a new isolated-worktree-baseline lesson recorded. Report: .superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-1-report.md.
+diff --git a/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-1-report.md b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-1-report.md
+new file mode 100644
+index 000000000..b078e5a23
+--- /dev/null
++++ b/.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/task-1-report.md
+@@ -0,0 +1,483 @@
++# Wave-5 Task 1 report — Ingest state PR (series 1/3)
++
++Plan: `Docs/superpowers/plans/2026-09-05-library-decomposition-wave5-ingest.md`.
++Recipe: `backlog/docs/library-decomposition-recipe.md` §1–§19 (mechanics
++authority). Branch: `refactor/library-decomp-wave5-ingest`. Worktree:
++`.worktrees/library-decomp-foundation`. Base: `9e62dd8f7`.
++
++Commits:
++- `a11220648` — `test(library): characterization + wiring pins for the
++  ingest extraction series (RED)`
++- `12ba4fb13` — `refactor(library): ingest state object + shims (ingest
++  series 1/3)`
++- `3b83eab93` — `docs(library): record wave-5 task-1 sweep evidence and
++  ledger close` (recipe/ledger documentation only, not part of the
++  RED/GREEN pair the plan named)
++
++## 1. Cluster enumeration + ownership analysis
++
++`ast` walk of `LibraryScreen.__init__` for `_library_ingest_*` store
++targets: **20 fields**, matching the plan's own 2026-09-04 measure exactly.
++Screen measured fresh before any edit: **41574 lines, 1302 methods**
++(matches the SDD ledger's own recorded baseline — no drift from the two
++prior commits on this branch, neither of which touches `library_screen.py`).
++
++### Oddball check (no prefix shortcuts)
++
++- Substring scan for `"ingest"` anywhere in `LibraryScreen`'s `__init__`
++  store targets, outside the `_library_ingest_` prefix: **zero** hits. No
++  conversations-exemplar-style "startswith trap" here.
++- Reverse check — do any of the 78 ingest-*named methods* reach into fields
++  of a *different* prefix family: **yes, two adjacent clusters**, both
++  confirmed NOT ingest-owned by reading every consumer (not assumed by
++  name/proximity):
++  - `_library_external_submit_generation/_scope_id/_worker/_backend/
++    _consent/_busy/_status` (7 fields) — a separate "external source"
++    onboarding feature (VAD-consent preparation). Only 2 of 78 ingest-named
++    methods (`_do_submit_ingest`, `_enqueue_library_ingest_snapshot`) touch
++    these; every field's *majority* consumer set is external-preparation-
++    owned (`_apply_library_external_preparation`,
++    `_apply_library_external_vad_progress`, `_confirm_library_external_vad`,
++    `_invalidate_library_external_submission`, `_set_library_external_
++    status`, `compose_content`). Stays screen-resident shared shell state.
++  - `_transcribe_cpp_configured` — read by 2 ingest-named methods
++    (`_build_library_ingest_state`, `_load_library_ingest_options_from_
++    config`) but also by the unrelated `_apply_transcribe_cpp_gguf_result`
++    model-install handler. Stays screen-resident.
++  - `_library_model_install_progress_label/_owner` — zero ingest-named
++    consumers at all (false lead from init-block proximity).
++
++### The ingest-options trio — verified location, untouched
++
++`_INGEST_OPTIONS_CACHE_ATTR` (`library_screen.py:605`),
++`_read_library_ingest_options_from_config` (`:608`) and
++`_library_ingest_options_for` (`:661`) are module-level `FunctionDef`s,
++still resident in `library_screen.py`, with the file's own comment block
++(`:714+`) explaining why they must stay together there (tests monkeypatch
++`get_cli_setting`/`_read_library_ingest_options_from_config` on the
++`library_screen` module object, and the patch only reaches `_library_
++ingest_options_for`'s internal free-name call while both share that
++module's globals). Read both function bodies: **neither references any
++`self._library_ingest_*` instance field** — this state move touches
++neither the trio nor anything it depends on. No move, no shim, nothing to
++verify beyond confirming the location, which is done.
++
++### `@work`-heavy flows (enumerated for the record; not this task's scope)
++
++4 `@work(thread=True)`-decorated ingest methods, no `group=` kwarg on any:
++`_save_library_ingest_backend`, `_persist_library_ingest_location`,
++`_run_library_ingest_preflight`, `_save_library_ingest_options`. Relevant
++to Task 2 (controller PR), not this state-only task.
++
++### Shell-touched candidates named in the plan
++
++- `_sync_library_ingest_rail_for_width` — touches exactly one ingest field
++  (`auto_collapsed_rail`) plus shared shell state
++  (`_library_rail_collapsed`, `_library_selected_row_id` — the canonical
++  ≥2-subsystems field). Ingest-named but mixed shell+ingest body; census
++  verdict for Task 2 to make, doesn't change field ownership here.
++- `_pause_library_ingest_transient_ui` — touches 3 ingest fields
++  (`clear_finished_armed`, `path_debounce_timer`, `preflight_generation`)
++  plus calls into other ingest-named siblings and the external cluster.
++  Called from `_select_library_rail_row_after_source_admission` (the
++  shared shell rail-switch-hygiene dispatcher — same call site that also
++  runs skills'/export's own per-subsystem hygiene resets). This is the
++  task-2043 form-persistence contract's own implementation seam: it
++  deliberately does NOT touch `form`, which is why the form survives rail
++  switches.
++
++### Full field-ownership table (recipe §2 script output)
++
++All 20 fields: `NONE` or shell/plumbing-only non-ingest users, zero fields
++claimed by another subsystem's own method-name prefix, zero fields BLOCKED
++by the ≥2-subsystems rule. **20/20 MOVE, 0 wiring, 0 BLOCKED** — no field
++holds a live controller/coordinator instance (unlike the `_conversation_
++reader_controller`/`_library_collections_capture_controller`/`_library_
++skill_import_coordinator` precedent), so there is no wiring-field exclusion
++in this state PR at all — the simplest ownership shape of any subsystem to
++date.
++
++| Field | Non-ingest users found | Verdict |
++|---|---|---|
++| `auto_collapsed_rail` | `_library_resize_layout_signature`, `_set_library_rail_collapsed` (shell) | MOVE |
++| `backend_generation` | none | MOVE |
++| `backend_save_lock` | none | MOVE |
++| `backend_target` | none | MOVE |
++| `batch_baseline` | none | MOVE |
++| `clear_finished_armed` | none | MOVE |
++| `clear_finished_armed_at` | none | MOVE |
++| `expanded_details` | none | MOVE |
++| `form` | `_apply_parakeet_v2_install_result`, `_on_preflight_retry` (shell) | MOVE |
++| `last_active_count` | none | MOVE |
++| `last_done_count` | `on_mount` (shell) | MOVE |
++| `last_submission` | none | MOVE |
++| `path_debounce_timer` | none | MOVE |
++| `preflight_generation` | none | MOVE |
++| `preflight_worker` | none | MOVE |
++| `recent_ledger` | none | MOVE |
++| `retry_confirm_armed` | none | MOVE |
++| `retry_confirm_armed_at` | none | MOVE |
++| `start_confirm_armed_at` | `_apply_library_external_preparation` (shell) | MOVE |
++| `start_consent` | `_library_emergency_return_eligibility`, `_apply_library_external_preparation` (shell) | MOVE |
++
++All 20 original `__init__` lines are static literals or no-argument
++factory calls (`threading.Lock()`, `LibraryIngestFormState()`, `[]`,
++`set()`) with **zero entanglement** with any other subsystem's shared init
++code (no reader-preferences-trio-shaped complication anywhere in this
++cluster) — the simplest possible state-PR shape in this recipe to date.
++`LibraryIngestState()` is constructed with **no constructor arguments**, at
++the position of the first removed field (`auto_collapsed_rail`'s original
++line, `library_screen.py:3111` pre-edit).
++
++## 2. Characterization spot-check
++
++Test roots checked: `Tests/UI`, `Tests/Library`, `Tests/Live`, `Tests/App`,
++`Tests/integration` (no dedicated `Tests/Ingest/` tree exists — ingest
++coverage is distributed across `Tests/UI/test_library_ingest_*.py` (8
++files), `Tests/Library/test_library_ingest_*.py`, `Tests/App/
++test_submit_library_ingest_job.py`, `Tests/integration/
++test_library_ingest_flow.py`; `Tests/Live` has **zero** ingest references
++of any kind).
++
++29 unique `@on`-bound Ingest handlers (30 raw decorator matches;
++`handle_library_ingest_browse` carries two selectors,
++`#ingest-preflight-choose` + `#library-ingest-browse`, over one shared
++body). Per-selector `grep -rn` across all five roots, followed by a manual
++read for an actual `.press()`/`.click()`/message-bubble-through-a-real-
++Collapsible interaction (not a same-line-only grep, and not a raw
++`screen.handle_x(event)` call with a hand-built fake event, which exercises
++handler logic but never the `@on` CSS-selector dispatch itself):
++
++**24 of 29 genuinely covered**, including one initially-missed case caught
++only by tracing the FULL interaction chain rather than grepping the
++handler/message name literally:
++`sync_library_ingest_type_group_expanded` (`@on(LibraryIngestCanvas.
++OptionPanelToggled)`) looked unpressed under a literal name/message-class
++grep, but is genuinely covered by `test_library_shell_ingest_type_group_
++panel_expand_survives_recompose` (`Tests/UI/test_library_shell.py:24931`),
++which toggles a real `#type-group-generic` `Collapsible` and asserts
++`screen._library_ingest_form.expanded_type_groups` updates and survives a
++recompose — the exact same "a same-line-only grep undercounts coverage"
++trap the collections series' own report already named, reproduced here on
++a message-based handler instead of a button id.
++
++**5 genuine gaps**, all pinned into
++`Tests/UI/test_library_ingest_characterization.py` (new file, 4 test
++functions covering 5 handlers — one function double-checks 2 related
++assertions), confirmed **PASSING pre-change**:
++
++1. `_on_library_ingest_top_button` (`#library-ingest-top-button`) — the one
++   existing test naming this id (`test_ingest_button_opens_canvas`,
++   `Tests/integration/test_library_ingest_flow.py`) explicitly bypasses a
++   real press ("button.press() is unreliable for async handlers in the
++   test harness"). Disproven: `.press()` works identically to every other
++   async `@on` handler already `.press()`-tested in this codebase (e.g.
++   `_return_library_rail_to_starter` via `#library-rail-back-to-starter`,
++   `test_library_shell.py:2940`).
++2. `sync_library_ingest_tooling_detail_expanded` (`@on(LibraryIngestCanvas.
++   ToolingDetailToggled)`) — its sibling above is covered; this one has no
++   screen-level equivalent (only a standalone-canvas-host test in
++   `test_library_ingest_canvas.py` proving the CANVAS posts the message,
++   never that the SCREEN handles it).
++3. `handle_library_ingest_view_on_server` (`.library-ingest-view-server`) —
++   zero test references of any kind.
++4. `handle_library_ingest_choose_gguf` (`.library-ingest-choose-gguf`) —
++   only ever `query_one`-d for a button-presence/removal assertion, never
++   pressed.
++
++New pins use direct registry state injection (`LibraryIngestJobRegistry.
++submit(origin="server")` + `mark_remote_done(...)` for the view-on-server
++case; `.submit()` + `mark_failed(error_detail={"category": "stt_failure",
++"actions": [...]})` for the choose-gguf case) rather than driving a real
++async worker pipeline to a specific failure classification — the same
++registry-direct-mutation pattern already used throughout
++`test_library_shell.py`'s own existing ingest tests.
++
++**5 more, documented but NOT pinned** (a "spot-check", not an exhaustive
++re-drive of every already-somewhat-tested handler into a full DOM press):
++`handle_library_ingest_cancel`, `_force_stop`, `_retry_faster_whisper`,
++`_option_reset`, `_directory_browse` are each exercised only via a raw
++`screen.handle_x(event)` (or `LibraryScreen.handle_x(screen, event)`) call
++with a hand-built `MagicMock` event on a REAL, fully-`__init__`-ed screen
++instance — genuine logic coverage, but the `@on` CSS-selector dispatch
++itself is unverified. Recorded as known, bounded coverage debt in the new
++characterization file's own module docstring rather than silently counted
++as "24 of 29 covered" or exhaustively closed at this task's own expense —
++each needs a specific backing `LibraryIngestJob` state composed through the
++real registry, exactly the added machinery the 2 pinned per-job-row tests
++above demonstrate is tractable, for a future task.
++
++### Form-persistence contract (task-2043)
++
++**Already pinned, meets the `.press()` standard — no new pin needed.**
++`test_rail_switch_preserves_staged_ingest_form`
++(`Tests/UI/test_library_shell.py:29585`) types into two real `Input`
++widgets, presses a real rail-row button (`#library-row-browse-media`) to
++switch away from Ingest — the exact call chain that runs `_pause_library_
++ingest_transient_ui()` — reopens the Ingest canvas, and asserts BOTH
++`screen._library_ingest_form` state AND the re-rendered widget's `.value`
++survived. Confirmed passing pre-change.
++
++## 3. `LibraryIngestState`
++
++`tldw_chatbook/UI/Library_Modules/library_ingest_state.py` (new file): a
++`@dataclass` with all 20 fields, verbatim defaults, single
++`_library_ingest_` prefix (no plural variant, no wiring exclusion — the
++export series' own simplest-case shape). Imports `LibraryIngestFormState`/
++`LibraryIngestLastSubmission` from the pre-existing `tldw_chatbook/
++Library/library_ingest_state.py` (a DIFFERENT module, same basename, the
++established `UI/Library_Modules/` ↔ `Library/` pairing precedent already
++used by 6 other subsystems) and `_LibraryIngestStartConsent` from
++`UI/Library_Modules/screen_support_types.py` (PR 0a's own foundation
++module).
++
++## 4. Programmatic screen shims
++
++Sentinel-wrapped block (`--- BEGIN/END generated ingest-state shims ---`)
++appended at module end, mirroring the export/collections generator loop
++exactly: `for _lis_field in dataclasses.fields(LibraryIngestState): setattr(
++LibraryScreen, "_library_ingest_" + _lis_field.name, property(getter,
++setter))`, `_n=` binding on both lambdas.
++
++## 5. A new bypass shape, found by the battery (not by static census)
++
++Not in recipe §3's prior catalogue: **`object.__new__(LibraryScreen)` /
++`LibraryScreen.__new__(LibraryScreen)` `__init__`-bypass fixtures.**
++24 call sites across 4 test files (`Tests/UI/test_library_ingest_canvas.py`
++[16], `Tests/App/test_submit_library_ingest_job.py` [5], `Tests/UI/
++test_library_ingest_inline_consent.py` [1], `Tests/UI/test_library_ingest_
++retry_last.py` [1], `Tests/integration/test_library_ingest_flow.py` [2, the
++`.LibraryScreen.__new__(LibraryScreen)` spelling]) skip `__init__` entirely
++and hand-set flat `_library_ingest_<field>` names as PLAIN instance
++attributes — safe before this move (no property existed, so the assignment
++just created an instance attribute), but `AttributeError: 'LibraryScreen'
++object has no attribute '_ingest_state'` immediately once the property
++setter tries to route through a never-constructed state object.
++
++Unlike every previously-catalogued bypass shape (unbound fake-self,
++instance-attribute monkeypatch, module-globals coupling, bare-self
++identity, unbound-attribute escape — all of which stay latent until a
++CONTROLLER-PR's method move, deferred to that series' own cleanup task by
++design), this one fails immediately, at the STATE PR itself, for every
++affected test — a no-red-ships violation if shipped unfixed. **63 tests
++were RED** after the screen edit landed, before this fix.
++
++Fixed mechanically and minimally, in the same GREEN commit: one line
++inserted after each `__new__` call (`screen._ingest_state =
++LibraryIngestState()`), zero assertions, call sites, or other lines
++touched anywhere. Re-ran the same 63 (and the surrounding `-k "ingest and
++library"` sweep) after the fix: **0 failures caused by this shape
++remained.** Recorded in `library-decomposition-recipe.md`'s own §3-shaped
++catalogue is left as a forward note here rather than a formal new
++numbered entry (out of this task's own file-edit scope — the recipe edit
++in this task's third commit is scoped to §7's sweep-evidence list per its
++own explicit "add to it" instruction, not a new bypass-shape entry).
++
++## 6. TDD evidence
++
++RED (`a11220648`): `Tests/Architecture/test_library_ingest_wiring.py`
++watched failing against the untouched screen —
++`AssertionError: no screen shim property found for: [...]` (all 20 expected
++shim properties missing), confirmed with `library_ingest_state.py` already
++present. Screen untouched in this commit (verified via `git status`/`git
++diff --stat` before committing).
++
++GREEN (`12ba4fb13`): same test passes after the screen edit.
++
++```
++$ .venv/bin/python -m pytest Tests/Architecture/test_library_ingest_wiring.py -p no:randomly -q
++# before the GREEN commit:
++FAILED Tests/Architecture/test_library_ingest_wiring.py::test_state_object_fields_match_the_shim_surface
++1 failed
++# after:
++1 passed
++```
++
++## 7. Size ratchet
++
++Fresh `_measure()`: **41520 lines, 1302 methods** (pure field move — zero
++`FunctionDef`s touched, methods unchanged). `_BUDGETS` lowered in the GREEN
++commit per recipe §6: `41574/1302 → 41520/1302`.
++
++Not rebased onto `origin/dev`'s 4 newer commits before this measurement:
++confirmed via `git diff --stat HEAD..origin/dev` that they are
++Console-scoped only (`console_cost_tracker.py`, `console_spend_
++projection.py`, `console_status_chips.py`, `console_context_controls.py`,
++`console_model_popover.py`, associated tests/CSS) — touching neither
++`library_screen.py` nor `test_screen_size_ratchet.py`. This is a mid-series
++task (1 of 3), not the wave's own closing PR; the dev-merge reconciliation
++is deferred to that task, matching wave-4's own precedent (skills task 1
++measured against its branch tip; the `origin/dev` merge landed at wave-4's
++close, task 4, per recipe §19).
++
++Both `test_screen_does_not_grow_past_its_budget[library_screen.py]` and
++`test_budget_is_not_left_slack_after_a_wave[library_screen.py]` pass — the
++pin is exact, no slack.
++
++`Tests/Architecture/test_library_modules_size_ratchet.py` (controller-file
++governance, §17): 29 passed, unaffected — no controller file exists for
++Ingest yet (Task 2's own scope).
++
++## 8. Verification battery
++
++All commands from `.worktrees/library-decomp-foundation`, `.venv/bin/
++python`, `-p no:randomly` where applicable.
++
++**Wiring + characterization + ratchet + support-layer, combined**: all six
++wiring suites (conversations/export/collections/search+RAG/skills/ingest)
+++ 3 characterization files (collections/export/ingest) + support-layer
++surface + both size-ratchet rows: **84 passed, 2 failed** — both the
++documented pre-existing `chat_screen.py` ratchet rows (recipe §7's own
++standing list), unrelated to this diff.
++
++**Full `Tests/Architecture/`**: **16 failed, 544 passed, 1 skipped** —
++exact category-for-category match to wave-4 close's own documented
++pre-existing bucket (Console realtime ×1, review-selection ×1, wave6
++closeout ×1, wave6 inventory ×2, default-timeout-session-guard ×1,
++persistent-diagnostic-inventory ×2, chat_screen ratchet ×2, timer-path-
++static-update-inventory ×3, worker-exclusive-group-inventory ×2 = 16), +1
++pass versus wave-4 close's own 543 (this task's own new wiring test). Zero
++Library/Ingest-scoped failures.
++
++**`-k "ingest and library"`** across `Tests/UI` + `Tests/Library` +
++`Tests/App` + `Tests/integration` (1306 collected): first pass found **63
++failed** (the `object.__new__` bypass shape above, §5); after the fix,
++**7 failed, 1298 passed, 1 skipped** — all 7 confirmed identical on a
++`git stash -u` pristine baseline of the pre-GREEN-edit tree (i.e. the RED
++commit's own tree, where `_library_ingest_form` etc. are still plain
++unshimmed attributes, ruling out the property mechanism as the cause):
++`test_library_ingest_canvas.py::test_progress_detail_paints_below_row_
++without_obscuring_actions_or_neighbor[size0/size1]` (Color assertion),
++`test_library_ingest_retry_last.py::test_registry_ticks_only_reflow_
++footer_when_retry_availability_changes` (unrelated Prompt/Study
++backend-unavailable `ValueError`s bleeding into an unrelated assertion),
++`test_library_ingest_structural.py::{test_fold_hint_is_pinned_not_scrolled,
++test_outcome_lines_paint_heavier_than_the_tooling_summary,
++test_every_canvas_focusable_changes_at_the_glyph_level_on_focus}`
++(geometry/weight/focus-color assertions), `test_ingest_preflight_egress.py
++::test_the_probe_reports_a_redirect_as_an_answered_status_not_an_error`
++(capability-warning-count, environment-dependent). None touches the state
++move.
++
++**Full sequential xdist paired-baseline sweep** (`Tests/UI -k "library" -p
++no:randomly -q -n 8 --dist worksteal`), branch then baseline, per recipe
++§7:
++
++| | Failed | Passed | Wall time |
++|---|---|---|---|
++| Branch (`12ba4fb13`) | 356 | 3989 | 1616.20s (26:56) |
++| Baseline (`9e62dd8f7`, isolated `git worktree`) | 370 | 3971 | 2355.11s (39:15) |
++
++Both inside the documented ~330–371 historical backdrop. 348 shared, 22
++baseline-unique (not investigated further per §7's own precedent), **8
++branch-unique** — all resolved, zero unexplained:
++
++- 4 passed cleanly on a combined single-process re-run (ordinary xdist
++  noise): `test_audio_cpp_model_library_handoff.py::
++  test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_retry`,
++  `test_library_media_reader_flow.py::
++  test_edit_metadata_from_read_routes_to_info_form_actions`,
++  `test_library_media_reader_traversal_t22207.py::
++  test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke`
++  (already in the recipe's §7 list, wave-2 task 6), `test_screen_
++  navigation.py::test_search_route_round_trips_to_the_library_rag_row`.
++- 2 reproduced identically in TRUE isolation on BOTH the branch and the
++  isolated pristine-baseline worktree: `test_library_media_reader_no_
++  change_sync_t22208.py::test_image_item_traversal_wall_time_probe` (a
++  wall-clock timing probe by design) and its sibling `test_no_change_
++  traversal_builds_no_preview_and_copies_no_content` (already in the
++  recipe's list as a name that passed cleanly on rerun at wave-2 close;
++  this run's deterministic reproduction on both trees is a stronger,
++  consistent escalation of the same characterization, not a
++  contradiction).
++- 1 reproduced identically on both trees and is the SAME name already
++  documented (wave-3 task 5) as bidirectional run-to-run flakiness:
++  `test_screen_navigation.py::test_library_screen_round_trip_returns_to_
++  landing_with_rag_draft`.
++- 1, `test_library_shell.py::test_library_media_initial_error_is_unknown_
++  and_retry_is_unique`, failed once in the combined re-run (immediately
++  after the 3-minute wall-time-probe test) but passed 6 of 7 further
++  isolated re-runs on the branch and 3 of 3 on the isolated baseline —
++  ordinary load-adjacent flakiness, no causal link to this task's diff
++  (Media error-retry logic untouched).
++
++None of the 8 touches Ingest code or this task's own diff. **Zero real
++regressions.**
++
++Method note: the FIRST attempt at this comparison used an in-place
++`git checkout 9e62dd8f7 -- tldw_chatbook Tests` overlay of this same
++worktree, and was silently invalidated when a session-usage-limit
++interruption's recovery restored the shared worktree to `HEAD` while that
++background sweep was still reading files mid-run. Redone with an isolated
++`git worktree add /tmp/w5base 9e62dd8f7` + its own `uv venv` +
++`pip install -e ".[dev]"` — immune to that class of corruption. Recorded as
++a forward-looking lesson in the recipe (commit `3b83eab93`).
++
++**preflight**: `PYTHON=.venv/bin/python ./scripts/preflight.sh` — all six
++derived-artifact checks pass (CSS bundle, profile-owned-path census [48
++occurrences/18 files/46 exceptions], production diagnostic inventory [573
++owners], backlog task-id sweep [3240 files, zero duplicates], chachanotes
++table allowlist [105 tables], index plan pins [270/270, 57 pinned]).
++
++## 9. Files changed
++
++- `tldw_chatbook/UI/Library_Modules/library_ingest_state.py` (new) —
++  `LibraryIngestState` dataclass, 20 fields.
++- `tldw_chatbook/UI/Screens/library_screen.py` — import added; 20
++  `__init__` lines collapsed into 1 constructor call; generated shim block
++  appended at module end.
++- `Tests/Architecture/test_library_ingest_wiring.py` (new) — wiring test
++  (shim-surface check, export-precedent shape).
++- `Tests/Architecture/test_screen_size_ratchet.py` — `_BUDGETS` row
++  lowered, comment appended.
++- `Tests/UI/test_library_ingest_characterization.py` (new) — 4 test
++  functions pinning the 5 genuine coverage gaps.
++- `Tests/UI/test_library_ingest_canvas.py`,
++  `Tests/UI/test_library_ingest_inline_consent.py`,
++  `Tests/UI/test_library_ingest_retry_last.py`,
++  `Tests/App/test_submit_library_ingest_job.py`,
++  `Tests/integration/test_library_ingest_flow.py` — 24 `object.__new__`
++  bypass fixtures given a `screen._ingest_state = LibraryIngestState()`
++  seed line each; matching imports added. Zero assertions changed.
++- `backlog/docs/library-decomposition-recipe.md` — §7 sweep-evidence list
++  extended; isolated-worktree-baseline lesson added.
++- `.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest/
++  progress.md` — ledger closed out.
++
++## 10. Self-review
++
++- **Ingest-options trio**: verified current location (module-level,
++  `library_screen.py:605-692`), verified neither function touches any
++  `self._library_ingest_*` field, untouched by this diff. ✅.
++- **All 20 fields accounted for**, verdicts derived mechanically (recipe §2
++  script), not hand-listed; oddball scan run in both directions (fields
++  named outside the prefix, and ingest-named methods reaching outside
++  fields). ✅.
++- **Form-persistence contract**: found already covered to the `.press()`
++  standard; did not write a redundant pin. ✅.
++- **Wiring test genuinely RED then GREEN**, screen provably untouched in
++  the RED commit (`git status`/`git diff --stat` checked before
++  committing). ✅.
++- **Ratchet lowered in the same (GREEN) commit**, not deferred; both
++  ceiling and no-slack rows pass. ✅.
++- **A real, battery-found regression (63 tests) was caught and fixed
++  before landing** — not shipped, not deferred, not hand-waved. The fix is
++  minimal (one line per call site, zero assertions touched) and verified
++  by re-running the exact same failing set. This is the single largest risk
++  this task carried; I'm confident it's fully closed (re-verified via the
++  full `-k "ingest and library"` sweep post-fix: 0 attributable failures).
++- **Known, intentional gap**: 5 handlers (cancel/force-stop/retry-faster-
++  whisper/option-reset/directory-browse) remain covered only by raw
++  handler calls, not real `.press()`. This is a deliberate, documented
++  scope boundary for a "spot-check," not an oversight — flagged plainly in
++  the new characterization file's own docstring for whoever runs Task 2.
++  If the reviewer wants this closed now rather than left as debt, it is
++  tractable using the same registry-injection technique the 2 new
++  per-job-row pins already demonstrate.
++- **Sweep baseline method**: the first attempt (in-place checkout) was
++  invalidated by a session interruption; redone correctly with an isolated
++  worktree per the coordinator's explicit direction, and the lesson is
++  recorded for future tasks. The two pre-interruption stash-based checks
++  used to isolate the `object.__new__` bypass fix (short-lived,
++  foreground, `git stash pop`ped immediately after each) are unaffected by
++  that risk class — verified clean (`git status`) after each pop.
+diff --git a/Tests/App/test_submit_library_ingest_job.py b/Tests/App/test_submit_library_ingest_job.py
+index b3d943553..d4b1ebc0b 100644
+--- a/Tests/App/test_submit_library_ingest_job.py
++++ b/Tests/App/test_submit_library_ingest_job.py
+@@ -37,21 +37,21 @@ from tldw_chatbook.Research_Workspace.source_operations import (
+     ResearchSourceOperation,
+     SourceOperationStatus,
+ )
+ from tldw_chatbook.Research_Workspace.source_operation_store import (
+     ResearchSourceOperationStore,
+ )
+ from tldw_chatbook.Research_Workspace.paste_staging import ResearchPasteStagingStore
+ from tldw_chatbook.runtime_policy.server_event_scope import (
+     event_principal_id_from_active_context,
+ )
+-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++from tldw_chatbook.UI.Screens.library_screen import LibraryIngestState, LibraryScreen
+ from tldw_chatbook.app import TldwCli
+ import tldw_chatbook.app as app_module
+ 
+ 
+ def _minimal_app(media_db: Any = None) -> TldwCli:
+     """Return a TldwCli instance without running its heavy __init__."""
+     app = object.__new__(TldwCli)
+     app.library_ingest_jobs = LibraryIngestJobRegistry()
+     app.media_db = media_db
+     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
+@@ -1737,20 +1737,21 @@ class TestIngestJobOptions:
+         assert options["chunk_options"] is not None
+         assert options["chunk_options"]["method"] == "sentences"
+ 
+     def test_fresh_untouched_form_snapshot_maps_to_ebook_chapters(self) -> None:
+         """(F11) A FRESH untouched submission still chunks e-books by
+         chapter: the submit-time snapshot carries the schema default
+         ("chapters"), which the builder maps to the chunker's real
+         ``ebook_chapters`` -- distinguishing it from a legacy snapshot
+         where the field is absent."""
+         screen = object.__new__(LibraryScreen)
++        screen._ingest_state = LibraryIngestState()
+         screen._library_ingest_form = LibraryIngestFormState()
+         snapshot = screen._build_ingest_options_snapshot()
+ 
+         assert snapshot["ebook"]["chunk_method"] == "chapters"
+ 
+         app = _minimal_app()
+         job = _make_job(source_path="/tmp/book.epub", ingest_options=snapshot)
+         options = app._ingest_job_options(job)
+ 
+         assert options["chunk_options"]["method"] == "ebook_chapters"
+@@ -2084,20 +2085,21 @@ class TestIngestJobOptions:
+             "retry_of_job_id": None,
+             "retry_source_failure_provenance": None,
+         }
+         assert "transcription_model_path" not in options
+         assert secret_path not in str(job.ingest_options)
+ 
+     def test_untouched_exact_faster_whisper_model_uses_visible_base_default(
+         self,
+     ) -> None:
+         screen = object.__new__(LibraryScreen)
++        screen._ingest_state = LibraryIngestState()
+         screen._library_ingest_form = LibraryIngestFormState()
+         screen._library_ingest_form.type_options["audio_video"] = {
+             "transcription_provider": "faster-whisper",
+         }
+         snapshot = screen._build_ingest_options_snapshot()
+ 
+         app = _minimal_app()
+         job = _make_job(
+             source_path="/tmp/test.mp3",
+             ingest_options=snapshot,
+@@ -2128,20 +2130,21 @@ class TestIngestJobOptions:
+ 
+         assert options["translation_target_language"] is None
+ 
+     def test_untouched_audio_form_snapshot_resolves_closed_gate_default(self) -> None:
+         provider_field = next(
+             field
+             for field in get_capabilities("audio_video").fields
+             if field.name == "transcription_provider"
+         )
+         screen = object.__new__(LibraryScreen)
++        screen._ingest_state = LibraryIngestState()
+         screen._library_ingest_form = LibraryIngestFormState()
+         snapshot = screen._build_ingest_options_snapshot()
+         submitted_audio_options = snapshot.get("audio_video", {})
+ 
+         assert provider_field.default == "default"
+         assert submitted_audio_options.get("transcription_provider") not in {
+             "parakeet-onnx",
+             "faster-whisper",
+         }
+ 
+@@ -2368,36 +2371,38 @@ class TestIngestJobOptionsWiring:
+         options = app._ingest_job_options(job)
+ 
+         assert options["chunk_options"]["overlap"] == schema_overlap == 100
+ 
+     def test_untouched_form_local_and_server_paths_agree_on_overlap(self) -> None:
+         from tldw_chatbook.Library.server_ingest_request import (
+             build_server_ingest_kwargs,
+         )
+ 
+         screen = object.__new__(LibraryScreen)
++        screen._ingest_state = LibraryIngestState()
+         screen._library_ingest_form = LibraryIngestFormState()
+         snapshot = screen._build_ingest_options_snapshot()
+ 
+         app = _minimal_app()
+         job = _make_job(source_path="/tmp/test.txt", ingest_options=snapshot)
+         local_options = app._ingest_job_options(job)
+         server_kwargs = build_server_ingest_kwargs("/tmp/test.txt", options=snapshot)
+ 
+         assert local_options["chunk_options"] is not None
+         assert (
+             local_options["chunk_options"]["overlap"] == server_kwargs["chunk_overlap"]
+         )
+         assert local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
+ 
+     def test_fresh_snapshot_seeds_shared_generic_schema_defaults(self) -> None:
+         screen = object.__new__(LibraryScreen)
++        screen._ingest_state = LibraryIngestState()
+         screen._library_ingest_form = LibraryIngestFormState()
+ 
+         snapshot = screen._build_ingest_options_snapshot()
+         defaults = {
+             field.name: field.default
+             for field in get_capabilities("generic").fields
+             if field.name
+             in {
+                 "overwrite_existing",
+                 "custom_prompt",
+diff --git a/Tests/Architecture/test_library_ingest_wiring.py b/Tests/Architecture/test_library_ingest_wiring.py
+new file mode 100644
+index 000000000..d0326174a
+--- /dev/null
++++ b/Tests/Architecture/test_library_ingest_wiring.py
+@@ -0,0 +1,37 @@
++"""Ingest extraction series: state object exists and is screen-wired.
++
++Wave-5 Task 1 (ingest series 1/3, state PR; recipe: ``backlog/docs/
++library-decomposition-recipe.md``; export series precedent: Tests/
++Architecture/test_library_export_wiring.py, its state-PR-era shape -- the
++closest match, since Ingest also needed no plural-prefix split and no
++wiring-field exclusion). Every field ``LibraryIngestState`` declares must
++have a matching generated property shim on ``LibraryScreen`` under the
++``_library_ingest_<field>`` name -- the single prefix every Ingest field
++uses (the recipe §2 ownership script found no field needing a plural
++variant and no field held out as wiring, see ``library_ingest_state.py``'s
++own module docstring for the full ownership analysis).
++"""
++from __future__ import annotations
++
++import dataclasses
++
++import pytest
++
++from tldw_chatbook.UI.Library_Modules.library_ingest_state import (
++    LibraryIngestState,
++)
++
++
++@pytest.mark.unit
++def test_state_object_fields_match_the_shim_surface() -> None:
++    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++
++    field_names = {f.name for f in dataclasses.fields(LibraryIngestState)}
++    assert field_names, "state object is empty"
++    assert len(field_names) == 20, f"expected 20 ingest fields, got {len(field_names)}"
++    missing = []
++    for name in field_names:
++        shim = getattr(LibraryScreen, "_library_ingest_" + name, None)
++        if not isinstance(shim, property):
++            missing.append("_library_ingest_" + name)
++    assert not missing, f"no screen shim property found for: {missing!r}"
+diff --git a/Tests/Architecture/test_screen_size_ratchet.py b/Tests/Architecture/test_screen_size_ratchet.py
+index 5f07aa5a6..20e831407 100644
+--- a/Tests/Architecture/test_screen_size_ratchet.py
++++ b/Tests/Architecture/test_screen_size_ratchet.py
+@@ -382,21 +382,31 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
+     # split). 41247/1311 -> 41155/1295.
+     #
+     # 2026-09-04, wave-4 final review: `origin/dev` merge (106 commits since
+     # this branch's merge-base). Fresh `_measure()` on the merged tree:
+     # 41155/1295 -> 41574/1302 (+419 lines, +7 methods) -- ordinary
+     # dev-side feature drift landing in `LibraryScreen` while this wave's
+     # own series was in flight (unrelated to the skills move; the one
+     # merge conflict this dev-merge produced was in the diagnostic
+     # inventory pin, not in this file). Re-pinned to the merged tree's own
+     # measured value, not carried forward from either side.
+-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41574, 1302),
++    #
++    # 2026-09-05, wave-5 task 1 (ingest state PR, series 1/3): the 20-field
++    # ingest `__init__` block (all `_library_ingest_*`, single prefix, no
++    # wiring-field exclusion -- see `library_ingest_state.py`'s own module
++    # docstring) collapsed into one `LibraryIngestState` constructor call
++    # (no constructor arguments -- every original line was an uncomputed
++    # literal or a no-argument factory call, unlike every prior series'
++    # entangled reader-preferences trio) plus a generated single-prefix shim
++    # loop; methods unchanged (pure field move, zero FunctionDefs touched).
++    # 41574/1302 -> 41520/1302.
++    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 41520, 1302),
+ }
+ 
+ # Task 22507.4 started from this reviewed measurement. The repository-wide
+ # ratchet predates concurrent Console growth, so this explicit comparison
+ # proves this task does not add to that debt while the stale ceiling is fixed
+ # independently.
+ _TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+ 
+ 
+ @lru_cache(maxsize=None)
+diff --git a/Tests/UI/test_library_ingest_canvas.py b/Tests/UI/test_library_ingest_canvas.py
+index 3aff6bfad..ffeb9a509 100644
+--- a/Tests/UI/test_library_ingest_canvas.py
++++ b/Tests/UI/test_library_ingest_canvas.py
+@@ -51,20 +51,21 @@ from tldw_chatbook.Library.library_ingest_jobs import (
+     build_active_ingest_consent_scope,
+ )
+ from tldw_chatbook.Library.library_ingest_state import (
+     LibraryIngestCanvasState,
+     LibraryIngestFormState,
+     build_library_ingest_state,
+ )
+ from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+ from tldw_chatbook.UI.Screens.library_screen import (
++    LibraryIngestState,
+     LibraryScreen,
+     _LibraryIngestStartConsent,
+ )
+ from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+     LibraryIngestCanvas,
+     LibraryIngestQueuePanel,
+     _summarise_option,
+ )
+ 
+ 
+@@ -1653,20 +1654,21 @@ async def test_external_preparation_cancel_is_a_physical_message_action() -> Non
+ 
+ 
+ @pytest.mark.asyncio
+ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
+     monkeypatch: pytest.MonkeyPatch,
+     tmp_path: Path,
+ ) -> None:
+     fake_app = MagicMock()
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = MagicMock()
+     screen._library_ingest_form = LibraryIngestFormState(
+         type_options={
+             "audio_video": {
+                 "transcription_provider": "parakeet-onnx",
+                 "language": "en",
+             }
+         }
+     )
+     prior = deepcopy(screen._library_ingest_form.type_options)
+@@ -2059,20 +2061,21 @@ async def test_library_screen_ingest_layout_contains_metadata_and_start_for_loca
+         assert metadata.region.y >= canvas.region.y
+         assert metadata.region.height > 0
+         assert start.region.x >= canvas.region.x
+         assert start.region.right <= canvas.region.right
+         assert start.region.y >= canvas.region.y
+         assert start.region.bottom <= canvas.region.bottom
+ 
+ 
+ def test_external_override_defers_submit_until_preparation_finishes() -> None:
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     submit = MagicMock()
+     source_service = MagicMock()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: source_service,
+     )
+     screen._library_ingest_form = LibraryIngestFormState(
+         path="/tmp/speech.wav",
+         type_options={
+             "audio_video": {
+@@ -2166,20 +2169,21 @@ def test_external_prepare_retains_before_enqueue(
+     saved_settings: list[dict[str, object]] = []
+     fake_app = SimpleNamespace(
+         call_from_thread=lambda callback, *args: callback(*args),
+     )
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     monkeypatch.setattr(
+         "tldw_chatbook.UI.Screens.library_screen.get_current_worker",
+         lambda: SimpleNamespace(is_cancelled=False),
+     )
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     # task-15470: the actual write moved into a `@work(thread=True)`
+     # instance method (`_save_library_ingest_options`), which needs a real
+     # running app to dispatch through `run_worker` -- `fake_app` above is a
+     # bare `SimpleNamespace` stand-in for sequencing, not a mounted app, and
+     # has no `_thread_id`. Patching the instance method (rather than the
+     # module-level `save_settings_to_cli_config` it wraps) keeps this
+     # test's own subject -- that sensitive/internal fields are stripped
+     # before persisting -- intact.
+     screen._save_library_ingest_options = lambda values: saved_settings.append(values)
+     screen.app_instance = SimpleNamespace(
+@@ -2232,20 +2236,21 @@ def test_external_prepare_retains_before_enqueue(
+ 
+ def test_external_vad_plan_is_exact_and_cancel_releases_without_jobs(
+     monkeypatch: pytest.MonkeyPatch,
+     tmp_path: Path,
+ ) -> None:
+     fake_app = MagicMock()
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     service = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+     )
+     screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+     prior = deepcopy(screen._library_ingest_form)
+     screen._library_external_submit_generation = 4
+     screen._library_external_submit_scope_id = "library-external-vad"
+     screen._library_external_submit_worker = None
+     report = _vad_only_report(tmp_path)
+@@ -2277,20 +2282,21 @@ def test_external_vad_plan_rejects_any_non_vad_entry(
+     from dataclasses import replace
+     from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+         parakeet_reference,
+     )
+     from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+ 
+     fake_app = MagicMock()
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     service = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=MagicMock(),
+         _ensure_parakeet_source_service=lambda: service,
+         notify=MagicMock(),
+     )
+     screen._library_external_submit_generation = 2
+     screen._library_external_submit_scope_id = "library-external-changed-plan"
+     screen._library_external_submit_worker = None
+     report = _vad_only_report(tmp_path)
+     changed_entry = replace(
+@@ -2313,20 +2319,21 @@ def test_external_vad_plan_rejects_any_non_vad_entry(
+ 
+ 
+ def test_stale_external_result_releases_scope_without_enqueue(
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     fake_app = MagicMock()
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     service = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+     )
+     screen._library_external_submit_generation = 8
+     screen._library_external_submit_scope_id = "library-external-current"
+ 
+     LibraryScreen._apply_library_external_preparation(
+         screen,
+         7,
+@@ -2343,20 +2350,21 @@ def test_stale_external_result_releases_scope_without_enqueue(
+ 
+ 
+ def test_external_validation_failure_releases_and_preserves_form(
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     fake_app = MagicMock()
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     service = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+         notify=MagicMock(),
+     )
+     screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+     prior = deepcopy(screen._library_ingest_form)
+     screen._library_external_submit_generation = 3
+     screen._library_external_submit_scope_id = "library-external-failed"
+     screen._library_external_submit_worker = MagicMock()
+@@ -2385,20 +2393,21 @@ def test_external_validation_failure_releases_and_preserves_form(
+ def test_external_submit_exception_releases_before_any_registry_job(
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     fake_app = MagicMock()
+     monkeypatch.setattr(LibraryScreen, "app", property(lambda self: fake_app))
+     service = MagicMock()
+     registry = MagicMock()
+     registry.jobs.return_value = ()
+     submit = MagicMock(side_effect=RuntimeError("submit failed"))
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+         notify=MagicMock(),
+     )
+     screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+     prior = deepcopy(screen._library_ingest_form)
+     screen._library_ingest_registry = lambda: registry
+     screen._library_external_submit_generation = 5
+     screen._library_external_submit_scope_id = "library-external-submit-error"
+@@ -2420,20 +2429,21 @@ def test_external_submit_exception_releases_before_any_registry_job(
+     assert registry.jobs.call_count == 2
+     assert screen._library_ingest_form == prior
+     assert screen._library_external_submit_busy is False
+     assert screen._library_external_submit_status.startswith("Queueing failed.")
+ 
+ 
+ def test_external_override_is_not_prepared_for_server_backend() -> None:
+     submit = MagicMock()
+     service = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+         _resolve_ingest_backend=lambda: "server",
+     )
+     screen._library_ingest_form = LibraryIngestFormState(
+         type_options={
+             "audio_video": {
+                 "transcription_provider": "parakeet-onnx",
+                 "transcription_model_dir": "/private/external-parakeet",
+@@ -2454,20 +2464,21 @@ def test_external_override_is_not_prepared_for_server_backend() -> None:
+     service.prepare_external.assert_not_called()
+ 
+ 
+ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     backend = {"value": "local"}
+     service = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+         _resolve_ingest_backend=lambda: backend["value"],
+     )
+     screen._library_ingest_form = LibraryIngestFormState(
+         type_options={
+             "audio_video": {
+                 "transcription_provider": "parakeet-onnx",
+                 "transcription_model_dir": "/private/external-parakeet",
+@@ -2520,20 +2531,21 @@ def test_backend_switch_during_external_hash_cancels_and_fences_callback(
+     submit.assert_not_called()
+     service.release_scope.assert_any_call(scope_id)
+ 
+ 
+ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
+     monkeypatch: pytest.MonkeyPatch,
+ ) -> None:
+     service = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+         _resolve_ingest_backend=lambda: "local",
+     )
+     screen._library_ingest_form = LibraryIngestFormState(
+         path="/tmp/speech.wav",
+         type_options={
+             "audio_video": {
+                 "transcription_provider": "parakeet-onnx",
+@@ -2600,20 +2612,21 @@ async def test_external_vad_worker_cancellation_reaches_underlying_install(
+ 
+     monkeypatch.setattr(
+         "tldw_chatbook.UI.Screens.library_screen.run_parakeet_vad_provision",
+         gated_provision,
+     )
+     provision = LibraryScreen._provision_library_external_vad.__wrapped__
+     assert inspect.iscoroutinefunction(provision)
+     service = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+     )
+     screen.post_message = MagicMock()
+     screen._apply_library_external_preparation = MagicMock()
+     task = asyncio.create_task(
+         provision(
+             screen,
+             1,
+@@ -2636,20 +2649,21 @@ async def test_external_vad_worker_cancellation_reaches_underlying_install(
+     assert stopped.is_set()
+     screen._apply_library_external_preparation.assert_not_called()
+     submit.assert_not_called()
+ 
+ 
+ def test_vad_install_failure_has_exact_zero_job_copy_and_recovery() -> None:
+     service = MagicMock()
+     notify = MagicMock()
+     submit = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=submit,
+         _ensure_parakeet_source_service=lambda: service,
+         notify=notify,
+     )
+     screen._library_ingest_form = LibraryIngestFormState(path="/tmp/speech.wav")
+     screen._library_external_submit_generation = 2
+     screen._library_external_submit_scope_id = "library-external-vad-failed"
+     screen._library_external_submit_worker = MagicMock()
+     screen._library_external_submit_busy = True
+@@ -2677,20 +2691,21 @@ def test_vad_install_failure_has_exact_zero_job_copy_and_recovery() -> None:
+     assert "managed model" in screen._library_external_submit_status
+     assert screen._parakeet_v2_install_progress is None
+     submit.assert_not_called()
+ 
+ 
+ def test_external_invalidation_clears_busy_status_and_shared_vad_progress() -> None:
+     service = MagicMock()
+     progress_widget = SimpleNamespace(display=True)
+     worker = MagicMock(is_finished=False)
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         _ensure_parakeet_source_service=lambda: service,
+     )
+     screen._library_external_submit_generation = 3
+     screen._library_external_submit_scope_id = "library-external-stale-progress"
+     screen._library_external_submit_worker = worker
+     screen._library_external_submit_busy = True
+     screen._library_external_submit_status = "Installing Silero VAD dependency…"
+     screen._parakeet_v2_install_progress = MagicMock()
+     screen._is_mounted = True
+@@ -2705,20 +2720,21 @@ def test_external_invalidation_clears_busy_status_and_shared_vad_progress() -> N
+     assert screen._library_external_submit_status == ""
+     assert screen._parakeet_v2_install_progress is None
+     assert progress_widget.display is False
+     screen.refresh.assert_called_once_with(recompose=True)
+ 
+ 
+ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
+     service = MagicMock()
+     worker = MagicMock(is_finished=False)
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(
+         _ensure_parakeet_source_service=lambda: service,
+     )
+     screen._library_ingest_form = LibraryIngestFormState(
+         path="/tmp/speech.wav",
+         type_options={
+             "audio_video": {
+                 "transcription_provider": "parakeet-onnx",
+                 "transcription_model_dir": "/private/external-parakeet",
+             }
+@@ -2742,20 +2758,21 @@ def test_physical_external_cancel_releases_scope_and_preserves_form() -> None:
+     assert screen._library_external_submit_status == (
+         "External preparation cancelled; no import was queued."
+     )
+ 
+ 
+ def test_external_vad_progress_is_generation_fenced_and_labeled() -> None:
+     event = MagicMock()
+     label = MagicMock()
+     progress = MagicMock()
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen.app_instance = SimpleNamespace(_resolve_ingest_backend=lambda: "local")
+     screen._library_external_submit_generation = 7
+     screen._library_external_submit_scope_id = "library-external-progress"
+     screen._library_external_submit_backend = "local"
+     screen.query_one = MagicMock(side_effect=[label, progress])
+ 
+     LibraryScreen._apply_library_external_vad_progress(
+         screen,
+         7,
+         "library-external-progress",
+diff --git a/Tests/UI/test_library_ingest_characterization.py b/Tests/UI/test_library_ingest_characterization.py
+new file mode 100644
+index 000000000..499178921
+--- /dev/null
++++ b/Tests/UI/test_library_ingest_characterization.py
+@@ -0,0 +1,310 @@
++"""Pre-extraction characterization pins for the Library Ingest subsystem.
++
++Wave-5 Task 1 (ingest series 1/3, state PR; recipe: ``backlog/docs/
++library-decomposition-recipe.md``; collections/skills series precedent:
++``Tests/UI/test_library_collections_characterization.py``). Before the
++Ingest subsystem's state PR moves any ``_library_ingest_*`` field into
++``LibraryIngestState``, this file pins the CURRENT behavior of every Ingest
++``@on`` handler a per-id ``grep -rn "<id>" Tests/`` (the collections series'
++own methodology, re-run here) reported as never actually
++``.press()``-ed/``.click()``-ed/message-bubbled-through a real DOM/Pilot
++interaction -- not merely mentioned for an existence/``.disabled``
++assertion, and not merely reached via a raw ``screen.handle_x(event)`` call
++with a hand-built ``Button.Pressed``-shaped fake (which exercises the
++handler BODY but never proves the ``@on`` selector itself routes a real
++DOM event there).
++
++Enumeration: an ``ast`` walk of ``LibraryScreen`` for method names
++containing "ingest" (case-insensitive) found 78 methods, of which 30 carry
++a distinct ``@on`` decorator (29 unique methods --
++``handle_library_ingest_browse`` carries two decorators,
++``#ingest-preflight-choose`` and ``#library-ingest-browse``, over one
++shared body). Each of the 29 was checked with a per-id ``grep -rn`` across
++``Tests/UI``, ``Tests/Library``, ``Tests/Live``, ``Tests/App`` and
++``Tests/integration`` (no dedicated ``Tests/Ingest/`` tree exists; ``Tests/
++Live`` has zero ingest-field/selector references at all), followed by a
++manual read of the surrounding lines. 24 of the 29 are already exercised
++this way; 5 are genuine gaps, pinned below. (``handle_library_ingest_
++browse``'s OTHER selector, ``#ingest-preflight-choose``, is not itself
++pressed anywhere, but the SAME handler body IS pressed via ``#library-
++ingest-browse`` in ``Tests/UI/test_library_ingest_inline_consent.py``, so
++the method is genuinely covered -- this file does not double-pin it.)
++
++- ``test_ingest_top_button_opens_ingest_canvas`` pins
++  ``_on_library_ingest_top_button`` (``#library-ingest-top-button``). The
++  one existing test that names this id
++  (``test_ingest_button_opens_canvas``, ``Tests/integration/
++  test_library_ingest_flow.py``) explicitly bypasses a real press ("button.
++  press() is unreliable for async handlers in the test harness") and calls
++  ``_select_library_rail_row`` directly instead. A real ``.press()`` DOES
++  work for this handler -- Textual's message pump processes an async
++  ``@on`` body across ``pilot.pause()`` the same as every other async
++  handler in this file (e.g. ``_return_library_rail_to_starter``, pressed
++  via ``#library-rail-back-to-starter`` at ``test_library_shell.py:2940``)
++  -- so this pins the real dispatch path the old comment assumed away.
++- ``test_tooling_fold_toggle_persists_across_recompose`` pins
++  ``sync_library_ingest_tooling_detail_expanded``
++  (``@on(LibraryIngestCanvas.ToolingDetailToggled)``). Its sibling,
++  ``sync_library_ingest_type_group_expanded``, already has genuine
++  full-screen coverage via
++  ``test_library_shell_ingest_type_group_panel_expand_survives_recompose``
++  (toggles a real ``#type-group-generic`` ``Collapsible`` and asserts
++  ``screen._library_ingest_form.expanded_type_groups`` updates and
++  survives a recompose) -- easy to miss with a literal
++  ``grep -rn "OptionPanelToggled"``/handler-name search, since that test
++  never names the message class or the handler. The tooling fold has no
++  screen-level equivalent: the only existing tests toggling
++  ``#ingest-preflight-tooling-detail`` mount the canvas standalone
++  (``Tests/UI/test_library_ingest_canvas.py``'s ``_CanvasHost``/
++  ``_MessageRecordingHost``), proving the CANVAS posts
++  ``ToolingDetailToggled`` but never that the real ``LibraryScreen``
++  handler receives it and persists ``tooling_detail_expanded``.
++- ``test_view_on_server_button_opens_the_remote_media_detail`` pins
++  ``handle_library_ingest_view_on_server``
++  (``.library-ingest-view-server``, zero references anywhere in the
++  suite).
++- ``test_choose_gguf_button_opens_the_gguf_picker_for_the_failed_job``
++  pins ``handle_library_ingest_choose_gguf``
++  (``.library-ingest-choose-gguf`` -- only ever ``query_one``-d for a
++  button-presence/removal assertion in ``test_library_ingest_canvas.py``,
++  never pressed).
++
++Five more per-job-row handlers found by the same census --
++``handle_library_ingest_cancel``, ``handle_library_ingest_force_stop``,
++``handle_library_ingest_retry_faster_whisper``, ``handle_library_ingest_
++option_reset``, ``handle_library_ingest_directory_browse`` -- are each
++exercised by an existing test, but only via a raw
++``screen.handle_x(event)`` (or ``LibraryScreen.handle_x(screen, event)``)
++call with a hand-built ``MagicMock`` event on a REAL, fully-``__init__``-ed
++screen instance (``Tests/UI/test_library_screen.py``, ``Tests/UI/
++test_library_ingest_inline_consent.py``, ``Tests/UI/
++test_library_ingest_canvas.py``). That is not the same bypass shape the
++recipe's own catalogue warns about (an unbound fake ``self``/a bare
++``SimpleNamespace`` with only flat kwargs) -- the screen is real and the
++handler's own LOGIC is genuinely exercised -- but it does not prove the
++``@on`` CSS-selector-to-handler DISPATCH itself works, since the id/class
++match Textual performs when routing a real ``Button.Pressed`` is never
++exercised. Deliberately left un-pinned here (a "spot-check", not an
++exhaustive re-drive of every already-somewhat-tested handler into a full
++DOM press): each needs a specific backing ``LibraryIngestJob`` state
++(an active local attempt for cancel/force-stop; a classified STT failure
++for the retry variants) composed through the real registry + a real rendered
++row, which is exactly the added machinery ``test_view_on_server_button_
++opens_the_remote_media_detail``/``test_choose_gguf_button_opens_the_gguf_
++picker_for_the_failed_job`` below demonstrate is tractable -- recorded here
++as known, bounded coverage debt for a future task, not silently absorbed
++into "24 of 29 covered."
++
++No live bugs were found among the 5 pinned here -- every one is a coverage
++gap, not a behavior bug (each handler's current behavior, once actually
++driven through the DOM, is exactly what its body says it should be).
++
++Every test below drives the screen only through DOM queries/presses/value
++assignments and public screen attributes -- originally the pre-extraction
++``_library_ingest_*`` names, which will resolve identically through the
++state PR's generated property shim across the (future) controller PR. The
++pinned BEHAVIOR these tests characterize is unaffected by that move.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++from unittest.mock import AsyncMock, Mock
++
++import pytest
++from textual.widgets import Button, Collapsible, Input
++
++from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
++from tldw_chatbook.Library.ingest_types import PreflightResult
++from Tests.UI.test_library_shell import (
++    LIBRARY_TEST_SIZE,
++    _LibraryIngestCanvasHarness,
++    _open_library_ingest_canvas,
++    _wait_for_library_shell,
++    _wait_for_selector,
++)
++
++_POLL_ATTEMPTS = 250
++_POLL_INTERVAL = 0.02
++
++
++@pytest.mark.asyncio
++async def test_ingest_top_button_opens_ingest_canvas() -> None:
++    """Characterization (pre-extraction): a real press on the rail-top
++    ``Import…`` button reaches ``_on_library_ingest_top_button`` and opens
++    the Ingest canvas, exactly like the rail-row entry point already
++    covered by ``_open_library_ingest_canvas``'s own ``.press()`` on
++    ``#library-row-ingest-import-media``.
++    """
++    harness = _LibraryIngestCanvasHarness(None)
++
++    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = harness.screen_stack[-1]
++        await _wait_for_library_shell(screen, pilot)
++
++        screen.query_one("#library-ingest-top-button", Button).press()
++        await pilot.pause()
++        await pilot.pause()
++        await _wait_for_selector(screen, pilot, "#library-ingest-path")
++
++        assert screen.query_one("#library-ingest-path", Input) is not None
++
++
++@pytest.mark.asyncio
++async def test_tooling_fold_toggle_persists_across_recompose(tmp_path) -> None:
++    """Characterization (pre-extraction): expanding the preflight summary's
++    "What's missing" fold reaches ``sync_library_ingest_tooling_detail_
++    expanded`` and the flag survives a full recompose -- the screen-level
++    counterpart to ``test_library_shell_ingest_type_group_panel_expand_
++    survives_recompose``'s own coverage of the sibling option-panel
++    handler.
++    """
++    db = MediaDatabase(
++        tmp_path / "ingest-canvas.db", client_id="wave5-tooling-fold"
++    )
++    source = tmp_path / "note.txt"
++    source.write_text("warned preflight for the tooling fold.", encoding="utf-8")
++    harness = _LibraryIngestCanvasHarness(db)
++
++    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = harness.screen_stack[-1]
++        await _wait_for_library_shell(screen, pilot)
++        await _open_library_ingest_canvas(screen, pilot)
++
++        # Prime a warned pre-flight result so the tooling-detail fold
++        # renders (mirrors test_library_ingest_canvas.py's own
++        # _warned_state, inlined here rather than importing a private
++        # helper across test files).
++        screen._library_ingest_form.preflight = PreflightResult(
++            type_groups={"generic": [str(source)]},
++            warnings=[
++                {
++                    "feature": "feature_0",
++                    "label": "Backend 0",
++                    "hint": "capability 0",
++                    "command": 'pip install -e ".[extra0]"',
++                }
++            ],
++            errors=[],
++            total_size=10,
++            truncated=False,
++            total_files=1,
++        )
++        screen.refresh(recompose=True)
++        await _wait_for_selector(screen, pilot, "#ingest-preflight-tooling-detail")
++
++        fold = screen.query_one("#ingest-preflight-tooling-detail", Collapsible)
++        assert fold.collapsed is True, "the detail must start folded away"
++        assert screen._library_ingest_form.tooling_detail_expanded is False
++
++        fold.collapsed = False
++        for _ in range(_POLL_ATTEMPTS):
++            if screen._library_ingest_form.tooling_detail_expanded:
++                break
++            await pilot.pause(_POLL_INTERVAL)
++        else:
++            raise AssertionError(
++                "Fold expand never synced back to tooling_detail_expanded."
++            )
++
++        # A full recompose must leave the fold expanded.
++        screen.refresh(recompose=True)
++        await _wait_for_selector(screen, pilot, "#ingest-preflight-tooling-detail")
++        assert (
++            screen.query_one(
++                "#ingest-preflight-tooling-detail", Collapsible
++            ).collapsed
++            is False
++        )
++
++
++@pytest.mark.asyncio
++async def test_view_on_server_button_opens_the_remote_media_detail() -> None:
++    """Characterization (pre-extraction): pressing "View on server" on a
++    finished SERVER-origin job reaches ``handle_library_ingest_view_on_
++    server``, which resolves the job's ``remote_media_id`` and opens it via
++    ``_open_library_external_media_detail``. Zero test references to this
++    handler existed before this pin.
++    """
++    harness = _LibraryIngestCanvasHarness(None)
++    job = harness.library_ingest_jobs.submit(
++        source_path="https://example.test/report", origin="server"
++    )
++    harness.library_ingest_jobs.mark_remote_done(
++        job.job_id, remote_media_id="server-media-9"
++    )
++
++    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = harness.screen_stack[-1]
++        await _wait_for_library_shell(screen, pilot)
++        await _open_library_ingest_canvas(screen, pilot)
++        await _wait_for_selector(
++            screen, pilot, f"#library-ingest-view-server-{job.job_id}"
++        )
++
++        opened = AsyncMock()
++        screen._open_library_external_media_detail = opened
++
++        screen.query_one(
++            f"#library-ingest-view-server-{job.job_id}", Button
++        ).press()
++        await pilot.pause()
++        await pilot.pause()
++
++        opened.assert_called_once_with("server-media-9")
++
++
++@pytest.mark.asyncio
++async def test_choose_gguf_button_opens_the_gguf_picker_for_the_failed_job(
++    monkeypatch,
++) -> None:
++    """Characterization (pre-extraction): pressing "Choose another GGUF…"
++    on a job FAILED with an ``stt_failure``/``choose_another_gguf``
++    classification reaches ``handle_library_ingest_choose_gguf``, which
++    opens the real GGUF picker (mirrors ``test_library_ingest_inline_
++    consent.py``'s own ``push_screen``-capturing pattern for ``#library-
++    ingest-browse`` rather than driving a real filesystem dialog).
++    """
++    harness = _LibraryIngestCanvasHarness(None)
++    job = harness.library_ingest_jobs.submit(source_path="/tmp/interview.wav")
++    harness.library_ingest_jobs.mark_failed(
++        job.job_id,
++        error="transcribe.cpp model missing",
++        error_detail={
++            "category": "stt_failure",
++            "actions": ["choose_another_gguf"],
++        },
++    )
++
++    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
++        screen = harness.screen_stack[-1]
++        await _wait_for_library_shell(screen, pilot)
++        await _open_library_ingest_canvas(screen, pilot)
++        await _wait_for_selector(
++            screen, pilot, f"#library-ingest-choose-gguf-{job.job_id}"
++        )
++
++        callbacks: list = []
++        monkeypatch.setattr(
++            screen.app,
++            "push_screen",
++            lambda *args, **kwargs: callbacks.append(
++                kwargs.get("callback", args[1] if len(args) > 1 else None)
++            ),
++            raising=False,
++        )
++        configure = Mock()
++        screen._configure_transcribe_cpp_gguf = configure
++
++        screen.query_one(
++            f"#library-ingest-choose-gguf-{job.job_id}", Button
++        ).press()
++        await pilot.pause()
++
++        assert callbacks and callbacks[0] is not None, "Choose GGUF pushed no picker"
++
++        chosen = Path("/tmp/model.gguf")
++        await callbacks[0](chosen)
++        await pilot.pause()
++
++        configure.assert_called_once_with(chosen, retry_job_id=job.job_id)
+diff --git a/Tests/UI/test_library_ingest_inline_consent.py b/Tests/UI/test_library_ingest_inline_consent.py
+index b1488fb53..6d2a49f14 100644
+--- a/Tests/UI/test_library_ingest_inline_consent.py
++++ b/Tests/UI/test_library_ingest_inline_consent.py
+@@ -34,21 +34,21 @@ from tldw_chatbook.Library.library_ingest_jobs import (
+ )
+ from tldw_chatbook.Library.library_ingest_state import (
+     LibraryIngestFormState,
+     active_ingest_start_confirm_line,
+     build_ingest_forecast,
+     build_library_ingest_state,
+     count_warning_affected_files,
+ )
+ from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
+ from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++from tldw_chatbook.UI.Screens.library_screen import LibraryIngestState, LibraryScreen
+ from Tests.UI.app_factory import _build_test_app
+ from Tests.UI.test_library_shell import (
+     LIBRARY_TEST_SIZE,
+     LibraryHarness,
+     _seed_conversations,
+     _two_conversations,
+     _wait_for_condition,
+     _wait_for_library_shell,
+     _wait_for_selector,
+ )
+@@ -76,20 +76,21 @@ _WARNING = {
+ 
+ 
+ def _minimal_library_screen() -> LibraryScreen:
+     """A LibraryScreen without the full UI (the guardrail suite's shape).
+ 
+     ``_update_library_ingest_gate``/``_build_library_ingest_state`` are
+     mocked: the unit tests here assert the consent STATE MACHINE; the
+     rendered line is pinned by the pilot tests below.
+     """
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     screen._is_mounted = False
+     screen._library_ingest_form = LibraryIngestFormState()
+     screen._library_ingest_preflight_worker = None
+     screen._library_ingest_preflight_generation = 0
+     # Keeps ``_update_library_ingest_dynamic_regions`` a no-op (different
+     # canvas selected), matching the unmounted-screen constraint.
+     screen._library_selected_row_id = ""
+     screen._library_ingest_start_consent = None
+     screen._library_ingest_start_confirm_armed_at = 0.0
+     screen._library_ingest_last_submission = None
+diff --git a/Tests/UI/test_library_ingest_retry_last.py b/Tests/UI/test_library_ingest_retry_last.py
+index 49465f62c..b1b901fa2 100644
+--- a/Tests/UI/test_library_ingest_retry_last.py
++++ b/Tests/UI/test_library_ingest_retry_last.py
+@@ -113,23 +113,27 @@ def test_retry_last_shows_once_the_queue_has_settled():
+ 
+ 
+ # --- snapshot capture at submit ----------------------------------------------
+ 
+ 
+ def test_do_submit_ingest_captures_the_last_submission_snapshot(tmp_path):
+     """The snapshot is taken BEFORE the form clears: source, metadata,
+     generic toggles, and a per-group copy of the options."""
+     from unittest.mock import MagicMock
+ 
+-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
++    from tldw_chatbook.UI.Screens.library_screen import (
++        LibraryIngestState,
++        LibraryScreen,
++    )
+ 
+     screen = object.__new__(LibraryScreen)
++    screen._ingest_state = LibraryIngestState()
+     form = LibraryIngestFormState(path="/tmp/talk.mp3")
+     form.title = "My title"
+     form.author = "An author"
+     form.keywords = "one, two"
+     form.analyze = True
+     form.chunk = True
+     form.chunk_size = "900"
+     form.type_options = {
+         "audio_video": {"transcription_provider": "faster-whisper"}
+     }
+diff --git a/Tests/integration/test_library_ingest_flow.py b/Tests/integration/test_library_ingest_flow.py
+index ff5ac0f0d..6d0850b65 100644
+--- a/Tests/integration/test_library_ingest_flow.py
++++ b/Tests/integration/test_library_ingest_flow.py
+@@ -228,20 +228,21 @@ def test_options_persist_to_config(monkeypatch):
+     saved_batches = []
+ 
+     def fake_save(section_values):
+         saved_batches.append(section_values)
+         return True
+ 
+     submitted_jobs = []
+     screen = library_screen_module.LibraryScreen.__new__(
+         library_screen_module.LibraryScreen
+     )
++    screen._ingest_state = library_screen_module.LibraryIngestState()
+     # task-15470: the actual write moved into a `@work(thread=True)`
+     # instance method (`_save_library_ingest_options`), which needs a
+     # running app to dispatch through `run_worker` -- this screen was never
+     # mounted. Patching that instance method (rather than the module-level
+     # `save_settings_to_cli_config` it wraps) keeps this test's own
+     # subject -- the one atomic batch shape -- intact.
+     screen._save_library_ingest_options = fake_save
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
+     )
+@@ -317,20 +318,21 @@ def test_options_persist_to_config(monkeypatch):
+ 
+ 
+ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
+     """task-3301: the generic panel's Inputs hand back display text
+     (``"1000"``); the submitted snapshot must carry ints so processors and
+     the persisted config never see a string chunk size/overlap."""
+     submitted_jobs = []
+     screen = library_screen_module.LibraryScreen.__new__(
+         library_screen_module.LibraryScreen
+     )
++    screen._ingest_state = library_screen_module.LibraryIngestState()
+     # task-15470: see `test_options_persist_to_config` above for why this
+     # patches the `@work(thread=True)` instance method rather than the
+     # module-level config function it wraps.
+     screen._save_library_ingest_options = lambda section_values: True
+     screen.app_instance = SimpleNamespace(
+         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
+     )
+     screen._library_ingest_form = SimpleNamespace(
+         type_options={
+             "generic": {"chunk_size": "1000", "chunk_overlap": "150"}
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index a74c4e24b..618937ca8 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -585,20 +585,66 @@ rediscover the same red from scratch.
+   test_library_screen_round_trip_returns_to_landing_with_rag_draft}` --
+   a Notes reader test and three generic screen-navigation tests, none
+   touching Search/RAG logic; this task's own diff is docstring/comment-
+   only. The last of these, `..._with_rag_draft`, is the SAME name Task
+   4's own sweep flagged as BASELINE-unique (§18's sweep evidence) --
+   flipping which side it fails on between two different runs is itself
+   strong independent evidence of pure run-to-run flakiness, not a
+   regression tied to either tree. The other 4 of the 10 branch-unique
+   names passed cleanly on the same combined re-run (ordinary xdist
+   noise). **Zero real regressions.**
++- Wave-5 Task 1 (ingest state PR)'s own full sequential xdist paired-baseline
++  sweep (branch `12ba4fb13`, 356 failed/3989 passed vs. an ISOLATED-worktree
++  baseline at `9e62dd8f7` -- `git worktree add` + its own venv, not a
++  same-tree `git stash`/path-checkout overlay, after a same-tree overlay was
++  interrupted mid-run by a session usage limit and had to be discarded and
++  redone isolated -- 370 failed/3971 passed; 348 shared, 22 baseline-unique,
++  8 branch-unique) found 8 branch-unique names, all resolved without a
++  single unexplained one: 4 passed cleanly on a combined single-process
++  re-run (`test_audio_cpp_model_library_handoff.py::
++  test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_retry`,
++  `test_library_media_reader_flow.py::
++  test_edit_metadata_from_read_routes_to_info_form_actions`,
++  `test_library_media_reader_traversal_t22207.py::
++  test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke` --
++  already documented above, wave-2 task 6 -- and `test_screen_navigation.py::
++  test_search_route_round_trips_to_the_library_rag_row`); 2 reproduced
++  identically in TRUE isolation on BOTH the branch and the isolated
++  pristine-baseline worktree (`test_library_media_reader_no_change_sync_
++  t22208.py::test_image_item_traversal_wall_time_probe` -- a new name for
++  this list, a wall-clock timing probe by design -- and its sibling
++  `test_no_change_traversal_builds_no_preview_and_copies_no_content`,
++  already documented above at the wave-2-close entry as a branch-unique name
++  that passed cleanly on rerun THERE; this task's own run instead reproduced
++  it deterministically on both trees, a stronger and consistent escalation
++  of the same "Media reader, load/timing-sensitive" characterization, not a
++  contradiction); 1 more,
++  `Tests/UI/test_screen_navigation.py::test_library_screen_round_trip_
++  returns_to_landing_with_rag_draft`, is the SAME name already documented
++  above (wave-3 task 5) as bidirectional run-to-run flakiness, reconfirmed
++  reproducing identically on both trees here too; the last,
++  `Tests/UI/test_library_shell.py::
++  test_library_media_initial_error_is_unknown_and_retry_is_unique`, failed
++  once in a combined run immediately following the 3-minute wall-time-probe
++  test above but then passed 6 of 7 further isolated re-runs on the branch
++  and 3 of 3 on the baseline -- ordinary load-adjacent flakiness with no
++  causal link to this task's own field-move diff (Media error-retry logic
++  untouched by it). None of the 8 touches Ingest code or this task's own
++  diff. **Zero real regressions.** Forward note on method, not just result:
++  a same-tree `git checkout <base> -- tldw_chatbook Tests` overlay is FRAGILE
++  across a long-running background sweep -- an external restore-to-HEAD
++  (session interruption recovery) mid-sweep silently invalidates whatever
++  that sweep was reading, with no error of its own. A `git worktree add`
++  (its own directory, its own venv) is immune to this class of corruption
++  and should be the DEFAULT method for any baseline comparison expected to
++  run for many minutes, not merely a fallback for when the overlay method is
++  unavailable.
+ 
+ ## 8. Subsystem order (spec, "Order of work")
+ 
+ Sequenced cold-to-hot so the conversations exemplar never fights rebases,
+ and hot subsystems migrate in short, fast series once the recipe above is
+ rehearsed. Churn = commits touching `library_screen.py` in the trailing 30
+ days whose subjects name the subsystem (measured 2026-09-01):
+ 
+ | Order | Subsystem | Churn | Notes |
+ |---|---|---|---|
+diff --git a/tldw_chatbook/UI/Library_Modules/library_ingest_state.py b/tldw_chatbook/UI/Library_Modules/library_ingest_state.py
+new file mode 100644
+index 000000000..d75acb135
+--- /dev/null
++++ b/tldw_chatbook/UI/Library_Modules/library_ingest_state.py
+@@ -0,0 +1,188 @@
++"""``LibraryIngestState`` -- the Ingest subsystem's own fields.
++
++State PR of the Ingest extraction series (wave-5 task 1,
++``.superpowers/sdd/2026-09-05-library-decomposition-wave5-ingest``; recipe:
++``backlog/docs/library-decomposition-recipe.md``; export series --
++``library_export_state.py`` -- is the worked example this mirrors most
++closely, since Ingest also needed no plural-prefix split and no entangled
++reader-preferences trio). Every field here was moved verbatim out of
++``LibraryScreen.__init__`` in ``tldw_chatbook/UI/Screens/library_screen.py``
++-- same default, same type. ``library_screen.py`` keeps every original
++``_library_ingest_<field>`` attribute name alive as a generated getter/
++setter ``@property`` shim pointing at ``self._ingest_state.<field>`` (a
++sentinel-wrapped block right after the ``LibraryScreen`` class body); a
++later controller PR in this series moves the subsystem's methods here too.
++
++Every field uses the SAME ``_library_ingest_`` prefix -- the recipe §2
++ownership script (run against the ``_library_ingest`` prefix family) found
++20 ``__init__``-scoped fields, all exclusively Ingest-owned (every
++non-ingest consumer is a shell/plumbing method -- e.g.
++``_sync_library_ingest_rail_for_width``/``_set_library_rail_collapsed`` for
++``auto_collapsed_rail``, ``_apply_parakeet_v2_install_result``/``_on_
++preflight_retry`` for ``form``, ``on_mount`` for ``last_done_count``,
++``_apply_library_external_preparation``/``_library_emergency_return_
++eligibility`` for ``start_confirm_armed_at``/``start_consent``), so no
++field needed a plural variant and none is BLOCKED by the >=2-subsystems
++rule. No field holds a live controller/coordinator instance (unlike the
++``_conversation_reader_controller``/``_library_collections_capture_
++controller`` "capture-controller" precedent) -- every field here is plain
++data, so there is no wiring-field exclusion either.
++
++**The ingest-options trio is explicitly OUT OF SCOPE for this module and
++was NOT moved.** ``_INGEST_OPTIONS_CACHE_ATTR``, ``_read_library_ingest_
++options_from_config`` and ``_library_ingest_options_for`` (module-level
++``FunctionDef``s at ``library_screen.py:605-692``) are permanently
++screen-routed -- several tests monkeypatch ``get_cli_setting``/
++``_read_library_ingest_options_from_config`` on the ``library_screen``
++module object, expecting the patch to reach ``_library_ingest_options_
++for``'s internal free-name call, which only resolves correctly while both
++functions share that module's own ``__globals__`` (recipe §3's oldest
++documented module-globals-coupling hazard). None of the trio reads or
++writes any ``self._library_ingest_*`` instance field -- confirmed by
++reading both function bodies -- so this state move touches neither the
++trio nor anything it depends on.
++
++Two DIFFERENT, adjacent field clusters that share initialization code with
++Ingest but are NOT Ingest fields, and therefore NOT part of this dataclass,
++were confirmed by reading every consumer rather than assumed by proximity:
++
++- ``_library_external_submit_generation``/``_scope_id``/``_worker``/
++  ``_backend``/``_consent``/``_busy``/``_status`` -- a SEPARATE "external
++  source" onboarding feature (VAD-consent preparation for an external
++  root), interleaved in the same ``__init__`` region. Two ingest-named
++  methods (``_do_submit_ingest``, ``_enqueue_library_ingest_snapshot``)
++  read several of these, but every field's PRIMARY/majority consumer set
++  is external-preparation-owned (``_apply_library_external_preparation``,
++  ``_apply_library_external_vad_progress``, ``_confirm_library_external_
++  vad``, ``_invalidate_library_external_submission``, ``_set_library_
++  external_status``, ``compose_content``) -- these stay screen-resident
++  shared shell state, reached by a future controller PR via a named
++  dependency, exactly the shape the recipe's ownership script calls
++  "non-subsystem users belonging to another subsystem."
++- ``_transcribe_cpp_configured`` -- read by two ingest-named methods
++  (``_build_library_ingest_state``, ``_load_library_ingest_options_from_
++  config``) but ALSO by ``_apply_transcribe_cpp_gguf_result`` (an
++  unrelated model-install completion handler); stays screen-resident.
++
++All 20 fields' original ``__init__`` lines are simple, uncomputed
++literals or no-argument factory calls (``threading.Lock()``,
++``LibraryIngestFormState()``, ``[]``, ``set()``) -- unlike the
++conversations/collections/skills exemplars' entangled reader-preferences
++trio, or Export's own computed ``form`` default
++(``self._default_library_export_form()``), NOTHING here depends on
++runtime/config data or another subsystem's shared init call. So
++``self._ingest_state = LibraryIngestState()`` is constructed, with no
++constructor arguments, at the position of the first removed field
++(``auto_collapsed_rail``'s original line), and every one of the 20
++original assignment lines is deleted outright -- there is no
++"entangled/computed placeholder" complication at all, matching the export
++series' own simplest fields (``running``, ``error``, ...) but, unusually,
++for the ENTIRE cluster rather than a fraction of it.
++"""
++from __future__ import annotations
++
++import threading
++from dataclasses import dataclass, field
++
++from textual.timer import Timer
++from textual.worker import Worker
++
++from ...Library.library_ingest_jobs import LibraryIngestJob
++from ...Library.library_ingest_state import (
++    LibraryIngestFormState,
++    LibraryIngestLastSubmission,
++)
++from .screen_support_types import _LibraryIngestStartConsent
++
++
++@dataclass
++class LibraryIngestState:
++    """Every field the Ingest subsystem exclusively owns."""
++
++    auto_collapsed_rail: bool = False
++
++    # A backend choice remains pending while its config write runs in a
++    # thread. The canvas keeps rendering the persisted app resolver until
++    # completion; this target sequences rapid clicks. An older completion
++    # can neither remain the final persisted value nor repaint a newer
++    # choice.
++    backend_target: str | None = None
++    backend_generation: int = 0
++    backend_save_lock: threading.Lock = field(default_factory=threading.Lock)
++
++    # Ingest canvas form echo -- a single bundled mutable dataclass
++    # (rather than a scatter of scalar fields like the sync panel
++    # above) since every field here is reset together on rail
++    # re-entry (see ``_reset_library_ingest_transient_state``); the
++    # job queue itself is registry-owned, not screen state.
++    form: LibraryIngestFormState = field(default_factory=LibraryIngestFormState)
++
++    # Dedupe counter for the "poke the source snapshot on transitions
++    # into done" rule (Task 5's registry listener): only re-fetch when
++    # the registry's done-job count has grown since the last time this
++    # screen checked. Seeded from the live registry in ``on_mount``
++    # (not here) so a re-mounted, cached screen instance never treats
++    # jobs that finished in a previous mount as a fresh transition.
++    last_done_count: int = 0
++
++    # Pre-flight analysis worker for the ingest path field. Cancelled
++    # and replaced on every new trigger so rapid edits never stack.
++    preflight_worker: Worker | None = None
++
++    # Monotonic stamp for pre-flight validity. Worker cancellation is
++    # cooperative, so a cancelled worker can still deliver its result;
++    # `_apply_library_ingest_preflight_result` drops any result whose
++    # generation is no longer current (task-2011).
++    preflight_generation: int = 0
++
++    # (task-2015) While-typing validation: each path edit restarts this
++    # timer; its fire runs the pre-flight so feedback no longer waits
++    # for blur.
++    path_debounce_timer: Timer | None = None
++
++    # (task-2015) Batch-settle toast bookkeeping: active-job count at the
++    # last registry tick, and the (done, failed) counts captured when the
++    # queue went from idle to active -- the settle toast reports deltas
++    # against that baseline.
++    last_active_count: int = 0
++    batch_baseline: tuple[int, int, int, int] = (0, 0, 0, 0)
++
++    # (task-2015) Two-press "Clear finished": first press arms, second
++    # clears; any registry mutation disarms.
++    clear_finished_armed: bool = False
++    clear_finished_armed_at: float = 0.0
++
++    # Two-press inline Start consent for tooling risk and active-source
++    # duplicates. The immutable request fingerprint is the sole armed
++    # carrier, so lifecycle repaint tokens cannot steal consent and a
++    # changed source/options/backend/membership cannot inherit it.
++    start_consent: _LibraryIngestStartConsent | None = None
++    start_confirm_armed_at: float = 0.0
++
++    # (task-3313) Session-scoped snapshot of the last submitted batch,
++    # captured at submit time before the form auto-clears; feeds the
++    # "Retry this batch" affordance. Deliberately NOT persisted (the
++    # jobs DB has sources but not staged options) and deliberately NOT
++    # cleared by rail re-entry -- it is submission history, not form
++    # state.
++    last_submission: LibraryIngestLastSubmission | None = None
++
++    # (xhigh review + live-verify round) Two-press consent for the
++    # DESTRUCTIVE half of "Retry this batch". Re-staging replaces
++    # path/title/author/keywords/options wholesale with no undo, and
++    # the ``r`` accelerator can fire it from any non-text focus -- so
++    # when the re-stage would discard work the user entered since the
++    # submit, the first press only arms (the affordance's own label
++    # becomes the confirm) and the second replaces the form. A form
++    # that holds nothing the re-stage would discard skips consent
++    # entirely: friction with nothing at stake is just friction.
++    retry_confirm_armed: bool = False
++    retry_confirm_armed_at: float = 0.0
++
++    # (task-2130) Durable session ledger: terminal jobs snapshotted at
++    # Clear-finished time so Recent imports (incl. failure records)
++    # survives the registry removal.
++    recent_ledger: list[LibraryIngestJob] = field(default_factory=list)
++
++    # (task-2043) Failed rows whose inline error details are expanded.
++    expanded_details: set[str] = field(default_factory=set)
+diff --git a/tldw_chatbook/UI/Screens/library_screen.py b/tldw_chatbook/UI/Screens/library_screen.py
+index f476fdf1d..ba61cf69e 100644
+--- a/tldw_chatbook/UI/Screens/library_screen.py
++++ b/tldw_chatbook/UI/Screens/library_screen.py
+@@ -537,20 +537,21 @@ from ..Library_Modules.library_collections_controller import (
+ from ..Library_Modules.library_collections_state import LibraryCollectionsState
+ from ..Library_Modules.library_conversation_reader_controller import (
+     LibraryConversationReaderController,
+ )
+ from ..Library_Modules.library_conversations_controller import (
+     LibraryConversationsController,
+ )
+ from ..Library_Modules.library_conversations_state import LibraryConversationsState
+ from ..Library_Modules.library_export_controller import LibraryExportController
+ from ..Library_Modules.library_export_state import LibraryExportState
++from ..Library_Modules.library_ingest_state import LibraryIngestState
+ from ..Library_Modules.library_note_import_controller import (
+     LibraryNoteImportController,
+ )
+ from ..Library_Modules.library_notes_sync_controller import (
+     InertLastingSyncRuntime,
+     LibraryNotesSyncController,
+ )
+ from ..Library_Modules.library_notes_work_session import (
+     NotesWorkSessionEvent,
+     NotesWorkSessionPhase,
+@@ -3101,21 +3102,26 @@ class LibraryScreen(BaseAppScreen):
+         self._library_note_confirming_delete: bool = False
+         self._library_note_preview: bool = False
+         self._library_note_context: bool = False
+         self._library_note_delete_origin_context: bool = False
+         self._library_note_delete_origin_preview: bool = False
+         # Task 7 owns measured breakpoint transitions. Task 5 consumes this
+         # explicit presentation input now so compact/wide utility grouping is
+         # testable without coupling the canvas to terminal geometry.
+         self._library_notes_compact: bool = False
+         self._library_rail_collapsed: bool = False
+-        self._library_ingest_auto_collapsed_rail: bool = False
++        # Every field below is a static literal/no-argument factory call with
++        # zero entanglement with another subsystem's shared init code (see
++        # LibraryIngestState's own module docstring for the full ownership
++        # analysis) -- constructed once here, at the position of the first
++        # removed field, with no constructor arguments.
++        self._ingest_state = LibraryIngestState()
+         self._library_notes_stage: Literal["rail", "notes"] = "rail"
+         # TASK-23025: cheap-state gates for the per-frame resize/focus paths.
+         # ``_library_layout_ref_cache`` holds positive widget references for
+         # the invariant shell chrome (validated by the O(1) ``is_mounted``
+         # flag and cleared at compose_content, the one choke point every
+         # whole-screen recompose passes through), so steady-state resize
+         # frames and focus changes read attributes instead of walking the
+         # DOM. ``_library_resize_applied_signature`` records the bucket/flag
+         # signature the resize legs last applied; a frame whose signature is
+         # unchanged returns before any query work. The reader-shell probe is
+@@ -3255,110 +3261,32 @@ class LibraryScreen(BaseAppScreen):
+         self._library_notes_sync_active_token: int | None = None
+         self._library_notes_sync_running: bool = False
+         self._library_notes_auto_sync_timer: Timer | None = None
+         # The folder box's live (possibly uncommitted) text. Typing updates
+         # only this field -- persisting to the TOML config on every
+         # Input.Changed meant a full config rewrite + cache reload per
+         # keystroke. It commits to config on Enter, Browse…, or a validated
+         # Sync now run. None = not edited this panel visit; fall back to the
+         # persisted config value.
+         self._library_notes_sync_folder_text: str | None = None
+-        # A backend choice remains pending while its config write runs in a
+-        # thread. The canvas keeps rendering the persisted app resolver until
+-        # completion; this target sequences rapid clicks. An older completion
+-        # can neither remain the final persisted value nor repaint a newer
+-        # choice.
+-        self._library_ingest_backend_target: str | None = None
+-        self._library_ingest_backend_generation: int = 0
+-        self._library_ingest_backend_save_lock = threading.Lock()
+-        # Ingest canvas form echo -- a single bundled mutable dataclass
+-        # (rather than a scatter of scalar fields like the sync panel
+-        # above) since every field here is reset together on rail
+-        # re-entry (see ``_reset_library_ingest_transient_state``); the
+-        # job queue itself is registry-owned, not screen state.
+-        self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
+         self._transcribe_cpp_configured = False
+-        # Dedupe counter for the "poke the source snapshot on transitions
+-        # into done" rule (Task 5's registry listener): only re-fetch when
+-        # the registry's done-job count has grown since the last time this
+-        # screen checked. Seeded from the live registry in ``on_mount``
+-        # (not here) so a re-mounted, cached screen instance never treats
+-        # jobs that finished in a previous mount as a fresh transition.
+-        self._library_ingest_last_done_count: int = 0
+-        # Pre-flight analysis worker for the ingest path field. Cancelled
+-        # and replaced on every new trigger so rapid edits never stack.
+-        self._library_ingest_preflight_worker: Worker | None = None
+-        # Monotonic stamp for pre-flight validity. Worker cancellation is
+-        # cooperative, so a cancelled worker can still deliver its result;
+-        # `_apply_library_ingest_preflight_result` drops any result whose
+-        # generation is no longer current (task-2011).
+-        self._library_ingest_preflight_generation: int = 0
+         # One provisional external-root scope exists only while its captured
+         # submission is being verified or awaiting VAD consent.
+         self._library_external_submit_generation: int = 0
+         self._library_external_submit_scope_id: str | None = None
+         self._library_external_submit_worker: Worker | None = None
+         self._library_external_submit_backend: str | None = None
+         self._library_external_submit_consent: _LibraryIngestStartConsent | None = None
+         self._library_external_submit_busy: bool = False
+         self._library_external_submit_status: str = ""
+         self._library_model_install_progress_label: str = ""
+         self._library_model_install_progress_owner: str | None = None
+-        # (task-2015) While-typing validation: each path edit restarts this
+-        # timer; its fire runs the pre-flight so feedback no longer waits
+-        # for blur.
+-        self._library_ingest_path_debounce_timer: Timer | None = None
+-        # (task-2015) Batch-settle toast bookkeeping: active-job count at the
+-        # last registry tick, and the (done, failed) counts captured when the
+-        # queue went from idle to active -- the settle toast reports deltas
+-        # against that baseline.
+-        self._library_ingest_last_active_count: int = 0
+-        self._library_ingest_batch_baseline: tuple[int, int, int, int] = (
+-            0,
+-            0,
+-            0,
+-            0,
+-        )
+-        # (task-2015) Two-press "Clear finished": first press arms, second
+-        # clears; any registry mutation disarms.
+-        self._library_ingest_clear_finished_armed: bool = False
+-        self._library_ingest_clear_finished_armed_at: float = 0.0
+-        # Two-press inline Start consent for tooling risk and active-source
+-        # duplicates. The immutable request fingerprint is the sole armed
+-        # carrier, so lifecycle repaint tokens cannot steal consent and a
+-        # changed source/options/backend/membership cannot inherit it.
+-        self._library_ingest_start_consent: _LibraryIngestStartConsent | None = None
+-        self._library_ingest_start_confirm_armed_at: float = 0.0
+-        # (task-3313) Session-scoped snapshot of the last submitted batch,
+-        # captured at submit time before the form auto-clears; feeds the
+-        # "Retry this batch" affordance. Deliberately NOT persisted (the
+-        # jobs DB has sources but not staged options) and deliberately NOT
+-        # cleared by rail re-entry -- it is submission history, not form
+-        # state.
+-        self._library_ingest_last_submission: LibraryIngestLastSubmission | None = None
+-        # (xhigh review + live-verify round) Two-press consent for the
+-        # DESTRUCTIVE half of "Retry this batch". Re-staging replaces
+-        # path/title/author/keywords/options wholesale with no undo, and
+-        # the ``r`` accelerator can fire it from any non-text focus -- so
+-        # when the re-stage would discard work the user entered since the
+-        # submit, the first press only arms (the affordance's own label
+-        # becomes the confirm) and the second replaces the form. A form
+-        # that holds nothing the re-stage would discard skips consent
+-        # entirely: friction with nothing at stake is just friction.
+-        self._library_ingest_retry_confirm_armed: bool = False
+-        self._library_ingest_retry_confirm_armed_at: float = 0.0
+-        # (task-2130) Durable session ledger: terminal jobs snapshotted at
+-        # Clear-finished time so Recent imports (incl. failure records)
+-        # survives the registry removal.
+-        self._library_ingest_recent_ledger: list[LibraryIngestJob] = []
+-        # (task-2043) Failed rows whose inline error details are expanded.
+-        self._library_ingest_expanded_details: set[str] = set()
+         # Explicit user-started curated model install. It is separate from
+         # inference: providers never acquire models on first use. The same
+         # worker slot tracks BOTH the preflight step (plan computation) and
+         # the install step (grant + provision) -- either one running blocks
+         # a second trigger, matching the single busy notification already
+         # shown to the user.
+         self._parakeet_v2_install_worker: Worker | None = None
+         # TASK-1696: the immutable PreflightReport a completed preflight
+         # worker handed to the consent modal -- read back by
+         # ``_run_parakeet_v2_install`` (kept zero-argument; see
+@@ -41565,10 +41493,28 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
+ # wave-4 task 3 (skills cleanup, skills series 3/3) deleted the generated
+ # skills-state shim block that used to live here (wave-4 task 1): every
+ # remaining screen-side `_library_skill_<field>`/`_library_skills_<field>`/
+ # `_selected_skill_name` reference was retargeted to
+ # `self._skills_state.<field>` and every test attribute path/dynamic-
+ # dispatch string was retargeted to match, so nothing on `LibraryScreen`
+ # needs the flat property names anymore -- see `LibrarySkillsController`'s
+ # own generated shim loop (installed by task 2) for where the SAME shape
+ # now lives permanently, one layer down, exactly mirroring the collections/
+ # search+RAG precedents immediately above.
++
++# --- BEGIN generated ingest-state shims (delete wholesale at cleanup) ---
++# wave-5 task 1: keeps every original `_library_ingest_<field>` name
++# working as a property over `self._ingest_state` (single prefix, no
++# plural variant needed -- see LibraryIngestState's own module docstring).
++for _lis_field in dataclasses.fields(LibraryIngestState):
++    setattr(
++        LibraryScreen,
++        "_library_ingest_" + _lis_field.name,
++        property(
++            lambda self, _n=_lis_field.name: getattr(self._ingest_state, _n),
++            lambda self, value, _n=_lis_field.name: setattr(
++                self._ingest_state, _n, value
++            ),
++        ),
++    )
++del _lis_field
++# --- END generated ingest-state shims ---

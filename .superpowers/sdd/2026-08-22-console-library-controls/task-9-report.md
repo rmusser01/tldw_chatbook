@@ -1,0 +1,190 @@
+# Task 9 implementation report
+
+## Outcome
+
+Task 9 classifies the gateway-resolved effective endpoint conservatively and
+records a separate, non-durable disclosure state on each live Console session.
+Classification uses only the normalized endpoint: loopback/local transports are
+on-device; literal private/link-local/ULA addresses are private network; literal
+global addresses and exact canonical cloud origins are public network; everything
+unresolved, custom, missing, or malformed is unknown. Provider names and API-key
+presence never influence the result.
+
+ADR check: no new ADR was required. This task directly implements
+[ADR-079](../../../backlog/decisions/079-console-library-conversation-authority.md),
+status Accepted. `TASK-19900.2` remains In Progress with its acceptance criteria
+unchecked for Task 10 and Task 11.
+
+## RED-first evidence
+
+- All intended Task 9 destination, gateway, policy-axis, and settlement tests
+  were authored before the original production edits.
+- The initial combined RED stopped with exit 4 and one collection error because
+  `console_library_destination` did not exist. Split causation runs showed the
+  same missing-module collection error for the destination/store tests, **4/4
+  gateway failures** because `resolved_destination` was absent, and **4/4
+  authority failures** because the session runtime record was absent.
+- A settlement-publication refinement failed **1/1** before settlement moved
+  ahead of completion subscriber publication.
+- A malformed-userinfo refinement failed **2 tests** while 24 table cases passed:
+  malformed userinfo was being stripped to an otherwise canonical cloud origin.
+  It now fails closed to the bounded unknown identity.
+
+## Implementation
+
+- Added standard-library-only parsing with `urllib.parse` and `ipaddress` after
+  gateway endpoint normalization. The endpoint identity contains only normalized
+  scheme, host, and non-default port. Default `:80`/`:443` ports collapse;
+  userinfo, path, query, and fragment are discarded.
+- Invalid scheme/host/port/userinfo/control input, absent endpoints, overlong
+  input, and overlong hostnames produce the bounded `external/unknown` identity.
+  No DNS lookup or provider/API-key heuristic is used.
+- Wrapped the public gateway resolution seam so every ready-return branch,
+  including llama.cpp and configured/built-in cloud paths, receives one immutable
+  `ConsoleResolvedDestination` after its effective endpoint is finalized.
+- Added a per-session runtime record with current destination, last resolved
+  identity, and optional disclosure. A first-ever external resolution does not
+  invent an on-device transition. When either frozen policy axis can place
+  Library data in the request, an on-device-to-non-device change raises the
+  disclosure; another identity change replaces or clears it, and terminal
+  settlement clears it while retaining the last destination.
+- The Task 8 controller records this state only after constructing the complete
+  immutable execution context. The store settles it on complete, regenerated
+  complete, failed, and stopped assistant paths before completion publication.
+  Durable Library policy is never modified.
+
+## Files and contract scope
+
+The planned destination module and gateway/test files were changed. The file
+list expanded minimally to `console_chat_store.py`, `console_chat_controller.py`,
+`test_console_chat_store.py`, and `test_console_turn_library_authority.py` because
+Task 9 explicitly requires persistent live-session state, final-context wiring,
+policy-combination proof, and centralized settlement semantics. The report and
+shared progress ledger were also updated as required. There is no frozen-contract
+deviation and no Task 10 provider gating, provider construction, tool reservation,
+schema, sync, import, or export work.
+
+## Mutation and negative evidence
+
+Each production mutation was restored before the next probe:
+
+- Treating an arbitrary custom hostname as public failed its fail-closed case
+  (**1 failed, 34 passed**).
+- Disabling the on-device transition guard failed the pure transition case and
+  all three eligible policy-axis combinations (**4 failed, 1 passed**).
+- Removing centralized completion settlement failed complete,
+  regenerated-complete, and subscriber-order cases (**3 failed, 2 passed**).
+- Building identity from the raw configured URL failed both credential-stripping
+  probes (**2 failed**).
+- Settling the active session instead of the message-owning session failed the
+  navigation/isolation regression (**1 failed**); the restored test passes.
+
+The privacy probes use URL userinfo, path, query/fragment secrets, and a separate
+configured API-key canary. None appears in the destination repr, identity key, or
+runtime state. Stable identity remains unchanged when only those discarded URL
+parts change.
+
+## Verification
+
+- Destination plus full gateway coverage excluding two sandbox-only socket tests:
+  **301 passed, 2 deselected, 1 inherited warning**.
+- Authority, turn-context, and store coverage: **320 passed, 1 inherited
+  warning**.
+- Controller and agent-bridge compatibility: **427 passed, 1 inherited warning**.
+- Task 8 UI authority consumers: **63 passed, 1 inherited warning**.
+- Dispatch checkpoint repository/codecs: **52 passed, 1 inherited warning**.
+- Scoped Ruff over all changed Python source/tests: all checks passed.
+- `git diff --check`: passed.
+
+The two deselected gateway tests bind localhost sockets and are unavailable in
+this sandbox (`PermissionError` at `socket.bind`); their exclusion and identical
+Task 8 baseline limitation are already documented. Every executed battery emits
+only the pre-existing Requests/urllib3/charset dependency-version warning. Per
+repository and task instructions, no full suite, push, live profile, or user
+database was used.
+
+## Self-review
+
+- Confirmed canonical-cloud classification comes from the sanitized effective
+  origin, not provider identity, model, API key, or DNS.
+- Confirmed malformed and adversarial inputs cannot create unbounded state or
+  leak userinfo, path, query, fragment, or API keys.
+- Confirmed the public gateway wrapper attaches classification to all return
+  branches after normalization and readiness resolution.
+- Confirmed first external resolution is not treated as a transition; disclosure
+  replacement, return-to-device clearing, settlement, completion subscriber
+  ordering, session navigation, and cross-session isolation are covered.
+- Confirmed runtime state is session-owned, non-synced, and independent of the
+  durable policy holder; the complete Task 8 authority/context boundary remains
+  intact.
+- No generalizable new incident beyond the existing testing/backlog lessons arose,
+  so no lessons document was changed.
+
+## Fix round 1
+
+Independent review found five accepted gaps in the original Task 9 delivery. The
+fix moves destination observation from gateway readiness to the shared real-send
+boundary, binds the live record to the frozen `attempt_id` and actual assistant
+row, and makes every terminal settlement compare the session, attempt, and
+message owner. Store completion clears the matching record before publication;
+the stream wrapper provides idempotent exact-owner cleanup for refusal,
+cancellation, session close, and the missing-placeholder complete-append
+fallback without clearing a newer attempt.
+
+Endpoint parsing now rejects all Unicode `Cc`/`Cf` controls, including DEL, C1,
+zero-width and bidi isolates, before any identity is constructed. `unix` and
+`http+unix` endpoints are on-device only with a concrete valid absolute/encoded
+socket target; empty, malformed, and credential-like targets fail closed to the
+bounded unknown identity. IPv4-mapped IPv6 classification follows the mapped
+IPv4 address while retaining the sanitized stable IPv6 origin identity.
+
+### Fix-round RED and verification
+
+- Reviewer reproduction RED: **22 failed, 27 passed, 495 deselected** across all
+  five findings. The expanded exact-owner/terminal matrix was **37 failed, 27
+  passed, 489 deselected**, with one inherited dependency warning.
+- First GREEN and final focused rerun: **64 passed, 489 deselected**, one inherited
+  warning.
+- Full affected-file compatibility: **553 passed**, one inherited warning.
+- Destination plus full gateway: **318 passed, 2 deselected**, one inherited
+  warning; the two excluded tests reproduce the documented sandbox
+  `PermissionError` on localhost `socket.bind`.
+- Task 8 context/UI/checkpoint compatibility: **94 passed**, one inherited warning.
+- Agent bridge compatibility: **247 passed**, one inherited warning.
+- Scoped Ruff and `git diff --check`: passed. No full suite, push, live profile,
+  or user database was used.
+
+Mutation probes were restored after each run: removing real dispatch observation
+failed **4/4** manual/queued cases; weakening message ownership failed **2/2**
+older-owner cases; restoring ASCII-only control checks failed **5/5** control
+cases; trusting local schemes without targets failed **4/8** local cases; and
+skipping mapped-address classification failed the private mapped-IPv6 control
+(**1 failed, 2 passed**). Negative coverage also proves first-external baseline,
+policy-both-off behavior, provider/API-key independence, bounded credential-free
+identity, replacement safety, session isolation/navigation, subscriber order,
+and direct/agent success/failure/stop/cancel/fallback settlement.
+
+The file list did not expand beyond the original Task 9 implementation report.
+There is no contract deviation, durable policy mutation, persistence/sync change,
+or Task 10 provider gating. `TASK-19900.2` remains In Progress with acceptance
+criteria unchecked.
+
+## Fix round 2
+
+Re-review found one bounded local-transport parsing gap: percent-encoded bytes
+were checked syntactically, but the decoded `http+unix` socket target was only
+required to start with `/`, and `unquote` silently replaced malformed UTF-8.
+Named RED coverage was **6 failed, 1 passed, 54 deselected** for decoded NUL,
+newline, DEL, whitespace, U+200B, malformed UTF-8, and a valid encoded absolute
+socket control. The parser now decodes strictly and rejects decoded whitespace
+or Unicode `Cc`/`Cf` characters before classifying the transport on-device.
+
+Focused GREEN was **7 passed, 54 deselected**. Full destination plus gateway
+compatibility was **325 passed, 2 documented sandbox socket tests deselected**;
+authority plus store compatibility was **311 passed**. Each run emitted only the
+inherited Requests dependency warning. Removing the strict decoded-target guard
+failed all **6/6** named invalid cases, and the restored implementation passed
+the final destination run. Scoped Ruff and `git diff --check` passed. Only the
+destination parser, its tests, this report, and the ignored shared progress
+ledger changed; there is no contract deviation or Task 10 work, and
+`TASK-19900.2` remains In Progress with acceptance criteria unchecked.

@@ -9,7 +9,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TRACEABILITY_REPORT = Path(
     "Docs/superpowers/qa/provider-cdp-uat/2026-06-16-provider-uat-traceability.md"
 )
-TASK_123 = Path("backlog/tasks/task-123 - Restore-provider-UAT-evidence-traceability.md")
+TASK_123 = Path(
+    "backlog/tasks/task-123 - Restore-provider-UAT-evidence-traceability.md"
+)
 
 
 def _text(path: Path) -> str:

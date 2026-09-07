@@ -12,8 +12,11 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 if TYPE_CHECKING:
@@ -23,11 +26,17 @@ if TYPE_CHECKING:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-5-visual-broken-state-audit.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-5-visual-broken-state-audit.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
-TASK = Path("backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-State-Audit.md")
-TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
+TASK = Path(
+    "backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-State-Audit.md"
+)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "home": ("#home-triage-grid",),
     # The live-work readiness card only mounts while a launch is pending and
@@ -35,14 +44,16 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     # always-present control bar + native session surface instead.
     "console": ("#console-control-bar", "#console-session-surface"),
     "library": ("#library-shell-grid",),
+    "research": ("#research-workspace-shell",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
     "watchlists_collections": ("#watchlists-collections-shell",),
     "schedules": ("#schedules-shell",),
     "workflows": ("#workflows-shell",),
-    "mcp": ("#mcp-shell", "#unified-mcp-panel"),
+    "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
-    "skills": ("#skills-shell",),
+    "lab": ("#lab-destination-header", "#llm-main-content"),
+    "logs": ("#logs-destination-header",),
     "settings": ("#settings-shell",),
 }
 TERMINAL_SIZE_MATRIX = (
@@ -74,7 +85,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _test_cli_setting(section: str, key: str, default=None):
@@ -95,7 +108,9 @@ def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
         monkeypatch.setenv(env_var, str(path))
 
 
-def _build_clean_visual_audit_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> "TldwCli":
+def _build_clean_visual_audit_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> "TldwCli":
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -113,10 +128,14 @@ def _screen_text(app: "TldwCli") -> str:
     return "\n".join(piece for piece in pieces if piece.strip())
 
 
-def _assert_destination_body_mounted(app: "TldwCli", destination_id: str, size_label: str) -> None:
+def _assert_destination_body_mounted(
+    app: "TldwCli", destination_id: str, size_label: str
+) -> None:
     selectors = DESTINATION_BODY_SELECTORS[destination_id]
     content = app.screen.query_one("#screen-content")
-    missing_selectors = [selector for selector in selectors if not list(content.query(selector))]
+    missing_selectors = [
+        selector for selector in selectors if not list(content.query(selector))
+    ]
     assert not missing_selectors, (
         f"{destination_id} missing primary body selector(s) at {size_label}: "
         f"{', '.join(missing_selectors)}"
@@ -127,8 +146,42 @@ def _has_visual_chrome(app: "TldwCli") -> bool:
     nav_bars = list(app.screen.query(MainNavigationBar))
     if not nav_bars or not list(app.screen.query("#screen-content")):
         return False
-    nav_buttons = tuple(button.id for button in nav_bars[0].query(Button))
-    return nav_buttons == tuple(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS)
+    nav_buttons = tuple(button.id for button in nav_bars[0].query(".nav-button"))
+    # The docked overflow hint mounts a tick after the nav strip; treat the
+    # chrome as incomplete until it is present too.
+    if len(app.screen.query("#nav-overflow-hint")) != 1:
+        return False
+    return nav_buttons == tuple(
+        f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS
+    )
+
+
+def _destination_body_ready(app: "TldwCli", destination_id: str) -> bool:
+    """Whether every one of a destination's body selectors is mounted.
+
+    Chrome (nav bar, overflow hint) can be ready before a screen's own body
+    is: Lab defers its body past first paint by design (LabScreen mounts it
+    from ``call_after_refresh`` so a ~500-700 ms compose never blocks first
+    paint), so a destination's body is not guaranteed to exist the instant
+    ``_has_visual_chrome`` turns true. Generic over every destination -- not
+    just "lab" -- so a future lazily-mounted screen is covered too.
+
+    Args:
+        app: The running application.
+        destination_id: The destination whose selectors to check.
+
+    Returns:
+        True once every selector in ``DESTINATION_BODY_SELECTORS[destination_id]``
+        matches at least one node under ``#screen-content``.
+    """
+    screen_content = list(app.screen.query("#screen-content"))
+    if not screen_content:
+        return False
+    content = screen_content[0]
+    return all(
+        list(content.query(selector))
+        for selector in DESTINATION_BODY_SELECTORS[destination_id]
+    )
 
 
 async def _wait_until(
@@ -147,19 +200,26 @@ async def _wait_until(
     if condition():
         return
     context_suffix = f" for {context}" if context else ""
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s{context_suffix}")
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s{context_suffix}"
+    )
 
 
-def _assert_visual_snapshot_is_healthy(app: "TldwCli", destination_id: str, size_label: str) -> None:
+async def _assert_visual_snapshot_is_healthy(
+    app: "TldwCli", destination_id: str, size_label: str, pilot
+) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
-    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
+    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button"))
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
-    assert "Ctrl+P" in str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
+    overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+    assert str(overflow_hint.label).strip() == "More ▾"
     _assert_destination_body_mounted(app, destination_id, size_label)
 
     text = _screen_text(app)
-    svg = app.export_screenshot(title=f"Phase 1.5 {size_label} {destination_id}", simplify=True)
+    svg = app.export_screenshot(
+        title=f"Phase 1.5 {size_label} {destination_id}", simplify=True
+    )
 
     assert text.strip(), f"{destination_id} rendered empty content at {size_label}"
     assert "<svg" in svg
@@ -184,22 +244,29 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
-            _initial_screen_name, initial_tab, initial_screen_class = app._resolve_screen_navigation_target("home")
+            _initial_screen_name, initial_tab, initial_screen_class = (
+                app._resolve_screen_navigation_target("home")
+            )
             assert initial_screen_class is not None
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == initial_tab and isinstance(app.screen, initial_screen_class),
+                lambda: (
+                    app.current_tab == initial_tab
+                    and isinstance(app.screen, initial_screen_class)
+                ),
                 context=f"{size_label}:home:initial",
             )
 
             for destination in SHELL_DESTINATION_ORDER:
-                _screen_name, expected_tab, expected_screen_class = app._resolve_screen_navigation_target(
-                    destination.primary_route
+                _screen_name, expected_tab, expected_screen_class = (
+                    app._resolve_screen_navigation_target(destination.primary_route)
                 )
                 assert expected_screen_class is not None, destination.primary_route
 
                 if app.current_tab != expected_tab:
-                    await app.handle_screen_navigation(NavigateToScreen(destination.primary_route))
+                    await app.handle_screen_navigation(
+                        NavigateToScreen(destination.primary_route)
+                    )
                     await _wait_until(
                         pilot,
                         lambda expected_tab=expected_tab, expected_screen_class=expected_screen_class: (
@@ -213,10 +280,62 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
                     lambda: _has_visual_chrome(app),
                     context=f"{size_label}:{destination.destination_id}:chrome",
                 )
+                await _wait_until(
+                    pilot,
+                    lambda destination_id=destination.destination_id: (
+                        _destination_body_ready(app, destination_id)
+                    ),
+                    context=f"{size_label}:{destination.destination_id}:body",
+                )
 
-                _assert_visual_snapshot_is_healthy(app, destination.destination_id, size_label)
+                await _assert_visual_snapshot_is_healthy(
+                    app, destination.destination_id, size_label, pilot
+                )
 
 
 def test_visual_audit_destination_body_selectors_cover_top_level_destinations() -> None:
     assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
 
+
+def test_first_run_css_defines_distinct_semantic_visual_states() -> None:
+    css = _text(Path("tldw_chatbook/css/features/_wizards.tcss"))
+
+    assert ".setup-progress-item.-active" in css
+    assert ".setup-progress-item.-complete" in css
+    assert ".setup-progress-item.-upcoming" in css
+    assert ".setup-choice-list:focus" in css
+    assert ".setup-choice-list SetupRadioButton.-on" in css
+    assert ".setup-step-error" in css and "background: $error 15%" in css
+    assert "border: solid $ds-focus-accent" in css
+
+    complete_number = re.search(
+        r"\.setup-progress-item\.-complete \.step-number\s*\{([^}]*)\}",
+        css,
+        re.DOTALL,
+    )
+    complete_title = re.search(
+        r"\.setup-progress-item\.-complete \.step-title\s*\{([^}]*)\}",
+        css,
+        re.DOTALL,
+    )
+    assert complete_number is not None and complete_title is not None
+    number_style = complete_number.group(1)
+    title_style = complete_title.group(1)
+    assert "background: $ds-surface-raised" in number_style
+    assert "color: $ds-text-primary" in number_style
+    assert "border: solid $success" in number_style
+    assert "background: $success" not in number_style
+    assert "color: $background" not in number_style
+    assert "color: $ds-text-primary" in title_style
+    assert "color: $success" not in title_style
+
+
+def test_first_run_css_stabilizes_provider_list_and_footer_dimensions() -> None:
+    css = _text(Path("tldw_chatbook/css/features/_wizards.tcss"))
+
+    assert ".setup-choice-list" in css
+    assert "min-height: 5" in css
+    assert "max-height: 7" in css
+    assert "FirstRunSetupWizard SetupWizardContainer .wizard-navigation" in css
+    assert "FirstRunSetupWizard .setup-key-hints" in css
+    assert "FirstRunSetupWizard SetupWizardContainer .wizard-steps-container" in css

@@ -78,14 +78,28 @@ class ResearchSearchScopeService:
             "capabilities": ["paper_search"],
         },
     }
-    SERVER_DETAIL_PAPER_PROVIDERS = {"arxiv", "semantic_scholar", "biorxiv", "medrxiv", "pubmed"}
+    SERVER_DETAIL_PAPER_PROVIDERS = {
+        "arxiv",
+        "semantic_scholar",
+        "biorxiv",
+        "medrxiv",
+        "pubmed",
+    }
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: ResearchSearchBackend | str | None) -> ResearchSearchBackend:
+    def _normalize_mode(
+        self, mode: ResearchSearchBackend | str | None
+    ) -> ResearchSearchBackend:
         if mode is None:
             return ResearchSearchBackend.LOCAL
         if isinstance(mode, ResearchSearchBackend):
@@ -147,13 +161,18 @@ class ResearchSearchScopeService:
         base_capabilities: list[str] | None = None,
     ) -> list[str]:
         capabilities = list(base_capabilities or ["paper_search"])
-        if mode == ResearchSearchBackend.SERVER and provider_id in cls.SERVER_DETAIL_PAPER_PROVIDERS:
+        if (
+            mode == ResearchSearchBackend.SERVER
+            and provider_id in cls.SERVER_DETAIL_PAPER_PROVIDERS
+        ):
             if "paper_detail" not in capabilities:
                 capabilities.append("paper_detail")
         return capabilities
 
     @staticmethod
-    def _with_backend(mode: ResearchSearchBackend, result: Any, *, entity_kind: str | None = None) -> Any:
+    def _with_backend(
+        mode: ResearchSearchBackend, result: Any, *, entity_kind: str | None = None
+    ) -> Any:
         if isinstance(result, dict):
             payload = dict(result)
             payload.setdefault("backend", mode.value)
@@ -190,7 +209,9 @@ class ResearchSearchScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
-        engines = list(await self._maybe_await(service.list_supported_websearch_engines()))
+        engines = list(
+            await self._maybe_await(service.list_supported_websearch_engines())
+        )
         records = [
             self._provider_record(
                 mode=normalized_mode,
@@ -207,7 +228,9 @@ class ResearchSearchScopeService:
             else list(self.PAPER_PROVIDER_DEFINITIONS)
         )
         for provider_id in paper_provider_ids:
-            provider_definition = self.PAPER_PROVIDER_DEFINITIONS.get(str(provider_id), {})
+            provider_definition = self.PAPER_PROVIDER_DEFINITIONS.get(
+                str(provider_id), {}
+            )
             records.append(
                 self._provider_record(
                     mode=normalized_mode,
@@ -217,7 +240,9 @@ class ResearchSearchScopeService:
                     capabilities=self._paper_provider_capabilities(
                         mode=normalized_mode,
                         provider_id=str(provider_id),
-                        base_capabilities=provider_definition.get("capabilities", ["paper_search"]),
+                        base_capabilities=provider_definition.get(
+                            "capabilities", ["paper_search"]
+                        ),
                     ),
                 )
             )
@@ -230,12 +255,19 @@ class ResearchSearchScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        if normalized_mode == ResearchSearchBackend.LOCAL and self.local_service is None:
-            raise ValueError("websearch is server-only when no local research search backend is configured.")
+        if (
+            normalized_mode == ResearchSearchBackend.LOCAL
+            and self.local_service is None
+        ):
+            raise ValueError(
+                "websearch is server-only when no local research search backend is configured."
+            )
         self._enforce_policy(self._action_id("launch", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(service.websearch(**kwargs))
-        return self._with_backend(normalized_mode, result, entity_kind="research_websearch")
+        return self._with_backend(
+            normalized_mode, result, entity_kind="research_websearch"
+        )
 
     async def _call_server_only_provider_method(
         self,
@@ -326,7 +358,9 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="get_arxiv_by_id", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="get_arxiv_by_id", kwargs=kwargs
+        )
 
     async def get_semantic_scholar_by_id(
         self,
@@ -364,7 +398,9 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="search_biorxiv", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="search_biorxiv", kwargs=kwargs
+        )
 
     async def get_biorxiv_by_doi(
         self,
@@ -372,7 +408,9 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="get_biorxiv_by_doi", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="get_biorxiv_by_doi", kwargs=kwargs
+        )
 
     async def search_medrxiv(
         self,
@@ -380,7 +418,9 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="search_medrxiv", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="search_medrxiv", kwargs=kwargs
+        )
 
     async def get_medrxiv_by_doi(
         self,
@@ -388,7 +428,9 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="get_medrxiv_by_doi", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="get_medrxiv_by_doi", kwargs=kwargs
+        )
 
     async def search_pubmed(
         self,
@@ -396,7 +438,9 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="search_pubmed", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="search_pubmed", kwargs=kwargs
+        )
 
     async def get_pubmed_by_id(
         self,
@@ -404,4 +448,6 @@ class ResearchSearchScopeService:
         mode: ResearchSearchBackend | str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        return await self._call_provider_method(mode=mode, method_name="get_pubmed_by_id", kwargs=kwargs)
+        return await self._call_provider_method(
+            mode=mode, method_name="get_pubmed_by_id", kwargs=kwargs
+        )

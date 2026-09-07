@@ -7,7 +7,15 @@ from typing import Optional, List, Tuple, Any, Callable
 from enum import Enum
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, Container
-from textual.widgets import Label, Input, TextArea, Select, Checkbox, Button, Collapsible
+from textual.widgets import (
+    Label,
+    Input,
+    TextArea,
+    Select,
+    Checkbox,
+    Button,
+    Collapsible,
+)
 from textual.widget import Widget
 
 
@@ -19,11 +27,11 @@ def create_form_field(
     default_value: Any = None,
     options: Optional[List[Tuple[str, Any]]] = None,
     required: bool = False,
-    **kwargs
+    **kwargs,
 ) -> ComposeResult:
     """
     Create a standardized form field with label.
-    
+
     Args:
         label: The label text for the field
         field_id: The ID for the field widget
@@ -36,7 +44,7 @@ def create_form_field(
     """
     # Add asterisk for required fields
     label_text = f"{label}*" if required else label
-    
+
     if field_type == "checkbox":
         # Checkbox has different layout - label comes after
         yield Checkbox(
@@ -44,46 +52,41 @@ def create_form_field(
             value=bool(default_value) if default_value is not None else False,
             id=field_id,
             classes="form-checkbox",
-            **kwargs
+            **kwargs,
         )
     else:
         # Standard fields have label above
         yield Label(f"{label_text}:", classes="form-label")
-        
+
         if field_type == "input":
             yield Input(
                 value=str(default_value) if default_value is not None else "",
                 placeholder=placeholder,
                 id=field_id,
                 classes="form-input",
-                **kwargs
+                **kwargs,
             )
         elif field_type == "textarea":
             yield TextArea(
                 str(default_value) if default_value is not None else "",
                 id=field_id,
                 classes="form-textarea",
-                **kwargs
+                **kwargs,
             )
         elif field_type == "select":
             if options is None:
                 options = []
             # Remove 'value' from kwargs if it exists to avoid conflicts
-            kwargs.pop('value', None)
-            
+            kwargs.pop("value", None)
+
             # Don't set value in constructor - let it be set after mounting
-            yield Select(
-                options,
-                id=field_id,
-                classes="form-select",
-                **kwargs
-            )
+            yield Select(options, id=field_id, classes="form-select", **kwargs)
 
 
 def create_form_row(*fields) -> ComposeResult:
     """
     Create a horizontal row of form fields.
-    
+
     Args:
         *fields: Tuples of field arguments to pass to create_form_field
     """
@@ -98,11 +101,11 @@ def create_form_section(
     fields: List[tuple],
     collapsible: bool = False,
     collapsed: bool = True,
-    section_id: Optional[str] = None
+    section_id: Optional[str] = None,
 ) -> ComposeResult:
     """
     Create a form section with optional collapsibility.
-    
+
     Args:
         title: Section title
         fields: List of field configurations
@@ -115,7 +118,7 @@ def create_form_section(
             title=title,
             collapsed=collapsed,
             id=section_id,
-            classes="form-section-collapsible"
+            classes="form-section-collapsible",
         ):
             for field_args in fields:
                 yield from create_form_field(*field_args)
@@ -126,24 +129,18 @@ def create_form_section(
 
 
 def create_button_group(
-    buttons: List[Tuple[str, str, str]],
-    alignment: str = "left"
+    buttons: List[Tuple[str, str, str]], alignment: str = "left"
 ) -> ComposeResult:
     """
     Create a group of buttons.
-    
+
     Args:
         buttons: List of (label, id, variant) tuples
         alignment: Button alignment ("left", "center", "right")
     """
     with Horizontal(classes=f"button-group button-group-{alignment}"):
         for label, button_id, variant in buttons:
-            yield Button(
-                label,
-                id=button_id,
-                variant=variant,
-                classes="form-button"
-            )
+            yield Button(label, id=button_id, variant=variant, classes="form-button")
 
 
 def create_status_area(
@@ -151,11 +148,11 @@ def create_status_area(
     label: str = "Status:",
     initial_content: str = "",
     min_height: int = 5,
-    max_height: int = 15
+    max_height: int = 15,
 ) -> ComposeResult:
     """
     Create a standardized status area.
-    
+
     Args:
         area_id: ID for the status area
         label: Label for the status area
@@ -164,12 +161,7 @@ def create_status_area(
         max_height: Maximum height
     """
     yield Label(label, classes="status-label")
-    area = TextArea(
-        initial_content,
-        id=area_id,
-        read_only=True,
-        classes="status-area"
-    )
+    area = TextArea(initial_content, id=area_id, read_only=True, classes="status-area")
     # Apply dynamic styling
     area.styles.min_height = min_height
     area.styles.max_height = max_height
@@ -179,19 +171,14 @@ def create_status_area(
 
 # Additional form components for SubscriptionWindow compatibility
 
+
 class FormField(Container):
     """A form field container that yields a label and a widget."""
-    
-    def __init__(
-        self,
-        label: str,
-        widget: Widget,
-        required: bool = False,
-        **kwargs
-    ):
+
+    def __init__(self, label: str, widget: Widget, required: bool = False, **kwargs):
         """
         Initialize a form field.
-        
+
         Args:
             label: The field label text
             widget: The form widget (Input, Select, TextArea, etc.)
@@ -202,7 +189,7 @@ class FormField(Container):
         self.label = label
         self.widget = widget
         self.required = required
-    
+
     def compose(self) -> ComposeResult:
         """Compose the form field."""
         label_text = f"{self.label}*" if self.required else self.label
@@ -212,16 +199,11 @@ class FormField(Container):
 
 class FormFieldSet(Container):
     """A collapsible container for grouping form fields."""
-    
-    def __init__(
-        self,
-        title: str,
-        collapsed: bool = False,
-        **kwargs
-    ):
+
+    def __init__(self, title: str, collapsed: bool = False, **kwargs):
         """
         Initialize a form field set.
-        
+
         Args:
             title: The title of the field set
             collapsed: Whether to start collapsed
@@ -231,22 +213,22 @@ class FormFieldSet(Container):
         self.title = title
         self.collapsed = collapsed
         self._content_container = Vertical(classes="form-fieldset-content")
-    
+
     def compose(self) -> ComposeResult:
         """Compose the field set with collapsible behavior."""
         # For now, just use a simple container with a title
         # Can be enhanced later to add collapsible behavior
         yield Label(self.title, classes="form-fieldset-title")
         yield self._content_container
-    
+
     def __enter__(self):
         """Context manager entry."""
         return self._content_container
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         pass
-    
+
     def add_field(self, field: FormField) -> None:
         """Add a field to the field set."""
         self._content_container.mount(field)
@@ -254,7 +236,7 @@ class FormFieldSet(Container):
 
 class FormSubmitButton(Button):
     """A styled submit button for forms."""
-    
+
     def __init__(self, label: str = "Submit", **kwargs):
         """Initialize a form submit button."""
         kwargs.setdefault("variant", "primary")
@@ -264,6 +246,7 @@ class FormSubmitButton(Button):
 
 class ValidationStatus(Enum):
     """Validation status enum."""
+
     VALID = "valid"
     INVALID = "invalid"
     PENDING = "pending"
@@ -279,12 +262,14 @@ def form_validator(func: Callable) -> Callable:
 
 class FormBuilder:
     """Utility class for building forms with consistent layout."""
-    
+
     @staticmethod
-    def create_form_field(label: str, widget: Widget, required: bool = False, **kwargs) -> FormField:
+    def create_form_field(
+        label: str, widget: Widget, required: bool = False, **kwargs
+    ) -> FormField:
         """Create a form field with label and widget."""
         return FormField(label, widget, required, **kwargs)
-    
+
     @staticmethod
     def create_field_set(title: str, fields: List[FormField], **kwargs) -> FormFieldSet:
         """Create a collapsible field set."""
@@ -292,7 +277,7 @@ class FormBuilder:
         for field in fields:
             field_set.add_field(field)
         return field_set
-    
+
     @staticmethod
     def add_field(container: Container, field: FormField) -> None:
         """Add a field to a container."""

@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from tldw_chatbook.Web_Server import serve
 
 
@@ -59,14 +63,14 @@ def test_main_cli_runner_serve_uses_web_dependency_gate(monkeypatch, tmp_path):
     """
     import atexit
     import signal
+    import subprocess
     import sys
 
     from tldw_chatbook import app as app_module
 
-    package_root = tmp_path / "package"
+    package_root = tmp_path / "installed" / "tldw_chatbook"
     css_dir = package_root / "css"
     css_dir.mkdir(parents=True)
-    (css_dir / "tldw_cli_modular.tcss").write_text("", encoding="utf-8")
     (css_dir / "build_css.py").write_text("", encoding="utf-8")
 
     run_calls = []
@@ -75,12 +79,16 @@ def test_main_cli_runner_serve_uses_web_dependency_gate(monkeypatch, tmp_path):
         run_calls.append(kwargs)
 
     monkeypatch.setattr(app_module, "__file__", str(package_root / "app.py"))
-    monkeypatch.setattr(app_module, "DEFAULT_CONFIG_PATH", tmp_path / "config.toml")
     monkeypatch.setattr(app_module, "initialize_early_logging", lambda: object())
     monkeypatch.setattr(app_module, "supports_emoji", lambda: False)
     monkeypatch.setattr(app_module, "get_char", lambda _emoji, fallback: fallback)
     monkeypatch.setattr(atexit, "register", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(signal, "signal", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("installed CSS build attempted"),
+    )
     monkeypatch.setattr(serve, "check_web_server_available", lambda: True)
     monkeypatch.setattr(serve, "run_web_server", fake_run_web_server)
     monkeypatch.setattr(
@@ -109,3 +117,42 @@ def test_main_cli_runner_serve_uses_web_dependency_gate(monkeypatch, tmp_path):
             "debug": True,
         }
     ]
+
+
+def test_source_tree_requires_adjacent_pyproject(tmp_path):
+    from tldw_chatbook import app as app_module
+
+    package_root = tmp_path / "checkout" / "tldw_chatbook"
+    package_root.mkdir(parents=True)
+    assert app_module._is_source_tree(package_root) is False
+
+    (package_root.parent / "pyproject.toml").write_text("", encoding="utf-8")
+    assert app_module._is_source_tree(package_root) is True
+
+
+def test_get_app_does_not_build_css_outside_source_tree(monkeypatch, tmp_path):
+    import subprocess
+    from tldw_chatbook import app as app_module
+
+    package_root = tmp_path / "installed" / "tldw_chatbook"
+    css_dir = package_root / "css"
+    css_dir.mkdir(parents=True)
+    (css_dir / "build_css.py").write_text("", encoding="utf-8")
+    expected = object()
+
+    monkeypatch.setattr(app_module, "__file__", str(package_root / "app.py"))
+    monkeypatch.setattr(app_module, "TldwCli", lambda: expected)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("installed CSS build attempted"),
+    )
+
+    assert app_module.get_app() is expected
+
+
+def test_all_css_bootstrap_sites_use_source_tree_guard() -> None:
+    from tldw_chatbook import app as app_module
+
+    source = Path(app_module.__file__).read_text(encoding="utf-8")
+    assert source.count("if _is_source_tree(package_root):") == 3

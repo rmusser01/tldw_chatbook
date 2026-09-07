@@ -37,43 +37,141 @@ async def test_prompt_studio_projects_prompts_and_test_cases_routes(monkeypatch)
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"success": True, "data": {"id": 1, "name": "Eval Lab", "status": "active"}},
+            {
+                "success": True,
+                "data": {"id": 1, "name": "Eval Lab", "status": "active"},
+            },
             {
                 "success": True,
                 "data": [{"id": 1, "name": "Eval Lab", "status": "active"}],
                 "metadata": {"page": 2, "per_page": 10, "total": 1, "total_pages": 1},
             },
             {"success": True, "data": {"id": 1, "name": "Eval Lab"}},
-            {"success": True, "data": {"id": 1, "name": "Eval Lab v2", "status": "active"}},
+            {
+                "success": True,
+                "data": {"id": 1, "name": "Eval Lab v2", "status": "active"},
+            },
             {"success": True, "data": {"message": "Project soft deleted"}},
             {"success": True, "data": {"id": 1, "status": "archived"}},
             {"success": True, "data": {"id": 1, "status": "active"}},
             {"success": True, "data": {"prompt_count": 2, "test_case_count": 3}},
-            {"success": True, "data": {"id": 11, "project_id": 1, "name": "Summarizer", "version_number": 1}},
             {
                 "success": True,
-                "data": [{"id": 11, "project_id": 1, "name": "Summarizer", "version_number": 1}],
+                "data": {
+                    "id": 11,
+                    "project_id": 1,
+                    "name": "Summarizer",
+                    "version_number": 1,
+                },
+            },
+            {
+                "success": True,
+                "data": [
+                    {
+                        "id": 11,
+                        "project_id": 1,
+                        "name": "Summarizer",
+                        "version_number": 1,
+                    }
+                ],
                 "metadata": {"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
             },
-            {"success": True, "data": {"id": 11, "project_id": 1, "name": "Summarizer", "version_number": 1}},
-            {"success": True, "data": {"id": 12, "project_id": 1, "name": "Summarizer", "version_number": 2}},
-            {"success": True, "data": [{"id": 11, "version_number": 1}, {"id": 12, "version_number": 2}]},
-            {"success": True, "data": {"id": 13, "project_id": 1, "name": "Summarizer", "version_number": 3}},
-            {"success": True, "data": {"assembled_messages": [{"role": "user", "content": "Hi"}]}},
-            {"success": True, "data": {"prompt_format": "structured", "prompt_schema_version": 1}},
+            {
+                "success": True,
+                "data": {
+                    "id": 11,
+                    "project_id": 1,
+                    "name": "Summarizer",
+                    "version_number": 1,
+                },
+            },
+            {
+                "success": True,
+                "data": {
+                    "id": 12,
+                    "project_id": 1,
+                    "name": "Summarizer",
+                    "version_number": 2,
+                },
+            },
+            {
+                "success": True,
+                "data": [
+                    {"id": 11, "version_number": 1},
+                    {"id": 12, "version_number": 2},
+                ],
+            },
+            {
+                "success": True,
+                "data": {
+                    "id": 13,
+                    "project_id": 1,
+                    "name": "Summarizer",
+                    "version_number": 3,
+                },
+            },
+            {
+                "success": True,
+                "data": {"assembled_messages": [{"role": "user", "content": "Hi"}]},
+            },
+            {
+                "success": True,
+                "data": {"prompt_format": "structured", "prompt_schema_version": 1},
+            },
             {"output": "ok", "tokens_used": 7, "execution_time": 0.2},
-            {"success": True, "data": {"id": 21, "project_id": 1, "name": "Smoke", "inputs": {"text": "Hi"}}},
             {
                 "success": True,
-                "data": [{"id": 21, "project_id": 1, "name": "Smoke", "inputs": {"text": "Hi"}}],
+                "data": {
+                    "id": 21,
+                    "project_id": 1,
+                    "name": "Smoke",
+                    "inputs": {"text": "Hi"},
+                },
+            },
+            {
+                "success": True,
+                "data": [
+                    {
+                        "id": 21,
+                        "project_id": 1,
+                        "name": "Smoke",
+                        "inputs": {"text": "Hi"},
+                    }
+                ],
                 "metadata": {"page": 1, "per_page": 20, "total": 1, "total_pages": 1},
             },
-            {"success": True, "data": {"id": 21, "project_id": 1, "name": "Smoke", "inputs": {"text": "Hi"}}},
-            {"success": True, "data": {"id": 21, "project_id": 1, "name": "Smoke v2", "inputs": {"text": "Hi"}}},
+            {
+                "success": True,
+                "data": {
+                    "id": 21,
+                    "project_id": 1,
+                    "name": "Smoke",
+                    "inputs": {"text": "Hi"},
+                },
+            },
+            {
+                "success": True,
+                "data": {
+                    "id": 21,
+                    "project_id": 1,
+                    "name": "Smoke v2",
+                    "inputs": {"text": "Hi"},
+                },
+            },
             {"success": True, "data": {"message": "Test case soft deleted"}},
             {"success": True, "data": [{"id": 22}, {"id": 23}]},
-            {"success": True, "data": {"imported": 2, "errors": [], "total_test_cases": 3}},
-            {"success": True, "data": {"format": "json", "data": "[{}]", "content_type": "application/json"}},
+            {
+                "success": True,
+                "data": {"imported": 2, "errors": [], "total_test_cases": 3},
+            },
+            {
+                "success": True,
+                "data": {
+                    "format": "json",
+                    "data": "[{}]",
+                    "content_type": "application/json",
+                },
+            },
             {"success": True, "data": [{"id": 24, "is_generated": True}]},
             {"results": [{"test_case_id": 21, "passed": True}]},
         ]
@@ -81,7 +179,9 @@ async def test_prompt_studio_projects_prompts_and_test_cases_routes(monkeypatch)
     monkeypatch.setattr(client, "_request", mocked)
 
     created_project = await client.create_prompt_studio_project(
-        PromptStudioProjectCreate(name="Eval Lab", description="Prompt experiments", status="active"),
+        PromptStudioProjectCreate(
+            name="Eval Lab", description="Prompt experiments", status="active"
+        ),
         idempotency_key="project-key",
     )
     projects = await client.list_prompt_studio_projects(
@@ -113,23 +213,33 @@ async def test_prompt_studio_projects_prompts_and_test_cases_routes(monkeypatch)
     prompt = await client.get_prompt_studio_prompt(11)
     updated_prompt = await client.update_prompt_studio_prompt(
         11,
-        PromptStudioPromptUpdate(system_prompt="Summarize tersely.", change_description="tighten"),
+        PromptStudioPromptUpdate(
+            system_prompt="Summarize tersely.", change_description="tighten"
+        ),
     )
     prompt_history = await client.get_prompt_studio_prompt_history(11)
     reverted_prompt = await client.revert_prompt_studio_prompt(11, 1)
     preview = await client.preview_prompt_studio_prompt(
-        PromptStudioPromptPreviewRequest(project_id=1, user_prompt="{{text}}", variables={"text": "Hi"})
+        PromptStudioPromptPreviewRequest(
+            project_id=1, user_prompt="{{text}}", variables={"text": "Hi"}
+        )
     )
     converted = await client.convert_prompt_studio_prompt(
-        PromptStudioPromptConvertRequest(project_id=1, system_prompt="S", user_prompt="{{text}}")
+        PromptStudioPromptConvertRequest(
+            project_id=1, system_prompt="S", user_prompt="{{text}}"
+        )
     )
     execution = await client.execute_prompt_studio_prompt(
-        PromptStudioPromptExecuteRequest(prompt_id=11, inputs={"text": "Hi"}, provider="openai", model="gpt-4o-mini")
+        PromptStudioPromptExecuteRequest(
+            prompt_id=11, inputs={"text": "Hi"}, provider="openai", model="gpt-4o-mini"
+        )
     )
     created_case = await client.create_prompt_studio_test_case(
         PromptStudioTestCaseCreate(project_id=1, name="Smoke", inputs={"text": "Hi"})
     )
-    cases = await client.list_prompt_studio_test_cases(1, is_golden=True, tags=["smoke", "gold"], search="Smoke")
+    cases = await client.list_prompt_studio_test_cases(
+        1, is_golden=True, tags=["smoke", "gold"], search="Smoke"
+    )
     case = await client.get_prompt_studio_test_case(21)
     updated_case = await client.update_prompt_studio_test_case(
         21,
@@ -137,23 +247,39 @@ async def test_prompt_studio_projects_prompts_and_test_cases_routes(monkeypatch)
     )
     deleted_case = await client.delete_prompt_studio_test_case(21)
     bulk_cases = await client.create_prompt_studio_test_cases_bulk(
-        PromptStudioTestCaseBulkCreate(project_id=1, test_cases=[PromptStudioTestCaseBase(name="A", inputs={})])
+        PromptStudioTestCaseBulkCreate(
+            project_id=1, test_cases=[PromptStudioTestCaseBase(name="A", inputs={})]
+        )
     )
     imported_cases = await client.import_prompt_studio_test_cases(
         PromptStudioTestCaseImportRequest(project_id=1, format="json", data="[]")
     )
     exported_cases = await client.export_prompt_studio_test_cases(
         1,
-        PromptStudioTestCaseExportRequest(format="json", include_golden_only=False, tag_filter=["smoke"]),
+        PromptStudioTestCaseExportRequest(
+            format="json", include_golden_only=False, tag_filter=["smoke"]
+        ),
     )
-    generated_cases = await client.generate_prompt_studio_test_cases(project_id=1, prompt_id=11, num_cases=2)
+    generated_cases = await client.generate_prompt_studio_test_cases(
+        project_id=1, prompt_id=11, num_cases=2
+    )
     run_cases = await client.run_prompt_studio_test_cases(
-        PromptStudioRunTestCasesRequest(project_id=1, prompt_id=11, test_case_ids=[21], model="gpt-4o-mini")
+        PromptStudioRunTestCasesRequest(
+            project_id=1, prompt_id=11, test_case_ids=[21], model="gpt-4o-mini"
+        )
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/prompt-studio/projects/")
-    assert mocked.await_args_list[0].kwargs["headers"] == {"Idempotency-Key": "project-key"}
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/prompt-studio/projects/")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/projects/",
+    )
+    assert mocked.await_args_list[0].kwargs["headers"] == {
+        "Idempotency-Key": "project-key"
+    }
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/projects/",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "page": 2,
         "per_page": 10,
@@ -161,21 +287,60 @@ async def test_prompt_studio_projects_prompts_and_test_cases_routes(monkeypatch)
         "include_deleted": "true",
         "search": "Eval",
     }
-    assert mocked.await_args_list[3].args[:2] == ("PUT", "/api/v1/prompt-studio/projects/update/1")
-    assert mocked.await_args_list[3].kwargs["json_data"] == {"name": "Eval Lab v2", "status": "active"}
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/prompt-studio/projects/delete/1")
+    assert mocked.await_args_list[3].args[:2] == (
+        "PUT",
+        "/api/v1/prompt-studio/projects/update/1",
+    )
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "name": "Eval Lab v2",
+        "status": "active",
+    }
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/prompt-studio/projects/delete/1",
+    )
     assert mocked.await_args_list[4].kwargs["params"] == {"permanent": "false"}
-    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/prompt-studio/prompts/create")
-    assert mocked.await_args_list[8].kwargs["headers"] == {"Idempotency-Key": "prompt-key"}
-    assert mocked.await_args_list[9].args[:2] == ("GET", "/api/v1/prompt-studio/prompts/list/1")
-    assert mocked.await_args_list[9].kwargs["params"] == {"page": 1, "per_page": 20, "include_deleted": "true"}
-    assert mocked.await_args_list[14].args[:2] == ("POST", "/api/v1/prompt-studio/prompts/preview")
-    assert mocked.await_args_list[16].args[:2] == ("POST", "/api/v1/prompt-studio/prompts/execute")
-    assert mocked.await_args_list[18].args[:2] == ("GET", "/api/v1/prompt-studio/test-cases/list/1")
+    assert mocked.await_args_list[8].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/prompts/create",
+    )
+    assert mocked.await_args_list[8].kwargs["headers"] == {
+        "Idempotency-Key": "prompt-key"
+    }
+    assert mocked.await_args_list[9].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/prompts/list/1",
+    )
+    assert mocked.await_args_list[9].kwargs["params"] == {
+        "page": 1,
+        "per_page": 20,
+        "include_deleted": "true",
+    }
+    assert mocked.await_args_list[14].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/prompts/preview",
+    )
+    assert mocked.await_args_list[16].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/prompts/execute",
+    )
+    assert mocked.await_args_list[18].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/test-cases/list/1",
+    )
     assert mocked.await_args_list[18].kwargs["params"]["tags"] == "smoke,gold"
-    assert mocked.await_args_list[22].args[:2] == ("POST", "/api/v1/prompt-studio/test-cases/bulk")
-    assert mocked.await_args_list[25].args[:2] == ("POST", "/api/v1/prompt-studio/test-cases/generate")
-    assert mocked.await_args_list[26].args[:2] == ("POST", "/api/v1/prompt-studio/test-cases/run")
+    assert mocked.await_args_list[22].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/test-cases/bulk",
+    )
+    assert mocked.await_args_list[25].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/test-cases/generate",
+    )
+    assert mocked.await_args_list[26].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/test-cases/run",
+    )
     assert isinstance(created_project, PromptStudioStandardResponse)
     assert projects.metadata["page"] == 2
     assert project.data["name"] == "Eval Lab"
@@ -210,18 +375,48 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"id": 31, "project_id": 1, "prompt_id": 11, "status": "running", "metrics": {}, "config": {}, "tags": []},
+            {
+                "id": 31,
+                "project_id": 1,
+                "prompt_id": 11,
+                "status": "running",
+                "metrics": {},
+                "config": {},
+                "tags": [],
+            },
             {
                 "evaluations": [
-                    {"id": 31, "project_id": 1, "prompt_id": 11, "status": "running", "metrics": {}, "config": {}, "tags": []}
+                    {
+                        "id": 31,
+                        "project_id": 1,
+                        "prompt_id": 11,
+                        "status": "running",
+                        "metrics": {},
+                        "config": {},
+                        "tags": [],
+                    }
                 ],
                 "total": 1,
                 "limit": 50,
                 "offset": 0,
             },
-            {"id": 31, "project_id": 1, "prompt_id": 11, "status": "completed", "metrics": {}, "config": {}, "tags": []},
+            {
+                "id": 31,
+                "project_id": 1,
+                "prompt_id": 11,
+                "status": "completed",
+                "metrics": {},
+                "config": {},
+                "tags": [],
+            },
             {"message": "Evaluation 31 deleted successfully"},
-            {"success": True, "data": {"optimization": {"id": 41, "status": "pending"}, "job_id": "job-1"}},
+            {
+                "success": True,
+                "data": {
+                    "optimization": {"id": 41, "status": "pending"},
+                    "job_id": "job-1",
+                },
+            },
             {"id": "job-2", "status": "pending"},
             {
                 "success": True,
@@ -232,10 +427,24 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
             {"id": "job-1", "status": "processing", "progress": 0.5},
             {"success": True, "data": {"message": "Optimization cancelled"}},
             {"success": True, "data": [{"name": "iterative"}]},
-            {"success": True, "data": {"optimization": {"id": 41}, "progress": {"status": "running"}, "timeline": []}},
+            {
+                "success": True,
+                "data": {
+                    "optimization": {"id": 41},
+                    "progress": {"status": "running"},
+                    "timeline": [],
+                },
+            },
             {"success": True, "data": {"id": 51}},
-            {"success": True, "data": {"iterations": [{"iteration_number": 1}]}, "metadata": {"page": 1}},
-            {"success": True, "data": {"optimization_ids": [41, 42], "job_ids": ["job-1", "job-2"]}},
+            {
+                "success": True,
+                "data": {"iterations": [{"iteration_number": 1}]},
+                "metadata": {"page": 1},
+            },
+            {
+                "success": True,
+                "data": {"optimization_ids": [41, 42], "job_ids": ["job-1", "job-2"]},
+            },
             {
                 "success": True,
                 "data": {
@@ -262,7 +471,9 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
             run_async=True,
         )
     )
-    evaluations = await client.list_prompt_studio_evaluations(project_id=1, prompt_id=11, limit=50, offset=0)
+    evaluations = await client.list_prompt_studio_evaluations(
+        project_id=1, prompt_id=11, limit=50, offset=0
+    )
     fetched_evaluation = await client.get_prompt_studio_evaluation(31)
     deleted_evaluation = await client.delete_prompt_studio_evaluation(31)
     optimization = await client.create_prompt_studio_optimization(
@@ -280,7 +491,9 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
         idempotency_key="opt-key",
     )
     simple_optimization = await client.create_prompt_studio_optimization_simple(
-        PromptStudioOptimizationSimpleCreateRequest(prompt_id=11, strategy="iterative", config={"max_iterations": 2})
+        PromptStudioOptimizationSimpleCreateRequest(
+            prompt_id=11, strategy="iterative", config={"max_iterations": 2}
+        )
     )
     optimizations = await client.list_prompt_studio_optimizations(1, status="pending")
     fetched_optimization = await client.get_prompt_studio_optimization(41)
@@ -290,9 +503,13 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
     history = await client.get_prompt_studio_optimization_history(41)
     iteration = await client.add_prompt_studio_optimization_iteration(
         41,
-        PromptStudioOptimizationIterationCreate(iteration_number=1, metrics={"accuracy": 0.8}),
+        PromptStudioOptimizationIterationCreate(
+            iteration_number=1, metrics={"accuracy": 0.8}
+        ),
     )
-    iterations = await client.list_prompt_studio_optimization_iterations(41, page=1, per_page=25)
+    iterations = await client.list_prompt_studio_optimization_iterations(
+        41, page=1, per_page=25
+    )
     comparison = await client.compare_prompt_studio_optimization_strategies(
         PromptStudioCompareStrategiesRequest(
             prompt_id=11,
@@ -303,19 +520,51 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
     )
     status = await client.get_prompt_studio_status(warn_seconds=60)
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/prompt-studio/evaluations")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/evaluations",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"]["run_async"] is True
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/prompt-studio/evaluations")
-    assert mocked.await_args_list[1].kwargs["params"] == {"project_id": 1, "prompt_id": 11, "limit": 50, "offset": 0}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/prompt-studio/optimizations/create")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/evaluations",
+    )
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "project_id": 1,
+        "prompt_id": 11,
+        "limit": 50,
+        "offset": 0,
+    }
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/optimizations/create",
+    )
     assert mocked.await_args_list[4].kwargs["headers"] == {"Idempotency-Key": "opt-key"}
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/prompt-studio/optimizations")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/prompt-studio/optimizations/list/1")
-    assert mocked.await_args_list[9].args[:2] == ("POST", "/api/v1/prompt-studio/optimizations/cancel/41")
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/optimizations",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/optimizations/list/1",
+    )
+    assert mocked.await_args_list[9].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/optimizations/cancel/41",
+    )
     assert mocked.await_args_list[9].kwargs["json_data"] == "stop"
-    assert mocked.await_args_list[13].args[:2] == ("GET", "/api/v1/prompt-studio/optimizations/iterations/41")
-    assert mocked.await_args_list[14].args[:2] == ("POST", "/api/v1/prompt-studio/optimizations/compare")
-    assert mocked.await_args_list[15].args[:2] == ("GET", "/api/v1/prompt-studio/status")
+    assert mocked.await_args_list[13].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/optimizations/iterations/41",
+    )
+    assert mocked.await_args_list[14].args[:2] == (
+        "POST",
+        "/api/v1/prompt-studio/optimizations/compare",
+    )
+    assert mocked.await_args_list[15].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/status",
+    )
     assert isinstance(evaluation, PromptStudioEvaluationResponse)
     assert isinstance(evaluations, PromptStudioEvaluationListResponse)
     assert fetched_evaluation.status == "completed"
@@ -338,7 +587,12 @@ async def test_prompt_studio_evaluations_optimizations_and_status_routes(monkeyp
 @pytest.mark.asyncio
 async def test_prompt_studio_csv_upload_template_and_sse_routes(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
-    request_mock = AsyncMock(return_value={"success": True, "data": {"imported": 1, "errors": [], "total_test_cases": 4}})
+    request_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"imported": 1, "errors": [], "total_test_cases": 4},
+        }
+    )
     binary_mock = AsyncMock(
         return_value=ReadingExportResponse(
             content=b"name,input.text,expected.summary\n",
@@ -351,8 +605,16 @@ async def test_prompt_studio_csv_upload_template_and_sse_routes(monkeypatch):
 
     async def fake_sse_request(method, endpoint, params=None, headers=None):
         sse_calls.append((method, endpoint, params, headers))
-        yield {"event": "message", "data": {"type": "connection", "status": "connected"}, "event_id": None}
-        yield {"event": "message", "data": {"type": "initial_state", "project_id": 1, "jobs": []}, "event_id": None}
+        yield {
+            "event": "message",
+            "data": {"type": "connection", "status": "connected"},
+            "event_id": None,
+        }
+        yield {
+            "event": "message",
+            "data": {"type": "initial_state", "project_id": 1, "jobs": []},
+            "event_id": None,
+        }
 
     monkeypatch.setattr(client, "_request", request_mock)
     monkeypatch.setattr(client, "_binary_request", binary_mock)
@@ -366,7 +628,12 @@ async def test_prompt_studio_csv_upload_template_and_sse_routes(monkeypatch):
         auto_generate_names=False,
     )
     template = await client.get_prompt_studio_test_cases_csv_template(signature_id=7)
-    events = [event async for event in client.stream_prompt_studio_events(client_id="chatbook-1", project_id=1)]
+    events = [
+        event
+        async for event in client.stream_prompt_studio_events(
+            client_id="chatbook-1", project_id=1
+        )
+    ]
 
     assert request_mock.await_args_list[0].args[:2] == (
         "POST",
@@ -380,7 +647,10 @@ async def test_prompt_studio_csv_upload_template_and_sse_routes(monkeypatch):
     assert request_mock.await_args_list[0].kwargs["files"] == [
         ("file", ("cases.csv", b"name,input.text\nSmoke,Hello\n", "text/csv"))
     ]
-    assert binary_mock.await_args_list[0].args[:2] == ("GET", "/api/v1/prompt-studio/test-cases/import/template")
+    assert binary_mock.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/prompt-studio/test-cases/import/template",
+    )
     assert binary_mock.await_args_list[0].kwargs["params"] == {"signature_id": 7}
     assert sse_calls == [
         (

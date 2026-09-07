@@ -1,20 +1,62 @@
 """Home dashboard screen for the master shell."""
 
-from collections.abc import Callable
+import asyncio
+import inspect
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from datetime import datetime, timezone
+from typing import Any
 
+from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
-from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.Chat.console_session_settings import (
+    build_console_settings_readiness,
+    build_default_console_session_settings,
+)
+from tldw_chatbook.config import (
+    get_cli_setting,
+    load_settings,
+    save_setting_to_cli_config,
+)
+from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    MEDIA_BROWSE_SUBVIEW_READ_IT_LATER,
+    MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW,
+    TAB_CHAT,
+    TAB_LIBRARY,
+    TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_NOTIFICATIONS,
+    WATCHLISTS_SECTION_RUNS,
+)
 from tldw_chatbook.Home.dashboard_state import (
+    HOME_OPEN_ITEM_CONTROL_ID,
+    HOME_PRIMARY_ACTION_ID,
+    HOME_RESUME_KIND_CONVERSATION,
+    HOME_RESUME_KIND_MEDIA,
+    HOME_RESUME_KIND_NOTE,
+    HOME_RESUME_LATEST_CONTROL_ID,
+    HOME_START_CONVERSATION_CONTROL_ID,
+    LOCAL_CONVERSATION_ITEM_ID_PREFIX,
+    LOCAL_MEDIA_ITEM_ID_PREFIX,
+    LOCAL_NOTE_ITEM_ID_PREFIX,
+    HomeActiveWorkItem,
+    HomeContentSnapshot,
+    HomeControl,
     HomeDashboard,
     HomeDashboardInput,
-    HomeTriageState,
+    apply_home_content_snapshot,
     build_home_triage_state,
     choose_home_selected_item,
+    content_item_kind,
     summarize_home_dashboard,
 )
 from tldw_chatbook.Home.home_rail_state import (
@@ -23,15 +65,16 @@ from tldw_chatbook.Home.home_rail_state import (
     coerce_home_rail_preferences,
     serialize_home_rail_preferences,
 )
-from tldw_chatbook.Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from tldw_chatbook.Widgets.Home.home_canvas import HomeCanvas
 from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.screen_state_store import RuntimeIdentity
 from .settings_config_models import SettingsCategoryId
 
 
@@ -64,16 +107,223 @@ def _home_runtime_status_label(state: HomeDashboardInput) -> str:
     return f"Server: {server_label}" if server_label else "Server"
 
 
-def _home_primary_action_context(action: object) -> dict[str, object]:
-    if getattr(action, "action_id", None) == "fix_model_setup":
+def _home_primary_action_context(
+    action: object,
+    dashboard_input: HomeDashboardInput | None = None,
+) -> dict[str, object]:
+    action_id = getattr(action, "action_id", None)
+    if action_id == "fix_model_setup":
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    if action_id == "resume_last_conversation":
+        # The terminal suggestion deep-links the newest conversation into
+        # Console via the resume-navigation seam (spec §4; the contract
+        # shipped upstream as CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID).
+        resume_id = str(getattr(dashboard_input, "resume_id", "") or "")
+        if resume_id:
+            return {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: resume_id}
+    if action_id == "review_read_later":
+        # Land Media on the saved-reading queue, not the generic list.
+        return {MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: MEDIA_BROWSE_SUBVIEW_READ_IT_LATER}
+    if action_id == "review_notifications" and getattr(
+        action, "target_route", None
+    ) in {
+        "subscriptions",
+        TAB_WATCHLISTS_COLLECTIONS,
+    }:
+        return {WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_NOTIFICATIONS}
+    if action_id == "review_failed_work" and getattr(action, "target_route", None) in {
+        "subscriptions",
+        TAB_WATCHLISTS_COLLECTIONS,
+    }:
+        return {WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS}
     return {}
+
+
+# T190: max characters of a raw resume-candidate title kept on the resume
+# control's Button label (truncated BEFORE markup-escaping so the escape
+# backslashes can never be cut mid-sequence).
+_HOME_RESUME_TITLE_MAX_CHARS = 40
+
+# Sections load_settings() always injects into a disk-loaded config but which
+# test fakes never carry -- the exact marker check Console's readiness
+# staleness fix uses (chat_screen._CONSOLE_LIVE_CONFIG_MARKER_SECTIONS,
+# task-177). A real boot snapshot is safe to refresh from disk; an injected
+# hermetic test config must be honored verbatim.
+_HOME_LIVE_CONFIG_MARKER_SECTIONS = ("general", "logging")
+
+
+async def _await_home_seam_result(awaitable: Any) -> Any:
+    """Await a seam's awaitable inside the worker thread's private loop."""
+    return await awaitable
+
+
+def _home_response_total(result: Any) -> int | None:
+    """Extract a total count from a scope-service list response.
+
+    Mirrors the shapes Library's rail counts consume: the local
+    conversation service returns ``{"items", "pagination": {"total"}}``,
+    the local media service ``{"items", "pagination": {"total_items"}}``.
+
+    Args:
+        result: The raw service response.
+
+    Returns:
+        The non-negative total, or ``None`` when the response carries no
+        authoritative total (never falls back to a page-sample length --
+        Home fetches limit-1 pages, so a sample count would be a lie).
+    """
+    if not isinstance(result, Mapping):
+        return None
+    pagination = result.get("pagination")
+    candidates = []
+    if isinstance(pagination, Mapping):
+        candidates.extend((pagination.get("total"), pagination.get("total_items")))
+    candidates.append(result.get("total"))
+    for candidate in candidates:
+        if isinstance(candidate, bool):
+            continue
+        try:
+            if candidate is not None:
+                return max(int(candidate), 0)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _home_record_timestamp(record: Mapping[str, Any] | None) -> datetime:
+    """Parse a record's freshest timestamp for newest-wins comparison."""
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    if not isinstance(record, Mapping):
+        return fallback
+    for key in ("last_modified", "updated_at", "created_at"):
+        raw = record.get(key)
+        if raw in (None, ""):
+            continue
+        if isinstance(raw, datetime):
+            # DB layers may hand back datetimes directly; no str round-trip
+            # (PR #608 review).
+            return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+        text = str(raw).strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    return fallback
+
+
+_HOME_CONTENT_FETCH_LIMIT = 8
+
+
+def _home_content_records(
+    notes_result: Any,
+    conversations_result: Any,
+    media_result: Any,
+) -> list[tuple[str, Mapping[str, Any]]]:
+    """Merge the three content seams into (kind, raw record) newest-first.
+
+    Shapes mirror ``_home_first_record``: a seam result is either a bare
+    list of records or a mapping carrying ``items``. Records without a
+    usable id are dropped.
+    """
+    merged: list[tuple[str, Mapping[str, Any]]] = []
+    for kind, result in (
+        (HOME_RESUME_KIND_CONVERSATION, conversations_result),
+        (HOME_RESUME_KIND_NOTE, notes_result),
+        (HOME_RESUME_KIND_MEDIA, media_result),
+    ):
+        records = result.get("items") if isinstance(result, Mapping) else result
+        if not isinstance(records, Sequence) or isinstance(
+            records, (str, bytes, bytearray)
+        ):
+            continue
+        for record in records:
+            if isinstance(record, Mapping) and record.get("id") not in (None, ""):
+                merged.append((kind, record))
+    merged.sort(key=lambda pair: _home_record_timestamp(pair[1]), reverse=True)
+    return merged
+
+
+def _home_content_resume_fields(
+    merged: list[tuple[str, Mapping[str, Any]]],
+) -> tuple[str, str, str, str]:
+    """(resume_kind, resume_id, raw truncated title, updated_at) of the top.
+
+    The title stays RAW here (truncated before escaping so escape
+    backslashes can never be cut mid-sequence); it is escaped exactly
+    once, in ``build_home_resume_control``.
+    """
+    if not merged:
+        return "", "", "", ""
+    kind, record = merged[0]
+    title = " ".join(str(record.get("title") or "").split())
+    if len(title) > _HOME_RESUME_TITLE_MAX_CHARS:
+        title = title[: _HOME_RESUME_TITLE_MAX_CHARS - 1].rstrip() + "…"
+    return (
+        kind,
+        str(record.get("id")),
+        title,
+        _home_record_timestamp(record).isoformat(),
+    )
+
+
+# (source label, detail route) per content kind for rail rows.
+_HOME_CONTENT_SOURCE_LABELS = {
+    HOME_RESUME_KIND_CONVERSATION: ("Conversations", "chat"),
+    HOME_RESUME_KIND_NOTE: ("Notes", "library"),
+    HOME_RESUME_KIND_MEDIA: ("Media", "library"),
+}
+_HOME_CONTENT_ID_PREFIXES = {
+    HOME_RESUME_KIND_CONVERSATION: LOCAL_CONVERSATION_ITEM_ID_PREFIX,
+    HOME_RESUME_KIND_NOTE: LOCAL_NOTE_ITEM_ID_PREFIX,
+    HOME_RESUME_KIND_MEDIA: LOCAL_MEDIA_ITEM_ID_PREFIX,
+}
+
+
+def _home_content_recent_items(
+    merged: list[tuple[str, Mapping[str, Any]]],
+    *,
+    exclude_id: str,
+) -> tuple[HomeActiveWorkItem, ...]:
+    """Build rail-ready content items, excluding the banner item.
+
+    Titles are markup-escaped HERE (rail rows render straight into Button
+    labels, which parse Rich markup); the banner's raw title is handled
+    separately by ``_home_content_resume_fields`` -- exactly one escape
+    per surface.
+    """
+    items: list[HomeActiveWorkItem] = []
+    for kind, record in merged:
+        item_id = f"{_HOME_CONTENT_ID_PREFIXES[kind]}{record.get('id')}"
+        if item_id == exclude_id:
+            continue
+        source, route = _HOME_CONTENT_SOURCE_LABELS[kind]
+        raw_title = " ".join(str(record.get("title") or "").split())
+        title = escape_markup(raw_title) or escape_markup(
+            f"{kind.title()} {record.get('id')}"
+        )
+        items.append(
+            HomeActiveWorkItem(
+                item_id=item_id,
+                title=title,
+                source=source,
+                status="ready",
+                detail_route=route,
+                console_available=(kind == HOME_RESUME_KIND_CONVERSATION),
+                updated_at=_home_record_timestamp(record).isoformat(),
+            )
+        )
+    return tuple(items)
 
 
 class HomeActionButton(Button):
     """Home button that emits press events even when app chrome hides layout."""
 
-    def __init__(self, *args, fallback_press: Callable[[], None] | None = None, **kwargs):
+    def __init__(
+        self, *args, fallback_press: Callable[[], None] | None = None, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self._fallback_press = fallback_press
 
@@ -92,15 +342,47 @@ class HomeScreen(BaseAppScreen):
         self._current_dashboard: HomeDashboard | None = None
         self._current_dashboard_input: HomeDashboardInput | None = None
         self._home_selected_row_id: str = ""
+        # T152: the scoped canvas controls the user actually sees/presses
+        # (``triage.canvas.actions``) -- kept alongside ``_current_dashboard``
+        # (the UNSCOPED ``summarize_home_dashboard`` controls) because only
+        # the scoped set carries a selection-aware ``target_id`` (e.g.
+        # ``home-retry`` pointed at the SELECTED failed item rather than
+        # just the first failed item in the list). See
+        # ``_activate_home_control``.
+        self._current_canvas_controls: tuple[HomeControl, ...] = ()
+        # T190: cached content/readiness snapshot, refreshed by the
+        # ``_refresh_home_content_snapshot`` worker off the compose path and
+        # merged into every ``_build_dashboard_input``. Per-instance --
+        # screens compose fresh on navigation, so every Home visit re-reads
+        # the real seams.
+        self._home_content_snapshot: HomeContentSnapshot | None = None
 
-    def on_mount(self) -> None:
-        super().on_mount()
+    def on_screen_resume(self) -> None:
+        """Refresh the dashboard for this visit (initial and repeat alike).
+
+        TASK-24452: Home is a reusable route (`ScreenRoute.reusable`), so
+        `on_mount` fires once per app run and THIS hook is the per-visit
+        seam -- without it, revisits would show the previous visit's
+        dashboard. It is also the ONLY dispatch seam: Textual posts
+        ``ScreenResume`` on the initial push too, so dispatching from
+        ``on_mount`` as well double-ran the refreshers on every first
+        visit -- worker exclusivity cancels the superseded handle but
+        cannot undo synchronous provider calls already executing on its
+        thread (Qodo #2402 finding 4).
+
+        No super() call -- Textual's dispatcher invokes BaseAppScreen's
+        own handler separately for this event (the on_mount MRO contract).
+        """
         self._refresh_home_chatbook_artifact_snapshot()
+        self._refresh_home_content_snapshot()
+        self._refresh_home_active_work_cache()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="home-refresh-chatbook-artifact-snapshot", thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
-        refresh_flashcards_due = getattr(adapter, "refresh_flashcards_due_snapshot", None)
+        refresh_flashcards_due = getattr(
+            adapter, "refresh_flashcards_due_snapshot", None
+        )
         if callable(refresh_flashcards_due):
             chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
             if getattr(chachanotes_db, "is_memory_db", False):
@@ -116,14 +398,228 @@ class HomeScreen(BaseAppScreen):
             else:
                 refresh_flashcards_due()
         refresh_snapshot = getattr(adapter, "refresh_chatbook_artifact_snapshot", None)
+        if callable(refresh_snapshot):
+            refresh_snapshot()
+        # Open-task queue counts (spec §4): same thread-worker placement as
+        # the chatbook snapshot -- the providers hit the evals/media DBs
+        # synchronously, so they must not run on the UI thread.
+        refresh_open_tasks = getattr(adapter, "refresh_open_tasks_snapshot", None)
+        if callable(refresh_open_tasks):
+            refresh_open_tasks()
         if not callable(refresh_snapshot):
             return
-        refresh_snapshot()
         self.app.call_from_thread(self._refresh_after_chatbook_artifact_snapshot)
 
     def _refresh_after_chatbook_artifact_snapshot(self) -> None:
         if self.is_mounted:
             self.refresh(recompose=True)
+
+    @work(exclusive=True, group="home-content-snapshot")
+    async def _refresh_home_content_snapshot(self) -> None:
+        """Refresh readiness + real content counts/recents off the compose path.
+
+        T190: sources Console readiness from FRESH config (the same seams
+        Console uses) and content counts/most-recent items from the same
+        scope-service seams the Library rail uses, then syncs the triage
+        surface in place. Runs in its own worker group so it never cancels
+        (or is cancelled by) the chatbook-artifact snapshot worker.
+        """
+        snapshot = await self._build_home_content_snapshot()
+        previous = self._home_content_snapshot
+        self._home_content_snapshot = snapshot
+        # Only re-sync when the snapshot actually changes what Home shows --
+        # an all-default snapshot (nothing ready, nothing counted) must not
+        # trigger a redundant adapter rebuild/refresh cycle.
+        if self.is_mounted and snapshot != (previous or HomeContentSnapshot()):
+            self._sync_home_triage()
+
+    @work(exclusive=True, group="home-active-work-cache")
+    async def _refresh_home_active_work_cache(self) -> None:
+        """Warm the active-work adapter's TTL cache off the event loop.
+
+        B3 (task-282): ``home_active_work_adapter.build_dashboard_input``
+        used to run its watchlist/notification/server-event seam queries
+        synchronously on the UI thread from every compose, triage sync,
+        and rail click. The adapter now caches those fields with a short
+        TTL (see ``LocalNotificationHomeActiveWorkAdapter``); this worker
+        just keeps that cache warm via ``asyncio.to_thread`` so callers on
+        the UI thread hit the cache instead of the DB/services. Runs in
+        its own worker group so it never cancels (or is cancelled by) the
+        content-snapshot/chatbook-artifact workers. Test doubles (e.g.
+        ``RecordingHomeActiveWorkAdapter``) don't implement the async
+        refresh hook and are silently skipped.
+        """
+        if getattr(self.app_instance, "_home_dashboard_test_input", None) is not None:
+            # ``_build_dashboard_input`` returns the injected test input
+            # without ever consulting the adapter, so warming its cache is
+            # pure dead weight -- and for memory-backed seams the warm
+            # compute runs inline on the event loop, where it measurably
+            # delayed mount settling (phase6 power-user replay gate).
+            return
+        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        refresh = getattr(adapter, "refresh_active_work_cache_async", None)
+        if not inspect.iscoroutinefunction(refresh):
+            return
+        try:
+            refreshed = await refresh()
+        except Exception as exc:
+            logger.debug(f"Home active-work cache refresh failed: {exc}")
+            return
+        # Only re-sync when the adapter actually recomputed -- a fresh
+        # cache (the common on-mount case: compose just cold-computed and
+        # stored it) means nothing changed, and re-syncing would just burn
+        # a redundant triage rebuild during mount settling.
+        if refreshed and self.is_mounted:
+            self._sync_home_triage()
+
+    async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
+        """Assemble the T190 content snapshot from real seams, degrading quietly."""
+        console_ready = await asyncio.to_thread(self._home_console_provider_ready)
+        notes_service = getattr(self.app_instance, "notes_scope_service", None)
+        conversation_service = getattr(
+            self.app_instance, "chat_conversation_scope_service", None
+        )
+        media_service = getattr(self.app_instance, "media_reading_scope_service", None)
+        notes_user_id = (
+            getattr(self.app_instance, "notes_user_id", None) or "default_user"
+        )
+
+        note_count_result = await self._home_content_seam_call(
+            getattr(notes_service, "count_notes", None),
+            scope="local_note",
+            user_id=notes_user_id,
+        )
+        notes_result = await self._home_content_seam_call(
+            getattr(notes_service, "list_notes", None),
+            scope="local_note",
+            limit=_HOME_CONTENT_FETCH_LIMIT,
+            user_id=notes_user_id,
+        )
+        conversations_result = await self._home_content_seam_call(
+            getattr(conversation_service, "list_conversations", None),
+            mode="local",
+            # "all" spans global- and workspace-scoped conversations, same
+            # as Library's rail count: Console chats persisted inside a
+            # workspace session would be invisible under 'global'.
+            scope_type="all",
+            limit=_HOME_CONTENT_FETCH_LIMIT,
+            offset=0,
+        )
+        media_result = await self._home_content_seam_call(
+            getattr(media_service, "list_media_items", None),
+            mode="local",
+            page=1,
+            results_per_page=_HOME_CONTENT_FETCH_LIMIT,
+            include_keywords=False,
+        )
+
+        merged = _home_content_records(
+            notes_result, conversations_result, media_result
+        )
+        resume_kind, resume_id, resume_title, resume_updated_at = (
+            _home_content_resume_fields(merged)
+        )
+        return HomeContentSnapshot(
+            console_ready=console_ready,
+            conversation_count=_home_response_total(conversations_result),
+            note_count=(
+                note_count_result if isinstance(note_count_result, int) else None
+            ),
+            media_count=_home_response_total(media_result),
+            resume_kind=resume_kind,
+            resume_id=resume_id,
+            resume_title=resume_title,
+            resume_updated_at=resume_updated_at,
+            content_recent_items=_home_content_recent_items(
+                merged,
+                exclude_id=(
+                    f"{_HOME_CONTENT_ID_PREFIXES[resume_kind]}{resume_id}"
+                    if resume_kind and resume_id
+                    else ""
+                ),
+            ),
+        )
+
+    async def _home_content_seam_call(self, callable_obj: Any, **kwargs: Any) -> Any:
+        """Invoke one scope-service seam safely for the content snapshot.
+
+        Degrades to ``None`` on any failure (missing seam, policy denial,
+        backend unavailable). SQLite ``:memory:`` connections are
+        thread-local -- only the thread that created ChaChaNotes has the
+        migrated schema -- so the in-memory case runs inline on this (UI)
+        thread while file-backed DBs keep the off-thread call (same guard
+        as ``_refresh_home_chatbook_artifact_snapshot`` and Library's
+        ``_study_count_or_none``).
+        """
+        if not callable(callable_obj):
+            return None
+        chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+        try:
+            if getattr(chachanotes_db, "is_memory_db", False):
+                result = callable_obj(**kwargs)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+
+            def invoke_seam_in_worker() -> Any:
+                result = callable_obj(**kwargs)
+                if inspect.isawaitable(result):
+                    # This thread has no event loop, and the awaitable must
+                    # complete here so blocking async services stay off the
+                    # UI loop (mirrors Library's _run_library_service_call).
+                    return asyncio.run(
+                        _await_home_seam_result(result)
+                    )  # policy-exception: worker-thread loop
+                return result
+
+            return await asyncio.to_thread(invoke_seam_in_worker)
+        except Exception as exc:
+            logger.debug(f"Home content snapshot seam call failed: {exc}")
+            return None
+
+    def _home_console_provider_ready(self, *, allow_fresh_load: bool = True) -> bool:
+        """Return Console provider readiness from the freshest config.
+
+        Reuses the exact readiness seams Console uses
+        (``build_default_console_session_settings`` +
+        ``build_console_settings_readiness``) over ``load_settings()``
+        rather than the boot-time ``app_config`` snapshot -- the staleness
+        bug just fixed for Console (task-177) must not be reintroduced on
+        Home. An injected hermetic test config (no disk-load marker
+        sections) is honored verbatim, same as Console's
+        ``_provider_readiness_app_config``.
+
+        Args:
+            allow_fresh_load: When True (the async content-snapshot path),
+                refresh from ``load_settings()`` for freshness. When False
+                (TASK-31805's synchronous compose path for the "Model:"
+                badge), skip the disk read and resolve readiness from the
+                in-memory ``app_config`` only, so first paint is honest and
+                cheap without a per-compose ``load_settings()`` disk hit.
+        """
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        config: Mapping[str, object] = (
+            app_config if isinstance(app_config, Mapping) else {}
+        )
+        if allow_fresh_load and all(
+            section in config for section in _HOME_LIVE_CONFIG_MARKER_SECTIONS
+        ):
+            try:
+                fresh = load_settings()
+            except Exception:
+                logger.debug(
+                    "Home readiness refresh via load_settings() failed; using snapshot"
+                )
+                fresh = None
+            if isinstance(fresh, Mapping) and fresh:
+                config = fresh
+        try:
+            settings = build_default_console_session_settings(config)
+            readiness = build_console_settings_readiness(settings, app_config=config)
+        except Exception as exc:
+            logger.debug(f"Home Console readiness check failed: {exc}")
+            return False
+        return bool(readiness.native_send_supported)
 
     def _build_dashboard_input(self) -> HomeDashboardInput:
         test_override = getattr(self.app_instance, "_home_dashboard_test_input", None)
@@ -131,10 +627,33 @@ class HomeScreen(BaseAppScreen):
             return test_override
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
-        has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
-        dashboard_input = self.app_instance.home_active_work_adapter.build_dashboard_input(
-            providers_models=providers,
-            has_recent_work=has_recent_work,
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
+        dashboard_input = (
+            self.app_instance.home_active_work_adapter.build_dashboard_input(
+                providers_models=providers,
+                has_recent_work=has_recent_work,
+            )
+        )
+        # TASK-31805: the "Model: Ready" badge -- and every model-readiness
+        # -derived control (the "Set up Console model" next action, the
+        # runtime/system summaries) -- must report what an actual send would
+        # do, not the mere presence of a provider catalog. The adapter can
+        # only see ``providers_models`` (non-empty on any fresh profile, key
+        # or no key), so it necessarily reported ``bool(providers_models)``;
+        # override it here with the SAME send-path readiness Console enforces
+        # (``get_provider_readiness`` via ``build_console_settings_readiness``).
+        # Compute it synchronously from the in-memory config so first paint is
+        # honest and flicker-free (no false "Ready" flash on a no-key profile);
+        # the async content snapshot below refreshes it from freshly-loaded
+        # config, keeping the badge in lockstep with ``console_ready``.
+        dashboard_input = replace(
+            dashboard_input,
+            model_ready=self._home_console_provider_ready(allow_fresh_load=False),
         )
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
@@ -145,6 +664,20 @@ class HomeScreen(BaseAppScreen):
                     dashboard_input,
                     acp_ready=str(raw_snapshot.get("status") or "") == "running",
                 )
+        content_snapshot = self._home_content_snapshot
+        if content_snapshot is not None:
+            # T190: fold in fresh-config readiness + real content counts and
+            # the most-recent resume candidate (see the snapshot worker).
+            dashboard_input = apply_home_content_snapshot(
+                dashboard_input, content_snapshot
+            )
+            # TASK-31805: the snapshot's ``console_ready`` is the fresh-config
+            # authority for send-path readiness; keep the "Model:" badge in
+            # lockstep with it so a credential added/removed since boot is
+            # reflected once the snapshot lands.
+            dashboard_input = replace(
+                dashboard_input, model_ready=dashboard_input.console_ready
+            )
         return dashboard_input
 
     def compose_content(self) -> ComposeResult:
@@ -154,9 +687,14 @@ class HomeScreen(BaseAppScreen):
             dashboard_input,
             selected_row_id=self._home_selected_row_id,
         )
-        # Keep the legacy dashboard object for the unchanged control dispatch.
+        # Keep the legacy dashboard object as the defensive fallback for
+        # control dispatch (count-only canvases with no selection have
+        # their controls in both); the scoped canvas controls
+        # (``_current_canvas_controls``) are what the user actually sees
+        # and presses, and are tried first in ``_activate_home_control``.
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
+        self._current_canvas_controls = triage.canvas.actions
         self._home_selected_row_id = triage.selected_row_id
 
         yield Static(
@@ -200,11 +738,15 @@ class HomeScreen(BaseAppScreen):
                 currently selected row (see ``HomeCanvasState.
                 primary_control_id`` / ``_canvas_primary_control_id``).
         """
-        classes = "home-canvas-action console-action-primary" if primary else "home-canvas-action"
-        if control_id == "home-primary-action":
+        classes = (
+            "home-canvas-action console-action-primary"
+            if primary
+            else "home-canvas-action"
+        )
+        if control_id == HOME_PRIMARY_ACTION_ID:
             return HomeActionButton(
                 label,
-                id="home-primary-action",
+                id=HOME_PRIMARY_ACTION_ID,
                 classes=classes,
                 fallback_press=self._activate_home_primary_action,
             )
@@ -212,8 +754,8 @@ class HomeScreen(BaseAppScreen):
             label,
             id=control_id,
             classes=classes,
-            fallback_press=lambda control_id=control_id: (
-                self._activate_home_control(control_id)
+            fallback_press=lambda control_id=control_id: self._activate_home_control(
+                control_id
             ),
         )
 
@@ -278,7 +820,7 @@ class HomeScreen(BaseAppScreen):
         try:
             body = self.query_one(f"#home-rail-section-body-{section_id}")
             header = self.query_one(
-                f"#home-rail-section-header-{section_id}", ConsoleRailSectionHeader
+                f"#home-rail-section-header-{section_id}", DestinationRailSectionHeader
             )
         except Exception:
             return
@@ -302,6 +844,7 @@ class HomeScreen(BaseAppScreen):
         )
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
+        self._current_canvas_controls = triage.canvas.actions
         self._home_selected_row_id = triage.selected_row_id
         try:
             self.query_one("#home-rail", HomeRail).sync_state(
@@ -329,10 +872,10 @@ class HomeScreen(BaseAppScreen):
                 self._sync_home_triage()
             return
 
-        if button_id.startswith(f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"):
+        if button_id.startswith(f"{RAIL_SECTION_TOGGLE_PREFIX}home-"):
             event.stop()
             section_id = button_id.removeprefix(
-                f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"
+                f"{RAIL_SECTION_TOGGLE_PREFIX}home-"
             )
             currently_open = bool(
                 getattr(self._home_rail_preferences(), f"{section_id}_open", True)
@@ -340,7 +883,7 @@ class HomeScreen(BaseAppScreen):
             self._set_home_rail_section(section_id, not currently_open)
             return
 
-        if button_id == "home-primary-action":
+        if button_id == HOME_PRIMARY_ACTION_ID:
             self._activate_home_primary_action()
             return
 
@@ -350,21 +893,52 @@ class HomeScreen(BaseAppScreen):
         dashboard = self._current_dashboard
         if dashboard is None:
             return
-        prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
-        if callable(prepare):
-            prepare(dashboard.next_action)
         self.post_message(
             NavigateToScreen(
                 dashboard.next_action.target_route,
-                screen_context=_home_primary_action_context(dashboard.next_action),
+                screen_context=_home_primary_action_context(
+                    dashboard.next_action, self._current_dashboard_input
+                ),
             )
         )
 
     def _activate_home_control(self, button_id: str) -> None:
+        # T190: the idle-canvas controls are screen-level navigations
+        # (mirroring the model-setup recovery card's routing), not
+        # app-instance runtime hooks -- dispatch them before the generic
+        # HOME_CONTROL_METHODS lookup would misreport them as unconnected.
+        if button_id == HOME_START_CONVERSATION_CONTROL_ID:
+            self.post_message(NavigateToScreen(TAB_CHAT))
+            return
+        if button_id == HOME_RESUME_LATEST_CONTROL_ID:
+            self._activate_home_resume_latest()
+            return
+        if button_id == HOME_OPEN_ITEM_CONTROL_ID:
+            self._activate_home_open_item()
+            return
         dashboard = self._current_dashboard
         if dashboard is None:
             return
-        control = next((item for item in dashboard.controls if item.control_id == button_id), None)
+        # T152: resolve from the SELECTION-SCOPED canvas controls first --
+        # the set the user actually sees and presses, whose target_id
+        # reflects the SELECTED item (e.g. home-retry pointed at the
+        # selected failed item, not just the first failed item in the
+        # list). Fall back to the unscoped dashboard controls only when
+        # the pressed control isn't there (defensive: count-only fallback
+        # canvases with no selection have their controls in both sets).
+        control = next(
+            (
+                item
+                for item in self._current_canvas_controls
+                if item.control_id == button_id
+            ),
+            None,
+        )
+        if control is None:
+            control = next(
+                (item for item in dashboard.controls if item.control_id == button_id),
+                None,
+            )
         if control is None:
             return
 
@@ -384,4 +958,86 @@ class HomeScreen(BaseAppScreen):
             self.app_instance.notify(
                 f"{control.label} is not connected yet.",
                 severity="warning",
+            )
+
+    def _activate_home_resume_latest(self) -> None:
+        """Route the resume-latest control to its one-click destination.
+
+        Notes deep-link into the Library notes editor via the existing
+        ``LIBRARY_NAV_CONTEXT_NOTE_ID`` navigation-context contract; media
+        into the Library item view via the open-source pair; conversations
+        into Console carrying the resume-local-conversation nav-context id
+        so the freshly mounted screen resumes THAT conversation through
+        the ordered resume-navigation startup.
+        Navigation always composes a fresh screen, so the deep link lands
+        on a cleanly mounted surface.
+        """
+        control = next(
+            (
+                item
+                for item in self._current_canvas_controls
+                if item.control_id == HOME_RESUME_LATEST_CONTROL_ID
+            ),
+            None,
+        )
+        if control is None or not control.target_id:
+            return
+        self._open_content_item(control.target_id)
+
+    def _activate_home_open_item(self) -> None:
+        """Route the selected content row's Open control (same dispatch)."""
+        control = next(
+            (
+                item
+                for item in self._current_canvas_controls
+                if item.control_id == HOME_OPEN_ITEM_CONTROL_ID
+            ),
+            None,
+        )
+        if control is None or not control.target_id:
+            return
+        self._open_content_item(control.target_id)
+
+    def _open_content_item(self, target_id: str) -> None:
+        """Deep-link a prefixed content item id to its surface.
+
+        Conversations land in Console on that conversation; notes in the
+        Library notes editor; media in the Library item view. Unknown
+        prefixes are a silent no-op (defensive: dispatch only ever builds
+        content ids via ``_home_content_recent_items``).
+        """
+        kind = content_item_kind(target_id)
+        if kind == HOME_RESUME_KIND_CONVERSATION:
+            self.post_message(
+                NavigateToScreen(
+                    TAB_CHAT,
+                    {
+                        CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: (
+                            target_id.removeprefix(LOCAL_CONVERSATION_ITEM_ID_PREFIX)
+                        )
+                    },
+                )
+            )
+        elif kind == HOME_RESUME_KIND_NOTE:
+            self.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY,
+                    {
+                        LIBRARY_NAV_CONTEXT_NOTE_ID: target_id.removeprefix(
+                            LOCAL_NOTE_ITEM_ID_PREFIX
+                        )
+                    },
+                )
+            )
+        elif kind == HOME_RESUME_KIND_MEDIA:
+            self.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY,
+                    {
+                        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+                        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: (
+                            target_id.removeprefix(LOCAL_MEDIA_ITEM_ID_PREFIX)
+                        ),
+                    },
+                )
             )

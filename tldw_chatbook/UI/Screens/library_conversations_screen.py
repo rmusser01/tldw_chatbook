@@ -15,7 +15,11 @@ class LibraryConversationsScreen(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         with Vertical(id="library-conversations-shell"):
-            yield Static("Library: Conversations", id="library-conversations-title", classes="ds-destination-header")
+            yield Static(
+                "Library: Conversations",
+                id="library-conversations-title",
+                classes="ds-destination-header",
+            )
             yield Static(
                 "Saved conversations as source material for browsing, reuse, and Search/RAG.",
                 id="library-conversations-purpose",

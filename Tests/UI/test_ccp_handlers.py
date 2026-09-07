@@ -4,22 +4,25 @@ from functools import partial
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import ListView, Static
 
-from tldw_chatbook.Character_Chat.Character_Chat_Lib import fetch_all_dictionaries, fetch_character_names
-from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    fetch_all_dictionaries,
+    fetch_character_names,
+)
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
-    CCPConversationHandler,
     CCPMessageManager,
     CCPPersonaHandler,
-    CCPPromptHandler,
     PersonaMessage,
     ViewChangeMessage,
 )
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import fetch_all_characters
-from tldw_chatbook.tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from tldw_chatbook.tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+)
 
 
 @pytest.fixture
@@ -63,7 +66,9 @@ def mock_window():
     backend.list_chat_greetings = AsyncMock(
         return_value={
             "chat_id": "chat.server.alice",
-            "greetings": [{"index": 0, "text": "Hello there.", "preview": "Hello there."}],
+            "greetings": [
+                {"index": 0, "text": "Hello there.", "preview": "Hello there."}
+            ],
             "current_selection": 0,
         }
     )
@@ -80,9 +85,15 @@ def mock_window():
             "presets": [{"preset_id": "default", "name": "Default", "builtin": True}],
         }
     )
-    backend.create_chat_preset = AsyncMock(return_value={"preset_id": "custom-alpha", "name": "Custom Alpha"})
-    backend.update_chat_preset = AsyncMock(return_value={"preset_id": "custom-alpha", "name": "Custom Beta"})
-    backend.delete_chat_preset = AsyncMock(return_value={"status": "deleted", "preset_id": "custom-alpha"})
+    backend.create_chat_preset = AsyncMock(
+        return_value={"preset_id": "custom-alpha", "name": "Custom Alpha"}
+    )
+    backend.update_chat_preset = AsyncMock(
+        return_value={"preset_id": "custom-alpha", "name": "Custom Beta"}
+    )
+    backend.delete_chat_preset = AsyncMock(
+        return_value={"status": "deleted", "preset_id": "custom-alpha"}
+    )
     window.app_instance.character_persona_scope_service = backend
     window.run_worker = Mock()
     window.post_message = Mock()
@@ -144,49 +155,6 @@ def test_legacy_ccp_dictionary_list_wrapper_uses_current_db_api(monkeypatch):
     assert fetch_all_dictionaries(db) == [{"id": 4, "name": "Lore"}]
 
 
-class TestCCPConversationHandler:
-    """Conversation handler coverage for string-first IDs."""
-
-    @pytest.mark.asyncio
-    async def test_load_conversation_wrapper_accepts_string_identifier(self, mock_window):
-        handler = CCPConversationHandler(mock_window)
-
-        await handler.load_conversation("conv-1")
-
-        mock_window.run_worker.assert_called_once()
-        call_args = mock_window.run_worker.call_args
-        assert call_args[0][0] == handler._load_conversation_sync
-        assert call_args[0][1] == "conv-1"
-
-    def test_search_excludes_workspace_scoped_conversations_from_general_results(self, mock_window):
-        class FakeConversationDb:
-            def search_conversations_by_title(self, title_query, limit=100):
-                return [
-                    {
-                        "id": "conv-global-1",
-                        "title": "Alpha",
-                        "discovery_owner": "general_chat",
-                        "scope_type": "global",
-                    },
-                    {
-                        "id": "conv-ws-1",
-                        "title": "Alpha",
-                        "discovery_owner": "general_chat",
-                        "scope_type": "workspace",
-                        "workspace_id": "ws-9",
-                    },
-                ]
-
-        mock_window.app_instance.chachanotes_db = FakeConversationDb()
-        mock_window.state.selected_character_id = None
-        mock_window.state.selected_persona_id = None
-        handler = CCPConversationHandler(mock_window)
-
-        CCPConversationHandler._search_conversations_sync.__wrapped__(handler, "Alpha", "title")
-
-        assert [row["id"] for row in handler.search_results] == ["conv-global-1"]
-
-
 class TestCCPCharacterHandler:
     """Character handler coverage for string-friendly selected IDs."""
 
@@ -203,7 +171,9 @@ class TestCCPCharacterHandler:
         worker_callable = call_args[0][0]
         assert isinstance(worker_callable, partial)
         assert worker_callable.func == handler._load_character_sync
-        assert worker_callable.args == ("char.local.alice",)
+        # TASK-19563: the dispatch generation rides along with the id, so the
+        # arrival callback can reject a superseded load.
+        assert worker_callable.args == ("char.local.alice", 1)
 
     @pytest.mark.asyncio
     async def test_list_chat_greetings_routes_via_scope_service(self, mock_window):
@@ -217,6 +187,34 @@ class TestCCPCharacterHandler:
             mode="server",
         )
         assert payload["current_selection"] == 0
+
+    @pytest.mark.asyncio
+    async def test_handle_import_character_cards_filter_accepts_webp_not_md(
+        self, mock_window
+    ):
+        """Legacy CCP import route (task-431 AC#1): stay in sync with the
+        destination-native Personas import filter - accept .webp cards, and
+        never treat .md as a "Character Cards" match here either (this route
+        never included .md, so this pins the no-regression side)."""
+        from pathlib import Path
+
+        mock_window.app.push_screen = AsyncMock(return_value=None)
+        handler = CCPCharacterHandler(mock_window)
+
+        await handler.handle_import()
+
+        mock_window.app.push_screen.assert_awaited_once()
+        picker = mock_window.app.push_screen.call_args[0][0]
+        filter_by_name = {
+            name: picker.filters[filter_id]
+            for name, filter_id in picker.filters.selections
+        }
+        character_cards = filter_by_name["Character Cards"]
+
+        assert character_cards(Path("x.webp")) is True
+        assert character_cards(Path("x.png")) is True
+        assert character_cards(Path("x.json")) is True
+        assert character_cards(Path("README.md")) is False
 
 
 class TestCCPPersonaHandler:
@@ -298,7 +296,7 @@ class TestCCPPersonaHandler:
 
         create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
         request_data = create_call.args[0]
-        assert isinstance(request_data, PersonaProfileCreate)
+        assert isinstance(request_data, LocalPersonaProfileCreate)
         assert request_data.name == "Created Persona"
         assert request_data.system_prompt == "Be concise."
         assert create_call.kwargs["mode"] == "local"
@@ -322,10 +320,58 @@ class TestCCPPersonaHandler:
         update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
         assert update_call.args[0] == "persona.local.alice"
         request_data = update_call.args[1]
-        assert isinstance(request_data, PersonaProfileUpdate)
+        assert isinstance(request_data, LocalPersonaProfileUpdate)
         assert request_data.mode == "persistent_scoped"
         assert update_call.kwargs["expected_version"] == 3
         assert update_call.kwargs["mode"] == "local"
+
+    @pytest.mark.asyncio
+    async def test_save_persona_uses_exact_server_create_contract(self, mock_window):
+        mock_window.state.runtime_backend = "server"
+        handler = CCPPersonaHandler(mock_window)
+
+        await handler.save_persona(
+            {
+                "name": "Server Persona",
+                "description": "Local only",
+                "personality_traits": "local only",
+                "system_prompt": "Be concise.",
+            }
+        )
+
+        create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
+        request_data = create_call.args[0]
+        assert isinstance(request_data, PersonaProfileCreate)
+        assert set(type(request_data).model_fields).isdisjoint(
+            {"description", "personality_traits"}
+        )
+        assert create_call.kwargs["mode"] == "server"
+
+    @pytest.mark.asyncio
+    async def test_save_persona_uses_exact_server_update_contract(self, mock_window):
+        mock_window.state.runtime_backend = "server"
+        handler = CCPPersonaHandler(mock_window)
+        handler.current_persona_id = "persona.server.alice"
+
+        await handler.save_persona(
+            {
+                "name": "Server Persona Updated",
+                "description": "Local only",
+                "personality_traits": "local only",
+                "system_prompt": None,
+                "version": 3,
+            }
+        )
+
+        update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
+        request_data = update_call.args[1]
+        assert isinstance(request_data, PersonaProfileUpdate)
+        assert "system_prompt" in request_data.model_fields_set
+        assert request_data.system_prompt is None
+        assert set(type(request_data).model_fields).isdisjoint(
+            {"description", "personality_traits"}
+        )
+        assert update_call.kwargs["mode"] == "server"
 
     @pytest.mark.asyncio
     async def test_list_chat_presets_routes_via_scope_service(self, mock_window):
@@ -340,7 +386,9 @@ class TestCCPPersonaHandler:
         assert payload["presets"][0]["preset_id"] == "default"
 
     @pytest.mark.asyncio
-    async def test_select_chat_greeting_notifies_when_current_mode_cannot_use_it(self, mock_window):
+    async def test_select_chat_greeting_notifies_when_current_mode_cannot_use_it(
+        self, mock_window
+    ):
         handler = CCPPersonaHandler(mock_window)
         mock_window.state.runtime_backend = "local"
         mock_window.app_instance.character_persona_scope_service.select_chat_greeting = AsyncMock(
@@ -356,44 +404,58 @@ class TestCCPPersonaHandler:
         )
 
 
-class TestCCPPromptHandler:
-    """Prompt handler Library empty-state coverage."""
-
-    @pytest.mark.asyncio
-    async def test_empty_prompt_search_results_keep_library_guidance(self, mock_window):
-        class TestApp(App):
-            def compose(self) -> ComposeResult:
-                yield ListView(id="ccp-prompts-listview")
-
-        app = TestApp()
-        async with app.run_test() as pilot:
-            list_view = pilot.app.query_one("#ccp-prompts-listview", ListView)
-            mock_window.query_one.return_value = list_view
-            handler = CCPPromptHandler(mock_window)
-            handler.search_results = []
-
-            await handler._update_search_results_ui()
-            await pilot.pause()
-
-            assert len(list_view.children) == 1
-            empty_text = str(list_view.children[0].query_one(Static).render())
-            assert "No prompts yet." in empty_text
-            assert "Create New Prompt" in empty_text
-            assert "Chat instructions" in empty_text
-
-
 class TestCCPMessageManager:
     """Message manager coverage for string session IDs."""
 
-    @pytest.mark.asyncio
-    async def test_load_conversation_messages_accepts_string_identifier(self, mock_window):
+    def test_load_conversation_messages_accepts_string_identifier(self, mock_window):
+        # load_conversation_messages is a plain `def` (TASK-981: it never
+        # awaits anything, so `@work(thread=True)` on `async def` was
+        # buying nothing but an extra event loop per call) -- call the
+        # unwrapped function synchronously, no `await`.
         manager = CCPMessageManager(mock_window)
 
         with patch(
             "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.fetch_messages_for_conversation",
             return_value=[{"id": "msg-1", "role": "user", "content": "hello"}],
         ) as mock_fetch:
-            await CCPMessageManager.load_conversation_messages.__wrapped__(manager, "conv-1")
+            CCPMessageManager.load_conversation_messages.__wrapped__(
+                manager, "conv-1"
+            )
 
         mock_fetch.assert_called_with("conv-1")
         assert manager.current_messages[0]["id"] == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_ccp_character_load_discards_out_of_order_stale_results(mock_window):
+    """TASK-19563: a superseded character card must never be displayed.
+
+    Display corruption only -- the modern save path carries its own generation
+    guard, so stored character data is not at risk either way.
+    """
+    handler = CCPCharacterHandler(mock_window)
+    displayed: list[str] = []
+    handler._display_character_card = lambda: displayed.append(
+        str(handler.current_character_id)
+    )
+
+    await handler.load_character("char.local.alice")
+    await handler.load_character("char.local.bob")
+    assert mock_window.run_worker.call_count == 2
+
+    first_generation, second_generation = (
+        call[0][0].args[1] for call in mock_window.run_worker.call_args_list
+    )
+    assert second_generation > first_generation
+
+    # Newest arrives first, then the stale one.
+    handler._apply_loaded_character(
+        second_generation, "char.local.bob", {"name": "Bob"}
+    )
+    handler._apply_loaded_character(
+        first_generation, "char.local.alice", {"name": "Alice"}
+    )
+
+    assert displayed == ["char.local.bob"]
+    assert handler.current_character_id == "char.local.bob"
+    assert handler.current_character_data == {"name": "Bob"}

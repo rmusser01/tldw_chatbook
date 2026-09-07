@@ -9,21 +9,24 @@ Provides an interface for selecting content and creating chatbooks.
 """
 
 from pathlib import Path
-from typing import Dict, List, Set, Optional, TYPE_CHECKING
+from typing import Dict, Set, TYPE_CHECKING
 from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static, Button, Input, TextArea, Label, Checkbox, Tree
-from textual.widgets.tree import TreeNode
 from loguru import logger
 
 from ..Chatbooks.chatbook_creator import ChatbookCreator
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ..Chatbooks.chatbook_models import ContentType
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Prompts_DB import PromptsDatabase
-from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..config import load_console_library_migration_seed
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -31,7 +34,7 @@ if TYPE_CHECKING:
 
 class ChatbookCreationWindow(ModalScreen):
     """Window for creating chatbooks."""
-    
+
     DEFAULT_CSS = """
     ChatbookCreationWindow {
         align: center middle;
@@ -104,7 +107,7 @@ class ChatbookCreationWindow(ModalScreen):
         color: $primary;
     }
     """
-    
+
     def __init__(self, app_instance: "TldwCli"):
         """Initialize the chatbook creation window."""
         super().__init__()
@@ -114,68 +117,54 @@ class ChatbookCreationWindow(ModalScreen):
             ContentType.NOTE: set(),
             ContentType.CHARACTER: set(),
             ContentType.PROMPT: set(),
-            ContentType.MEDIA: set()
+            ContentType.MEDIA: set(),
+            ContentType.KEPT_BRIEFING: set(),
         }
-        
-        # Get database paths from config
-        db_config = self.app.config_data.get("database", {})
+
+        chatbook_db_paths = get_chatbook_database_paths()
         self.db_paths = {
-            "chachanotes": Path(db_config.get("chachanotes_db_path", "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db")).expanduser(),
-            "prompts": Path(db_config.get("prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db")).expanduser(),
-            "media": Path(db_config.get("media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db")).expanduser()
+            "chachanotes": Path(chatbook_db_paths["ChaChaNotes"]),
+            "prompts": Path(chatbook_db_paths["Prompts"]),
+            "media": Path(chatbook_db_paths["Media"]),
         }
-        
-        self.creator = ChatbookCreator({
-            name: str(path) for name, path in self.db_paths.items()
-        })
-    
+
+        self.creator = ChatbookCreator(chatbook_db_paths)
+
     def compose(self) -> ComposeResult:
         """Compose the UI."""
         with Container():
             yield Static("Create Chatbook", classes="chatbook-title")
-            
+
             with VerticalScroll():
                 # Basic Information
                 with Container(classes="form-section"):
                     yield Label("Chatbook Name:", classes="form-label")
                     yield Input(
-                        placeholder="Enter chatbook name...",
-                        id="chatbook-name"
+                        placeholder="Enter chatbook name...", id="chatbook-name"
                     )
-                    
+
                     yield Label("Description:", classes="form-label")
-                    yield TextArea(
-                        "",
-                        id="chatbook-description"
-                    )
-                    
+                    yield TextArea("", id="chatbook-description")
+
                     yield Label("Author (optional):", classes="form-label")
-                    yield Input(
-                        placeholder="Your name...",
-                        id="chatbook-author"
-                    )
-                    
+                    yield Input(placeholder="Your name...", id="chatbook-author")
+
                     yield Label("Tags (comma-separated):", classes="form-label")
                     yield Input(
-                        placeholder="research, tutorial, guide...",
-                        id="chatbook-tags"
+                        placeholder="research, tutorial, guide...", id="chatbook-tags"
                     )
-                
+
                 # Content Selection
                 with Container(classes="form-section"):
                     yield Label("Select Content:", classes="form-label")
-                    yield Tree(
-                        "Content",
-                        id="content-tree",
-                        classes="content-tree"
-                    )
-                
+                    yield Tree("Content", id="content-tree", classes="content-tree")
+
                 # Options
                 with Container(classes="form-section"):
                     yield Label("Options:", classes="form-label")
                     yield Checkbox("Include media files", id="include-media")
                     yield Checkbox("Include embeddings", id="include-embeddings")
-                
+
                 # Statistics
                 with Container(classes="stats-container"):
                     with Container(classes="stat-item"):
@@ -190,86 +179,116 @@ class ChatbookCreationWindow(ModalScreen):
                     with Container(classes="stat-item"):
                         yield Static("Total Items", classes="form-label")
                         yield Static("0", id="stat-total", classes="stat-value")
-            
+
             # Buttons
             with Horizontal(classes="button-container"):
                 yield Button("Create Chatbook", variant="success", id="create-button")
                 yield Button("Cancel", variant="default", id="cancel-button")
-    
+
     async def on_mount(self) -> None:
         """Called when the window is mounted."""
         # Load content tree
         await self._populate_content_tree()
-        
+
         # Set default author from config
         username = self.app.config_data.get("general", {}).get("users_name")
         if username:
             self.query_one("#chatbook-author", Input).value = username
-    
+
     async def _populate_content_tree(self) -> None:
         """Populate the content tree with available content."""
         tree = self.query_one("#content-tree", Tree)
         tree.clear()
-        
+
         # Load conversations
         if self.db_paths["chachanotes"].exists():
-            db = CharactersRAGDB(str(self.db_paths["chachanotes"]), "chatbook_ui")
-            
+            db = CharactersRAGDB(
+                str(self.db_paths["chachanotes"]),
+                "chatbook_ui",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+
             # Add conversations node
             conv_node = tree.root.add("📚 Conversations", expand=True)
             conversations = db.list_all_active_conversations(limit=100)
-            
+
             for conv in conversations:
                 node = conv_node.add(
                     f"{conv['conversation_name']} ({conv['message_count']} messages)",
-                    data={"type": ContentType.CONVERSATION, "id": str(conv['id'])}
+                    data={"type": ContentType.CONVERSATION, "id": str(conv["id"])},
                 )
                 node.allow_expand = False
-            
+
             # Add notes node
             notes_node = tree.root.add("📝 Notes", expand=True)
             notes = db.list_notes(limit=100)
-            
+
             for note in notes:
                 node = notes_node.add(
-                    note['title'],
-                    data={"type": ContentType.NOTE, "id": str(note['id'])}
+                    note["title"],
+                    data={"type": ContentType.NOTE, "id": str(note["id"])},
                 )
                 node.allow_expand = False
-            
+
             # Add characters node
             chars_node = tree.root.add("👤 Characters", expand=True)
             characters = db.list_all_characters()
-            
+
             for char in characters:
                 node = chars_node.add(
-                    char['name'],
-                    data={"type": ContentType.CHARACTER, "id": str(char['id'])}
+                    char["name"],
+                    data={"type": ContentType.CHARACTER, "id": str(char["id"])},
                 )
                 node.allow_expand = False
-        
+
+            # Add kept briefings node. Kept scripts are not independently
+            # selectable -- they ride along with their parent briefing (see
+            # ContentType.KEPT_BRIEFING) -- so the subtitle just reports how
+            # many will come along.
+            kept_node = tree.root.add("📰 Kept Briefings", expand=False)
+            kept_briefings = db.list_kept_briefings(limit=200)
+            # A grouped COUNT, not a per-briefing len(list_kept_scripts(...))
+            # -- the latter materialized every kept script's full
+            # turns_json/roster_snapshot_json (a complete cast transcript) on
+            # the UI thread purely to discard it and keep the length
+            # (task-1870 fix-wave F3).
+            kept_script_counts = db.kept_script_counts(
+                [kept["id"] for kept in kept_briefings]
+            )
+
+            for kept in kept_briefings:
+                script_count = kept_script_counts.get(kept["id"], 0)
+                label = kept.get("watchlist_name") or f"Kept briefing {kept['id']}"
+                if script_count:
+                    label += f" ({script_count} script{'s' if script_count != 1 else ''})"
+                node = kept_node.add(
+                    label,
+                    data={"type": ContentType.KEPT_BRIEFING, "id": str(kept["id"])},
+                )
+                node.allow_expand = False
+
         # Load prompts
         if self.db_paths["prompts"].exists():
             db = PromptsDatabase(str(self.db_paths["prompts"]), "chatbook_ui")
-            
+
             prompts_node = tree.root.add("💬 Prompts", expand=False)
             prompts = db.list_prompts()
-            
+
             for prompt in prompts:
                 node = prompts_node.add(
-                    prompt['name'],
-                    data={"type": ContentType.PROMPT, "id": str(prompt['id'])}
+                    prompt["name"],
+                    data={"type": ContentType.PROMPT, "id": str(prompt["id"])},
                 )
                 node.allow_expand = False
-    
+
     async def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         """Handle tree node selection."""
         node = event.node
-        
-        if hasattr(node, 'data') and node.data:
-            content_type = node.data.get('type')
-            content_id = node.data.get('id')
-            
+
+        if hasattr(node, "data") and node.data:
+            content_type = node.data.get("type")
+            content_id = node.data.get("id")
+
             if content_type and content_id:
                 # Toggle selection
                 if content_id in self.selected_content[content_type]:
@@ -282,29 +301,35 @@ class ChatbookCreationWindow(ModalScreen):
                     # Update visual indicator
                     if "✓ " not in node.label:
                         node.set_label(f"✓ {node.label}")
-                
+
                 # Update statistics
                 self._update_statistics()
-    
+
     def _update_statistics(self) -> None:
         """Update the statistics display."""
         conv_count = len(self.selected_content[ContentType.CONVERSATION])
         note_count = len(self.selected_content[ContentType.NOTE])
         char_count = len(self.selected_content[ContentType.CHARACTER])
-        total_count = conv_count + note_count + char_count + len(self.selected_content[ContentType.PROMPT])
-        
+        total_count = (
+            conv_count
+            + note_count
+            + char_count
+            + len(self.selected_content[ContentType.PROMPT])
+            + len(self.selected_content[ContentType.KEPT_BRIEFING])
+        )
+
         self.query_one("#stat-conversations", Static).update(str(conv_count))
         self.query_one("#stat-notes", Static).update(str(note_count))
         self.query_one("#stat-characters", Static).update(str(char_count))
         self.query_one("#stat-total", Static).update(str(total_count))
-    
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
         if event.button.id == "cancel-button":
             self.dismiss(None)
         elif event.button.id == "create-button":
             await self._create_chatbook()
-    
+
     async def _create_chatbook(self) -> None:
         """Create the chatbook."""
         # Get form values
@@ -313,42 +338,41 @@ class ChatbookCreationWindow(ModalScreen):
         author = self.query_one("#chatbook-author", Input).value.strip()
         tags_input = self.query_one("#chatbook-tags", Input).value.strip()
         tags = [tag.strip() for tag in tags_input.split(",")] if tags_input else []
-        
+
         include_media = self.query_one("#include-media", Checkbox).value
         include_embeddings = self.query_one("#include-embeddings", Checkbox).value
-        
+
         # Validate
         if not name:
             self.app.notify("Please enter a chatbook name", severity="error")
             return
-        
+
         if not description:
             self.app.notify("Please enter a description", severity="error")
             return
-        
+
         # Check if any content selected
         total_selected = sum(len(items) for items in self.selected_content.values())
         if total_selected == 0:
             self.app.notify("Please select at least one content item", severity="error")
             return
-        
+
         # Generate output path
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = "".join(c for c in name if c.isalnum() or c in " -_").strip()
-        output_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = get_private_chatbooks_dir()
         output_path = output_dir / f"{safe_name}_{timestamp}.zip"
-        
+
         # Convert selected content to list format
         content_selections = {
             content_type: list(items)
             for content_type, items in self.selected_content.items()
             if items
         }
-        
+
         # Create chatbook in background
         self.app.notify(f"Creating chatbook '{name}'...", severity="information")
-        
+
         try:
             success, message, _dependency_info = self.creator.create_chatbook(
                 name=name,
@@ -358,15 +382,15 @@ class ChatbookCreationWindow(ModalScreen):
                 author=author or None,
                 include_media=include_media,
                 include_embeddings=include_embeddings,
-                tags=tags
+                tags=tags,
             )
-            
+
             if success:
                 self.app.notify(message, severity="success")
                 self.dismiss(str(output_path))
             else:
                 self.app.notify(message, severity="error")
-                
+
         except Exception as e:
             logger.error(f"Error creating chatbook: {e}")
             self.app.notify(f"Error creating chatbook: {str(e)}", severity="error")

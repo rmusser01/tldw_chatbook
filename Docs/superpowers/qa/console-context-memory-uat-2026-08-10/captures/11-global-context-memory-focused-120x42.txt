@@ -1,0 +1,43 @@
+╭─────────────╮
+tldw chatbook
+‹ts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F7 Lab  F8 Logs │ F9 Settings │ More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Settings | Global preferences, appearance, storage, and app behavior | Local
+Mode: Console Behavior
+┌──────────────────────────────┐│┌───────────────────────────────────────────────────────┐│┌───────────────────┐
+││││││││
+│Filter categories (/)│││State: Draft — save with s | Changes affect global│││Scope Inspector│
+│No filter | / focus│││Console fallbacks after save.││││
+│category search│││││How much of an agent tool result the│││││Selected│
+││││││Console shows you here -- distinct from│││││category: Console│
+│Core│││││max_tool_result_chars, which caps what the│││││Behavior│
+│   Overview (view) │││││model itself saw. Open a run's "View full│││││No unsaved│
+│   Providers & Models │││││log" (Agent rail) to read everything│││││changes│
+│   Speech & TTS │││││beyond this cap.│││││Guided edits:│
+│Interface││││││││││change a field│
+│   Appearance │││││Conversation context and memory││▃│││first.│
+│   Theme │││││Global defaults for new and inherited│││││ Save (s) — no ch│
+│   Splash Screen │││││conversations. Current-conversation│││││ Revert (r) — no │
+│ > Console Behavior │││││overrides remain in the Console's Context│││││Local-only: saves│
+│Data & Privacy│││││& memory view.│││││write your config│
+│   Storage │││││┌──────────────────┐│││││file.│
+│   Workspaces │││││Budget strategy│Automatic▼│││▆│││Purpose: Focus│
+│   Privacy & Security │││││└──────────────────┘│││││a Console│
+│Troubleshooting│││││Conversation max tokens│tokens (used in │││││Behavior field│
+│   Diagnostics (view) │││││┌──────────────────┐│││││for│
+│   About (view) │││││When limit nears│Ask▼││││││setting-specif│
+│   Agents │││││└──────────────────┘│││││ic guidance.│
+│Expert│││││Summarize at (%)│80││││││
+│   Internal Prompts │││││Reduce conversation to│55│││││Consequences:│
+│   Advanced Config │││││Summary response max│1024│││││No▁│
+│ Domain Defaults ▸ (11) │││││┌──────────────────┐│││││field-specific│
+││││││If summary fails│Stop and ask▼││││││guidance is│
+││││││└──────────────────┘│││││active right▇│
+││││││┌──────────────────┐│││││now.│
+││││││Keep after summary│Memory +▼│││││││
+││││││└──────────────────┘│││││Saved as:│
+││││││ Edit summary prompt… │││││▼ more — scroll│
+││││││││
+└──────────────────────────────┘│└───────────────────────────────────────────────────────┘│└───────────────────┘
+
+s save category | r revert category | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

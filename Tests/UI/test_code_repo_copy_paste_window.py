@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
-from Tests.textual_test_utils import app_pilot
+from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
 
 
 async def _active_window(pilot) -> CodeRepoCopyPasteWindow:
@@ -27,15 +27,21 @@ class TestCodeRepoCopyPasteWindow:
 
     @pytest.fixture
     def mock_api_client(self):
-        with patch("tldw_chatbook.UI.CodeRepoCopyPasteWindow.GitHubAPIClient") as mock_class:
+        with patch(
+            "tldw_chatbook.UI.CodeRepoCopyPasteWindow.GitHubAPIClient"
+        ) as mock_class:
             mock_instance = MagicMock()
             mock_class.return_value = mock_instance
-            mock_instance.parse_github_url = Mock(return_value=("test-owner", "test-repo"))
-            mock_instance.get_repository_info = AsyncMock(return_value={
-                "name": "test-repo",
-                "full_name": "test-owner/test-repo",
-                "description": "Test repository",
-            })
+            mock_instance.parse_github_url = Mock(
+                return_value=("test-owner", "test-repo")
+            )
+            mock_instance.get_repository_info = AsyncMock(
+                return_value={
+                    "name": "test-repo",
+                    "full_name": "test-owner/test-repo",
+                    "description": "Test repository",
+                }
+            )
             mock_instance.get_branches = AsyncMock(return_value=["main", "develop"])
             mock_instance.get_repository_tree = AsyncMock(return_value=[])
             mock_instance.get_file_content = AsyncMock(return_value="print('Hello')")
@@ -135,13 +141,19 @@ class TestCodeRepoCopyPasteWindow:
             mock_api_client.parse_github_url.assert_called_with(
                 "https://github.com/test-owner/test-repo"
             )
-            mock_api_client.get_repository_info.assert_called_with("test-owner", "test-repo")
+            mock_api_client.get_repository_info.assert_called_with(
+                "test-owner", "test-repo"
+            )
             mock_api_client.get_branches.assert_called_with("test-owner", "test-repo")
             window.notify.assert_called()
 
     @pytest.mark.asyncio
-    async def test_loading_repository_invalid_url(self, app_pilot, mock_app, mock_api_client):
-        mock_api_client.parse_github_url.side_effect = ValueError("Invalid GitHub repository URL")
+    async def test_loading_repository_invalid_url(
+        self, app_pilot, mock_app, mock_api_client
+    ):
+        mock_api_client.parse_github_url.side_effect = ValueError(
+            "Invalid GitHub repository URL"
+        )
 
         class TestApp(App):
             def on_mount(self) -> None:
@@ -159,11 +171,15 @@ class TestCodeRepoCopyPasteWindow:
 
             window.notify.assert_called()
             call_args = window.notify.call_args
-            assert "Failed to load repository: Invalid GitHub repository URL" in str(call_args)
+            assert "Failed to load repository: Invalid GitHub repository URL" in str(
+                call_args
+            )
             assert call_args.kwargs.get("severity") == "error"
 
     @pytest.mark.asyncio
-    async def test_quick_filter_buttons_update_select(self, app_pilot, mock_app, mock_api_client):
+    async def test_quick_filter_buttons_update_select(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -185,7 +201,9 @@ class TestCodeRepoCopyPasteWindow:
             assert filter_select.value == "config"
 
     @pytest.mark.asyncio
-    async def test_copy_to_clipboard_requires_compilation(self, app_pilot, mock_app, mock_api_client):
+    async def test_copy_to_clipboard_requires_compilation(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -223,7 +241,9 @@ class TestCodeRepoCopyPasteWindow:
             window.notify.assert_called_with("No files selected", severity="warning")
 
     @pytest.mark.asyncio
-    async def test_reset_clears_selection_and_compilation(self, app_pilot, mock_app, mock_api_client):
+    async def test_reset_clears_selection_and_compilation(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -247,10 +267,84 @@ class TestCodeRepoCopyPasteWindow:
                 window.query_one("#aggregated-text", TextArea).text
                 == "Click 'Generate Compilation' to aggregate selected files"
             )
-            window.notify.assert_called_with("Reset selection and compilation", severity="info")
+            window.notify.assert_called_with(
+                "Reset selection and compilation", severity="info"
+            )
 
     @pytest.mark.asyncio
-    async def test_loading_overlay_visibility(self, app_pilot, mock_app, mock_api_client):
+    async def test_load_node_children_expands_tree_on_success(
+        self, app_pilot, mock_app, mock_api_client
+    ):
+        """load_node_children runs on a real thread worker (as production does via
+        handle_node_expanded -> run_worker) and must reach its success path: the
+        tree actually expands and no error is surfaced to the user.
+
+        This guards against `await self.app.call_from_thread(...)`: call_from_thread
+        already invokes tree_view.expand_node synchronously and returns its result
+        (None) before any `await` would run, so "expand_node was called" alone does
+        NOT distinguish the bug from the fix -- the bug still calls expand_node, then
+        raises TypeError on `await None`, which the except block swallows into an
+        error notification. The real signal is that no error notification fires.
+        """
+        mock_api_client.get_directory_contents = AsyncMock(
+            return_value=[
+                {"path": "src/utils.py", "name": "utils.py", "type": "blob", "size": 512},
+                {"path": "src/lib", "name": "lib", "type": "tree"},
+            ]
+        )
+
+        class TestApp(App):
+            def on_mount(self) -> None:
+                self.push_screen(CodeRepoCopyPasteWindow(mock_app))
+
+        async with await app_pilot(TestApp) as pilot:
+            window = await _active_window(pilot)
+            window.notify = Mock()
+            window.current_repo = {"owner": "test-owner", "repo": "test-repo"}
+            window.is_local_repo = False
+
+            tree_view = window.query_one("#repo-tree", TreeView)
+            # Real TreeView.expand_node returns None, same as production; keep
+            # that here so a reinstated `await` reproduces the exact same
+            # TypeError ("object NoneType can't be used in 'await' expression")
+            # that the production bug raises, not an artifact of the mock type.
+            tree_view.expand_node = AsyncMock(return_value=None)
+            branch = window.query_one("#branch-selector", Select).value
+
+            worker = window.load_node_children("src")
+            await worker.wait()
+
+            mock_api_client.get_directory_contents.assert_called_once_with(
+                "test-owner", "test-repo", "src", branch
+            )
+
+            expected_child_nodes = [
+                {
+                    "path": "src/utils.py",
+                    "name": "utils.py",
+                    "type": "blob",
+                    "size": 512,
+                    "children": None,
+                },
+                {
+                    "path": "src/lib",
+                    "name": "lib",
+                    "type": "tree",
+                    "size": 0,
+                    "children": [],
+                },
+            ]
+            tree_view.expand_node.assert_called_once_with("src", expected_child_nodes)
+
+            # The success path never calls notify. If the TypeError from an
+            # awaited call_from_thread slipped through, the except block would
+            # have called notify(..., severity="error") instead.
+            window.notify.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_loading_overlay_visibility(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))
@@ -290,7 +384,9 @@ class TestCodeRepoCopyPasteWindow:
             window.dismiss.assert_called_with(None)
 
     @pytest.mark.asyncio
-    async def test_initial_focus_is_repo_input(self, app_pilot, mock_app, mock_api_client):
+    async def test_initial_focus_is_repo_input(
+        self, app_pilot, mock_app, mock_api_client
+    ):
         class TestApp(App):
             def on_mount(self) -> None:
                 self.push_screen(CodeRepoCopyPasteWindow(mock_app))

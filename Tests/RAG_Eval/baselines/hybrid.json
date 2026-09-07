@@ -1,0 +1,90 @@
+{
+  "baseline_id": "hybrid",
+  "created_at": "2026-08-18T23:33:29.981252+00:00",
+  "pipeline_config": {
+    "mode": "hybrid",
+    "k": 10,
+    "profile": "hybrid_basic",
+    "source_types": [
+      "media",
+      "notes",
+      "conversations",
+      "prompts"
+    ]
+  },
+  "metrics": {
+    "overall.precision": 0.08913043478260871,
+    "overall.recall": 0.8478260869565217,
+    "overall.mrr": 0.8091787439613526,
+    "overall.ndcg": 0.8174360867679992,
+    "overall.f1": 0.16073781291172598,
+    "category.keyword.precision": 0.1125,
+    "category.keyword.recall": 1.0,
+    "category.keyword.mrr": 0.9444444444444444,
+    "category.keyword.ndcg": 0.9563143747289988,
+    "category.keyword.f1": 0.20075757575757577,
+    "category.negation.precision": 0.0,
+    "category.negation.recall": 0.0,
+    "category.negation.mrr": 0.0,
+    "category.negation.ndcg": 0.0,
+    "category.negation.f1": 0.0,
+    "category.paraphrase.precision": 0.1,
+    "category.paraphrase.recall": 1.0,
+    "category.paraphrase.mrr": 1.0,
+    "category.paraphrase.ndcg": 1.0,
+    "category.paraphrase.f1": 0.18181818181818182,
+    "category.prompt.precision": 0.02,
+    "category.prompt.recall": 0.2,
+    "category.prompt.mrr": 0.02222222222222222,
+    "category.prompt.ndcg": 0.06020599913279624,
+    "category.prompt.f1": 0.03636363636363636,
+    "category.scoped.precision": 0.1,
+    "category.scoped.recall": 1.0,
+    "category.scoped.mrr": 0.1626984126984127,
+    "category.scoped.ndcg": 0.347975219484757,
+    "category.scoped.f1": 0.18181818181818182,
+    "category.vocabulary_mismatch.precision": 0.1,
+    "category.vocabulary_mismatch.recall": 1.0,
+    "category.vocabulary_mismatch.mrr": 1.0,
+    "category.vocabulary_mismatch.ndcg": 1.0,
+    "category.vocabulary_mismatch.f1": 0.18181818181818182
+  },
+  "metadata": {
+    "environment": {
+      "model": "all-MiniLM-L6-v2",
+      "transformers": "5.6.2",
+      "torch": "2.11.0",
+      "chromadb": "1.5.8",
+      "corpus_sha256": "6346786bcc45ffd96903147b2e178dbfe4d084e5519abb9601b2e3e09d24730e",
+      "platform": "darwin"
+    },
+    "environment_info": {
+      "sentence_transformers": "5.4.1"
+    },
+    "report_only": {
+      "latency": {
+        "count": 60.0,
+        "mean_ms": 8.6,
+        "p95_ms": 12.9,
+        "max_ms": 13.5,
+        "total_s": 0.5
+      },
+      "mean_docs_at_k": 10.0,
+      "num_queries": 46,
+      "num_golden_queries": 60,
+      "num_negative": 7,
+      "num_scoped": 7,
+      "runtime_backends": [
+        "rag-hybrid"
+      ],
+      "errors": [],
+      "negatives": {
+        "count": 7,
+        "returned_any": 7,
+        "mean_docs_at_k": 10.0,
+        "max_top_score": 0.1167,
+        "max_top_vector_score": 0.3539
+      }
+    }
+  }
+}

@@ -4,7 +4,9 @@ from unittest.mock import Mock
 import pytest
 
 import tldw_chatbook.Auth_Account_Interop.server_auth_account_service as auth_account_module
-from tldw_chatbook.Auth_Account_Interop.server_auth_account_service import ServerAuthAccountService
+from tldw_chatbook.Auth_Account_Interop.server_auth_account_service import (
+    ServerAuthAccountService,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.tldw_api import (
     APIKeyCreateRequest,
@@ -20,8 +22,14 @@ class FakeAuthAccountClient:
         self.calls = []
 
     async def login(self, username, password, *, set_bearer_token=True):
-        self.calls.append(("login", username, password, {"set_bearer_token": set_bearer_token}))
-        return {"access_token": "access-1", "refresh_token": "refresh-1", "token_type": "bearer"}
+        self.calls.append(
+            ("login", username, password, {"set_bearer_token": set_bearer_token})
+        )
+        return {
+            "access_token": "access-1",
+            "refresh_token": "refresh-1",
+            "token_type": "bearer",
+        }
 
     async def refresh_auth_token(self, request_data, *, set_bearer_token=True):
         self.calls.append(
@@ -31,10 +39,19 @@ class FakeAuthAccountClient:
                 {"set_bearer_token": set_bearer_token},
             )
         )
-        return {"access_token": "access-2", "refresh_token": "refresh-2", "token_type": "bearer"}
+        return {
+            "access_token": "access-2",
+            "refresh_token": "refresh-2",
+            "token_type": "bearer",
+        }
 
     async def logout(self, *, all_devices=False, clear_bearer_token=True):
-        self.calls.append(("logout", {"all_devices": all_devices, "clear_bearer_token": clear_bearer_token}))
+        self.calls.append(
+            (
+                "logout",
+                {"all_devices": all_devices, "clear_bearer_token": clear_bearer_token},
+            )
+        )
         return {"message": "logged out"}
 
     async def list_auth_sessions(self):
@@ -42,23 +59,43 @@ class FakeAuthAccountClient:
         return [{"id": 7, "ip_address": "127.0.0.1"}]
 
     async def update_current_user_profile(self, request_data):
-        self.calls.append(("update_current_user_profile", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("update_current_user_profile", request_data.model_dump(mode="json"))
+        )
         return {"profile_version": "v2", "applied": ["ui.theme"], "skipped": []}
 
     async def list_user_api_keys(self):
         self.calls.append(("list_user_api_keys",))
-        return [{"id": 5, "name": "desktop", "key_prefix": "tldw_1234", "scope": ["read"]}]
+        return [
+            {"id": 5, "name": "desktop", "key_prefix": "tldw_1234", "scope": ["read"]}
+        ]
 
     async def create_user_api_key(self, request_data):
-        self.calls.append(("create_user_api_key", request_data.model_dump(exclude_none=True, mode="json")))
-        return {"id": 6, "name": "desktop", "key": "tldw_secret", "key_prefix": "tldw_5678", "scope": ["read"]}
+        self.calls.append(
+            (
+                "create_user_api_key",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "id": 6,
+            "name": "desktop",
+            "key": "tldw_secret",
+            "key_prefix": "tldw_5678",
+            "scope": ["read"],
+        }
 
     async def list_user_provider_keys(self):
         self.calls.append(("list_user_provider_keys",))
         return {"items": [{"provider": "openai", "has_key": True, "source": "user"}]}
 
     async def test_user_provider_key(self, request_data):
-        self.calls.append(("test_user_provider_key", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "test_user_provider_key",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"provider": "openai", "status": "valid", "model": "gpt-4o-mini"}
 
     async def get_user_storage_quota(self):
@@ -131,7 +168,9 @@ async def test_server_auth_account_service_denied_policy_does_not_build_provider
         )
     )
     provider = ExplodingProvider()
-    service = ServerAuthAccountService.from_server_context_provider(provider, policy_enforcer=policy)
+    service = ServerAuthAccountService.from_server_context_provider(
+        provider, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_auth_sessions()
@@ -192,7 +231,9 @@ async def test_server_auth_account_service_routes_representative_account_operati
     policy = Mock()
     service = ServerAuthAccountService(client=client, policy_enforcer=policy)
 
-    token = await service.login(username="ada@example.com", password="secret", set_bearer_token=False)
+    token = await service.login(
+        username="ada@example.com", password="secret", set_bearer_token=False
+    )
     refreshed = await service.refresh_auth_token(
         RefreshTokenRequest(refresh_token="refresh-1"),
         set_bearer_token=False,
@@ -200,10 +241,14 @@ async def test_server_auth_account_service_routes_representative_account_operati
     logout = await service.logout(all_devices=True)
     sessions = await service.list_auth_sessions()
     updated_profile = await service.update_current_user_profile(
-        UserProfileUpdateRequest(updates=[UserProfileUpdateEntry(key="ui.theme", value="dark")])
+        UserProfileUpdateRequest(
+            updates=[UserProfileUpdateEntry(key="ui.theme", value="dark")]
+        )
     )
     api_keys = await service.list_user_api_keys()
-    created_key = await service.create_user_api_key(APIKeyCreateRequest(name="desktop", scope=["read"]))
+    created_key = await service.create_user_api_key(
+        APIKeyCreateRequest(name="desktop", scope=["read"])
+    )
     provider_keys = await service.list_user_provider_keys()
     tested_provider_key = await service.test_user_provider_key(
         ProviderKeyTestRequest(provider="openai", model="gpt-4o-mini")
@@ -220,7 +265,9 @@ async def test_server_auth_account_service_routes_representative_account_operati
     assert provider_keys["items"][0]["provider"] == "openai"
     assert tested_provider_key["status"] == "valid"
     assert quota["storage_quota_mb"] == 5120
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "auth.identity.launch.server",
         "auth.identity.update.server",
         "auth.identity.delete.server",

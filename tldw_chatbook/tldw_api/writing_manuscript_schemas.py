@@ -8,12 +8,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-ProjectStatus = Literal["draft", "outlining", "writing", "revising", "complete", "archived"]
+ProjectStatus = Literal[
+    "draft", "outlining", "writing", "revising", "complete", "archived"
+]
 ManuscriptItemStatus = Literal["outline", "draft", "revising", "final"]
 CharacterRole = Literal["protagonist", "antagonist", "supporting", "minor", "mentioned"]
 WorldInfoKind = Literal["location", "item", "faction", "concept", "event", "custom"]
 PlotLineStatus = Literal["active", "resolved", "abandoned", "dormant"]
-PlotEventType = Literal["setup", "conflict", "action", "emotional", "plot", "resolution"]
+PlotEventType = Literal[
+    "setup", "conflict", "action", "emotional", "plot", "resolution"
+]
 PlotHoleSeverity = Literal["low", "medium", "high", "critical"]
 PlotHoleStatus = Literal["open", "investigating", "resolved", "wontfix"]
 PlotHoleDetectedBy = Literal["manual", "ai"]
@@ -56,7 +60,9 @@ class ManuscriptProjectResponse(BaseModel):
     status: str
     synopsis: str | None = None
     target_word_count: int | None = None
-    settings: ManuscriptProjectSettings = Field(default_factory=ManuscriptProjectSettings)
+    settings: ManuscriptProjectSettings = Field(
+        default_factory=ManuscriptProjectSettings
+    )
     word_count: int = 0
     created_at: datetime | str
     last_modified: datetime | str
@@ -554,7 +560,9 @@ class ManuscriptResearchResponse(BaseModel):
 
 
 class ManuscriptAnalysisRequest(BaseModel):
-    analysis_types: list[AnalysisType] = Field(default_factory=lambda: ["pacing"], min_length=1)
+    analysis_types: list[AnalysisType] = Field(
+        default_factory=lambda: ["pacing"], min_length=1
+    )
     provider: str | None = None
     model: str | None = None
 

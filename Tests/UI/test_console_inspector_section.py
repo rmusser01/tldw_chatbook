@@ -1,0 +1,1260 @@
+"""Supervisor fleet PR 2b, Task 3: the reusable Inspector-style section.
+
+Rendered-geometry assertions throughout, not DOM presence -- per the Library
+UAT lesson this repo has been burned by before: an unbounded-width Static
+can be "present" in a headless query while rendering invisible on a real
+terminal. `_assert_painted_at_own_region`/`_assert_widget_and_ancestors_
+displayed` (imported from `test_console_parallel_runs.py`, the precedent
+this whole PR cites) use the compositor's own hit-test rather than a raw
+`region.y` bound, since `Widget.region` is reported UNCLIPPED -- a widget
+positioned below the fold of a scrollable ancestor still has a non-empty
+`region`, just one nothing actually paints.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
+from textual.widgets import Static
+
+from Tests.UI.test_console_parallel_runs import (
+    _assert_painted_at_own_region,
+    _assert_widget_and_ancestors_displayed,
+)
+from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    RAIL_CONTENT_WIDTH_MIN,
+    ROW_INDENT_COLUMNS,
+    SINGLE_LINE_ROW_BUDGET,
+    ConsoleInspectorSection,
+    ConsoleInspectorSectionRow,
+    ConsoleInspectorSectionState,
+    InspectorSectionRow,
+    row_fits_one_line,
+)
+
+
+def _rows(
+    n: int, *, clickable: bool = False, status: str = "", cancellable: bool = False
+) -> tuple[InspectorSectionRow, ...]:
+    return tuple(
+        InspectorSectionRow(
+            row_id=f"row-{i}",
+            primary_text=f"Agent {i} - running",
+            secondary_text=f"last step {i}",
+            status=status,
+            clickable=clickable,
+            cancellable=cancellable,
+        )
+        for i in range(n)
+    )
+
+
+def test_state_construction_requires_both_rows_and_summary():
+    """task-3 review round 3, HIGH: round 1's fix kept per-field defaults
+    on `ConsoleInspectorSectionState` (`rows: ... = ()`, `summary: str =
+    ""`), so `ConsoleInspectorSectionState(rows=updated_rows)` --
+    omitting `summary`, the exact "just refresh the rows" shape this test
+    file itself used to write -- silently reproduced the original
+    "sync_state wipes the other dimension" bug one call-frame later.
+    Removing the defaults makes partial construction a `TypeError` instead
+    of a silent data-loss bug."""
+    with pytest.raises(TypeError):
+        ConsoleInspectorSectionState(rows=_rows(1))  # summary omitted
+    with pytest.raises(TypeError):
+        ConsoleInspectorSectionState(summary="2 working")  # rows omitted
+    with pytest.raises(TypeError):
+        ConsoleInspectorSectionState()  # both omitted
+
+
+def test_state_construction_with_an_explicit_empty_summary_still_works():
+    """The deliberate "no summary" case must stay expressible -- it just
+    has to be SAID (`summary=""`), not left to a default."""
+    state = ConsoleInspectorSectionState(rows=_rows(1), summary="")
+    assert state.rows == _rows(1)
+    assert state.summary == ""
+
+
+class _SectionHarness(ConsolidatedCSSApp):
+    """Minimal host mounting one Inspector section directly (no ChatScreen
+    involved -- this is a standalone-component test, mirroring the
+    `_HandleHarness`/`_SectionHeaderHarness` pattern in
+    `test_destination_rail.py`)."""
+
+    def __init__(self, section: ConsoleInspectorSection) -> None:
+        super().__init__()
+        self._section = section
+        self.activated: list[tuple[str, str]] = []
+        self.cancel_requested: list[tuple[str, str]] = []
+        self.view_all_events: list[str] = []
+        self.collapse_events: list[tuple[str, bool]] = []
+
+    def compose(self) -> ComposeResult:
+        yield self._section
+
+    @on(ConsoleInspectorSection.RowActivated)
+    def _on_row_activated(self, event: ConsoleInspectorSection.RowActivated) -> None:
+        self.activated.append((event.section_id, event.row_id))
+
+    @on(ConsoleInspectorSection.RowCancelRequested)
+    def _on_row_cancel_requested(
+        self, event: ConsoleInspectorSection.RowCancelRequested
+    ) -> None:
+        self.cancel_requested.append((event.section_id, event.row_id))
+
+    @on(ConsoleInspectorSection.ViewAllRequested)
+    def _on_view_all(self, event: ConsoleInspectorSection.ViewAllRequested) -> None:
+        self.view_all_events.append(event.section_id)
+
+    @on(ConsoleInspectorSection.CollapseToggled)
+    def _on_collapse_toggled(
+        self, event: ConsoleInspectorSection.CollapseToggled
+    ) -> None:
+        self.collapse_events.append((event.section_id, event.open))
+
+
+class _ScrolledSectionHarness(ConsolidatedCSSApp):
+    """Hosts a section inside a height-constrained `VerticalScroll`, the
+    same shape as the real Console rail body (`#console-left-rail-body`) --
+    needed to create a genuine below-the-fold row for the hit-test guard."""
+
+    CSS = "#scroll { height: 8; }"
+
+    def __init__(self, section: ConsoleInspectorSection) -> None:
+        super().__init__()
+        self._section = section
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="scroll"):
+            yield self._section
+
+
+@pytest.mark.asyncio
+async def test_header_and_each_row_have_positive_rendered_regions():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        summary="2 working, 1 done",
+        rows=_rows(3),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(70, 20)) as pilot:
+        await pilot.pause()
+        header = app.query_one("#console-inspector-section-agents-header")
+        assert header.region.width > 0 and header.region.height > 0
+        _assert_widget_and_ancestors_displayed(header)
+
+        for index in range(3):
+            row = app.query_one(
+                f"#console-inspector-section-agents-row-{index}",
+                ConsoleInspectorSectionRow,
+            )
+            assert row.region.width > 0 and row.region.height > 0
+            _assert_widget_and_ancestors_displayed(row)
+            # The hit-test asserts IDENTITY at a pixel, and a compositor hit
+            # always resolves to the deepest (leaf) widget painted there --
+            # a container row is never itself "the thing painted", its
+            # primary-line Static is. Applied to the leaf, matching how the
+            # precedent in `test_console_parallel_runs.py` always targets a
+            # Static, never a container.
+            primary = app.query_one(
+                f"#console-inspector-section-agents-row-{index}-primary"
+            )
+            assert primary.region.width > 0 and primary.region.height > 0
+            _assert_painted_at_own_region(app, primary)
+
+
+@pytest.mark.asyncio
+async def test_summary_is_right_aligned_within_the_header_region_no_chevron():
+    """`collapsible=False` -- the summary is the header's last element, so
+    its right edge must land exactly on the header's own right edge."""
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        summary="3 working, 1 done",
+        collapsible=False,
+        rows=_rows(1),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        header = app.query_one("#console-inspector-section-agents-header")
+        title = app.query_one("#console-inspector-section-agents-title")
+        summary = app.query_one("#console-inspector-section-agents-summary")
+        assert summary.region.width > 0 and summary.region.height > 0
+        # Title is `1fr` -- it grows to consume all room not claimed by the
+        # summary, so the two must be exactly adjacent...
+        assert title.region.right == summary.region.x
+        # ...and the summary, being the last header child, ends flush with
+        # the header's own right edge.
+        assert summary.region.right == header.region.right
+
+
+@pytest.mark.asyncio
+async def test_summary_sits_between_title_and_chevron_when_collapsible():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        summary="2 working",
+        collapsible=True,
+        open=True,
+        rows=_rows(1),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        header = app.query_one("#console-inspector-section-agents-header")
+        title = app.query_one("#console-inspector-section-agents-title")
+        summary = app.query_one("#console-inspector-section-agents-summary")
+        toggle = app.query_one("#console-inspector-section-agents-toggle")
+        assert title.region.right == summary.region.x
+        assert summary.region.right == toggle.region.x
+        assert toggle.region.right == header.region.right
+
+
+@pytest.mark.asyncio
+async def test_collapsing_hides_the_body_but_keeps_the_header_painted():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        summary="1 working",
+        rows=_rows(3),
+        open=True,
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        header = app.query_one("#console-inspector-section-agents-header")
+        # The compositor hit-test resolves to the deepest (leaf) widget
+        # painted at a pixel, never a container -- title is the header's
+        # leftmost leaf, so it stands in for "the header is really
+        # painted" the same way the precedent always hit-tests a Static.
+        title = app.query_one("#console-inspector-section-agents-title")
+        body = app.query_one("#console-inspector-section-agents-body")
+        row0_primary = app.query_one(
+            "#console-inspector-section-agents-row-0-primary"
+        )
+
+        _assert_painted_at_own_region(app, title)
+        _assert_painted_at_own_region(app, row0_primary)
+
+        section.set_open(False)
+        await pilot.pause()
+
+        assert app.collapse_events == [("agents", False)]
+        assert not body.display
+        # A collapsed body's children lose their laid-out region entirely
+        # (Textual excludes `display: none` subtrees from layout) -- the
+        # meaningful assertion is that the HEADER is still there and still
+        # painted, not that the (now off-layout) row still reports a
+        # positive region.
+        assert row0_primary.region.width == 0
+        _assert_widget_and_ancestors_displayed(header)
+        _assert_painted_at_own_region(app, title)
+
+        section.set_open(True)
+        await pilot.pause()
+        assert app.collapse_events == [("agents", False), ("agents", True)]
+        assert body.display
+        _assert_painted_at_own_region(app, row0_primary)
+
+
+@pytest.mark.asyncio
+async def test_collapsible_false_forces_permanently_open_and_hides_the_chevron():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        collapsible=False,
+        open=False,  # ignored -- collapsible=False always wins
+        rows=_rows(1),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        assert section.open is True
+        assert len(app.query("#console-inspector-section-agents-toggle")) == 0
+        body = app.query_one("#console-inspector-section-agents-body")
+        assert body.display
+        # set_open is a no-op when the section isn't collapsible.
+        section.set_open(False)
+        await pilot.pause()
+        assert section.open is True
+        assert app.collapse_events == []
+
+
+@pytest.mark.asyncio
+async def test_row_past_the_fold_is_caught_by_the_compositor_hit_test():
+    """Mirrors the exact shape the brief warns about: rows compose fine and
+    are individually "displayed", but most of them sit below the visible
+    fold of a height-constrained scrollable ancestor. Only the compositor
+    hit-test -- not `region` alone -- tells the two cases apart."""
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(15),
+        id="section",
+    )
+    app = _ScrolledSectionHarness(section)
+    async with app.run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        # Leaf Statics, not the row containers -- the compositor hit-test
+        # asserts pixel IDENTITY, and a hit always resolves to the deepest
+        # widget painted at that pixel (the primary-line Static), never its
+        # container.
+        first_row_primary = app.query_one(
+            "#console-inspector-section-agents-row-0-primary"
+        )
+        last_row_primary = app.query_one(
+            "#console-inspector-section-agents-row-14-primary"
+        )
+        # Within the scroll box's 8-row fold: really painted.
+        _assert_painted_at_own_region(app, first_row_primary)
+        # Below the fold: `region` is still non-empty (unclipped)...
+        assert (
+            last_row_primary.region.width > 0
+            and last_row_primary.region.height > 0
+        )
+        # ...but nothing is actually painted there.
+        hit_widget, _hit_region = app.get_widget_at(
+            last_row_primary.region.x + 1, last_row_primary.region.y
+        )
+        assert hit_widget is not last_row_primary
+        with pytest.raises(AssertionError):
+            _assert_painted_at_own_region(app, last_row_primary)
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_row_after_an_in_place_patch_still_routes_to_the_right_row():
+    """The load-bearing test the brief demands: prove click targeting
+    survives the in-place (non-recompose) update path, rather than assuming
+    it the way `console_workspace_context.py`'s history warns against."""
+    rows = (
+        InspectorSectionRow(
+            row_id="alpha",
+            primary_text="Agent alpha - running",
+            secondary_text="step 1",
+            status="running",
+            clickable=True,
+        ),
+        InspectorSectionRow(
+            row_id="beta",
+            primary_text="Agent beta - running",
+            secondary_text="step 1",
+            status="running",
+            clickable=True,
+        ),
+    )
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=rows, id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        row1_widget = app.query_one(
+            "#console-inspector-section-agents-row-1", ConsoleInspectorSectionRow
+        )
+
+        await pilot.click("#console-inspector-section-agents-row-1")
+        await pilot.pause()
+        assert app.activated == [("agents", "beta")]
+
+        # Same row_id set, same order -- structurally compatible, so this
+        # must take the IN-PLACE path (recompose_count stays 0), not a
+        # hidden recompose that would trivially "fix" click targeting by
+        # rebuilding the row.
+        updated_rows = (
+            rows[0],
+            InspectorSectionRow(
+                row_id="beta",
+                primary_text="Agent beta - done",
+                secondary_text="step 2",
+                status="done",
+                clickable=True,
+            ),
+        )
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary="")
+        )
+        await pilot.pause()
+
+        assert section.recompose_count == 0
+        # Literally the same mounted widget instance -- the strongest proof
+        # this went through the patch path, not a recompose in disguise.
+        assert (
+            app.query_one(
+                "#console-inspector-section-agents-row-1", ConsoleInspectorSectionRow
+            )
+            is row1_widget
+        )
+        assert row1_widget.row_id == "beta"
+        # The in-place patch must actually have RENDERED the new content,
+        # not merely left recompose_count at 0 (task-3 review round 2,
+        # MEDIUM finding -- stripping the `.update()` calls left every
+        # structural/identity assertion above green).
+        assert (
+            str(
+                app.query_one(
+                    "#console-inspector-section-agents-row-1-primary"
+                ).renderable
+            )
+            == "Agent beta - done"
+        )
+        assert (
+            str(
+                app.query_one(
+                    "#console-inspector-section-agents-row-1-secondary"
+                ).renderable
+            )
+            == "step 2"
+        )
+
+        await pilot.click("#console-inspector-section-agents-row-1")
+        await pilot.pause()
+        assert app.activated == [("agents", "beta"), ("agents", "beta")]
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_non_clickable_row_posts_nothing():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1, clickable=False),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        await pilot.click("#console-inspector-section-agents-row-0")
+        await pilot.pause()
+        assert app.activated == []
+
+
+@pytest.mark.asyncio
+async def test_sync_state_updating_rows_while_carrying_the_summary_forward_does_not_wipe_it():
+    """task-3 review round 1, HIGH: reproduced against the pre-fix code,
+    `sync_state(rows=<updated>)` treated the omitted `summary` kwarg as
+    "clear this" -- the summary Static disappeared from the DOM and
+    `recompose_count` spuriously incremented, even though the caller never
+    intended to touch the summary. The atomic `ConsoleInspectorSectionState`
+    makes that call shape impossible: the caller states the whole section
+    state, so the natural "just refresh the rows" call carries the summary
+    it already had forward, unchanged."""
+    initial_rows = _rows(2)
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=initial_rows,
+        summary="2 working",
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        assert (
+            str(app.query_one("#console-inspector-section-agents-summary").renderable)
+            == "2 working"
+        )
+
+        updated_rows = tuple(
+            InspectorSectionRow(
+                row_id=row.row_id,
+                primary_text=f"{row.primary_text} (updated)",
+                secondary_text=row.secondary_text,
+                status=row.status,
+                clickable=row.clickable,
+            )
+            for row in initial_rows
+        )
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary=section.summary)
+        )
+        await pilot.pause()
+
+        # Same row_id sequence + summary still present -> in-place, not a
+        # recompose (and definitely not the spurious recompose the bug
+        # caused every time).
+        assert section.recompose_count == 0
+        assert (
+            str(app.query_one("#console-inspector-section-agents-summary").renderable)
+            == "2 working"
+        )
+        assert (
+            str(
+                app.query_one(
+                    "#console-inspector-section-agents-row-0-primary"
+                ).renderable
+            )
+            == "Agent 0 - running (updated)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_sync_state_updating_only_the_summary_does_not_wipe_the_rows():
+    """Mirror of the finding above: a summary-only-intended update must not
+    wipe the rows either."""
+    initial_rows = _rows(2)
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=initial_rows,
+        summary="2 working",
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=section.rows, summary="3 working, 1 done"
+            )
+        )
+        await pilot.pause()
+
+        assert section.recompose_count == 0
+        assert (
+            str(app.query_one("#console-inspector-section-agents-summary").renderable)
+            == "3 working, 1 done"
+        )
+        for index, row in enumerate(initial_rows):
+            assert (
+                str(
+                    app.query_one(
+                        f"#console-inspector-section-agents-row-{index}-primary"
+                    ).renderable
+                )
+                == row.primary_text
+            )
+
+
+@pytest.mark.asyncio
+async def test_row_becoming_clickable_via_sync_state_does_not_recompose():
+    """task-3 review round 2, LOW: `clickable` is deliberately excluded
+    from the structural key -- a row transitioning non-clickable ->
+    clickable (a real fleet transition, e.g. queued -> running) must patch
+    in place, not force a whole-section recompose, and the row's actual
+    click behavior must reflect the new state afterward."""
+    rows = (
+        InspectorSectionRow(
+            row_id="alpha", primary_text="Agent alpha - queued", clickable=False
+        ),
+    )
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=rows, id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        assert row_widget.can_focus is False
+
+        await pilot.click("#console-inspector-section-agents-row-0")
+        await pilot.pause()
+        assert app.activated == []  # not clickable yet
+
+        updated_rows = (
+            InspectorSectionRow(
+                row_id="alpha", primary_text="Agent alpha - running", clickable=True
+            ),
+        )
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary="")
+        )
+        await pilot.pause()
+
+        # Same row_id sequence -> in-place, even though clickability flipped.
+        assert section.recompose_count == 0
+        assert (
+            app.query_one(
+                "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+            )
+            is row_widget
+        )
+        assert row_widget.clickable is True
+        assert row_widget.can_focus is True
+
+        await pilot.click("#console-inspector-section-agents-row-0")
+        await pilot.pause()
+        assert app.activated == [("agents", "alpha")]
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_on_a_cancellable_row_posts_row_cancel_requested():
+    """PR2b Task 5 (per-row cancel): Delete -- not Enter/Space -- is the
+    cancel gesture, so it can coexist with a clickable row's own
+    drill-in gesture without contention (see the "both at once" test
+    below)."""
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1, cancellable=True),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        assert row_widget.can_focus is True
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == [("agents", "row-0")]
+        assert app.activated == []
+
+
+@pytest.mark.asyncio
+async def test_pressing_delete_on_a_non_cancellable_row_posts_nothing():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1, cancellable=False),
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        # Not focusable at all: neither clickable nor cancellable.
+        assert row_widget.can_focus is False
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == []
+
+
+@pytest.mark.asyncio
+async def test_a_row_can_be_both_clickable_and_cancellable_independently():
+    """Enter drills in; Delete cancels -- the same row answers to both
+    gestures without either interfering with the other, proving `clickable`
+    and `cancellable` are genuinely independent dimensions."""
+    row = InspectorSectionRow(
+        row_id="alpha",
+        primary_text="Agent alpha - running",
+        clickable=True,
+        cancellable=True,
+    )
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=(row,), id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.activated == [("agents", "alpha")]
+        assert app.cancel_requested == []
+
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == [("agents", "alpha")]
+        assert app.activated == [("agents", "alpha")]  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_cancellable_re_syncs_on_an_in_place_patch():
+    """Mirrors `test_row_becoming_clickable_via_sync_state_does_not_
+    recompose` for the new `cancellable` field -- a running -> done
+    transition (cancellable -> not) must patch in place, not recompose,
+    and the row must stop answering to Delete afterward."""
+    rows = (
+        InspectorSectionRow(
+            row_id="alpha",
+            primary_text="Agent alpha - running",
+            status="running",
+            cancellable=True,
+        ),
+    )
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=rows, id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row_widget = app.query_one(
+            "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+        )
+        assert row_widget.can_focus is True
+
+        updated_rows = (
+            InspectorSectionRow(
+                row_id="alpha",
+                primary_text="Agent alpha - done",
+                status="done",
+                cancellable=False,
+            ),
+        )
+        section.sync_state(
+            ConsoleInspectorSectionState(rows=updated_rows, summary="")
+        )
+        await pilot.pause()
+
+        # Same row_id sequence -> in-place, even though cancellability
+        # flipped (mirrors clickable's own exclusion from the structural
+        # key).
+        assert section.recompose_count == 0
+        assert (
+            app.query_one(
+                "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+            )
+            is row_widget
+        )
+        assert row_widget.cancellable is False
+        assert row_widget.can_focus is False
+
+        row_widget.focus()
+        await pilot.pause()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert app.cancel_requested == []
+
+
+@pytest.mark.asyncio
+async def test_sync_state_recomposes_on_a_structural_row_change():
+    section = ConsoleInspectorSection(
+        title="Agents", section_id="agents", rows=_rows(2), id="section"
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        assert section.recompose_count == 0
+
+        # A third row added is a structural change (different row_id
+        # sequence) -- must recompose, not silently drop the new row.
+        section.sync_state(ConsoleInspectorSectionState(rows=_rows(3), summary=""))
+        await pilot.pause()
+
+        assert section.recompose_count == 1
+        new_row = app.query_one(
+            "#console-inspector-section-agents-row-2", ConsoleInspectorSectionRow
+        )
+        assert new_row.region.width > 0 and new_row.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_view_all_tail_posts_view_all_requested_for_this_section():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1),
+        view_all_label="View all",
+        id="section",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        view_all = app.query_one("#console-inspector-section-agents-view-all")
+        assert view_all.region.width > 0 and view_all.region.height > 0
+
+        await pilot.click("#console-inspector-section-agents-view-all")
+        await pilot.pause()
+        assert app.view_all_events == ["agents"]
+
+
+# -- TASK-31662: row density ------------------------------------------------
+#
+# Measured on this branch 2026-09-05 (probe against the real Console at
+# 80x24): the section box is 30 columns, its body 29, and a row's own
+# content 27 -- so `SINGLE_LINE_ROW_BUDGET` (27) is the real thing, not a
+# guess. The harness below therefore pins the section to 30 columns AND
+# loads the app sheets, because the body indent and row padding that make
+# up the difference live in `screen_agentic_console.tcss`, which the
+# widget-defaults pair alone does not carry.
+
+
+class _RailWidthHarness(ConsolidatedCSSApp):
+    """Hosts one section at the rail's real content width, with real CSS."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+    CSS = f"#section {{ width: {RAIL_CONTENT_WIDTH_MIN}; }}"
+
+    def __init__(self, section: ConsoleInspectorSection) -> None:
+        super().__init__()
+        self._section = section
+
+    def compose(self) -> ComposeResult:
+        yield self._section
+
+
+def _one_row_section(row: InspectorSectionRow) -> ConsoleInspectorSection:
+    return ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=(row,),
+        summary="",
+        id="section",
+    )
+
+
+def _row_widget(app: App) -> ConsoleInspectorSectionRow:
+    return app.query_one(
+        "#console-inspector-section-agents-row-0", ConsoleInspectorSectionRow
+    )
+
+
+def _row_statics(app: App) -> tuple[Static, Static]:
+    return (
+        app.query_one("#console-inspector-section-agents-row-0-primary", Static),
+        app.query_one("#console-inspector-section-agents-row-0-secondary", Static),
+    )
+
+
+@pytest.mark.asyncio
+async def test_row_with_an_empty_secondary_renders_one_line():
+    """AC#1a: 25% of the Environment section's row-lines were blank because
+    every row mounted a second Static whether or not it had anything to
+    say. The Static stays mounted (consumers query it by id) but takes no
+    line."""
+    app = _RailWidthHarness(
+        _one_row_section(InspectorSectionRow(row_id="r0", primary_text="Local"))
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert row.size.height == 1
+        assert primary.render_line(0).text.rstrip() == "Local"
+        assert not secondary.display
+
+
+@pytest.mark.asyncio
+async def test_row_whose_secondary_fits_renders_one_line_right_aligned():
+    """AC#1b: primary + secondary on ONE line, secondary flush right --
+    the shape the section HEADER already uses (title 1fr + summary auto)."""
+    app = _RailWidthHarness(
+        _one_row_section(
+            InspectorSectionRow(
+                row_id="r0", primary_text="Changes", secondary_text="+10 −2"
+            )
+        )
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert row.size.height == 1
+        # Same line...
+        assert primary.region.y == secondary.region.y == row.content_region.y
+        # ...secondary flush against the row's right edge, primary at its left.
+        assert secondary.region.right == row.content_region.right
+        assert primary.region.x == row.content_region.x
+        assert primary.render_line(0).text.rstrip() == "Changes"
+        assert secondary.render_line(0).text.strip() == "+10 −2"
+
+
+@pytest.mark.asyncio
+async def test_row_whose_secondary_does_not_fit_falls_back_to_two_lines():
+    """AC#1c: the pair only shares a line when it fits at the SMALLEST
+    supported width; otherwise the old stacked shape, uncut."""
+    long_primary = "M tldw_chatbook/UI/Screens/chat_screen.py"
+    app = _RailWidthHarness(
+        _one_row_section(
+            InspectorSectionRow(
+                row_id="r0", primary_text=long_primary, secondary_text="+120 −44"
+            )
+        )
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert len(long_primary) + 1 + len("+120 −44") > SINGLE_LINE_ROW_BUDGET
+        assert row.size.height == 2
+        assert secondary.region.y == primary.region.y + 1
+        assert secondary.display
+
+
+@pytest.mark.asyncio
+async def test_fleet_shaped_rows_keep_the_two_line_form():
+    """The fleet section shares this widget: its rows carry real
+    secondaries (`Console_Modules/agent.py::_fleet_row_from_handle` --
+    "glyph name · elapsed" over "task · N tok"), which do not fit 27
+    columns and must keep both painted lines."""
+    app = _RailWidthHarness(
+        _one_row_section(
+            InspectorSectionRow(
+                row_id="r0",
+                primary_text="▶ researcher · 3s",
+                secondary_text="find pricing · 1.2k tok",
+                status="running",
+            )
+        )
+    )
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        row = _row_widget(app)
+        primary, secondary = _row_statics(app)
+        assert row.size.height == 2
+        _assert_painted_at_own_region(app, primary)
+        _assert_painted_at_own_region(app, secondary)
+        assert "researcher" in primary.render_line(0).text
+        assert "find pricing" in secondary.render_line(0).text
+
+
+@pytest.mark.asyncio
+async def test_status_colour_reaches_the_primary_in_both_line_shapes():
+    """The status rules were `.row-error > .row-primary`. In the one-line
+    shape the primary is a GRANDchild (inside the line `Horizontal`), so
+    the child combinator silently dropped the colour for exactly the rows
+    that just became one line -- the second half of this change, and the
+    kind that ships looking fine because the widget is still there."""
+    one_line = InspectorSectionRow(
+        row_id="r0", primary_text="Checks", secondary_text="2 failed", status="error"
+    )
+    stacked = InspectorSectionRow(
+        row_id="r0",
+        primary_text="M tldw_chatbook/UI/Screens/chat_screen.py",
+        secondary_text="+120 −44",
+        status="error",
+    )
+    plain = InspectorSectionRow(row_id="r0", primary_text="Checks")
+    colours = {}
+    for name, row in (("one_line", one_line), ("stacked", stacked), ("plain", plain)):
+        app = _RailWidthHarness(_one_row_section(row))
+        async with app.run_test(size=(60, 12)) as pilot:
+            await pilot.pause()
+            colours[name] = _row_statics(app)[0].styles.color
+    assert colours["one_line"] == colours["stacked"] != colours["plain"]
+
+
+@pytest.mark.asyncio
+async def test_a_row_changing_line_shape_recomposes_rather_than_patching():
+    """The row's mounted SHAPE is part of the structural key now: patching
+    a one-line row's Statics with text that no longer fits would leave the
+    pair sharing 27 columns with the primary ellipsised to nothing."""
+    section = _one_row_section(
+        InspectorSectionRow(row_id="r0", primary_text="Changes", secondary_text="+1 −0")
+    )
+    app = _RailWidthHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        assert _row_widget(app).size.height == 1
+        assert section.recompose_count == 0
+
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(
+                    InspectorSectionRow(
+                        row_id="r0",
+                        primary_text="M tldw_chatbook/UI/Screens/chat_screen.py",
+                        secondary_text="+120 −44",
+                    ),
+                ),
+                summary="",
+            )
+        )
+        await pilot.pause()
+        assert section.recompose_count == 1
+        assert _row_widget(app).size.height == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stacked_row_gaining_a_secondary_unhides_it_in_place():
+    """The empty->long transition keeps the same mounted shape, so it is
+    still an in-place patch (no recompose) -- but the hidden Static has to
+    come back, or the new text renders nowhere."""
+    section = _one_row_section(InspectorSectionRow(row_id="r0", primary_text="Local"))
+    app = _RailWidthHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        assert _row_widget(app).size.height == 1
+
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(
+                    InspectorSectionRow(
+                        row_id="r0",
+                        primary_text="Local",
+                        secondary_text="Remote tldw_server — not configured",
+                    ),
+                ),
+                summary="",
+            )
+        )
+        await pilot.pause()
+        assert section.recompose_count == 0
+        _, secondary = _row_statics(app)
+        assert secondary.display
+        assert _row_widget(app).size.height == 2
+
+
+@pytest.mark.asyncio
+async def test_summary_is_suppressed_while_open_and_returns_when_collapsed():
+    """AC#3: an open section's rows already carry what its summary says, so
+    the summary is for the COLLAPSED state. Opt-in -- the fleet section's
+    "2 working, 1 done" is an aggregate no row restates, so it keeps its
+    summary open (the default, covered by the tests above)."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="agents",
+        rows=_rows(1),
+        summary="dev +10 −2",
+        collapsible=True,
+        open=True,
+        suppress_summary_when_open=True,
+        id="section",
+    )
+    app = _RailWidthHarness(section)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause()
+        summary = app.query_one("#console-inspector-section-agents-summary", Static)
+        title = app.query_one("#console-inspector-section-agents-title", Static)
+        assert not summary.display
+        # ...and the columns it would have taken go back to the title.
+        assert title.render_line(0).text.strip() == "Environment"
+
+        section.set_open(False)
+        await pilot.pause()
+        assert summary.display
+        assert summary.region.width > 0
+
+        section.set_open(True)
+        await pilot.pause()
+        assert not summary.display
+
+
+def test_inspector_section_css_is_styled_in_source_and_bundle():
+    """Regression guard against a hand-edit-only-the-bundle desync
+    (TASK-395's failure mode) -- both the source module and the generated
+    bundle must carry the new grammar's rules.
+
+    Round-1 review M7 (TASK-31661): the CSS build's screen-owned split
+    (`build_css.py`'s `split_agentic_terminal`/`split_owned_module`) moved
+    every `.console-inspector-section*` rule OUT of the monolithic
+    `tldw_cli_modular.tcss` and into the Console screen's own generated
+    sheet, `screen_agentic_console.tcss` (loaded directly by `app.py` and
+    `chat_screen.py`) -- these selectors are owned by that screen, not
+    shared, so the split moves them wholesale rather than duplicating
+    them. Checking the old monolithic bundle here was baselined as a
+    pre-existing red for that reason: it was asserting against a file
+    that no longer carries these rules at all, not detecting a real
+    desync. Pointing this guard at the bundle that actually ships them
+    restores its purpose.
+    """
+    for path in (
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+        Path("tldw_chatbook/css/screen_agentic_console.tcss"),
+    ):
+        text = path.read_text(encoding="utf-8")
+        for class_name in (
+            ".console-inspector-section",
+            ".console-inspector-section-header",
+            ".console-inspector-section-title",
+            ".console-inspector-section-summary",
+            ".console-inspector-section-toggle",
+            ".console-inspector-section-body",
+            ".console-inspector-section-row",
+            ".console-inspector-section-row-primary",
+            ".console-inspector-section-row-secondary",
+            ".console-inspector-section-view-all",
+        ):
+            assert class_name in text, f"{class_name} missing from {path}"
+
+
+# --- TASK-31665 AC#14: one-line fitting must measure CELLS, not codepoints ---
+
+
+def test_row_fits_one_line_measures_wide_glyphs_in_terminal_cells():
+    """AC#14. `len()` under-measured a CJK/emoji title by up to half, so a
+    pair that did not fit was mounted in the one-line form and then
+    ellipsized by the primary's own `text-overflow` at paint time. Backlog
+    titles (read straight out of frontmatter since AC#2) and changed-file
+    paths are both user data."""
+    wide = "映画生成基盤の実装"          # 9 chars, 18 cells
+    assert len(wide) == 9
+    assert row_fits_one_line(wide, "x", budget=12) is False
+    # The ASCII control of the same codepoint count still fits.
+    assert row_fits_one_line("a" * 9, "x", budget=12) is True
+
+
+def test_row_fits_one_line_charges_the_indent_against_the_budget():
+    """AC#3 + AC#14: an indented child has fewer columns for its own text,
+    and deciding its shape against the un-indented budget would reintroduce
+    exactly the truncation this fitter exists to prevent."""
+    assert row_fits_one_line("abcdefgh", "xy", budget=12) is True
+    assert row_fits_one_line("abcdefgh", "xy", budget=12, indent=2) is False
+
+
+# --- Q4: the fit must measure what is actually RENDERED ---------------------
+
+#: A fleet-shaped row two cells inside the budget as Unicode, and two cells
+#: OVER it once ASCII mode expands the marker (``✓`` -> ``[x]``, 1 cell -> 3).
+_ASCII_BOUNDARY_PRIMARY = "✓ deploy-worker-agent-1"
+_ASCII_BOUNDARY_SECONDARY = "4m"
+
+
+def _boundary_row() -> InspectorSectionRow:
+    return InspectorSectionRow(
+        row_id="fleet-boundary",
+        primary_text=_ASCII_BOUNDARY_PRIMARY,
+        secondary_text=_ASCII_BOUNDARY_SECONDARY,
+    )
+
+
+def test_row_shape_measures_the_glyph_RESOLVED_text_in_ascii_mode():
+    """Q4: `row_fits_one_line` is pure over the text it is GIVEN, and the
+    widget was giving it the UNRESOLVED text while rendering the resolved
+    one. Every ASCII fallback is wider than its glyph (``✓`` -> ``[x]``,
+    ``●`` -> ``[*]``: 1 cell -> 3; ``◉`` -> ``(rec)``: 1 -> 5), so in
+    ``appearance.ascii_glyphs`` a row within 2 cells of the budget was
+    measured as a fit, mounted one-line, and then ellipsized at paint time
+    by the primary's own ``text-overflow`` -- the exact defect AC#14's
+    cell-measurement fix exists to prevent, reachable through the other
+    seam. Fixed at the widget (the projection stays pure and
+    mode-independent).
+    """
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    row = _boundary_row()
+    # Unicode: a genuine fit, and it must STAY one -- this is the control.
+    unicode_widget = ConsoleInspectorSectionRow(row, section_id="fleet", index=0)
+    assert unicode_widget._one_line is True
+
+    set_ascii_glyph_mode(True)
+    try:
+        ascii_widget = ConsoleInspectorSectionRow(row, section_id="fleet", index=0)
+        assert ascii_widget._primary_text == "[x] deploy-worker-agent-1"
+        assert ascii_widget._one_line is False, (
+            "the ASCII-expanded row was one-lined against its unresolved width"
+        )
+    finally:
+        set_ascii_glyph_mode(False)
+
+
+def test_structural_key_tracks_the_ascii_mode_row_shape():
+    """Q4, second half: the shape decision is also a RECOMPOSE key, so it has
+    to be measured the same way in both places. A key computed from the
+    unresolved text is identical in both modes, so a live ``ascii_glyphs``
+    flip would patch rows in place and leave every boundary row in the shape
+    the OTHER mode chose."""
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    rows = (_boundary_row(),)
+    unicode_key = ConsoleInspectorSection._structural_key(rows, "")
+    set_ascii_glyph_mode(True)
+    try:
+        ascii_key = ConsoleInspectorSection._structural_key(rows, "")
+    finally:
+        set_ascii_glyph_mode(False)
+    assert ascii_key != unicode_key, (
+        "the structural key ignored the mode that decides the row's shape"
+    )
+
+
+# --- TASK-31665 AC#3: expansion children are visually contained -------------
+
+
+@pytest.mark.asyncio
+async def test_an_indented_row_paints_further_right_than_its_parent():
+    """AC#3, measured as GEOMETRY. The containment cue used to be the blank
+    second line the pre-TASK-31662 two-line row shape happened to leave."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="env",
+        rows=(
+            InspectorSectionRow(row_id="parent", primary_text="Changes ▸"),
+            InspectorSectionRow(row_id="child", primary_text="M a.py", indent=1),
+        ),
+        summary="",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        parent = next(
+            row for row in section.query(ConsoleInspectorSectionRow)
+            if row.row_id == "parent"
+        )
+        child = next(
+            row for row in section.query(ConsoleInspectorSectionRow)
+            if row.row_id == "child"
+        )
+        assert child.content_region.x > parent.content_region.x, (
+            "the expansion child paints flush with its parent: "
+            f"child x={child.content_region.x} parent x={parent.content_region.x}"
+        )
+        assert child.content_region.x - parent.content_region.x == ROW_INDENT_COLUMNS
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_gains_an_indent_recomposes_rather_than_patching():
+    """AC#3: the indent is inline padding written in `__init__`, so an
+    in-place patch never revisits it -- a row whose depth changed while its
+    id and line shape did not would keep the OLD indent forever."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="env",
+        rows=(InspectorSectionRow(row_id="r", primary_text="M a.py"),),
+        summary="",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        flush_x = section.query_one(
+            "#console-inspector-section-env-row-0", ConsoleInspectorSectionRow
+        ).content_region.x
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(InspectorSectionRow(row_id="r", primary_text="M a.py", indent=1),),
+                summary="",
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+        indented_x = section.query_one(
+            "#console-inspector-section-env-row-0", ConsoleInspectorSectionRow
+        ).content_region.x
+        assert indented_x - flush_x == ROW_INDENT_COLUMNS, (
+            "the depth change was patched in place and the indent never applied"
+        )
+
+
+# --- TASK-31665 AC#5: the tail button names its own scope -------------------
+
+
+@pytest.mark.asyncio
+async def test_the_view_all_tail_tooltip_names_the_section_in_both_halves():
+    """AC#5. `compose` sets the tooltip on a fresh build and
+    `set_view_all_busy` sets it on a live one; both halves must agree, or the
+    acknowledgment window silently drops the scope."""
+    section = ConsoleInspectorSection(
+        title="Environment",
+        section_id="env",
+        rows=(InspectorSectionRow(row_id="r", primary_text="Changes"),),
+        summary="",
+        view_all_label="Refresh",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tail = section.query_one("#console-inspector-section-env-view-all")
+        assert str(tail.tooltip) == "Refresh — Environment"
+        section.set_view_all_busy(True)
+        await pilot.pause()
+        assert "Environment" in str(tail.tooltip)
+        section.set_view_all_busy(False)
+        await pilot.pause()
+        assert str(tail.tooltip) == "Refresh — Environment"

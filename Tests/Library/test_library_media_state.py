@@ -4,13 +4,271 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+from hypothesis import given, settings, strategies as st
+
 from tldw_chatbook.Library.library_media_state import (
+    MediaBrowseScope,
     LibraryMediaRow,
     LibraryMediaCanvasState,
+    build_media_browse_result,
+    build_library_media_browse_state,
     build_library_media_state,
+    validate_media_browse_items,
 )
+from Tests.UI.library_media_rows import summary_row, summary_rows
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def _page(scope: MediaBrowseScope, *, total: int) -> dict[str, object]:
+    count = min(20, max(total - scope.offset, 0))
+    return {
+        "items": summary_rows(count, start=scope.offset + 1, media_type="document"),
+        "total": total,
+        "limit": 20,
+        "offset": scope.offset,
+    }
+
+
+def test_media_browse_scope_normalizes_query_but_preserves_literal_type() -> None:
+    scope = MediaBrowseScope(
+        query="  needle  ", media_type="  video  ", sort_by="title_asc", page=3
+    )
+
+    assert scope.query == "needle"
+    assert scope.media_type == "  video  "
+    assert scope.page_size == 20
+    assert scope.offset == 40
+    assert scope.with_page(2).same_except_page(scope)
+    assert scope.fingerprint != scope.with_page(2).fingerprint
+    with pytest.raises(Exception):
+        scope.page = 4  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("page", [True, 0, -1, 2**63 // 20 + 2])
+def test_media_browse_scope_rejects_invalid_or_overflowing_pages(page: object) -> None:
+    with pytest.raises(ValueError, match="page"):
+        MediaBrowseScope(page=page)  # type: ignore[arg-type]
+
+
+def test_empty_query_relevance_cannot_misdescribe_database_order() -> None:
+    assert MediaBrowseScope(sort_by="relevance").sort_by == "last_modified_desc"
+    assert MediaBrowseScope(query="find", sort_by="relevance").sort_by == "relevance"
+
+
+@pytest.mark.parametrize("media_type", ["All", "all", "ALL"])
+def test_media_browse_scope_preserves_literal_all_type_values(media_type: str) -> None:
+    assert MediaBrowseScope(media_type=media_type).media_type == media_type
+    assert (
+        MediaBrowseScope(media_type=f" {media_type} ").media_type == f" {media_type} "
+    )
+
+
+@pytest.mark.parametrize("media_type", [None, "", "   "])
+def test_media_browse_scope_uses_none_for_unfiltered_type(
+    media_type: str | None,
+) -> None:
+    assert MediaBrowseScope(media_type=media_type).media_type is None
+
+
+def test_media_browse_result_preserves_exact_order_and_detaches_items() -> None:
+    scope = MediaBrowseScope(page=2)
+    payload = _page(scope, total=23)
+    result = build_media_browse_result(scope, payload)
+
+    assert [item["backing_media_id"] for item in result.items] == [21, 22, 23]
+    assert result.total == 23
+    assert result.limit == 20
+    assert result.offset == 20
+    assert result.last_page == 2
+    assert result.out_of_range is False
+    payload["items"][0]["title"] = "mutated"  # type: ignore[index]
+    assert result.items[0]["title"] == "Media 21"
+    with pytest.raises(TypeError):
+        result.items[0]["title"] = "mutated"  # type: ignore[index]
+
+
+def test_media_browse_result_permits_coherent_empty_out_of_range_page() -> None:
+    scope = MediaBrowseScope(page=9)
+    result = build_media_browse_result(scope, _page(scope, total=45))
+
+    assert result.items == ()
+    assert result.out_of_range is True
+    assert result.last_page == 3
+
+
+@pytest.mark.parametrize("field", ["items", "total", "limit", "offset"])
+def test_media_browse_result_requires_every_exact_envelope_field(field: str) -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=1)
+    del payload[field]
+
+    with pytest.raises((TypeError, ValueError), match=field):
+        build_media_browse_result(scope, payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("limit", 19), ("offset", 1), ("total", True), ("offset", None)],
+)
+def test_media_browse_result_rejects_repaired_or_mismatched_coordinates(
+    field: str, value: object
+) -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=1)
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        build_media_browse_result(scope, payload)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda item: item.pop("id"),
+        lambda item: item.__setitem__("id", None),
+        lambda item: item.__setitem__("backing_media_id", True),
+        lambda item: item.__setitem__("backing_media_id", "1"),
+        lambda item: item.__setitem__("id", "local:media:2"),
+        lambda item: item.__setitem__("extra", "forbidden"),
+    ],
+)
+def test_media_browse_result_rejects_malformed_identity_and_shape(mutate) -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=1)
+    mutate(payload["items"][0])  # type: ignore[index]
+
+    with pytest.raises((TypeError, ValueError)):
+        build_media_browse_result(scope, payload)
+
+
+def test_validator_accepts_the_exact_seven_key_summary_row() -> None:
+    """has_analysis and reviewed are part of the contract, not decoration."""
+    frozen = validate_media_browse_items(
+        [summary_row(id=1, has_analysis=True, reviewed=False)]
+    )
+
+    assert set(frozen[0]) == {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "updated_at",
+        "has_analysis",
+        "reviewed",
+    }
+    assert frozen[0]["has_analysis"] is True
+    assert frozen[0]["reviewed"] is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda item: item.pop("has_analysis"), id="five-key-legacy-row"),
+        pytest.param(lambda item: item.pop("reviewed"), id="six-key-row"),
+        pytest.param(
+            lambda item: item.__setitem__("match_reason", "keyword"), id="eighth-key"
+        ),
+    ],
+)
+def test_validator_rejects_any_key_set_but_the_seven(mutate) -> None:
+    item = summary_row(id=1)
+    mutate(item)
+
+    with pytest.raises(ValueError, match="seven"):
+        validate_media_browse_items([item])
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", None, "yes"])
+def test_validator_rejects_non_boolean_has_analysis(value: object) -> None:
+    """A truthy int would paint the analysed marker off a SQL 1/0 leak."""
+    item = summary_row(id=1)
+    item["has_analysis"] = value
+
+    with pytest.raises((TypeError, ValueError), match="has_analysis"):
+        validate_media_browse_items([item])
+
+
+@pytest.mark.parametrize("value", ["yes", "", 0, 1, "True"])
+def test_validator_rejects_non_tristate_reviewed(value: object) -> None:
+    item = summary_row(id=1)
+    item["reviewed"] = value
+
+    with pytest.raises((TypeError, ValueError), match="reviewed"):
+        validate_media_browse_items([item])
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    has_analysis=st.booleans(),
+    reviewed=st.sampled_from([None, False, True]),
+)
+def test_validator_accepts_the_whole_marker_value_domain(
+    has_analysis: bool, reviewed: bool | None
+) -> None:
+    frozen = validate_media_browse_items(
+        [summary_row(id=1, has_analysis=has_analysis, reviewed=reviewed)]
+    )
+
+    assert frozen[0]["has_analysis"] is has_analysis
+    assert frozen[0]["reviewed"] is reviewed
+
+
+def test_media_browse_result_rejects_duplicate_page_identity() -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=2)
+    payload["items"][1]["backing_media_id"] = 1  # type: ignore[index]
+    payload["items"][1]["id"] = "local:media:1"  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="unique"):
+        build_media_browse_result(scope, payload)
+
+
+def test_media_browse_result_rejects_wrong_exact_cardinality() -> None:
+    scope = MediaBrowseScope(page=2)
+    payload = _page(scope, total=22)
+    payload["items"] = payload["items"][:1]  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="count"):
+        build_media_browse_result(scope, payload)
+
+
+def test_authoritative_media_page_projection_preserves_order_and_complete_facets() -> (
+    None
+):
+    scope = MediaBrowseScope(media_type="video")
+    payload = _page(scope, total=2)
+    payload["items"][0]["updated_at"] = "2020-01-01T00:00:00+00:00"  # type: ignore[index]
+    payload["items"][1]["updated_at"] = "2026-01-01T00:00:00+00:00"  # type: ignore[index]
+    result = build_media_browse_result(scope, payload)
+
+    state = build_library_media_browse_state(
+        result,
+        type_options=("audio", "document", "video"),
+        now=NOW,
+    )
+
+    assert [row.media_id for row in state.rows] == ["local:media:1", "local:media:2"]
+    assert state.type_options == (None, "audio", "document", "video")
+    assert state.active_type == "video"
+    assert state.count == 2
+
+
+def test_authoritative_projection_distinguishes_unfiltered_from_literal_all_types() -> (
+    None
+):
+    scope = MediaBrowseScope()
+    result = build_media_browse_result(scope, _page(scope, total=1))
+
+    state = build_library_media_browse_state(
+        result,
+        type_options=("ALL", "All", "all", " pdf ", "pdf"),
+        now=NOW,
+    )
+
+    assert state.active_type is None
+    assert state.type_options == (None, " pdf ", "ALL", "All", "all", "pdf")
 
 
 def test_rows_with_type_and_age_secondary_and_missing_last():
@@ -51,11 +309,36 @@ def test_rows_with_type_and_age_secondary_and_missing_last():
 def test_type_options_enumerated_and_sorted():
     """type_options = ('All',) + sorted(distinct non-empty types, preserve title-case)."""
     records = [
-        {"id": "1", "title": "One", "type": "Video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "Two", "type": "audio", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "title": "Three", "type": "PDF", "ingestion_date": "2026-07-06T09:00:00+00:00"},
-        {"id": "4", "title": "Four", "type": "Video", "ingestion_date": "2026-07-06T08:00:00+00:00"},
-        {"id": "5", "title": "Five", "type": "", "ingestion_date": "2026-07-06T07:00:00+00:00"},  # empty type, skip
+        {
+            "id": "1",
+            "title": "One",
+            "type": "Video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "Two",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "title": "Three",
+            "type": "PDF",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },
+        {
+            "id": "4",
+            "title": "Four",
+            "type": "Video",
+            "ingestion_date": "2026-07-06T08:00:00+00:00",
+        },
+        {
+            "id": "5",
+            "title": "Five",
+            "type": "",
+            "ingestion_date": "2026-07-06T07:00:00+00:00",
+        },  # empty type, skip
     ]
 
     state = build_library_media_state(records, now=NOW)
@@ -67,10 +350,30 @@ def test_type_options_enumerated_and_sorted():
 def test_active_type_filter_with_status_copy():
     """When active_type != 'All', filter rows to that type and show status."""
     records = [
-        {"id": "1", "title": "Video One", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "title": "Video Two", "type": "video", "ingestion_date": "2026-07-06T09:00:00+00:00"},
-        {"id": "4", "title": "Audio One", "type": "audio", "ingestion_date": "2026-07-06T08:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video One",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "title": "Video Two",
+            "type": "video",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },
+        {
+            "id": "4",
+            "title": "Audio One",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T08:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="video", now=NOW)
@@ -84,8 +387,18 @@ def test_active_type_filter_with_status_copy():
 def test_active_type_filter_no_match_empty_copy():
     """When active_type != 'All' and no matches, empty_copy shows specific message."""
     records = [
-        {"id": "1", "title": "Video One", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video One",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="audio", now=NOW)
@@ -103,7 +416,10 @@ def test_no_records_yields_default_empty_copy():
 
     assert state.rows == ()
     assert state.status_copy == ""
-    assert state.empty_copy == "No media in your Library yet. Ingest something to see it here."
+    assert (
+        state.empty_copy
+        == "No media in your Library yet. Import something to see it here."
+    )
     assert state.selected_id == ""
     assert state.preview_lines == ()
     assert state.active_type == "All"
@@ -112,8 +428,18 @@ def test_no_records_yields_default_empty_copy():
 def test_selected_id_not_present_falls_back_to_first_row():
     """When selected_id not in filtered+limited rows, fallback to first row."""
     records = [
-        {"id": "media-a", "title": "Alpha", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "media-b", "title": "Beta", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
+        {
+            "id": "media-a",
+            "title": "Alpha",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "media-b",
+            "title": "Beta",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, selected_id="does-not-exist", now=NOW)
@@ -207,9 +533,23 @@ def test_id_title_type_key_fallbacks():
 def test_untitled_fallback_for_missing_title():
     """Missing or empty title defaults to 'Untitled media'."""
     records = [
-        {"id": "1", "title": None, "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "  ", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "type": "audio", "ingestion_date": "2026-07-06T09:00:00+00:00"},  # No title key
+        {
+            "id": "1",
+            "title": None,
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "  ",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },  # No title key
     ]
 
     state = build_library_media_state(records, now=NOW)
@@ -276,11 +616,36 @@ def test_updated_key_fallbacks():
 def test_count_tracks_total_pre_type_filter():
     """count reflects total records pre-filter, status_copy shows filtered count."""
     records = [
-        {"id": "1", "title": "Video One", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "title": "Video Two", "type": "video", "ingestion_date": "2026-07-06T09:00:00+00:00"},
-        {"id": "4", "title": "Audio One", "type": "audio", "ingestion_date": "2026-07-06T08:00:00+00:00"},
-        {"id": "5", "title": "Video Three", "type": "video", "ingestion_date": "2026-07-06T07:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video One",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "title": "Video Two",
+            "type": "video",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },
+        {
+            "id": "4",
+            "title": "Audio One",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T08:00:00+00:00",
+        },
+        {
+            "id": "5",
+            "title": "Video Three",
+            "type": "video",
+            "ingestion_date": "2026-07-06T07:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="video", now=NOW)
@@ -326,8 +691,18 @@ def test_tolerates_invalid_and_missing_records():
 def test_no_type_status_copy_when_active_type_all():
     """When active_type='All', status_copy is empty."""
     records = [
-        {"id": "1", "title": "Video", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="All", now=NOW)
@@ -339,26 +714,23 @@ def test_no_type_status_copy_when_active_type_all():
 def test_status_copy_uses_pre_limit_count():
     """status_copy shows count of filtered entries (pre-limit), not displayed rows (post-limit)."""
     # 100 video records + 10 other-type records = 110 total
-    records = (
-        [
-            {
-                "id": f"video-{i}",
-                "title": f"Video {i}",
-                "type": "video",
-                "ingestion_date": f"2026-07-06T{11 - (i % 12):02d}:00:00+00:00",
-            }
-            for i in range(100)
-        ]
-        + [
-            {
-                "id": f"other-{i}",
-                "title": f"Other {i}",
-                "type": "audio",
-                "ingestion_date": f"2026-07-06T{10 - (i % 10):02d}:00:00+00:00",
-            }
-            for i in range(10)
-        ]
-    )
+    records = [
+        {
+            "id": f"video-{i}",
+            "title": f"Video {i}",
+            "type": "video",
+            "ingestion_date": f"2026-07-06T{11 - (i % 12):02d}:00:00+00:00",
+        }
+        for i in range(100)
+    ] + [
+        {
+            "id": f"other-{i}",
+            "title": f"Other {i}",
+            "type": "audio",
+            "ingestion_date": f"2026-07-06T{10 - (i % 10):02d}:00:00+00:00",
+        }
+        for i in range(10)
+    ]
 
     # Filter to video type with limit=75
     state = build_library_media_state(records, active_type="video", now=NOW, limit=75)
@@ -372,7 +744,12 @@ def test_status_copy_uses_pre_limit_count():
 def test_active_type_absent_from_records_stays_in_type_options():
     """When active_type is not in records, it is still included in type_options."""
     records = [
-        {"id": "1", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T11:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
     ]
 
     # Request active_type="video" even though no records have type="video"
@@ -386,3 +763,77 @@ def test_active_type_absent_from_records_stays_in_type_options():
     assert state.rows == ()
     # Empty copy reflects the filtered type
     assert state.empty_copy == "No media of type 'video'."
+
+
+def test_confirming_bulk_delete_defaults_false_and_passes_through():
+    """task-2853 AC3: the bulk-delete confirm flag is a pure passthrough,
+    like ``select_mode`` -- no computation, just carried onto the state so
+    the canvas can render the confirm row in place of the normal toolbar.
+    """
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records, select_mode=True)
+    assert default_state.confirming_bulk_delete is False
+
+    confirming_state = build_library_media_state(
+        records, select_mode=True, confirming_bulk_delete=True
+    )
+    assert confirming_state.confirming_bulk_delete is True
+
+
+def test_delete_receipt_count_defaults_zero_and_passes_through():
+    """task-4022 AC2: like ``confirming_bulk_delete``, the bulk-delete
+    receipt count is a pure passthrough -- no computation, just carried
+    onto the state so the canvas can render the "✓ deleted · N items"
+    row. Negative input (defensive only -- no real caller passes one)
+    floors to 0 rather than rendering a nonsensical receipt."""
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records)
+    assert default_state.delete_receipt_count == 0
+
+    receipt_state = build_library_media_state(records, delete_receipt_count=3)
+    assert receipt_state.delete_receipt_count == 3
+
+    floored_state = build_library_media_state(records, delete_receipt_count=-1)
+    assert floored_state.delete_receipt_count == 0
+
+
+def test_analyze_receipt_fields_default_zero_and_pass_through():
+    """task-28007 AC#3/AC#4: the five bulk-Analyze receipt fields follow
+    ``delete_receipt_count`` exactly -- pure passthrough, defaulted so
+    every existing constructor call stays valid, counts floored at 0."""
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records)
+    assert default_state.analyze_receipt_total == 0
+    assert default_state.analyze_receipt_done == 0
+    assert default_state.analyze_receipt_failed == 0
+    assert default_state.analyze_receipt_running is False
+    assert default_state.analyze_choice_count == 0
+
+    running = build_library_media_state(
+        records,
+        analyze_receipt_total=40,
+        analyze_receipt_done=37,
+        analyze_receipt_failed=1,
+        analyze_receipt_running=True,
+        analyze_choice_count=2,
+    )
+    assert running.analyze_receipt_total == 40
+    assert running.analyze_receipt_done == 37
+    assert running.analyze_receipt_failed == 1
+    assert running.analyze_receipt_running is True
+    assert running.analyze_choice_count == 2
+
+    floored = build_library_media_state(
+        records,
+        analyze_receipt_total=-1,
+        analyze_receipt_done=-1,
+        analyze_receipt_failed=-1,
+        analyze_choice_count=-1,
+    )
+    assert floored.analyze_receipt_total == 0
+    assert floored.analyze_receipt_done == 0
+    assert floored.analyze_receipt_failed == 0
+    assert floored.analyze_choice_count == 0

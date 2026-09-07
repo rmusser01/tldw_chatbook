@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 _VALID_AUTH_MODES = {"api_key", "bearer", "custom_token"}
 _VALID_REACHABILITY_STATES = {"unknown", "reachable", "unreachable"}
@@ -63,7 +64,9 @@ def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:
         port = parsed.port
     except ValueError:
         return None, None
-    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    default_port = (scheme == "http" and port == 80) or (
+        scheme == "https" and port == 443
+    )
 
     netloc = hostname
     if port and not default_port:
@@ -191,20 +194,34 @@ class ConfiguredServerTarget:
     last_known_auth_state: str | None = None
     last_connected_at: datetime | None = None
     updated_at: datetime | None = None
+    authority_scope_id: str | None = field(
+        default_factory=lambda: str(uuid4()),
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         normalized_base_url = self.base_url.rstrip("/")
         object.__setattr__(self, "base_url", normalized_base_url)
-        object.__setattr__(self, "auth_mode", _coerce_choice(self.auth_mode, valid_values=_VALID_AUTH_MODES, default="api_key"))
+        object.__setattr__(
+            self,
+            "auth_mode",
+            _coerce_choice(
+                self.auth_mode, valid_values=_VALID_AUTH_MODES, default="api_key"
+            ),
+        )
         object.__setattr__(
             self,
             "last_known_reachability",
-            _optional_choice(self.last_known_reachability, valid_values=_VALID_REACHABILITY_STATES),
+            _optional_choice(
+                self.last_known_reachability, valid_values=_VALID_REACHABILITY_STATES
+            ),
         )
         object.__setattr__(
             self,
             "last_known_auth_state",
-            _optional_choice(self.last_known_auth_state, valid_values=_VALID_AUTH_STATES),
+            _optional_choice(
+                self.last_known_auth_state, valid_values=_VALID_AUTH_STATES
+            ),
         )
 
     def with_status(self, status: TargetStatusMetadata) -> "ConfiguredServerTarget":
@@ -218,8 +235,14 @@ class ConfiguredServerTarget:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the public JSON-compatible target mapping.
+
+        Returns:
+            Routing, authority, auth-reference, and status data.
+        """
         return {
             "server_id": self.server_id,
+            "authority_scope_id": self.authority_scope_id,
             "label": self.label,
             "base_url": self.base_url,
             "auth_mode": self.auth_mode,
@@ -234,13 +257,27 @@ class ConfiguredServerTarget:
 
     @classmethod
     def from_dict(cls, data: Any) -> "ConfiguredServerTarget":
+        """Normalize a configured target mapping.
+
+        Args:
+            data: Serialized target data; a non-mapping yields an empty legacy target.
+
+        Returns:
+            A normalized configured server target.
+        """
         if not isinstance(data, Mapping):
-            return cls(server_id="", label="", base_url="")
+            return cls(
+                server_id="",
+                label="",
+                base_url="",
+                authority_scope_id=None,
+            )
 
         status = TargetStatusMetadata.from_dict(data.get("status"))
         base_url = _text_or_none(data.get("base_url")) or ""
         return cls(
             server_id=_text_or_none(data.get("server_id")) or "",
+            authority_scope_id=data.get("authority_scope_id"),
             label=_text_or_none(data.get("label")) or "",
             base_url=base_url,
             auth_mode=_coerce_choice(
@@ -250,7 +287,8 @@ class ConfiguredServerTarget:
             ),
             auth_reference=_text_or_none(data.get("auth_reference")),
             is_default=bool(data.get("is_default", False)),
-            last_known_server_label=_text_or_none(data.get("last_known_server_label")) or status.last_known_server_label,
+            last_known_server_label=_text_or_none(data.get("last_known_server_label"))
+            or status.last_known_server_label,
             last_known_reachability=_optional_choice(
                 data.get("last_known_reachability")
                 if data.get("last_known_reachability") is not None
@@ -263,12 +301,15 @@ class ConfiguredServerTarget:
                 else status.last_known_auth_state,
                 valid_values=_VALID_AUTH_STATES,
             ),
-            last_connected_at=_iso_to_datetime(data.get("last_connected_at")) or status.last_connected_at,
+            last_connected_at=_iso_to_datetime(data.get("last_connected_at"))
+            or status.last_connected_at,
             updated_at=_iso_to_datetime(data.get("updated_at")) or status.updated_at,
         )
 
     @classmethod
-    def from_legacy_tldw_api_config(cls, app_config: Mapping[str, Any]) -> "ConfiguredServerTarget" | None:
+    def from_legacy_tldw_api_config(
+        cls, app_config: Mapping[str, Any]
+    ) -> "ConfiguredServerTarget" | None:
         if not isinstance(app_config, Mapping):
             return None
 
@@ -276,7 +317,12 @@ class ConfiguredServerTarget:
 
         api_config = resolve_tldw_api_config(app_config)
 
-        raw_url = str(api_config.get("base_url") or api_config.get("api_url") or api_config.get("url") or "").strip()
+        raw_url = str(
+            api_config.get("base_url")
+            or api_config.get("api_url")
+            or api_config.get("url")
+            or ""
+        ).strip()
         if not raw_url:
             return None
 
@@ -286,7 +332,11 @@ class ConfiguredServerTarget:
 
         auth_mode = str(api_config.get("auth_mode") or "").strip().lower()
         if auth_mode not in _VALID_AUTH_MODES:
-            auth_mode = "bearer" if api_config.get("bearer_token") and not api_config.get("api_key") else "api_key"
+            auth_mode = (
+                "bearer"
+                if api_config.get("bearer_token") and not api_config.get("api_key")
+                else "api_key"
+            )
 
         now = datetime.now(timezone.utc)
         return cls(
@@ -314,7 +364,9 @@ class ServerAccessContext:
     manageable_team_ids: tuple[int, ...] = field(default_factory=tuple)
     manageable_org_ids: tuple[int, ...] = field(default_factory=tuple)
     can_use_system_admin_scope: bool = False
-    section_capabilities: SectionCapabilityFlags = field(default_factory=SectionCapabilityFlags)
+    section_capabilities: SectionCapabilityFlags = field(
+        default_factory=SectionCapabilityFlags
+    )
     endpoint_capabilities: dict[str, bool] = field(default_factory=dict)
     target_status: TargetStatusMetadata = field(default_factory=TargetStatusMetadata)
     panel_records: tuple[NormalizedPanelRecord, ...] = field(default_factory=tuple)
@@ -344,7 +396,9 @@ class ServerAccessContext:
         if isinstance(panel_records, list):
             normalized_panels = tuple(
                 record
-                for record in (NormalizedPanelRecord.from_dict(item) for item in panel_records)
+                for record in (
+                    NormalizedPanelRecord.from_dict(item) for item in panel_records
+                )
                 if record.panel_id
             )
         else:
@@ -358,9 +412,15 @@ class ServerAccessContext:
             can_use_personal_scope=bool(data.get("can_use_personal_scope", True)),
             manageable_team_ids=_coerce_int_tuple(data.get("manageable_team_ids")),
             manageable_org_ids=_coerce_int_tuple(data.get("manageable_org_ids")),
-            can_use_system_admin_scope=bool(data.get("can_use_system_admin_scope", False)),
-            section_capabilities=SectionCapabilityFlags.from_dict(data.get("section_capabilities")),
-            endpoint_capabilities=_coerce_bool_mapping(data.get("endpoint_capabilities")),
+            can_use_system_admin_scope=bool(
+                data.get("can_use_system_admin_scope", False)
+            ),
+            section_capabilities=SectionCapabilityFlags.from_dict(
+                data.get("section_capabilities")
+            ),
+            endpoint_capabilities=_coerce_bool_mapping(
+                data.get("endpoint_capabilities")
+            ),
             target_status=TargetStatusMetadata.from_dict(data.get("target_status")),
             panel_records=normalized_panels,
         )
@@ -412,7 +472,9 @@ class UnifiedMCPContext:
 
         return cls(
             selected_source=_selected_source_or_default(data.get("selected_source")),
-            selected_active_server_id=_text_or_none(data.get("selected_active_server_id")),
+            selected_active_server_id=_text_or_none(
+                data.get("selected_active_server_id")
+            ),
             selected_scope=_scope_or_none(data.get("selected_scope")),
             selected_scope_ref=_text_or_none(data.get("selected_scope_ref")),
             selected_section=_text_or_none(data.get("selected_section")),
@@ -439,11 +501,7 @@ def _coerce_int_tuple(value: Any) -> tuple[int, ...]:
 def _coerce_bool_mapping(value: Any) -> dict[str, bool]:
     if not isinstance(value, Mapping):
         return {}
-    return {
-        str(key): bool(item)
-        for key, item in value.items()
-        if str(key).strip()
-    }
+    return {str(key): bool(item) for key, item in value.items() if str(key).strip()}
 
 
 def _text_or_none(value: Any) -> str | None:

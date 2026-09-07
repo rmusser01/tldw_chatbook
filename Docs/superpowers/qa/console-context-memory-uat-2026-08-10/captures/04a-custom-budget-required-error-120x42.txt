@@ -1,0 +1,43 @@
+╭────────────╮
+tldw chatbook
+ ⌃1 Home │ ⌃2 Console │ ⌃3 Library  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M More ▾
+──────────────╭──────────────────────────────────────────────────────────────────────────────────────────╮──────────────
+Console— Cha││Ready
+ New tab │Console Settings│
+┌─────────────││─────────────┐
+│┌───────────││────────────│
+│││ Model and generation  Context and memory ││
+││Console co│││
+││──────────│llama_cpp is ready. No API key is required.│────────────│
+││Sessions│Save applies to this conversation. Global context defaults are in F9 Settings >││
+││Conversat│Console behavior.││
+││Chat 1│█Custom conversation budget requires a positive token value.││
+│││││
+│││││
+││──────────│Model capacity│────────────│
+││Workspaces│Model window (est.) 8,001 tokens││
+││Workspace│Response max tokens 0 tokens││
+││ Switch │Safety margin       unknown tokens││
+││ RAG Scop│Safe input ceiling  8,001 tokens││
+││Add anoth│Estimated fallback only; model capacity is unverified. Set the actual context window││
+│││in F9 Settings > Providers & Models.││
+│││▃││
+││──────────│Conversation budget│────────────│
+││Conversati│Budget modeCustom▼││
+││ New conv│││
+││▊▔▔▔▔▔▔▔▔│Conversation max tokens▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│▔▔▔▔▔▔▔▔▔▔▔▔│
+││▊Search│▊Required in Custom mode▎││
+││▊▁▁▁▁▁▁▁▁│▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│▁▁▁▁▁▁▁▁▁▁▁▁│
+│││Effective           8,001 tokens││
+││Local sta│Next request        0 tokens││
+│││Request overhead    unknown tokens││
+│└───────────││────────────│
+└─────────────│Compaction│─────────────┘
+Provider: L│▼ more — scroll for the rest│Library sea
+││
+┌─────────────│ Cancel  Save │─────────────┐
+││││
+│Composer ▾╰──────────────────────────────────────────────────────────────────────────────────────────╯tate │
+││
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+… F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

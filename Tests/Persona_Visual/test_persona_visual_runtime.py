@@ -1,0 +1,1165 @@
+"""Tests for path-free Persona Visual operational-state resolution."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import fields, replace
+from io import BytesIO
+from pathlib import Path
+from types import MappingProxyType
+
+import pytest
+from PIL import Image
+
+import tldw_chatbook.Persona_Visual.runtime as runtime_module
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Persona_Visual.assets import (
+    PersonaVisualAsset,
+    PersonaVisualAssetError,
+    PersonaVisualAssetMetadata,
+)
+from tldw_chatbook.Persona_Visual.contracts import PersonaVisualTrigger
+from tldw_chatbook.Persona_Visual.repository import (
+    PersonaVisualAssetRecord,
+    PersonaVisualBindingRecord,
+    PersonaVisualGraph,
+    PersonaVisualIdentity,
+    PersonaVisualPackRecord,
+    PersonaVisualRepository,
+    PersonaVisualVersionRecord,
+)
+from tldw_chatbook.Persona_Visual.runtime import (
+    PersonaVisualPortrait,
+    resolve_active_persona_visual,
+    resolve_persona_visual,
+)
+from tldw_chatbook.Persona_Visual.validation import validate_persona_visual_manifest
+
+
+_WORKTREE = Path(__file__).resolve().parents[2]
+_NOW = "2026-08-20 20:00:00"
+
+
+def _manifest_payload() -> dict[str, object]:
+    return {
+        "renderer_type": "sprite_frames",
+        "manifest_version": 1,
+        "states": {
+            "idle": {"animation_id": "idle-animation"},
+            "listening": {"animation_id": "listening-animation"},
+            "thinking": {"animation_id": "idle-animation"},
+            "speaking": {"animation_id": "idle-animation"},
+            "error": {"animation_id": "idle-animation"},
+            "tool.notes": {"animation_id": "custom-animation"},
+        },
+        "animations": {
+            "idle-animation": {
+                "frames": [{"asset_id": "idle"}],
+                "frame_rate": 1,
+                "loop": True,
+            },
+            "listening-animation": {
+                "frames": [
+                    {
+                        "asset_id": "listen-1",
+                        "duration_ms": 80,
+                        "region": {"x": 0, "y": 0, "width": 4, "height": 5},
+                    },
+                    {"asset_id": "listen-2", "duration_ms": 120},
+                ],
+                "frame_rate": 12,
+                "loop": True,
+                "alignment": {"x": 0.5, "y": 1},
+                "preview_frame": 1,
+                "preview_asset_id": "listen-1",
+            },
+            "custom-animation": {
+                "frames": [{"asset_id": "custom"}],
+                "frame_rate": 4,
+                "loop": False,
+            },
+        },
+        "fallbacks": {
+            "tool.missing": ["tool.middle"],
+            "tool.middle": ["tool.notes"],
+            "tool.broken": ["listening"],
+        },
+        "state_catalog": {
+            "tool.notes": {"label": "Notes", "kind": "tool_variant"},
+            "tool.missing": {"label": "Missing", "kind": "tool_variant"},
+            "tool.middle": {"label": "Middle", "kind": "tool_variant"},
+            "tool.broken": {"label": "Broken", "kind": "tool_variant"},
+        },
+        "authored_triggers": [],
+    }
+
+
+def _asset_record(
+    asset_id: int,
+    asset_key: str,
+    *,
+    pack_id: int = 31,
+    version_id: int = 41,
+    data: bytes | None = None,
+) -> PersonaVisualAssetRecord:
+    payload = data if data is not None else f"bytes:{asset_key}".encode()
+    return PersonaVisualAssetRecord(
+        id=asset_id,
+        pack_id=pack_id,
+        pack_version_id=version_id,
+        asset_key=asset_key,
+        role="frame",
+        mime_type="image/png",
+        byte_count=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        width=4,
+        height=5,
+        frame_count=1,
+        duration_ms=None,
+        created_at=_NOW,
+    )
+
+
+def _graph(
+    *,
+    persona_id: str = "persona-1",
+    persona_revision: int = 7,
+    binding_id: int = 11,
+    binding_version: int = 13,
+    pack_id: int = 31,
+    pack_revision: int = 17,
+    version_id: int = 41,
+    version_number: int = 19,
+    manifest_sha256: str = "a" * 64,
+    asset_id_offset: int = 0,
+    asset_digest_override: str | None = None,
+    idle_frame_count: int = 1,
+    manifest: object | None = None,
+) -> PersonaVisualGraph:
+    assets = tuple(
+        _asset_record(
+            index + asset_id_offset, key, pack_id=pack_id, version_id=version_id
+        )
+        for index, key in enumerate(("idle", "listen-1", "listen-2", "custom"), 101)
+    )
+    if asset_digest_override is not None:
+        assets = (replace(assets[0], sha256=asset_digest_override), *assets[1:])
+    if idle_frame_count != 1:
+        assets = (replace(assets[0], frame_count=idle_frame_count), *assets[1:])
+    validated = manifest or validate_persona_visual_manifest(
+        _manifest_payload(),
+        {asset.asset_key: (asset.width, asset.height) for asset in assets},
+    )
+    identity = PersonaVisualIdentity(
+        persona_id=persona_id,
+        persona_revision=persona_revision,
+        binding_id=binding_id,
+        binding_version=binding_version,
+        pack_id=pack_id,
+        pack_revision=pack_revision,
+        pack_version_id=version_id,
+        version_number=version_number,
+        manifest_sha256=manifest_sha256,
+    )
+    return PersonaVisualGraph(
+        identity=identity,
+        pack=PersonaVisualPackRecord(
+            id=pack_id,
+            title="Operator states",
+            description="",
+            status="active",
+            source_kind="manual",
+            created_at=_NOW,
+            updated_at=_NOW,
+            revision=pack_revision,
+        ),
+        version=PersonaVisualVersionRecord(
+            id=version_id,
+            pack_id=pack_id,
+            version_number=version_number,
+            renderer_type="sprite_frames",
+            manifest_version=1,
+            manifest=validated,  # type: ignore[arg-type]
+            manifest_sha256=manifest_sha256,
+            created_at=_NOW,
+        ),
+        binding=PersonaVisualBindingRecord(
+            id=binding_id,
+            persona_id=persona_id,
+            persona_revision=persona_revision,
+            pack_id=pack_id,
+            active_version_id=version_id,
+            status="active",
+            created_at=_NOW,
+            updated_at=_NOW,
+            revision=binding_version,
+        ),
+        assets=assets,
+    )
+
+
+class RecordingLoader:
+    def __init__(self, *, fail: set[str] | None = None) -> None:
+        self.fail = fail or set()
+        self.calls: list[tuple[PersonaVisualIdentity, int, str, int]] = []
+
+    def __call__(
+        self,
+        identity: PersonaVisualIdentity,
+        record: PersonaVisualAssetRecord,
+        selected_frame: int,
+    ) -> PersonaVisualAsset:
+        self.calls.append((identity, record.id, record.asset_key, selected_frame))
+        if record.asset_key in self.fail:
+            raise PersonaVisualAssetError()
+        data = f"bytes:{record.asset_key}".encode()
+        metadata = PersonaVisualAssetMetadata(
+            asset_key=record.asset_key,
+            role=record.role,
+            mime_type=record.mime_type,
+            byte_count=record.byte_count,
+            sha256=record.sha256,
+            width=record.width,
+            height=record.height,
+            frame_count=record.frame_count,
+            duration_ms=record.duration_ms,
+        )
+        return PersonaVisualAsset(metadata=metadata, data=data, selected_frame=0)
+
+
+def _portrait() -> PersonaVisualPortrait:
+    output = BytesIO()
+    Image.new("RGBA", (2, 3), (1, 2, 3, 255)).save(output, format="PNG")
+    data = output.getvalue()
+    return PersonaVisualPortrait(
+        portrait_id="portrait-1",
+        revision=3,
+        mime_type="image/png",
+        sha256=hashlib.sha256(data).hexdigest(),
+        data=data,
+        selected_frame=0,
+    )
+
+
+def test_runtime_imports_from_the_assigned_worktree() -> None:
+    assert Path(runtime_module.__file__).resolve().is_relative_to(_WORKTREE)
+
+
+def _assert_hostile_graph_is_path_free_invalid(
+    graph: PersonaVisualGraph,
+    *,
+    marker: str = "/private/runtime/identity-marker",
+) -> None:
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(
+        graph, "idle", asset_loader=loader, portrait=_portrait()
+    )
+
+    assert result.reason == "persona_visual_graph_invalid"
+    assert result.cache_identity.graph is None
+    assert loader.calls == []
+    assert marker not in repr(result)
+    hash(result)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("persona_id", []),
+        ("persona_revision", True),
+        ("binding_id", True),
+        ("binding_version", 0),
+        ("pack_id", True),
+        ("pack_revision", 0),
+        ("pack_version_id", True),
+        ("version_number", 0),
+        ("manifest_sha256", "/private/runtime/identity-marker"),
+    ],
+)
+def test_hostile_identity_scalars_never_reach_public_results(
+    field: str,
+    value: object,
+) -> None:
+    graph = _graph()
+    hostile = replace(graph.identity, **{field: value})
+    related = graph
+    if field == "persona_id":
+        related = replace(graph, binding=replace(graph.binding, persona_id=value))  # type: ignore[arg-type]
+    elif field == "persona_revision":
+        related = replace(
+            graph,
+            binding=replace(graph.binding, persona_revision=value),  # type: ignore[arg-type]
+        )
+    elif field == "binding_id":
+        related = replace(graph, binding=replace(graph.binding, id=value))  # type: ignore[arg-type]
+    elif field == "binding_version":
+        related = replace(graph, binding=replace(graph.binding, revision=value))  # type: ignore[arg-type]
+    elif field == "pack_id":
+        related = replace(
+            graph,
+            pack=replace(graph.pack, id=value),  # type: ignore[arg-type]
+            version=replace(graph.version, pack_id=value),  # type: ignore[arg-type]
+            binding=replace(graph.binding, pack_id=value),  # type: ignore[arg-type]
+            assets=tuple(replace(asset, pack_id=value) for asset in graph.assets),  # type: ignore[arg-type]
+        )
+    elif field == "pack_revision":
+        related = replace(graph, pack=replace(graph.pack, revision=value))  # type: ignore[arg-type]
+    elif field == "pack_version_id":
+        related = replace(
+            graph,
+            version=replace(graph.version, id=value),  # type: ignore[arg-type]
+            binding=replace(graph.binding, active_version_id=value),  # type: ignore[arg-type]
+            assets=tuple(
+                replace(asset, pack_version_id=value)
+                for asset in graph.assets  # type: ignore[arg-type]
+            ),
+        )
+    elif field == "version_number":
+        related = replace(graph, version=replace(graph.version, version_number=value))  # type: ignore[arg-type]
+    elif field == "manifest_sha256":
+        related = replace(graph, version=replace(graph.version, manifest_sha256=value))  # type: ignore[arg-type]
+
+    _assert_hostile_graph_is_path_free_invalid(replace(related, identity=hostile))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", True),
+        ("pack_id", True),
+        ("pack_version_id", True),
+        ("asset_key", "/private/runtime/identity-marker"),
+        ("role", []),
+        ("mime_type", []),
+        ("byte_count", True),
+        ("sha256", "/private/runtime/identity-marker"),
+        ("width", True),
+        ("height", 0),
+        ("frame_count", True),
+        ("duration_ms", True),
+        ("created_at", "/private/runtime/identity-marker"),
+    ],
+)
+def test_hostile_asset_scalars_never_reach_memo_loader_or_results(
+    field: str,
+    value: object,
+) -> None:
+    graph = _graph()
+    hostile = replace(graph.assets[0], **{field: value})
+
+    _assert_hostile_graph_is_path_free_invalid(
+        replace(graph, assets=(hostile, *graph.assets[1:]))
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_name", "field", "value"),
+    [
+        ("pack", "created_at", "/private/runtime/identity-marker"),
+        ("pack", "title", []),
+        ("version", "created_at", "/private/runtime/identity-marker"),
+        ("version", "renderer_type", []),
+        ("binding", "updated_at", "/private/runtime/identity-marker"),
+        ("binding", "status", []),
+    ],
+)
+def test_hostile_related_record_scalars_fail_before_loader(
+    record_name: str,
+    field: str,
+    value: object,
+) -> None:
+    graph = _graph()
+    record = replace(getattr(graph, record_name), **{field: value})
+
+    _assert_hostile_graph_is_path_free_invalid(replace(graph, **{record_name: record}))
+
+
+def test_authoritative_unicode_space_and_slash_persona_id_remains_valid() -> None:
+    persona_id = "Ada Lovelace / ペルソナ-éclair"
+
+    result = resolve_persona_visual(
+        _graph(persona_id=persona_id), "idle", asset_loader=RecordingLoader()
+    )
+
+    assert result.source == "persona_visual"
+    assert result.cache_identity.graph is not None
+    assert result.cache_identity.graph.persona_id == persona_id
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "states_container",
+        "state_scalar",
+        "animations_container",
+        "frames_container",
+        "frame_type",
+        "frame_asset_id",
+        "unsafe_frame_asset_id",
+        "frame_duration",
+        "frame_region_type",
+        "region_scalar",
+        "frame_rate",
+        "loop",
+        "alignment_type",
+        "alignment_scalar",
+        "preview_frame",
+        "preview_asset",
+        "fallbacks_container",
+        "fallback_scalar",
+        "triggers_container",
+        "trigger_scalar",
+        "catalog_container",
+        "catalog_scalar",
+        "catalog_tags_container",
+    ],
+)
+def test_hostile_manifest_graph_is_revalidated_before_loader(case: str) -> None:
+    marker = "/private/runtime/manifest-marker"
+    graph = _graph()
+    manifest = graph.version.manifest
+    animations = dict(manifest.animations)
+    animation = animations["listening-animation"]
+    frames = animation.frames
+    frame = frames[0]
+
+    if case == "states_container":
+        manifest = replace(manifest, states=dict(manifest.states))
+    elif case == "state_scalar":
+        manifest = replace(
+            manifest, states=MappingProxyType({**manifest.states, "idle": [marker]})
+        )
+    elif case == "animations_container":
+        manifest = replace(manifest, animations=animations)
+    elif case == "frames_container":
+        animations["listening-animation"] = replace(animation, frames=list(frames))
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "frame_type":
+        animations["listening-animation"] = replace(
+            animation, frames=(marker, *frames[1:])
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "unsafe_frame_asset_id":
+        idle = animations["idle-animation"]
+        animations["idle-animation"] = replace(
+            idle, frames=(replace(idle.frames[0], asset_id=marker),)
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case in {
+        "frame_asset_id",
+        "frame_duration",
+        "frame_region_type",
+    }:
+        field = {
+            "frame_asset_id": "asset_id",
+            "frame_duration": "duration_ms",
+            "frame_region_type": "region",
+        }[case]
+        hostile = replace(frame, **{field: [marker]})
+        animations["listening-animation"] = replace(
+            animation, frames=(hostile, *frames[1:])
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "region_scalar":
+        hostile_region = replace(frame.region, x=[marker])  # type: ignore[arg-type]
+        hostile = replace(frame, region=hostile_region)
+        animations["listening-animation"] = replace(
+            animation, frames=(hostile, *frames[1:])
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case in {
+        "frame_rate",
+        "loop",
+        "alignment_type",
+        "preview_frame",
+        "preview_asset",
+    }:
+        field = {
+            "frame_rate": "frame_rate",
+            "loop": "loop",
+            "alignment_type": "alignment",
+            "preview_frame": "preview_frame",
+            "preview_asset": "preview_asset_id",
+        }[case]
+        animations["listening-animation"] = replace(animation, **{field: [marker]})
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "alignment_scalar":
+        hostile_alignment = replace(animation.alignment, x=[marker])  # type: ignore[arg-type]
+        animations["listening-animation"] = replace(
+            animation, alignment=hostile_alignment
+        )
+        manifest = replace(manifest, animations=MappingProxyType(animations))
+    elif case == "fallbacks_container":
+        manifest = replace(manifest, fallbacks=dict(manifest.fallbacks))
+    elif case == "fallback_scalar":
+        manifest = replace(
+            manifest,
+            fallbacks=MappingProxyType(
+                {**manifest.fallbacks, "tool.missing": ([marker],)}
+            ),
+        )
+    elif case == "triggers_container":
+        manifest = replace(manifest, triggers=[])
+    elif case == "trigger_scalar":
+        trigger = PersonaVisualTrigger(
+            "trigger-1", "live_state", marker, "thinking", 100, 1
+        )
+        manifest = replace(manifest, triggers=(replace(trigger, priority=[marker]),))
+    elif case == "catalog_container":
+        manifest = replace(manifest, state_catalog=dict(manifest.state_catalog))
+    else:
+        catalog = dict(manifest.state_catalog)
+        entry = catalog["tool.notes"]
+        field = "tags" if case == "catalog_tags_container" else "label"
+        catalog["tool.notes"] = replace(entry, **{field: [marker]})
+        manifest = replace(manifest, state_catalog=MappingProxyType(catalog))
+
+    _assert_hostile_graph_is_path_free_invalid(
+        replace(graph, version=replace(graph.version, manifest=manifest)),
+        marker=marker,
+    )
+
+
+@pytest.mark.parametrize(
+    ("requested", "resolved", "animation_id", "reason"),
+    [
+        ("listening", "listening", "listening-animation", None),
+        ("tool.notes", "tool.notes", "custom-animation", None),
+        (
+            "tool.missing",
+            "tool.notes",
+            "custom-animation",
+            "persona_visual_state_fallback",
+        ),
+        ("unknown.state", "idle", "idle-animation", "persona_visual_state_fallback"),
+    ],
+)
+def test_resolves_direct_custom_multihop_and_missing_states(
+    requested: str,
+    resolved: str,
+    animation_id: str,
+    reason: str | None,
+) -> None:
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(_graph(), requested, asset_loader=loader)
+
+    assert result.source == "persona_visual"
+    assert result.requested_state == requested
+    assert result.resolved_state == resolved
+    assert result.animation_id == animation_id
+    assert result.reason == reason
+    assert result.portrait is None
+    assert result.frames
+
+
+def test_unusable_animation_tries_manifest_fallback_then_stops() -> None:
+    loader = RecordingLoader(fail={"listen-2"})
+
+    result = resolve_persona_visual(_graph(), "tool.broken", asset_loader=loader)
+
+    assert result.source == "persona_visual"
+    assert result.resolved_state == "idle"
+    assert result.reason == "persona_visual_state_fallback"
+    assert [call[2] for call in loader.calls] == ["listen-1", "listen-2", "idle"]
+    assert [frame.asset_key for frame in result.frames] == ["idle"]
+
+
+def test_unusable_requested_animation_uses_healthy_manifest_fallback() -> None:
+    payload = _manifest_payload()
+    payload["fallbacks"]["listening"] = ["tool.notes"]  # type: ignore[index]
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    loader = RecordingLoader(fail={"listen-2"})
+
+    result = resolve_persona_visual(graph, "listening", asset_loader=loader)
+
+    assert result.resolved_state == "tool.notes"
+    assert [call[2] for call in loader.calls] == ["listen-1", "listen-2", "custom"]
+    assert [frame.asset_key for frame in result.frames] == ["custom"]
+
+
+def test_missing_requested_asset_record_uses_healthy_manifest_fallback() -> None:
+    payload = _manifest_payload()
+    payload["fallbacks"]["listening"] = ["tool.notes"]  # type: ignore[index]
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    graph = replace(
+        graph,
+        assets=tuple(asset for asset in graph.assets if asset.asset_key != "listen-2"),
+    )
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(graph, "listening", asset_loader=loader)
+
+    assert result.source == "persona_visual"
+    assert result.resolved_state == "tool.notes"
+    assert result.reason == "persona_visual_state_fallback"
+    assert [call[2] for call in loader.calls] == ["listen-1", "custom"]
+
+
+@pytest.mark.parametrize("portrait", [_portrait(), None])
+def test_invalid_idle_falls_back_to_portrait_or_unavailable(
+    portrait: PersonaVisualPortrait | None,
+) -> None:
+    loader = RecordingLoader(fail={"idle", "listen-1", "custom"})
+
+    result = resolve_persona_visual(
+        _graph(),
+        "unknown.state",
+        asset_loader=loader,
+        portrait=portrait,
+    )
+
+    assert result.source == ("persona_portrait" if portrait else "unavailable")
+    assert result.reason == (
+        "persona_visual_idle_unavailable" if portrait else "persona_visual_unavailable"
+    )
+    assert result.frames == ()
+    assert result.portrait == portrait
+
+
+@pytest.mark.parametrize("portrait", [_portrait(), None])
+def test_missing_idle_asset_record_falls_back_to_portrait_or_unavailable(
+    portrait: PersonaVisualPortrait | None,
+) -> None:
+    graph = _graph()
+    graph = replace(
+        graph,
+        assets=tuple(asset for asset in graph.assets if asset.asset_key != "idle"),
+    )
+
+    result = resolve_persona_visual(
+        graph,
+        "unknown.state",
+        asset_loader=RecordingLoader(),
+        portrait=portrait,
+    )
+
+    assert result.source == ("persona_portrait" if portrait else "unavailable")
+    assert result.reason == (
+        "persona_visual_idle_unavailable" if portrait else "persona_visual_unavailable"
+    )
+
+
+def test_stored_fallback_cycle_fails_closed_without_exposing_details() -> None:
+    original = _graph().version.manifest
+    corrupt = replace(
+        original,
+        fallbacks=MappingProxyType(
+            {
+                **original.fallbacks,
+                "tool.missing": ("tool.middle",),
+                "tool.middle": ("tool.missing",),
+            }
+        ),
+    )
+    portrait = _portrait()
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(
+        _graph(manifest=corrupt),
+        "tool.missing",
+        asset_loader=loader,
+        portrait=portrait,
+    )
+
+    assert result.source == "persona_portrait"
+    assert result.reason == "persona_visual_graph_invalid"
+    assert result.cache_identity.graph is None
+    assert loader.calls == []
+    assert not any(
+        "path" in field.name or "storage" in field.name for field in fields(result)
+    )
+
+
+def test_animation_loads_all_frames_and_never_returns_a_partial_animation() -> None:
+    healthy = resolve_persona_visual(
+        _graph(), "listening", asset_loader=RecordingLoader()
+    )
+    failed = resolve_persona_visual(
+        _graph(),
+        "listening",
+        asset_loader=RecordingLoader(fail={"listen-2"}),
+    )
+
+    assert healthy.animate is True
+    assert healthy.frame_rate == 12
+    assert [frame.duration_ms for frame in healthy.frames] == [80, 120]
+    assert [frame.asset_key for frame in healthy.frames] == ["listen-1", "listen-2"]
+    assert failed.resolved_state == "idle"
+    assert [frame.asset_key for frame in failed.frames] == ["idle"]
+    assert all(frame.selected_frame == 0 for frame in healthy.frames)
+
+
+def test_intrinsically_animated_asset_is_not_mistaken_for_a_still() -> None:
+    result = resolve_persona_visual(
+        _graph(idle_frame_count=3), "idle", asset_loader=RecordingLoader()
+    )
+
+    assert result.animate is True
+    assert [frame.asset_key for frame in result.frames] == ["idle"]
+
+
+def test_reduced_motion_uses_preview_frame_before_preview_asset_and_only_loads_it() -> (
+    None
+):
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(
+        _graph(), "listening", asset_loader=loader, reduced_motion=True
+    )
+
+    assert result.animate is False
+    assert [frame.asset_key for frame in result.frames] == ["listen-2"]
+    assert [call[2] for call in loader.calls] == ["listen-2"]
+    assert result.static_reason == "preview_frame"
+    assert result.frames[0].selected_frame == 0
+
+
+def test_reduced_motion_uses_preview_asset_then_frame_zero() -> None:
+    payload = _manifest_payload()
+    animation = payload["animations"]["listening-animation"]  # type: ignore[index]
+    animation.pop("preview_frame")
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    preview = resolve_persona_visual(
+        graph, "listening", asset_loader=RecordingLoader(), reduced_motion=True
+    )
+
+    animation.pop("preview_asset_id")
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    first = resolve_persona_visual(
+        graph, "listening", asset_loader=RecordingLoader(), reduced_motion=True
+    )
+
+    assert [frame.asset_key for frame in preview.frames] == ["listen-1"]
+    assert preview.static_reason == "preview_asset_id"
+    assert [frame.asset_key for frame in first.frames] == ["listen-1"]
+    assert first.static_reason == "first_frame"
+
+
+def test_healthy_candidate_does_not_load_fallback_or_idle_assets() -> None:
+    loader = RecordingLoader()
+
+    resolve_persona_visual(_graph(), "listening", asset_loader=loader)
+
+    assert [call[2] for call in loader.calls] == ["listen-1", "listen-2"]
+
+
+def test_absent_active_graph_uses_normal_portrait_fallback_reason() -> None:
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(
+        None, "idle", asset_loader=loader, portrait=_portrait()
+    )
+
+    assert result.source == "persona_portrait"
+    assert result.reason == "persona_visual_idle_unavailable"
+    assert result.portrait is not None and result.portrait.selected_frame == 0
+    assert loader.calls == []
+
+
+@pytest.mark.parametrize("graph", [None, _graph()])
+def test_invalid_requested_state_is_normalized_before_public_results(
+    graph: PersonaVisualGraph | None,
+) -> None:
+    private_marker = "/Users/example/.config/private/state"
+
+    result = resolve_persona_visual(
+        graph,
+        private_marker,
+        asset_loader=RecordingLoader(),
+        portrait=_portrait(),
+    )
+
+    assert result.requested_state == "invalid"
+    assert result.cache_identity.requested_state == "invalid"
+    assert private_marker not in repr(result)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        {"persona_id": "persona-2"},
+        {"persona_revision": 8},
+        {"binding_id": 12},
+        {"binding_version": 14},
+        {"pack_id": 32},
+        {"pack_revision": 18},
+        {"version_id": 42},
+        {"version_number": 20},
+        {"manifest_sha256": "b" * 64},
+    ],
+)
+def test_cache_identity_changes_for_each_graph_identity_field(
+    variant: dict[str, object],
+) -> None:
+    baseline = resolve_persona_visual(
+        _graph(), "idle", asset_loader=RecordingLoader()
+    ).cache_identity
+    changed = resolve_persona_visual(
+        _graph(**variant),  # type: ignore[arg-type]
+        "idle",
+        asset_loader=RecordingLoader(),
+    ).cache_identity
+
+    assert changed != baseline
+    assert changed.graph != baseline.graph
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [{"asset_id_offset": 100}, {"asset_digest_override": "c" * 64}],
+)
+def test_cache_identity_changes_for_asset_id_and_digest(
+    variant: dict[str, object],
+) -> None:
+    baseline = resolve_persona_visual(
+        _graph(), "idle", asset_loader=RecordingLoader()
+    ).cache_identity
+    changed = resolve_persona_visual(
+        _graph(**variant),  # type: ignore[arg-type]
+        "idle",
+        asset_loader=RecordingLoader(),
+    ).cache_identity
+
+    assert changed.assets != baseline.assets
+
+
+def test_cache_identity_changes_for_requested_resolved_asset_and_motion_fields() -> (
+    None
+):
+    graph = _graph()
+    idle = resolve_persona_visual(graph, "idle", asset_loader=RecordingLoader())
+    missing = resolve_persona_visual(
+        graph, "unknown.state", asset_loader=RecordingLoader()
+    )
+    listening = resolve_persona_visual(
+        graph, "listening", asset_loader=RecordingLoader()
+    )
+    reduced = resolve_persona_visual(
+        graph,
+        "listening",
+        asset_loader=RecordingLoader(),
+        reduced_motion=True,
+    )
+
+    assert (
+        len(
+            {
+                idle.cache_identity,
+                missing.cache_identity,
+                listening.cache_identity,
+                reduced.cache_identity,
+            }
+        )
+        == 4
+    )
+    assert idle.cache_identity.requested_state == "idle"
+    assert missing.cache_identity.resolved_state == "idle"
+    assert listening.cache_identity.assets != reduced.cache_identity.assets
+    assert reduced.cache_identity.reduced_motion is True
+
+
+def test_loader_result_must_attest_exact_record_and_digest() -> None:
+    graph = _graph()
+
+    def wrong_loader(
+        identity: PersonaVisualIdentity,
+        record: PersonaVisualAssetRecord,
+        selected_frame: int,
+    ) -> PersonaVisualAsset:
+        del identity, selected_frame
+        result = RecordingLoader()(graph.identity, record, 0)
+        return replace(
+            result,
+            metadata=replace(result.metadata, asset_key="different"),
+        )
+
+    result = resolve_persona_visual(
+        graph, "idle", asset_loader=wrong_loader, portrait=_portrait()
+    )
+
+    assert result.source == "persona_portrait"
+    assert result.reason == "persona_visual_runtime_failed"
+
+
+def test_loader_exception_details_and_raster_bytes_are_absent_from_repr() -> None:
+    private_marker = "/Users/example/.config/private/idle.png"
+
+    def leaking_loader(
+        identity: PersonaVisualIdentity,
+        record: PersonaVisualAssetRecord,
+        selected_frame: int,
+    ) -> PersonaVisualAsset:
+        del identity, record, selected_frame
+        raise RuntimeError(private_marker)
+
+    failed = resolve_persona_visual(
+        _graph(), "idle", asset_loader=leaking_loader, portrait=_portrait()
+    )
+    healthy = resolve_persona_visual(_graph(), "idle", asset_loader=RecordingLoader())
+
+    assert private_marker not in repr(failed)
+    assert failed.reason == "persona_visual_runtime_failed"
+    assert "bytes:idle" not in repr(healthy)
+
+
+def test_invalid_portrait_bytes_never_report_portrait_success() -> None:
+    data = b"not-an-image"
+    portrait = PersonaVisualPortrait(
+        portrait_id="portrait-invalid",
+        revision=1,
+        mime_type="image/png",
+        sha256=hashlib.sha256(data).hexdigest(),
+        data=data,
+        selected_frame=0,
+    )
+
+    result = resolve_persona_visual(
+        None, "idle", asset_loader=RecordingLoader(), portrait=portrait
+    )
+
+    assert result.source == "unavailable"
+    assert result.portrait is None
+    assert result.reason == "persona_visual_unavailable"
+
+
+def test_runtime_snapshots_identity_alignment_region_and_portrait_inputs() -> None:
+    graph = _graph()
+    original_identity = replace(graph.identity)
+    animation = graph.version.manifest.animations["listening-animation"]
+    original_alignment = replace(animation.alignment)  # type: ignore[arg-type]
+    original_region = replace(animation.frames[0].region)  # type: ignore[arg-type]
+
+    class MutatingLoader(RecordingLoader):
+        def __call__(
+            self,
+            identity: PersonaVisualIdentity,
+            record: PersonaVisualAssetRecord,
+            selected_frame: int,
+        ) -> PersonaVisualAsset:
+            loaded = super().__call__(identity, record, selected_frame)
+            object.__setattr__(identity, "persona_id", "loader-mutated")
+            object.__setattr__(record, "asset_key", "loader-mutated")
+            object.__setattr__(graph.identity, "persona_id", "mutated")
+            object.__setattr__(animation.alignment, "x", 0.9)  # type: ignore[arg-type]
+            object.__setattr__(animation.frames[0].region, "x", 3)  # type: ignore[arg-type]
+            return loaded
+
+    result = resolve_persona_visual(graph, "listening", asset_loader=MutatingLoader())
+
+    assert result.cache_identity.graph == original_identity
+    assert result.cache_identity.graph is not graph.identity
+    assert result.alignment == original_alignment
+    assert result.alignment is not animation.alignment
+    assert result.frames[0].region == original_region
+    assert result.frames[0].region is not animation.frames[0].region
+
+    portrait = _portrait()
+    portrait_result = resolve_persona_visual(
+        None, "idle", asset_loader=RecordingLoader(), portrait=portrait
+    )
+    before = (
+        hash(portrait_result),
+        repr(portrait_result),
+        portrait_result.portrait.data,
+    )
+    object.__setattr__(portrait, "portrait_id", "mutated")
+    object.__setattr__(portrait, "data", b"mutated")
+    assert (
+        hash(portrait_result),
+        repr(portrait_result),
+        portrait_result.portrait.data,
+    ) == before
+
+
+def test_resolution_memo_loads_one_asset_once_for_240_manifest_frames() -> None:
+    payload = _manifest_payload()
+    payload["animations"]["listening-animation"] = {  # type: ignore[index]
+        "frames": [{"asset_id": "idle"} for _ in range(240)],
+        "frame_rate": 12,
+    }
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(graph, "listening", asset_loader=loader)
+
+    assert len(result.frames) == 240
+    assert [call[2] for call in loader.calls] == ["idle"]
+
+
+def test_resolution_memo_does_not_reread_stable_failed_asset_across_fallbacks() -> None:
+    payload = _manifest_payload()
+    for animation_id in ("idle-animation", "listening-animation", "custom-animation"):
+        payload["animations"][animation_id] = {"frames": [{"asset_id": "idle"}]}  # type: ignore[index]
+    payload["fallbacks"]["listening"] = ["tool.notes"]  # type: ignore[index]
+    graph = _graph(
+        manifest=validate_persona_visual_manifest(
+            payload,
+            {key: (4, 5) for key in ("idle", "listen-1", "listen-2", "custom")},
+        )
+    )
+    loader = RecordingLoader(fail={"idle"})
+
+    result = resolve_persona_visual(graph, "listening", asset_loader=loader)
+
+    assert result.source == "unavailable"
+    assert [call[2] for call in loader.calls] == ["idle"]
+
+
+@pytest.mark.parametrize("budget", ["count", "bytes"])
+def test_runtime_rejects_graph_asset_budget_overflow_before_loading(
+    budget: str,
+) -> None:
+    graph = _graph()
+    if budget == "count":
+        template = graph.assets[0]
+        assets = tuple(
+            replace(template, id=1000 + index, asset_key=f"extra-{index}")
+            for index in range(257)
+        )
+    else:
+        assets = tuple(
+            replace(asset, byte_count=30 * 1024 * 1024) for asset in graph.assets
+        )
+    loader = RecordingLoader()
+
+    result = resolve_persona_visual(
+        replace(graph, assets=assets), "idle", asset_loader=loader, portrait=_portrait()
+    )
+
+    assert result.reason == "persona_visual_graph_invalid"
+    assert result.cache_identity.graph is None
+    assert loader.calls == []
+
+
+def test_real_sqlite_persisted_pack_resolves_without_exposing_storage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _portrait().data
+    storage = tmp_path / "persona_visual" / "pack" / "v1" / "idle.png"
+    storage.parent.mkdir(parents=True)
+    storage.write_bytes(data)
+    db = CharactersRAGDB(tmp_path / "runtime.db", client_id="runtime")
+    repository = PersonaVisualRepository(db)
+    try:
+        repository.activate_new_pack(
+            persona_id="persona-sqlite",
+            title="Runtime",
+            manifest={
+                "renderer_type": "sprite_frames",
+                "manifest_version": 1,
+                "states": {
+                    state: {"animation_id": "idle"}
+                    for state in ("idle", "listening", "thinking", "speaking", "error")
+                },
+                "animations": {"idle": {"frames": [{"asset_id": "idle"}]}},
+            },
+            manifest_storage_relpath="persona_visual/pack/v1/manifest.json",
+            assets=[
+                {
+                    "asset_key": "idle",
+                    "role": "frame",
+                    "storage_relpath": "persona_visual/pack/v1/idle.png",
+                    "mime_type": "image/png",
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "width": 2,
+                    "height": 3,
+                    "frame_count": 1,
+                    "duration_ms": None,
+                }
+            ],
+            expected_persona_revision=1,
+            authority_guard=lambda: True,
+        )
+
+        result = resolve_active_persona_visual(
+            repository, "persona-sqlite", tmp_path, "idle"
+        )
+        stale_graph = repository.get_active_persona_pack("persona-sqlite")
+        assert stale_graph is not None
+        with db.transaction():
+            db.execute_query(
+                "UPDATE persona_visual_bindings SET version = version + 1 WHERE id = ?",
+                (stale_graph.binding.id,),
+            )
+        monkeypatch.setattr(
+            repository, "get_active_persona_pack", lambda _persona_id: stale_graph
+        )
+        stale = resolve_active_persona_visual(
+            repository, "persona-sqlite", tmp_path, "idle", portrait=_portrait()
+        )
+    finally:
+        db.close_connection()
+
+    assert result.source == "persona_visual"
+    assert result.frames[0].data == data
+    assert stale.source == "persona_portrait"
+    assert stale.reason == "persona_visual_runtime_failed"
+    assert not any(
+        "path" in field.name or "storage" in field.name for field in fields(result)
+    )
+
+
+def test_unexpected_loader_failure_has_truthful_fixed_reason() -> None:
+    private_marker = "/private/runtime/bridge/detail"
+
+    def unexpected(
+        identity: PersonaVisualIdentity,
+        record: PersonaVisualAssetRecord,
+        selected_frame: int,
+    ) -> PersonaVisualAsset:
+        del identity, record, selected_frame
+        raise RuntimeError(private_marker)
+
+    result = resolve_persona_visual(
+        _graph(), "idle", asset_loader=unexpected, portrait=_portrait()
+    )
+
+    assert result.source == "persona_portrait"
+    assert result.reason == "persona_visual_runtime_failed"
+    assert private_marker not in repr(result)
+
+
+def test_public_results_reasons_and_cache_identity_are_path_free_and_immutable() -> (
+    None
+):
+    result = resolve_persona_visual(
+        _graph(), "listening", asset_loader=RecordingLoader()
+    )
+
+    for value in (result, result.cache_identity, *result.frames):
+        assert hasattr(type(value), "__slots__")
+        assert not any(
+            "path" in field.name or "storage" in field.name for field in fields(value)
+        )
+    assert "/" not in repr(result)
+    with pytest.raises(Exception):
+        result.frames = ()  # type: ignore[misc]

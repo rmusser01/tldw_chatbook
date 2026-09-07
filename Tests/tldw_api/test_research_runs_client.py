@@ -45,7 +45,11 @@ async def test_research_runs_client_routes_lifecycle_and_artifact_calls(monkeypa
             _run_payload(),
             {**_run_payload(), "status": "cancelled"},
             {"summary": {"answer": "Use explicit policy gates."}},
-            {"artifact_name": "final_report", "content_type": "application/json", "content": {"ok": True}},
+            {
+                "artifact_name": "final_report",
+                "content_type": "application/json",
+                "content": {"ok": True},
+            },
             _run_payload(status="running"),
         ]
     )
@@ -80,10 +84,22 @@ async def test_research_runs_client_routes_lifecycle_and_artifact_calls(monkeypa
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/research/runs")
     assert mocked.await_args_list[1].kwargs["params"] == {"limit": 10, "offset": 0}
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/research/runs/run-1")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/research/runs/run-1/pause")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/research/runs/run-1/resume")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/research/runs/run-1/cancel")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/research/runs/run-1/bundle")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/research/runs/run-1/pause",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/research/runs/run-1/resume",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/research/runs/run-1/cancel",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/research/runs/run-1/bundle",
+    )
     assert mocked.await_args_list[7].args[:2] == (
         "GET",
         "/api/v1/research/runs/run-1/artifacts/final_report",
@@ -92,7 +108,9 @@ async def test_research_runs_client_routes_lifecycle_and_artifact_calls(monkeypa
         "POST",
         "/api/v1/research/runs/run-1/checkpoints/checkpoint-1/patch-and-approve",
     )
-    assert mocked.await_args_list[8].kwargs["json_data"] == {"patch_payload": {"accepted": True}}
+    assert mocked.await_args_list[8].kwargs["json_data"] == {
+        "patch_payload": {"accepted": True}
+    }
 
     assert created.id == "run-1"
     assert listed[0].query == "Summarize MCP governance approaches"
@@ -122,7 +140,9 @@ async def test_research_runs_client_streams_sse_events(monkeypatch):
 
     monkeypatch.setattr(client, "_sse_request", fake_sse_request)
 
-    streamed = [event async for event in client.stream_research_run_events("run-1", after_id=3)]
+    streamed = [
+        event async for event in client.stream_research_run_events("run-1", after_id=3)
+    ]
 
     assert streamed[0].event == "snapshot"
     assert streamed[1].data == {"status": "completed"}

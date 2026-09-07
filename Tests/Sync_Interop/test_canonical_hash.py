@@ -9,7 +9,9 @@ def test_hash_is_deterministic_and_key_order_independent():
 
 
 def test_hash_changes_with_content():
-    assert canonical_payload_hash({"title": "T"}) != canonical_payload_hash({"title": "U"})
+    assert canonical_payload_hash({"title": "T"}) != canonical_payload_hash(
+        {"title": "U"}
+    )
 
 
 def test_hash_version_constant_exists():

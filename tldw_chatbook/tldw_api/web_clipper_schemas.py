@@ -9,7 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 WebClipperDestination = Literal["note", "workspace", "both"]
-WebClipperOutcomeState = Literal["saved", "saved_with_warnings", "partially_saved", "failed"]
+WebClipperOutcomeState = Literal[
+    "saved", "saved_with_warnings", "partially_saved", "failed"
+]
 WebClipperEnrichmentStatus = Literal["pending", "running", "complete", "failed"]
 WebClipperEnrichmentType = Literal["ocr", "vlm"]
 
@@ -65,7 +67,9 @@ class WebClipperSaveRequest(BaseModel):
     workspace: WebClipperWorkspacePayload | None = None
     content: WebClipperContentPayload = Field(default_factory=WebClipperContentPayload)
     attachments: list[WebClipperAttachmentPayload] = Field(default_factory=list)
-    enhancements: WebClipperEnhancementOptions = Field(default_factory=WebClipperEnhancementOptions)
+    enhancements: WebClipperEnhancementOptions = Field(
+        default_factory=WebClipperEnhancementOptions
+    )
     capture_metadata: dict[str, Any] = Field(default_factory=dict)
     source_note_version: int | None = Field(default=None, ge=1)
 
@@ -74,7 +78,9 @@ class WebClipperSaveRequest(BaseModel):
     @model_validator(mode="after")
     def validate_workspace_destination(self) -> "WebClipperSaveRequest":
         if self.destination_mode in {"workspace", "both"} and self.workspace is None:
-            raise ValueError("workspace is required when destination_mode targets a workspace.")
+            raise ValueError(
+                "workspace is required when destination_mode targets a workspace."
+            )
         return self
 
 
@@ -137,7 +143,9 @@ class WebClipperStatusResponse(BaseModel):
     clip_id: str = Field(..., min_length=1)
     status: WebClipperOutcomeState
     note: WebClipperSavedNote
-    workspace_placements: list[WebClipperWorkspacePlacement] = Field(default_factory=list)
+    workspace_placements: list[WebClipperWorkspacePlacement] = Field(
+        default_factory=list
+    )
     attachments: list[WebClipperAttachmentRecord] = Field(default_factory=list)
     analysis: dict[str, Any] = Field(default_factory=dict)
     content_budget: dict[str, Any] = Field(default_factory=dict)

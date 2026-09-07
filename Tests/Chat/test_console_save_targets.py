@@ -1,0 +1,251 @@
+"""Pure tests for Console Save-as title and payload derivation."""
+
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+from tldw_chatbook.Chat.console_save_targets import (
+    CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS,
+    CONSOLE_SAVE_TITLE_MAX_CHARS,
+    console_chatbook_artifact_payload,
+    console_message_preview,
+    derive_console_save_title,
+    resolve_console_artifact_owner_request,
+)
+
+FIXED_NOW = datetime(2026, 7, 11, 12, 30, tzinfo=timezone.utc)
+
+
+def test_derive_console_save_title_includes_conversation_title_and_date():
+    title = derive_console_save_title("Draft a release note", now=FIXED_NOW)
+
+    assert title == "Console message — Draft a release note (2026-07-11)"
+
+
+def test_derive_console_save_title_blank_conversation_falls_back_to_prefix():
+    assert (
+        derive_console_save_title("", now=FIXED_NOW) == "Console message (2026-07-11)"
+    )
+    assert (
+        derive_console_save_title("   ", now=FIXED_NOW)
+        == "Console message (2026-07-11)"
+    )
+
+
+def test_derive_console_save_title_weaves_role_label_into_prefix():
+    title = derive_console_save_title("Chat 1", role_label="Assistant", now=FIXED_NOW)
+
+    assert title == "Console assistant message — Chat 1 (2026-07-11)"
+
+
+def test_derive_console_save_title_caps_long_conversation_titles():
+    long_conversation = "How to configure llama.cpp streaming endpoints " * 5
+
+    title = derive_console_save_title(long_conversation, now=FIXED_NOW)
+
+    assert len(title) <= CONSOLE_SAVE_TITLE_MAX_CHARS
+    assert title.startswith("Console message — How to configure")
+    assert title.endswith("(2026-07-11)")
+    assert "…" in title
+
+
+def test_derive_console_save_title_collapses_multiline_titles():
+    title = derive_console_save_title("Line one\n  Line two", now=FIXED_NOW)
+
+    assert title == "Console message — Line one Line two (2026-07-11)"
+
+
+def test_console_message_preview_bounds_and_flattens():
+    preview = console_message_preview("alpha\nbeta   gamma", max_length=280)
+    assert preview == "alpha beta gamma"
+
+    bounded = console_message_preview("x" * 500, max_length=280)
+    assert len(bounded) <= 280
+    assert bounded.endswith("...")
+
+
+def test_console_chatbook_artifact_payload_marks_console_saved_artifact():
+    payload = console_chatbook_artifact_payload(
+        title="Console message — Chat 1 (2026-07-11)",
+        message_text="answer body",
+        message_role="Assistant",
+        conversation_id="conv-9",
+        message_id="m2",
+        provider="llama_cpp",
+        model="test-model",
+    )
+
+    assert payload["name"] == "Console message — Chat 1 (2026-07-11)"
+    assert "Preview: answer body" in payload["description"]
+    assert payload["tags"] == ["console", "artifact"]
+    assert payload["categories"] == ["Console", "Artifacts"]
+    metadata = payload["metadata"]
+    assert metadata["artifact_source"] == "console"
+    assert metadata["artifact_kind"] == "assistant-response"
+    assert metadata["message_role"] == "Assistant"
+    assert metadata["content"] == "answer body"
+    assert metadata["content_truncated"] is False
+    assert metadata["conversation_id"] == "conv-9"
+    assert metadata["message_id"] == "m2"
+    assert metadata["provider"] == "llama_cpp"
+    assert metadata["model"] == "test-model"
+
+
+def test_console_chatbook_payload_preserves_resolved_character_identity():
+    payload = console_chatbook_artifact_payload(
+        title="Console message",
+        message_text="Hello Captain Rowan.",
+        message_role="Alraune",
+    )
+
+    assert payload["metadata"]["content"] == "Hello Captain Rowan."
+    assert payload["metadata"]["message_role"] == "Alraune"
+
+
+def test_console_artifact_owner_resolution_uses_persisted_message_revision_and_body():
+    expected_request = object()
+    repository = SimpleNamespace(
+        db=SimpleNamespace(
+            get_message_by_id=Mock(
+                return_value={
+                    "id": "persisted-message-1",
+                    "version": 7,
+                    "content": "grounded answer",
+                    "deleted": 0,
+                }
+            )
+        )
+    )
+    coordinator = SimpleNamespace(
+        writes_enabled=True,
+        trace_repository=repository,
+        owner_request_for_message=Mock(return_value=expected_request),
+    )
+
+    result = resolve_console_artifact_owner_request(
+        coordinator=coordinator,
+        persisted_message_id="persisted-message-1",
+        message_text="grounded answer",
+    )
+
+    assert result is expected_request
+    coordinator.owner_request_for_message.assert_called_once_with(
+        message_id="persisted-message-1",
+        message_revision=7,
+        current_body="grounded answer",
+    )
+
+
+def test_console_artifact_owner_resolution_fails_closed_for_missing_or_mismatched_body():
+    coordinator = SimpleNamespace(
+        writes_enabled=True,
+        trace_repository=SimpleNamespace(
+            db=SimpleNamespace(
+                get_message_by_id=Mock(
+                    return_value={
+                        "id": "persisted-message-1",
+                        "version": 7,
+                        "content": "different answer",
+                        "deleted": 0,
+                    }
+                )
+            )
+        ),
+        owner_request_for_message=Mock(),
+    )
+
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id="persisted-message-1",
+            message_text="edited answer",
+        )
+        is None
+    )
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id=None,
+            message_text="edited answer",
+        )
+        is None
+    )
+    coordinator.owner_request_for_message.assert_not_called()
+
+
+def test_console_artifact_owner_resolution_fails_closed_for_ambiguous_switch_or_store_error():
+    get_message = Mock(side_effect=RuntimeError("database unavailable"))
+    coordinator = SimpleNamespace(
+        writes_enabled=object(),
+        trace_repository=SimpleNamespace(
+            db=SimpleNamespace(get_message_by_id=get_message)
+        ),
+        owner_request_for_message=Mock(),
+    )
+
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id="persisted-message-1",
+            message_text="grounded answer",
+        )
+        is None
+    )
+    get_message.assert_not_called()
+
+    coordinator.writes_enabled = True
+    assert (
+        resolve_console_artifact_owner_request(
+            coordinator=coordinator,
+            persisted_message_id="persisted-message-1",
+            message_text="grounded answer",
+        )
+        is None
+    )
+
+
+def test_console_chatbook_artifact_payload_omits_blank_optional_metadata():
+    payload = console_chatbook_artifact_payload(
+        title="Title",
+        message_text="body",
+        message_role="",
+        conversation_id=None,
+        message_id="  ",
+        provider="",
+        model=None,
+    )
+
+    metadata = payload["metadata"]
+    assert metadata["message_role"] == "Assistant"
+    for key in ("conversation_id", "message_id", "provider", "model"):
+        assert key not in metadata
+
+
+def test_console_chatbook_artifact_payload_truncates_oversized_content():
+    oversized = "y" * (CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS + 10)
+
+    payload = console_chatbook_artifact_payload(
+        title="Title",
+        message_text=oversized,
+        message_role="Assistant",
+    )
+
+    metadata = payload["metadata"]
+    assert len(metadata["content"]) == CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS
+    assert metadata["content_truncated"] is True
+
+
+def test_derive_console_save_title_stays_within_budget_at_one_char_headroom():
+    """Regression (PR #606 review): available == 1 must not overflow max_length."""
+    prefix_and_date = derive_console_save_title(
+        "", now=datetime(2026, 7, 11, tzinfo=timezone.utc)
+    )
+    # Build a max_length that leaves exactly one character for the title.
+    max_length = len(prefix_and_date) + len(" — ") + 1
+    title = derive_console_save_title(
+        "An extremely long conversation title that must truncate",
+        now=datetime(2026, 7, 11, tzinfo=timezone.utc),
+        max_length=max_length,
+    )
+    assert len(title) <= max_length
+    assert title.endswith("(2026-07-11)")

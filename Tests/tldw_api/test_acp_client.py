@@ -8,7 +8,9 @@ from tldw_chatbook.tldw_api.client import TLDWAPIClient
 
 
 @pytest.mark.asyncio
-async def test_acp_namespace_gateway_routes_agent_session_and_governance_surfaces(monkeypatch):
+async def test_acp_namespace_gateway_routes_agent_session_and_governance_surfaces(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
@@ -27,15 +29,26 @@ async def test_acp_namespace_gateway_routes_agent_session_and_governance_surface
     )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/acp/agents/health")
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/acp/sessions/prompt-async")
-    assert mocked.await_args_list[1].kwargs["json_data"] == {"session_id": "session-1", "prompt": "Continue"}
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/acp/sessions/prompt-async",
+    )
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "session_id": "session-1",
+        "prompt": "Continue",
+    }
     assert mocked.await_args_list[1].kwargs["headers"] == {"Idempotency-Key": "idem-1"}
-    assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/acp/permissions/decisions/decision-1")
+    assert mocked.await_args_list[2].args[:2] == (
+        "DELETE",
+        "/api/v1/acp/permissions/decisions/decision-1",
+    )
     assert mocked.await_args_list[2].kwargs["params"] == {"reason": "revoked"}
 
 
 @pytest.mark.asyncio
-async def test_acp_namespace_gateway_rejects_admin_cross_namespace_and_unsafe_routes(monkeypatch):
+async def test_acp_namespace_gateway_rejects_admin_cross_namespace_and_unsafe_routes(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)

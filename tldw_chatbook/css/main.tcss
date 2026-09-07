@@ -46,7 +46,6 @@
 @import "./features/_conversations.tcss";
 @import "./features/_notes.tcss";
 @import "./features/_media.tcss";
-@import "./features/_search-rag.tcss";
 @import "./features/_llm-management.tcss";
 @import "./features/_tools-settings.tcss";
 @import "./features/_ingest.tcss";

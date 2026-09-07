@@ -1,0 +1,166 @@
+from contextlib import contextmanager
+import tomllib
+
+from tldw_chatbook import config as config_module
+from tldw_chatbook.config import API_MODELS_BY_PROVIDER, CONFIG_TOML_CONTENT
+
+
+@contextmanager
+def _temporary_config(tmp_path, monkeypatch, toml_text):
+    """Load settings from an isolated scratch config and restore both caches."""
+    config_path = tmp_path / "provider-model-defaults.toml"
+    config_path.write_text(toml_text, encoding="utf-8")
+    original_config_cache = config_module._CONFIG_CACHE
+    original_config_cache_source = config_module._CONFIG_CACHE_SOURCE
+    original_settings_cache = config_module._SETTINGS_CACHE
+    original_settings_cache_source = config_module._SETTINGS_CACHE_SOURCE
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        yield config_module.load_settings(force_reload=True)
+    finally:
+        config_module._CONFIG_CACHE = original_config_cache
+        config_module._CONFIG_CACHE_SOURCE = original_config_cache_source
+        config_module._SETTINGS_CACHE = original_settings_cache
+        config_module._SETTINGS_CACHE_SOURCE = original_settings_cache_source
+
+
+def test_kimi_zai_provider_and_settings_defaults_are_current():
+    parsed = tomllib.loads(CONFIG_TOML_CONTENT)
+    assert parsed["providers"]["Moonshot"][0] == "kimi-k3"
+    assert parsed["providers"]["ZAI"][0] == "glm-5.2"
+
+    moonshot_settings = parsed["api_settings"]["moonshot"]
+    assert moonshot_settings == {
+        "api_key_env_var": "MOONSHOT_API_KEY",
+        "model": "kimi-k3",
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "api_region": "international",
+        "api_base_url": "https://api.moonshot.ai/v1",
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 1.0,
+        "streaming": True,
+    }
+    zai_settings = parsed["api_settings"]["zai"]
+    assert zai_settings == {
+        "api_key_env_var": "ZAI_API_KEY",
+        "model": "glm-5.2",
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 4096,
+        "api_base_url": "https://api.z.ai/api/paas/v4",
+        "timeout": 90,
+        "retries": 3,
+        "retry_delay": 5,
+        "streaming": True,
+    }
+
+
+def test_model_catalog_defaults_exist():
+    parsed = tomllib.loads(CONFIG_TOML_CONTENT)
+    section = parsed["model_catalog"]
+    assert section["auto_refresh_enabled"] is True
+    # Confirm-first (ADR-020 amendment): no online check before consent.
+    assert section["refresh_consent_recorded"] is False
+    assert section["stale_after_hours"] == 24
+    assert section["auto_refresh_disabled"] == []
+    assert section["write_to_config"] == []
+
+
+def test_bundled_provider_defaults_use_current_models():
+    parsed = tomllib.loads(CONFIG_TOML_CONTENT)
+
+    assert parsed["api_settings"]["deepseek"]["model"] == "deepseek-v4-flash"
+    assert parsed["api_settings"]["anthropic"]["model"] == "claude-sonnet-5"
+    assert parsed["api_settings"]["openai"]["model"] == "gpt-5.6-terra"
+    assert parsed["chat_defaults"]["provider"] == "OpenAI"
+    assert parsed["chat_defaults"]["model"] == "gpt-5.6-terra"
+
+    model_capabilities = parsed["model_capabilities"]
+    assert model_capabilities["models"]["gpt-5.6-terra"] == {
+        "vision": True,
+        "max_images": 10,
+    }
+    assert model_capabilities["models"]["claude-sonnet-5"] == {
+        "vision": True,
+        "max_images": 5,
+    }
+
+    providers = parsed["providers"]
+    assert providers["DeepSeek"] == ["deepseek-v4-flash", "deepseek-v4-pro"]
+    assert providers["Anthropic"][:4] == [
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-haiku-4-5",
+    ]
+    assert providers["OpenAI"][:3] == [
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
+    ]
+    assert "deepseek-chat" not in providers["DeepSeek"]
+    assert "deepseek-reasoner" not in providers["DeepSeek"]
+
+    for provider in ("DeepSeek", "Anthropic", "OpenAI"):
+        assert API_MODELS_BY_PROVIDER[provider] == providers[provider]
+
+
+def test_character_defaults_template_model_is_currently_served():
+    """TASK-19048: the shipped [character_defaults] default must be a served model.
+
+    The former default ``claude-3-haiku-20240307`` is RETIRED on the wire
+    (404 not_found_error, probe req_011CeEDXZ8iS29MZCgyySwQa), so a fresh
+    install's persona/character calls targeted a dead model. The replacement
+    is the retired id's served successor in the same cheap-fast haiku lineage
+    (TASK-19020 precedent). The template's own comment demands the model exist
+    in [providers.Anthropic], so that membership is pinned too.
+    """
+    parsed = tomllib.loads(CONFIG_TOML_CONTENT)
+    character_defaults = parsed["character_defaults"]
+    assert character_defaults["provider"] == "Anthropic"
+    assert character_defaults["model"] == "claude-haiku-4-5"
+    assert character_defaults["model"] in parsed["providers"]["Anthropic"]
+
+
+def test_load_settings_uses_current_models_when_legacy_api_models_are_omitted(
+    tmp_path, monkeypatch
+):
+    with _temporary_config(tmp_path, monkeypatch, "[API]\n") as settings:
+        assert settings["anthropic_api"]["model"] == "claude-sonnet-5"
+        assert settings["deepseek_api"]["model"] == "deepseek-v4-flash"
+        assert settings["openai_api"]["model"] == "gpt-5.6-terra"
+
+
+def test_load_settings_preserves_explicit_legacy_api_models(tmp_path, monkeypatch):
+    explicit_models = {
+        "anthropic_model": "user-anthropic-model",
+        "deepseek_model": "user-deepseek-model",
+        "openai_model": "user-openai-model",
+    }
+    config_text = "[API]\n" + "\n".join(
+        f'{key} = "{model}"' for key, model in explicit_models.items()
+    )
+
+    with _temporary_config(tmp_path, monkeypatch, config_text) as settings:
+        assert settings["anthropic_api"]["model"] == explicit_models["anthropic_model"]
+        assert settings["deepseek_api"]["model"] == explicit_models["deepseek_model"]
+        assert settings["openai_api"]["model"] == explicit_models["openai_model"]
+
+
+def test_load_settings_preserves_explicit_historical_kimi_glm_models(
+    tmp_path, monkeypatch
+):
+    config_text = """
+[api_settings.moonshot]
+model = "moonshot-v1-128k"
+
+[api_settings.zai]
+model = "glm-4.5"
+"""
+    with _temporary_config(tmp_path, monkeypatch, config_text) as settings:
+        assert settings["api_settings"]["moonshot"]["model"] == "moonshot-v1-128k"
+        assert settings["api_settings"]["zai"]["model"] == "glm-4.5"

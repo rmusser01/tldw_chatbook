@@ -5,24 +5,24 @@ Service helpers for server-backed notes and workspace resources.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
-from ..tldw_api import (
-    NoteCreateRequest,
-    NoteGraphRequest,
-    NoteLinkCreate,
-    NoteUpdateRequest,
-    TLDWAPIClient,
-    WorkspaceArtifactCreateRequest,
-    WorkspaceArtifactUpdateRequest,
-    WorkspaceCreateRequest,
-    WorkspaceNoteCreateRequest,
-    WorkspaceNoteUpdateRequest,
-    WorkspaceSourceCreateRequest,
-    WorkspaceSourceUpdateRequest,
-    WorkspaceUpdateRequest,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        NoteCreateRequest,
+        NoteUpdateRequest,
+        TLDWAPIClient,
+        WorkspaceArtifactCreateRequest,
+        WorkspaceArtifactUpdateRequest,
+        WorkspaceCreateRequest,
+        WorkspaceNoteCreateRequest,
+        WorkspaceNoteUpdateRequest,
+        WorkspaceSourceCreateRequest,
+        WorkspaceSourceUpdateRequest,
+        WorkspaceUpdateRequest,
+    )
 
 _UNSET = object()
 
@@ -72,7 +72,9 @@ class ServerNotesWorkspaceService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server note and workspace operations.")
+        raise ValueError(
+            "TLDW API client is required for server note and workspace operations."
+        )
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -189,7 +191,8 @@ class ServerNotesWorkspaceService:
             "id": workspace.get("id"),
             "name": workspace.get("name") or "",
             "archived": bool(workspace.get("archived", False)),
-            "study_materials_policy": workspace.get("study_materials_policy") or "general",
+            "study_materials_policy": workspace.get("study_materials_policy")
+            or "general",
             "audio_provider": workspace.get("audio_provider"),
             "audio_model": workspace.get("audio_model"),
             "audio_voice": workspace.get("audio_voice"),
@@ -210,7 +213,9 @@ class ServerNotesWorkspaceService:
             "version": int(source.get("version") or 1),
         }
 
-    def normalize_workspace_artifact(self, artifact: Mapping[str, Any]) -> dict[str, Any]:
+    def normalize_workspace_artifact(
+        self, artifact: Mapping[str, Any]
+    ) -> dict[str, Any]:
         return {
             "id": artifact.get("id"),
             "workspace_id": artifact.get("workspace_id"),
@@ -229,6 +234,9 @@ class ServerNotesWorkspaceService:
         note_id: Optional[str] = None,
         keywords: Optional[Sequence[str]] = None,
     ) -> NoteCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteCreateRequest
+
         return NoteCreateRequest(
             id=note_id,
             title=title,
@@ -243,6 +251,9 @@ class ServerNotesWorkspaceService:
         content: Any = _UNSET,
         keywords: Any = _UNSET,
     ) -> NoteUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteUpdateRequest
+
         payload = self._with_optional_update_fields(title=title, content=content)
         if keywords is not _UNSET and keywords is not None:
             payload["keywords"] = self._normalize_keywords(keywords)
@@ -255,6 +266,9 @@ class ServerNotesWorkspaceService:
         archived: bool = False,
         study_materials_policy: str = "general",
     ) -> WorkspaceCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceCreateRequest
+
         return WorkspaceCreateRequest(
             name=name,
             archived=archived,
@@ -276,6 +290,9 @@ class ServerNotesWorkspaceService:
         audio_voice: Any = _UNSET,
         audio_speed: Any = _UNSET,
     ) -> WorkspaceUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceUpdateRequest
+
         return WorkspaceUpdateRequest(
             version=version,
             **self._with_optional_update_fields(
@@ -299,6 +316,9 @@ class ServerNotesWorkspaceService:
         content: str,
         keywords: Optional[Sequence[str]] = None,
     ) -> WorkspaceNoteCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceNoteCreateRequest
+
         return WorkspaceNoteCreateRequest(
             title=title,
             content=content,
@@ -313,6 +333,9 @@ class ServerNotesWorkspaceService:
         keywords: Any = _UNSET,
         version: int,
     ) -> WorkspaceNoteUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceNoteUpdateRequest
+
         payload = self._with_optional_update_fields(title=title, content=content)
         if keywords is not _UNSET and keywords is not None:
             payload["keywords_json"] = json.dumps(self._normalize_keywords(keywords))
@@ -329,6 +352,9 @@ class ServerNotesWorkspaceService:
         position: int = 0,
         selected: bool = True,
     ) -> WorkspaceSourceCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceSourceCreateRequest
+
         return WorkspaceSourceCreateRequest(
             id=source_id,
             media_id=media_id,
@@ -349,6 +375,9 @@ class ServerNotesWorkspaceService:
         position: Any = _UNSET,
         selected: Any = _UNSET,
     ) -> WorkspaceSourceUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceSourceUpdateRequest
+
         return WorkspaceSourceUpdateRequest(
             version=version,
             **self._with_optional_update_fields(
@@ -369,6 +398,9 @@ class ServerNotesWorkspaceService:
         status: str = "pending",
         content: Optional[str] = None,
     ) -> WorkspaceArtifactCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceArtifactCreateRequest
+
         return WorkspaceArtifactCreateRequest(
             id=artifact_id,
             artifact_type=artifact_type,
@@ -388,6 +420,9 @@ class ServerNotesWorkspaceService:
         total_cost_usd: Any = _UNSET,
         completed_at: Any = _UNSET,
     ) -> WorkspaceArtifactUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WorkspaceArtifactUpdateRequest
+
         return WorkspaceArtifactUpdateRequest(
             version=version,
             **self._with_optional_update_fields(
@@ -400,14 +435,23 @@ class ServerNotesWorkspaceService:
             ),
         )
 
-    async def list_server_notes(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def list_server_notes(
+        self, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         self._enforce_policy(self._note_action_id("list", "server"))
         client = self._require_client()
-        response = await client.list_server_notes(limit=limit, offset=offset, include_keywords=True)
-        items = [self.normalize_server_note(item) for item in self._coerce_items(response)]
+        response = await client.list_server_notes(
+            limit=limit, offset=offset, include_keywords=True
+        )
+        items = [
+            self.normalize_server_note(item) for item in self._coerce_items(response)
+        ]
+        has_count = isinstance(response, Mapping) and "count" in response
+        raw_count = response["count"] if has_count else len(items)
         return {
             "items": items,
-            "count": int(response.get("count", len(items))) if isinstance(response, Mapping) else len(items),
+            "count": int(raw_count),
+            "count_exact": has_count and type(raw_count) is int and raw_count >= 0,
         }
 
     async def search_server_notes(
@@ -424,17 +468,23 @@ class ServerNotesWorkspaceService:
             offset=offset,
             include_keywords=True,
         )
-        items = [self.normalize_server_note(item) for item in self._coerce_items(response)]
+        items = [
+            self.normalize_server_note(item) for item in self._coerce_items(response)
+        ]
         return {
             "items": items,
-            "count": int(response.get("count", len(items))) if isinstance(response, Mapping) else len(items),
+            "count": int(response.get("count", len(items)))
+            if isinstance(response, Mapping)
+            else len(items),
         }
 
     async def get_server_note(self, note_id: str) -> dict[str, Any]:
         self._enforce_policy(self._note_action_id("detail", "server"))
         client = self._require_client()
         response = await client.get_server_note(note_id)
-        return self.normalize_server_note(self._coerce_resource(response, "note", "item"))
+        return self.normalize_server_note(
+            self._coerce_resource(response, "note", "item")
+        )
 
     async def save_server_note(
         self,
@@ -473,7 +523,9 @@ class ServerNotesWorkspaceService:
                 keywords=None if keywords is _UNSET else keywords,
             )
             response = await client.create_server_note(request)
-        return self.normalize_server_note(self._coerce_resource(response, "note", "item"))
+        return self.normalize_server_note(
+            self._coerce_resource(response, "note", "item")
+        )
 
     async def delete_server_note(self, note_id: str, version: int) -> dict[str, Any]:
         self._enforce_policy(self._note_action_id("delete", "server"))
@@ -481,6 +533,9 @@ class ServerNotesWorkspaceService:
         return await client.delete_server_note(note_id, expected_version=version)
 
     async def get_notes_graph(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteGraphRequest
+
         self._enforce_policy(self._graph_action_id("list"))
         client = self._require_client()
         return await client.get_notes_graph(NoteGraphRequest(**kwargs))
@@ -499,6 +554,9 @@ class ServerNotesWorkspaceService:
         weight: float | None = 1.0,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NoteLinkCreate
+
         self._enforce_policy(self._graph_action_id("create"))
         client = self._require_client()
         return await client.create_note_link(
@@ -546,7 +604,9 @@ class ServerNotesWorkspaceService:
             request = self.build_workspace_create_payload(
                 name=self._require_value(name, "name"),
                 archived=False if archived is _UNSET else bool(archived),
-                study_materials_policy="general" if study_materials_policy in {_UNSET, None} else study_materials_policy,
+                study_materials_policy="general"
+                if study_materials_policy in {_UNSET, None}
+                else study_materials_policy,
             )
             response = await client.create_workspace(workspace_id, request)
         else:
@@ -564,7 +624,9 @@ class ServerNotesWorkspaceService:
                 version=version,
             )
             response = await client.update_workspace(workspace_id, request)
-        return self.normalize_workspace(self._coerce_resource(response, "workspace", "item"))
+        return self.normalize_workspace(
+            self._coerce_resource(response, "workspace", "item")
+        )
 
     async def delete_workspace(self, workspace_id: str) -> dict[str, Any]:
         self._enforce_policy(self._workspace_action_id("delete"))
@@ -605,14 +667,22 @@ class ServerNotesWorkspaceService:
         notes: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> list[dict[str, Any]]:
         self._enforce_policy(self._note_action_id("list", "workspace"))
-        working_notes = list(notes) if notes is not None else (await self.list_workspace_notes(workspace_id))
-        return self.filter_workspace_notes(working_notes, workspace_id=workspace_id, query=query)
+        working_notes = (
+            list(notes)
+            if notes is not None
+            else (await self.list_workspace_notes(workspace_id))
+        )
+        return self.filter_workspace_notes(
+            working_notes, workspace_id=workspace_id, query=query
+        )
 
     async def list_workspace_notes(self, workspace_id: str) -> list[dict[str, Any]]:
         self._enforce_policy(self._note_action_id("list", "workspace"))
         client = self._require_client()
         response = await client.list_workspace_notes(workspace_id)
-        return [self.normalize_workspace_note(item) for item in self._coerce_items(response)]
+        return [
+            self.normalize_workspace_note(item) for item in self._coerce_items(response)
+        ]
 
     async def save_workspace_note(
         self,
@@ -647,8 +717,12 @@ class ServerNotesWorkspaceService:
                 keywords=keywords,
                 version=version,
             )
-            response = await client.update_workspace_note(workspace_id, note_id, request)
-        return self.normalize_workspace_note(self._coerce_resource(response, "note", "item"))
+            response = await client.update_workspace_note(
+                workspace_id, note_id, request
+            )
+        return self.normalize_workspace_note(
+            self._coerce_resource(response, "note", "item")
+        )
 
     async def delete_workspace_note(
         self,
@@ -664,7 +738,10 @@ class ServerNotesWorkspaceService:
         self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         response = await client.list_workspace_sources(workspace_id)
-        return [self.normalize_workspace_source(item) for item in self._coerce_items(response)]
+        return [
+            self.normalize_workspace_source(item)
+            for item in self._coerce_items(response)
+        ]
 
     async def save_workspace_source(
         self,
@@ -701,19 +778,114 @@ class ServerNotesWorkspaceService:
                 selected=selected,
                 version=version,
             )
-            response = await client.update_workspace_source(workspace_id, source_id, request)
-        return self.normalize_workspace_source(self._coerce_resource(response, "source", "item"))
+            response = await client.update_workspace_source(
+                workspace_id, source_id, request
+            )
+        return self.normalize_workspace_source(
+            self._coerce_resource(response, "source", "item")
+        )
 
-    async def delete_workspace_source(self, workspace_id: str, source_id: str) -> dict[str, Any]:
+    async def delete_workspace_source(
+        self, workspace_id: str, source_id: str
+    ) -> dict[str, Any]:
         self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
         return await client.delete_workspace_source(workspace_id, source_id)
+
+    async def preview_workspace_source(
+        self,
+        workspace_id: str,
+        source_id: str,
+        *,
+        max_chars: int = 3000,
+        chunk_limit: int = 3,
+    ) -> dict[str, Any]:
+        """Return the server's bounded source preview projection."""
+
+        self._enforce_policy(self._workspace_action_id("detail"))
+        client = self._require_client()
+        response = await client.get_workspace_source_preview(
+            workspace_id,
+            source_id,
+            max_chars=max_chars,
+            chunk_limit=chunk_limit,
+        )
+        return dict(response)
+
+    async def get_workspace_source_status(
+        self, workspace_id: str
+    ) -> dict[str, Any]:
+        """Return the server's source readiness projection unchanged."""
+
+        self._enforce_policy(self._workspace_action_id("detail"))
+        client = self._require_client()
+        return dict(await client.get_workspace_source_status(workspace_id))
+
+    async def get_workspace_capabilities(
+        self, workspace_id: str
+    ) -> dict[str, Any]:
+        """Return the server's capability read projection unchanged."""
+
+        self._enforce_policy(self._workspace_action_id("detail"))
+        client = self._require_client()
+        return dict(await client.get_workspace_capabilities(workspace_id))
+
+    async def set_workspace_source_selection(
+        self, workspace_id: str, selected_ids: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Persist desired association IDs and return reconciled source rows."""
+
+        from ..tldw_api import WorkspaceSourceSelectionRequest
+
+        self._enforce_policy(self._workspace_action_id("update"))
+        client = self._require_client()
+        request = WorkspaceSourceSelectionRequest(selected_ids=list(selected_ids))
+        response = await client.set_workspace_source_selection(workspace_id, request)
+        rows = [
+            self.normalize_workspace_source(item)
+            for item in self._coerce_items(response)
+        ]
+        selected = set(request.selected_ids)
+        if any(
+            row["workspace_id"] != workspace_id
+            or row["selected"] != (str(row["id"]) in selected)
+            for row in rows
+        ):
+            raise ValueError("Server source selection reconciliation did not match.")
+        if not selected.issubset({str(row["id"]) for row in rows}):
+            raise ValueError("Server source selection reconciliation is incomplete.")
+        return rows
+
+    async def reorder_workspace_sources(
+        self, workspace_id: str, ordered_ids: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Persist association order and return post-write row versions."""
+
+        from ..tldw_api import WorkspaceSourceReorderRequest
+
+        self._enforce_policy(self._workspace_action_id("update"))
+        client = self._require_client()
+        request = WorkspaceSourceReorderRequest(ordered_ids=list(ordered_ids))
+        response = await client.reorder_workspace_sources(workspace_id, request)
+        rows = [
+            self.normalize_workspace_source(item)
+            for item in self._coerce_items(response)
+        ]
+        if [str(row["id"]) for row in rows] != request.ordered_ids or any(
+            row["workspace_id"] != workspace_id or row["position"] != index
+            for index, row in enumerate(rows)
+        ):
+            raise ValueError("Server source reorder reconciliation did not match.")
+        return rows
 
     async def list_workspace_artifacts(self, workspace_id: str) -> list[dict[str, Any]]:
         self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         response = await client.list_workspace_artifacts(workspace_id)
-        return [self.normalize_workspace_artifact(item) for item in self._coerce_items(response)]
+        return [
+            self.normalize_workspace_artifact(item)
+            for item in self._coerce_items(response)
+        ]
 
     async def save_workspace_artifact(
         self,
@@ -744,10 +916,16 @@ class ServerNotesWorkspaceService:
                 content=content,
                 version=version,
             )
-            response = await client.update_workspace_artifact(workspace_id, artifact_id, request)
-        return self.normalize_workspace_artifact(self._coerce_resource(response, "artifact", "item"))
+            response = await client.update_workspace_artifact(
+                workspace_id, artifact_id, request
+            )
+        return self.normalize_workspace_artifact(
+            self._coerce_resource(response, "artifact", "item")
+        )
 
-    async def delete_workspace_artifact(self, workspace_id: str, artifact_id: str) -> dict[str, Any]:
+    async def delete_workspace_artifact(
+        self, workspace_id: str, artifact_id: str
+    ) -> dict[str, Any]:
         self._enforce_policy(self._workspace_action_id("update"))
         client = self._require_client()
         return await client.delete_workspace_artifact(workspace_id, artifact_id)
@@ -756,11 +934,28 @@ class ServerNotesWorkspaceService:
         self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         workspace = self.normalize_workspace(
-            self._coerce_resource(await client.get_workspace(workspace_id), "workspace", "item")
+            self._coerce_resource(
+                await client.get_workspace(workspace_id), "workspace", "item"
+            )
         )
-        notes = [self.normalize_workspace_note(item) for item in self._coerce_items(await client.list_workspace_notes(workspace_id))]
-        sources = [self.normalize_workspace_source(item) for item in self._coerce_items(await client.list_workspace_sources(workspace_id))]
-        artifacts = [self.normalize_workspace_artifact(item) for item in self._coerce_items(await client.list_workspace_artifacts(workspace_id))]
+        notes = [
+            self.normalize_workspace_note(item)
+            for item in self._coerce_items(
+                await client.list_workspace_notes(workspace_id)
+            )
+        ]
+        sources = [
+            self.normalize_workspace_source(item)
+            for item in self._coerce_items(
+                await client.list_workspace_sources(workspace_id)
+            )
+        ]
+        artifacts = [
+            self.normalize_workspace_artifact(item)
+            for item in self._coerce_items(
+                await client.list_workspace_artifacts(workspace_id)
+            )
+        ]
         return {
             "workspace": workspace,
             "notes": notes,

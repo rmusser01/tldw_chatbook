@@ -9,16 +9,23 @@ Improved UI for the chatbooks feature with better visual hierarchy,
 more features, and enhanced user experience.
 """
 
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
-from pathlib import Path
+import asyncio
+from typing import List, Dict, Any, TYPE_CHECKING
 from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container, Horizontal, VerticalScroll, Grid
-from textual.widgets import Static, Button, Label, Input, ListView, ListItem
+from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
+from textual.timer import Timer
 from loguru import logger
+
+from ..Chatbooks.database_paths import (
+    get_private_chatbooks_dir,
+    secure_chatbook_directory,
+)
+from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -26,7 +33,7 @@ if TYPE_CHECKING:
 
 class ChatbookCard(Container):
     """Card widget for displaying a chatbook."""
-    
+
     DEFAULT_CSS = """
     ChatbookCard {
         height: 8;
@@ -73,41 +80,43 @@ class ChatbookCard(Container):
         margin-top: 1;
     }
     """
-    
+
     def __init__(self, chatbook_data: Dict[str, Any], **kwargs):
         super().__init__(**kwargs)
         self.chatbook_data = chatbook_data
-        
+
     def compose(self) -> ComposeResult:
-        yield Static(self.chatbook_data.get('name', 'Untitled'), classes="chatbook-card-title")
         yield Static(
-            self.chatbook_data.get('description', 'No description')[:100] + '...',
-            classes="chatbook-card-description"
+            self.chatbook_data.get("name", "Untitled"), classes="chatbook-card-title"
         )
-        
+        yield Static(
+            self.chatbook_data.get("description", "No description")[:100] + "...",
+            classes="chatbook-card-description",
+        )
+
         # Stats line
-        stats = self.chatbook_data.get('statistics', {})
+        stats = self.chatbook_data.get("statistics", {})
         stats_text = f"📚 {stats.get('conversations', 0)} conversations • 📝 {stats.get('notes', 0)} notes • 👤 {stats.get('characters', 0)} characters"
         yield Static(stats_text, classes="chatbook-card-stats")
-        
+
         # Meta information
         with Horizontal(classes="chatbook-card-meta"):
-            created = self.chatbook_data.get('created_at', 'Unknown')
-            if isinstance(created, str) and created != 'Unknown':
+            created = self.chatbook_data.get("created_at", "Unknown")
+            if isinstance(created, str) and created != "Unknown":
                 try:
                     dt = datetime.fromisoformat(created)
-                    created = dt.strftime('%Y-%m-%d')
-                except:
+                    created = dt.strftime("%Y-%m-%d")
+                except Exception:
                     pass
             yield Static(f"📅 {created}", classes="chatbook-card-date")
-            
-            size = self.chatbook_data.get('size_mb', 0)
+
+            size = self.chatbook_data.get("size_mb", 0)
             yield Static(f"💾 {size:.1f} MB", classes="chatbook-card-size")
 
 
 class EmptyStateWidget(Container):
     """Enhanced empty state widget."""
-    
+
     DEFAULT_CSS = """
     EmptyStateWidget {
         align: center middle;
@@ -147,7 +156,7 @@ class EmptyStateWidget(Container):
         margin: 0 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         # ASCII art book icon
         book_art = """
@@ -165,11 +174,13 @@ class EmptyStateWidget(Container):
             "notes, characters/personas, prompts, and media so you can restore a "
             "project or seed Chat later. Start with Create Local Pack, Import Local "
             "Pack, or use the shared navigation to return to Chat.",
-            classes="empty-state-description"
+            classes="empty-state-description",
         )
-        
+
         with Container(classes="empty-state-actions"):
-            yield Button("✨ Create Local Pack", id="empty-create-btn", variant="primary")
+            yield Button(
+                "✨ Create Local Pack", id="empty-create-btn", variant="primary"
+            )
             yield Button(
                 "📥 Import Local Pack",
                 id="empty-import-btn",
@@ -184,27 +195,40 @@ class EmptyStateWidget(Container):
             )
 
 
-class ChatbooksWindowImproved(Screen):
-    """Enhanced Chatbooks management interface."""
+class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
+    """Enhanced Chatbooks management interface.
+
+    This class is a ``Screen`` subclass but is embedded as a plain child
+    widget of ``ChatbooksScreen`` (a ``BaseAppScreen``, see
+    ``UI/Screens/chatbooks_screen.py``), not pushed via the screen stack --
+    it never inherited ``BaseAppScreen``'s task-627 guard. It still inherits
+    ``RecomposeCaptureGuard`` (task-637) defensively: ``compose()`` is
+    static (it never reads ``self.chatbooks``/``view_mode``/``search_query``),
+    so none of this widget's own reactives are declared ``recompose=True``
+    -- ``_update_content()`` does the DOM rebuild imperatively from the
+    watchers instead (task-671; a ``recompose=True`` ``chatbooks`` reactive
+    used to schedule a deferred ``Widget.recompose()`` that tore the whole
+    subtree back down to ``compose()``'s empty skeleton one tick after
+    ``_update_content()`` had just populated it -- silently erasing any
+    non-empty chatbooks list). The guard mixin is kept because
+    ``Widget.refresh(recompose=True)`` can still be invoked directly (see
+    ``Tests/UI/test_chatbooks_screen_server_actions.py``'s task-637
+    regression coverage) and other recompose reactives may be added later.
+    """
 
     GRID_VIEW_TOOLTIP = "Show chatbooks as visual cards."
     LIST_VIEW_TOOLTIP = "Show chatbooks as a dense text list."
-    
+
     BINDINGS = [
         ("c", "create_chatbook", "Create"),
         ("i", "import_chatbook", "Import"),
         ("t", "browse_templates", "Templates"),
         ("m", "manage_exports", "Manage"),
         ("r", "refresh", "Refresh"),
-        ("escape", "close", "Close")
+        ("escape", "close", "Close"),
     ]
-    
+
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-input-focus-accent: $primary;
-    $ds-input-focus-bg: $surface;
-    $ds-input-focus-border: $primary;
-    $ds-text-primary: $text;
 
     ChatbooksWindowImproved {
         layout: vertical;
@@ -282,12 +306,10 @@ class ChatbooksWindowImproved(Screen):
         padding: 0 1;
     }
 
-    .search-input:focus {
-        border: solid $ds-input-focus-border;
-        border-bottom: solid $ds-input-focus-accent;
-        background: $ds-input-focus-bg;
-        color: $ds-text-primary;
-    }
+    /* .search-input:focus styling lives in css/components/_widgets.tcss,
+       scoped to this window (needs the bundle's $ds-input-focus-* tokens;
+       TASK-16811). NOTE: css/features/_chatbooks_improved.tcss carries a
+       diverged copy of these styles but is NOT in the build manifest. */
     
     .content-area {
         height: 1fr;
@@ -344,26 +366,46 @@ class ChatbooksWindowImproved(Screen):
         color: $text-muted;
     }
     """
-    
-    # Reactive properties
-    chatbooks = reactive([], recompose=True)
+
+    # Reactive properties. None of these are `recompose=True`: `compose()`
+    # is static and doesn't read any of them, so the watchers below rebuild
+    # `#chatbooks-container` imperatively via `_update_content()` instead
+    # (task-671; see the class docstring for why `recompose=True` on
+    # `chatbooks` was actively harmful here).
+    chatbooks = reactive(list)
     view_mode = reactive("grid")
     search_query = reactive("")
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    #: Debounce for the search `Input` -- mirrors the console picker
+    #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Setting
+    #: `search_query` synchronously runs `_update_content()`, which tears
+    #: down and remounts a card/list item per chatbook; that must not
+    #: happen on every keystroke (task-15476).
+    SEARCH_DEBOUNCE_SECONDS = 0.2
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
+        """Store the owning app and resolve the default export directory.
+
+        Args:
+            app_instance: The running TldwCli app instance.
+        """
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self._export_path = Path.home() / "Documents" / "Chatbooks"
-        
+        # Default to the app's private, hardened data directory rather than
+        # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
+        # exports at the old location are not moved by this change.
+        self._export_path = get_private_chatbooks_dir()
+        self._search_debounce_timer: Timer | None = None
+
     def compose(self) -> ComposeResult:
         # Header
         with Container(classes="chatbooks-header"):
             yield Static("📚 Chatbooks", classes="chatbooks-title")
             yield Static(
                 "Create and manage portable knowledge packs",
-                classes="chatbooks-subtitle"
+                classes="chatbooks-subtitle",
             )
-        
+
         # Quick actions
         with Container(classes="quick-actions"):
             with Grid(classes="quick-actions-grid"):
@@ -371,7 +413,7 @@ class ChatbooksWindowImproved(Screen):
                 with Container(classes="action-card", id="create-action"):
                     yield Static("✨", classes="action-icon")
                     yield Static("Create Local", classes="action-label")
-                
+
                 # Import card
                 with Container(classes="action-card", id="import-action"):
                     yield Static("📥", classes="action-icon")
@@ -384,31 +426,33 @@ class ChatbooksWindowImproved(Screen):
                 with Container(classes="action-card", id="import-server-action"):
                     yield Static("🔄", classes="action-icon")
                     yield Static("Import Server", classes="action-label")
-                
+
                 # Templates card
                 with Container(classes="action-card", id="templates-action"):
                     yield Static("📋", classes="action-icon")
                     yield Static("Templates", classes="action-label")
-                
+
                 # Manage card
                 with Container(classes="action-card", id="manage-action"):
                     yield Static("⚙️", classes="action-icon")
                     yield Static("Manage", classes="action-label")
-            
+
             # Search bar
             with Container(classes="search-bar"):
                 yield Input(
                     placeholder="🔍 Search chatbooks...",
                     id="chatbook-search",
-                    classes="search-input"
+                    classes="search-input",
                 )
-        
+
         # Content area
         with VerticalScroll(classes="content-area"):
             # Section header
             with Container(classes="section-header"):
-                yield Static("Recent Chatbooks", classes="section-title", id="section-title")
-                
+                yield Static(
+                    "Recent Chatbooks", classes="section-title", id="section-title"
+                )
+
                 # View mode toggles
                 with Container(classes="view-toggles"):
                     yield Button(
@@ -424,54 +468,66 @@ class ChatbooksWindowImproved(Screen):
                         classes="view-toggle",
                         tooltip=self.LIST_VIEW_TOOLTIP,
                     )
-            
+
             # Content container (will be populated based on chatbooks)
             yield Container(id="chatbooks-container")
-        
+
         # Stats bar
         with Container(classes="stats-bar"):
             yield Static(
-                "0 chatbooks • 0 MB total",
-                id="stats-text",
-                classes="stats-text"
+                "0 chatbooks • 0 MB total", id="stats-text", classes="stats-text"
             )
-    
-    async def on_mount(self) -> None:
-        """Called when screen is mounted."""
-        await self._refresh_chatbooks()
-        
+
+    def on_mount(self) -> None:
+        """Mount now, scan after (TASK-1320).
+
+        Synchronous by design: mounting is awaited by the app's own navigation
+        handler, so awaiting the directory scan here held the App's message
+        pump for the length of the scan on top of blocking the event loop.
+        """
+        self.run_worker(
+            self._refresh_chatbooks(),
+            group="chatbooks_refresh",
+            # A failed scan is an empty list with an error toast (see
+            # `_refresh_chatbooks`), never a dead app. Textual defaults this to
+            # True, so deferring the scan into a worker would otherwise turn any
+            # error the scan does not catch itself into an app exit.
+            exit_on_error=False,
+            exclusive=True,
+        )
+
     def watch_chatbooks(self, old_value: List[Dict], new_value: List[Dict]) -> None:
         """React to chatbooks list changes."""
         self._update_content()
         self._update_stats()
-        
+
     def watch_view_mode(self, old_value: str, new_value: str) -> None:
         """React to view mode changes."""
         # Update button states
         grid_btn = self.query_one("#view-grid", Button)
         list_btn = self.query_one("#view-list", Button)
-        
+
         if new_value == "grid":
             grid_btn.variant = "primary"
             list_btn.variant = "default"
         else:
             grid_btn.variant = "default"
             list_btn.variant = "primary"
-            
+
         self._update_content()
-        
+
     def watch_search_query(self, old_value: str, new_value: str) -> None:
         """React to search query changes."""
         self._update_content()
-        
+
     def _update_content(self) -> None:
         """Update the content display."""
         container = self.query_one("#chatbooks-container", Container)
         container.remove_children()
-        
+
         # Filter chatbooks based on search
         filtered = self._filter_chatbooks()
-        
+
         if not filtered:
             # Show empty state
             container.mount(EmptyStateWidget())
@@ -480,100 +536,137 @@ class ChatbooksWindowImproved(Screen):
             )
         else:
             self.query_one("#section-title", Static).update(
-                f"Found {len(filtered)} chatbooks" if self.search_query else "Recent Chatbooks"
+                f"Found {len(filtered)} chatbooks"
+                if self.search_query
+                else "Recent Chatbooks"
             )
-            
+
             if self.view_mode == "grid":
-                # Grid view
+                # Grid view. `container` is already attached (it comes from
+                # `query_one`), so mount the (still-unattached) grid into it
+                # FIRST -- only then is the grid itself attached and safe to
+                # mount cards into. `Widget.mount()` raises `MountError`
+                # synchronously when called on a widget that isn't attached
+                # yet (task-671).
                 grid = Grid(classes="chatbooks-grid")
+                container.mount(grid)
                 for cb_data in filtered:
                     card = ChatbookCard(cb_data)
                     grid.mount(card)
-                container.mount(grid)
             else:
-                # List view
+                # List view -- same attach-before-populate ordering as above.
                 list_view = ListView(classes="chatbooks-list")
+                container.mount(list_view)
                 for cb_data in filtered:
                     item = ListItem(
-                        Static(f"📚 {cb_data['name']} - {cb_data.get('description', 'No description')[:50]}...")
+                        Static(
+                            f"📚 {cb_data['name']} - {cb_data.get('description', 'No description')[:50]}..."
+                        )
                     )
                     list_view.mount(item)
-                container.mount(list_view)
-                
+
     def _filter_chatbooks(self) -> List[Dict[str, Any]]:
         """Filter chatbooks based on search query."""
         if not self.search_query:
             return self.chatbooks
-            
+
         query = self.search_query.lower()
         return [
-            cb for cb in self.chatbooks
-            if query in cb.get('name', '').lower() or
-               query in cb.get('description', '').lower() or
-               any(query in tag.lower() for tag in cb.get('tags', []))
+            cb
+            for cb in self.chatbooks
+            if query in cb.get("name", "").lower()
+            or query in cb.get("description", "").lower()
+            or any(query in tag.lower() for tag in cb.get("tags", []))
         ]
-        
+
     def _update_stats(self) -> None:
         """Update statistics display."""
-        total_size = sum(cb.get('size_mb', 0) for cb in self.chatbooks)
+        total_size = sum(cb.get("size_mb", 0) for cb in self.chatbooks)
         stats_text = f"{len(self.chatbooks)} chatbooks • {total_size:.1f} MB total"
         self.query_one("#stats-text", Static).update(stats_text)
-        
+
     async def _refresh_chatbooks(self) -> None:
-        """Load chatbooks from export directory."""
+        """Load chatbooks from the export directory, off the event loop.
+
+        The scan itself is blocking (`glob`, `stat`, and a `ZipFile` open plus
+        manifest read per chatbook) and used to run directly here. Being inside
+        an `async def` bought nothing: with no await around the blocking calls
+        the whole event loop stopped for the duration, so the app froze while a
+        directory of chatbooks was read. Measured at ~1s per second of scan.
+
+        The scan now runs in a thread and only the reactive assignment happens
+        back on the loop (TASK-1320).
+        """
         try:
-            if not self._export_path.exists():
-                self._export_path.mkdir(parents=True, exist_ok=True)
-                
-            chatbooks = []
-            
-            # Scan for .zip files
-            for zip_file in self._export_path.glob("*.zip"):
-                try:
-                    # Get basic info
-                    cb_info = {
-                        'name': zip_file.stem,
-                        'path': str(zip_file),
-                        'size_mb': zip_file.stat().st_size / (1024 * 1024),
-                        'created_at': datetime.fromtimestamp(zip_file.stat().st_ctime).isoformat()
-                    }
-                    
-                    # Try to read manifest for more info
-                    import zipfile
-                    import json
-                    try:
-                        with zipfile.ZipFile(zip_file, 'r') as zf:
-                            if 'manifest.json' in zf.namelist():
-                                manifest_data = json.loads(zf.read('manifest.json'))
-                                cb_info.update({
-                                    'name': manifest_data.get('name', cb_info['name']),
-                                    'description': manifest_data.get('description', ''),
-                                    'tags': manifest_data.get('tags', []),
-                                    'statistics': manifest_data.get('statistics', {
-                                        'conversations': 0,
-                                        'notes': 0,
-                                        'characters': 0
-                                    })
-                                })
-                    except:
-                        pass
-                        
-                    chatbooks.append(cb_info)
-                except Exception as e:
-                    logger.error(f"Error reading chatbook {zip_file}: {e}")
-                    
-            # Sort by created date, newest first
-            chatbooks.sort(key=lambda x: x['created_at'], reverse=True)
+            chatbooks = await asyncio.to_thread(self._scan_chatbooks)
             self.chatbooks = chatbooks
-            
         except Exception as e:
             logger.error(f"Error refreshing chatbooks: {e}")
-            self.app_instance.notify(f"Error loading chatbooks: {str(e)}", severity="error")
-            
+            self.app_instance.notify(
+                f"Error loading chatbooks: {str(e)}", severity="error"
+            )
+
+    def _scan_chatbooks(self) -> List[Dict[str, Any]]:
+        """Read the export directory. Blocking -- always call via a thread."""
+        self._export_path = secure_chatbook_directory(self._export_path)
+
+        chatbooks = []
+
+        # Scan for .zip files
+        for zip_file in self._export_path.glob("*.zip"):
+            try:
+                # Get basic info
+                cb_info = {
+                    "name": zip_file.stem,
+                    "path": str(zip_file),
+                    "size_mb": zip_file.stat().st_size / (1024 * 1024),
+                    "created_at": datetime.fromtimestamp(
+                        zip_file.stat().st_ctime
+                    ).isoformat(),
+                }
+
+                # Try to read manifest for more info
+                import zipfile
+                import json
+
+                try:
+                    with zipfile.ZipFile(zip_file, "r") as zf:
+                        if "manifest.json" in zf.namelist():
+                            manifest_data = json.loads(zf.read("manifest.json"))
+                            cb_info.update(
+                                {
+                                    "name": manifest_data.get(
+                                        "name", cb_info["name"]
+                                    ),
+                                    "description": manifest_data.get(
+                                        "description", ""
+                                    ),
+                                    "tags": manifest_data.get("tags", []),
+                                    "statistics": manifest_data.get(
+                                        "statistics",
+                                        {
+                                            "conversations": 0,
+                                            "notes": 0,
+                                            "characters": 0,
+                                        },
+                                    ),
+                                }
+                            )
+                except Exception:
+                    pass
+
+                chatbooks.append(cb_info)
+            except Exception as e:
+                logger.error(f"Error reading chatbook {zip_file}: {e}")
+
+        # Sort by created date, newest first
+        chatbooks.sort(key=lambda x: x["created_at"], reverse=True)
+        return chatbooks
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
-        
+
         if button_id in ["view-grid", "view-list"]:
             self.view_mode = "grid" if button_id == "view-grid" else "list"
         elif button_id in ["empty-create-btn", "create-action"]:
@@ -588,7 +681,7 @@ class ChatbooksWindowImproved(Screen):
             await self.action_browse_templates()
         elif button_id == "manage-action":
             await self.action_manage_exports()
-            
+
     async def on_container_click(self, event) -> None:
         """Handle container clicks for action cards."""
         # Check if clicked element or parent is an action card
@@ -602,7 +695,7 @@ class ChatbooksWindowImproved(Screen):
             "manage-action",
         ]:
             element = element.parent
-            
+
         if element:
             if element.id == "create-action":
                 await self.action_create_chatbook()
@@ -616,32 +709,50 @@ class ChatbooksWindowImproved(Screen):
                 await self.action_browse_templates()
             elif element.id == "manage-action":
                 await self.action_manage_exports()
-                
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes."""
-        if event.input.id == "chatbook-search":
-            self.search_query = event.value
-            
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes (debounced -- task-15476)."""
+        if event.input.id != "chatbook-search":
+            return
+        query = event.value
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+        self._search_debounce_timer = self.set_timer(
+            self.SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_search_query(query)
+        )
+
+    def _apply_search_query(self, query: str) -> None:
+        self._search_debounce_timer = None
+        self.search_query = query
+
     async def action_create_chatbook(self, execution_mode: str = "local") -> None:
         """Launch the chatbook creation wizard."""
         from .Wizards.ChatbookCreationWizard import ChatbookCreationWizard
-        
-        wizard = ChatbookCreationWizard(self.app_instance, initial_execution_mode=execution_mode)
+
+        wizard = ChatbookCreationWizard(
+            self.app_instance, initial_execution_mode=execution_mode
+        )
         result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
-        
+
         if result and result.get("success"):
-            self.app_instance.notify("Chatbook created successfully!", severity="success")
+            self.app_instance.notify(
+                "Chatbook created successfully!", severity="success"
+            )
             await self._refresh_chatbooks()
-            
+
     async def action_import_chatbook(self, execution_mode: str = "local") -> None:
         """Launch the chatbook import wizard."""
         from .Wizards.ChatbookImportWizard import ChatbookImportWizard
-        
-        wizard = ChatbookImportWizard(self.app_instance, initial_execution_mode=execution_mode)
+
+        wizard = ChatbookImportWizard(
+            self.app_instance, initial_execution_mode=execution_mode
+        )
         result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
-        
+
         if result and result.get("success"):
-            self.app_instance.notify("Chatbook imported successfully!", severity="success")
+            self.app_instance.notify(
+                "Chatbook imported successfully!", severity="success"
+            )
             await self._refresh_chatbooks()
 
     async def action_create_chatbook_server(self) -> None:
@@ -651,40 +762,46 @@ class ChatbooksWindowImproved(Screen):
     async def action_import_chatbook_server(self) -> None:
         """Launch the chatbook import wizard in server mode."""
         await self.action_import_chatbook(execution_mode="server")
-            
+
     async def action_browse_templates(self) -> None:
         """Open the templates browser."""
         from .ChatbookTemplatesWindow import ChatbookTemplatesWindow
-        
+
         templates_window = ChatbookTemplatesWindow(self.app_instance)
-        result = await self.app_instance.push_screen(templates_window, wait_for_dismiss=True)
-        
+        result = await self.app_instance.push_screen(
+            templates_window, wait_for_dismiss=True
+        )
+
         if result:
             # User selected a template, launch creation wizard with pre-filled data
             from .Wizards.ChatbookCreationWizard import ChatbookCreationWizard
-            
+
             wizard = ChatbookCreationWizard(self.app_instance, template_data=result)
-            create_result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
-            
+            create_result = await self.app_instance.push_screen(
+                wizard, wait_for_dismiss=True
+            )
+
             if create_result and create_result.get("success"):
-                self.app_instance.notify("Chatbook created from template!", severity="success")
+                self.app_instance.notify(
+                    "Chatbook created from template!", severity="success"
+                )
                 await self._refresh_chatbooks()
-                
+
     async def action_manage_exports(self) -> None:
         """Open the export management window."""
         from .ChatbookExportManagementWindow import ChatbookExportManagementWindow
-        
+
         management_window = ChatbookExportManagementWindow(self.app_instance)
         await self.app_instance.push_screen(management_window, wait_for_dismiss=True)
-        
+
         # Refresh after management in case anything was deleted
         await self._refresh_chatbooks()
-        
+
     async def action_refresh(self) -> None:
         """Refresh the chatbooks list."""
         await self._refresh_chatbooks()
         self.app_instance.notify("Chatbooks refreshed", severity="info")
-        
+
     async def action_close(self) -> None:
         """Close the chatbooks window."""
         self.dismiss()

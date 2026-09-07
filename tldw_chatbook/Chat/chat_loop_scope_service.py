@@ -61,7 +61,7 @@ class ServerChatLoopScopeService:
             raise ValueError("run_id is required.")
         prefix = "server:chat_loop_run:"
         if raw.startswith(prefix):
-            raw = raw[len(prefix):]
+            raw = raw[len(prefix) :]
         if not raw:
             raise ValueError("run_id is required.")
         return raw
@@ -90,7 +90,9 @@ class ServerChatLoopScopeService:
     def _normalize_events_response(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         data = dict(payload)
         events = data.get("events") or []
-        data["events"] = [self._normalize_event(self._as_dict(event)) for event in events]
+        data["events"] = [
+            self._normalize_event(self._as_dict(event)) for event in events
+        ]
         return data
 
     async def start_run(
@@ -102,7 +104,9 @@ class ServerChatLoopScopeService:
     ) -> dict[str, Any]:
         self._require_server(mode)
         self._enforce_policy("chat.launch.server")
-        response = await self._maybe_await(self.server_service.start_run(messages=messages, **payload))
+        response = await self._maybe_await(
+            self.server_service.start_run(messages=messages, **payload)
+        )
         return self._normalize_run(self._as_dict(response))
 
     async def list_events(
@@ -115,7 +119,9 @@ class ServerChatLoopScopeService:
         self._require_server(mode)
         self._enforce_policy("chat.detail.server")
         response = await self._maybe_await(
-            self.server_service.list_events(self._parse_run_id(run_id), after_seq=after_seq)
+            self.server_service.list_events(
+                self._parse_run_id(run_id), after_seq=after_seq
+            )
         )
         return self._normalize_events_response(self._as_dict(response))
 
@@ -129,7 +135,11 @@ class ServerChatLoopScopeService:
         self._require_server(mode)
         self._enforce_policy("chat.launch.server")
         return self._as_dict(
-            await self._maybe_await(self.server_service.approve(self._parse_run_id(run_id), str(approval_id)))
+            await self._maybe_await(
+                self.server_service.approve(
+                    self._parse_run_id(run_id), str(approval_id)
+                )
+            )
         )
 
     async def reject(
@@ -142,10 +152,18 @@ class ServerChatLoopScopeService:
         self._require_server(mode)
         self._enforce_policy("chat.launch.server")
         return self._as_dict(
-            await self._maybe_await(self.server_service.reject(self._parse_run_id(run_id), str(approval_id)))
+            await self._maybe_await(
+                self.server_service.reject(self._parse_run_id(run_id), str(approval_id))
+            )
         )
 
-    async def cancel(self, *, mode: ChatLoopBackend | str | None = None, run_id: Any) -> dict[str, Any]:
+    async def cancel(
+        self, *, mode: ChatLoopBackend | str | None = None, run_id: Any
+    ) -> dict[str, Any]:
         self._require_server(mode)
         self._enforce_policy("chat.launch.server")
-        return self._as_dict(await self._maybe_await(self.server_service.cancel(self._parse_run_id(run_id))))
+        return self._as_dict(
+            await self._maybe_await(
+                self.server_service.cancel(self._parse_run_id(run_id))
+            )
+        )

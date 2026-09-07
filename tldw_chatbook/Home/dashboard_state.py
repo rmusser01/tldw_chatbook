@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
+HOME_PRIMARY_ACTION_ID = "home-primary-action"
+"""Widget/control id of the Home canvas primary action button."""
 
-from tldw_chatbook.Constants import TAB_LLM, TAB_SETTINGS, TAB_STUDY, get_tab_display_label
-from tldw_chatbook.UI.Navigation.shell_destinations import (
+from dataclasses import dataclass, replace  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+from rich.markup import escape as escape_markup  # noqa: E402
+
+from tldw_chatbook.Constants import (  # noqa: E402
+    TAB_CHAT,
+    TAB_EVALS,
+    TAB_LLM,
+    TAB_MEDIA,
+    TAB_SETTINGS,
+    TAB_STUDY,
+    get_tab_display_label,
+)
+from tldw_chatbook.UI.Navigation.shell_destinations import (  # noqa: E402
     get_shell_destination,
     resolve_shell_route,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (  # noqa: E402
+    format_console_relative_age,
+)
 
 
 # C1: human-readable labels for the Home canvas "Opens: <label>" line.
@@ -92,6 +107,74 @@ SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 
 HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
 HOME_FLASHCARDS_DUE_STATUS_CATEGORY = "due"
+
+# T190: idle-canvas controls for a ready Console over real content.
+# ``home-start-conversation`` routes to Console; ``home-resume-latest``
+# resumes the newest note (Library notes editor deep-link) or conversation
+# (Console). Both are dispatched by HomeScreen directly (screen-level
+# navigation, mirroring the model-setup recovery card) rather than through
+# HOME_CONTROL_METHODS' app-instance hooks.
+HOME_START_CONVERSATION_CONTROL_ID = "home-start-conversation"
+HOME_RESUME_LATEST_CONTROL_ID = "home-resume-latest"
+HOME_RESUME_KIND_NOTE = "note"
+HOME_RESUME_KIND_CONVERSATION = "conversation"
+HOME_RESUME_KIND_MEDIA = "media"
+# Shared recents cap (the adapter keeps its own alias; this module is the
+# canonical home so the pure merge can enforce it without importing the
+# adapter).
+HOME_RECENT_WORK_LIMIT = 8
+LOCAL_CONVERSATION_ITEM_ID_PREFIX = "local:conversation:"
+LOCAL_NOTE_ITEM_ID_PREFIX = "local:note:"
+LOCAL_MEDIA_ITEM_ID_PREFIX = "local:media:"
+# Canvas control that opens the SELECTED content recents row (screen-level
+# dispatch, like home-resume-latest -- not a HOME_CONTROL_METHODS hook).
+HOME_OPEN_ITEM_CONTROL_ID = "home-open-item"
+
+
+def content_item_kind(item_id: str) -> str | None:
+    """Return the content kind for a prefixed content item id.
+
+    Args:
+        item_id: A HomeActiveWorkItem item_id, possibly carrying one of the
+            ``LOCAL_*_ITEM_ID_PREFIX`` content prefixes.
+
+    Returns:
+        The content kind (``"conversation"``, ``"note"``, or ``"media"``)
+        matching the prefix, or ``None`` when the id carries none of them.
+    """
+    for kind, prefix in (
+        (HOME_RESUME_KIND_CONVERSATION, LOCAL_CONVERSATION_ITEM_ID_PREFIX),
+        (HOME_RESUME_KIND_NOTE, LOCAL_NOTE_ITEM_ID_PREFIX),
+        (HOME_RESUME_KIND_MEDIA, LOCAL_MEDIA_ITEM_ID_PREFIX),
+    ):
+        if item_id.startswith(prefix):
+            return kind
+    return None
+
+
+def combined_recent_work_items(
+    state: "HomeDashboardInput",
+) -> tuple[HomeActiveWorkItem, ...]:
+    """Merge adapter recents with content recents, newest-first, capped.
+
+    Args:
+        state: Adapter-provided dashboard input carrying both recent
+            sources (``recent_work_items`` and ``content_recent_items``).
+
+    Returns:
+        The merged recents tuple, sorted newest-first by ``updated_at``
+        (stable on ties), truncated to ``HOME_RECENT_WORK_LIMIT``.
+    """
+    merged = list(state.recent_work_items) + list(state.content_recent_items)
+    merged.sort(key=lambda item: item.updated_at, reverse=True)
+    return tuple(merged[:HOME_RECENT_WORK_LIMIT])
+
+
+# Prefix for a Library ingest job's HomeActiveWorkItem.item_id
+# ("local:ingest:<job_id>"). Shared by the adapter that builds these items
+# and every consumer that recognizes them (PR #599 review — was hardcoded in
+# 5 places).
+LOCAL_INGEST_ITEM_ID_PREFIX = "local:ingest:"
 
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 # "parsing"/"writing" (F3): the Library ingest job registry's two active
@@ -176,6 +259,103 @@ class HomeDashboardInput:
     active_work_items: tuple[HomeActiveWorkItem, ...] = ()
     recent_work_items: tuple[HomeActiveWorkItem, ...] = ()
     flashcards_due_count: int = 0
+    # Open-task queue feeds (spec §4). Eval counts include only
+    # pending/failed -- 'running' rows are orphaned forever by a crash and
+    # would pin the review suggestion. read_later None = unknown, renders
+    # nothing.
+    pending_eval_run_count: int = 0
+    failed_eval_run_count: int = 0
+    read_later_count: int | None = None
+    # T190: Console provider readiness from FRESH config (the readiness
+    # seams Console itself uses -- build_console_settings_readiness over
+    # load_settings(), never a boot snapshot). Distinct from ``model_ready``,
+    # which only reflects the boot-time ``providers_models`` map.
+    console_ready: bool = False
+    # T190: real content counts from the same seams the Library rail uses.
+    # ``None`` means "unknown/unavailable" (seam missing or failed) and is
+    # rendered as nothing -- only known positive counts appear on canvas.
+    conversation_count: int | None = None
+    note_count: int | None = None
+    media_count: int | None = None
+    # T190: the most recent note-or-conversation resume candidate.
+    # ``resume_title`` carries the RAW (pre-truncated) user title; it is
+    # markup-escaped exactly once, in ``build_home_resume_control``, before
+    # reaching a Button label.
+    resume_kind: str = ""
+    resume_id: str = ""
+    resume_title: str = ""
+    # Content recents (conversations/notes/media) from the HomeScreen
+    # content-snapshot pipeline; merged into the Recent rail section by
+    # combined_recent_work_items. Titles are markup-escaped at build.
+    content_recent_items: tuple[HomeActiveWorkItem, ...] = ()
+    resume_updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class HomeContentSnapshot:
+    """T190: cached Home content/readiness snapshot built off the compose path.
+
+    Mirrors the new ``HomeDashboardInput`` content fields one-to-one so the
+    screen worker can cache one immutable value and merge it into every
+    dashboard build via ``apply_home_content_snapshot``.
+    """
+
+    console_ready: bool = False
+    conversation_count: int | None = None
+    note_count: int | None = None
+    media_count: int | None = None
+    resume_kind: str = ""
+    resume_id: str = ""
+    resume_title: str = ""
+    content_recent_items: tuple[HomeActiveWorkItem, ...] = ()
+    resume_updated_at: str = ""
+
+
+def apply_home_content_snapshot(
+    state: HomeDashboardInput,
+    snapshot: HomeContentSnapshot,
+) -> HomeDashboardInput:
+    """Merge a content snapshot into adapter-provided dashboard input.
+
+    Args:
+        state: The adapter-built dashboard input.
+        snapshot: The cached content/readiness snapshot.
+
+    Returns:
+        ``state`` with the snapshot fields applied; ``has_library_content``
+        additionally flips to ``True`` when any known count is positive, so
+        the next-best-action engine stops suggesting "Import Library
+        sources" over a profile that demonstrably has content.
+    """
+    counts = (
+        snapshot.conversation_count,
+        snapshot.note_count,
+        snapshot.media_count,
+    )
+    has_content = state.has_library_content or any(
+        isinstance(count, int) and count > 0 for count in counts
+    )
+    # Content recents count as recent work too: either rail rows exist, or
+    # the newest content item fed the resume banner (which is intentionally
+    # excluded from the rows) -- without this, a content-only profile would
+    # still report "No recent work yet" beside a populated Recent rail.
+    has_recent = state.has_recent_work or (
+        bool(snapshot.content_recent_items) or bool(snapshot.resume_id)
+    )
+    return replace(
+        state,
+        console_ready=snapshot.console_ready,
+        conversation_count=snapshot.conversation_count,
+        note_count=snapshot.note_count,
+        media_count=snapshot.media_count,
+        resume_kind=snapshot.resume_kind,
+        resume_id=snapshot.resume_id,
+        resume_title=snapshot.resume_title,
+        content_recent_items=snapshot.content_recent_items,
+        resume_updated_at=snapshot.resume_updated_at,
+        has_library_content=has_content,
+        has_recent_work=has_recent,
+    )
 
 
 @dataclass(frozen=True)
@@ -272,6 +452,21 @@ def choose_next_best_action(
             "subscriptions",
             "Unread notifications need review.",
         )
+    if state.pending_eval_run_count or state.failed_eval_run_count:
+        return HomeAction(
+            "review_eval_runs",
+            "Review eval runs",
+            TAB_EVALS,
+            "Pending or failed eval runs need attention.",
+        )
+    if state.read_later_count:
+        item_word = "item" if state.read_later_count == 1 else "items"
+        return HomeAction(
+            "review_read_later",
+            f"Read-it-later: {state.read_later_count} {item_word}",
+            TAB_MEDIA,
+            "Your saved reading queue is waiting.",
+        )
     if not state.has_library_content:
         return HomeAction(
             "import_sources",
@@ -286,7 +481,29 @@ def choose_next_best_action(
             "library",
             "Search/RAG is ready over saved content.",
         )
-    return HomeAction("start_console", "Start in Console", "chat", "Console is ready for a task.")
+    if state.console_ready:
+        # T190: with the provider verifiably ready (fresh-config readiness,
+        # not the boot snapshot), the terminal suggestion reads as the
+        # user's actual next step rather than a destination name. With a
+        # recent conversation, "resume where you left off" IS that step
+        # (spec §4) -- the primary-action dispatch attaches the
+        # conversation id to the Console nav context.
+        if state.resume_kind == HOME_RESUME_KIND_CONVERSATION and state.resume_id:
+            return HomeAction(
+                "resume_last_conversation",
+                "Resume last conversation",
+                TAB_CHAT,
+                "Pick up where you left off.",
+            )
+        return HomeAction(
+            "start_console",
+            "Start a conversation",
+            "chat",
+            "Console is ready for a task.",
+        )
+    return HomeAction(
+        "start_console", "Start in Console", "chat", "Console is ready for a task."
+    )
 
 
 def choose_home_selected_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:
@@ -344,15 +561,61 @@ def build_home_controls(
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
     selected_item_is_failed = (
-        selected_item is not None and _normalized_status(selected_item) in _FAILED_STATUSES
+        selected_item is not None
+        and _normalized_status(selected_item) in _FAILED_STATUSES
     )
     if selected_item_is_failed:
         # The selected row's own failure -- not just "the first failed item
         # in the list" -- is what Retry (and its retry_available gate)
         # should reflect when a real item is selected.
         failed_item = selected_item
+    selected_item_is_running = (
+        selected_item is not None
+        and _normalized_status(selected_item) in _RUNNING_STATUSES
+    )
+    if selected_item_is_running:
+        # Same as the failed-item override above: when a running item is
+        # selected, Pause's target should reflect *that* item rather than
+        # just "the first running item in the list".
+        running_item = selected_item
+    # T154: Library ingest jobs (item_id "local:ingest:<job_id>") have no
+    # wired pause action -- the ingest job registry has no pause state, only
+    # queued/parsing/writing/done/failed (see library_ingest_jobs.py) -- so
+    # Home must not offer a control with nothing behind it. Scoped to the
+    # *selected* item, mirroring selected_item_is_failed above: with no
+    # selection (summarize_home_dashboard, the triage builder's count-only
+    # fallback) Pause keeps its unconditional-when-running behavior.
+    selected_item_is_ingest_job = selected_item_is_running and _is_local_ingest_item(
+        selected_item
+    )
     chatbook_item = _first_chatbook_artifact_item(state)
-    detail_item = choose_home_selected_item(state)
+    # When a real item is selected, its details/console controls target THAT
+    # item -- mirroring the selected_item overrides for Retry/Pause above (PR
+    # #600 review). Without this, "Open details" (and "Open in Console")
+    # pointed at whichever item ``choose_home_selected_item`` ranks first
+    # (approval > failed > running > ...), so selecting a non-first failed
+    # item and pressing Open details opened the first item's details while the
+    # canvas showed the second. The no-selection callers (summarize_home_
+    # dashboard, the triage builder's count-only fallback) pass
+    # ``selected_item=None`` and keep today's first-in-priority behavior.
+    detail_item = (
+        selected_item if selected_item is not None else choose_home_selected_item(state)
+    )
+
+    # Content recents rows (conversations/notes/media) get a single Open
+    # control that deep-links the item (screen-level dispatch, same as
+    # home-resume-latest) -- scoped to the SELECTED item, mirroring the
+    # selected_item overrides for Retry/Pause above.
+    if selected_item is not None and content_item_kind(selected_item.item_id):
+        controls.append(
+            HomeControl(
+                HOME_OPEN_ITEM_CONTROL_ID,
+                "Open",
+                selected_item.detail_route,
+                "open_content",
+                selected_item.item_id,
+            )
+        )
 
     if _pending_approval_count(state):
         controls.extend(
@@ -373,7 +636,10 @@ def build_home_controls(
                 ),
             )
         )
-    if _running_run_count(state) or (not state.active_work_items and state.active_run_count):
+    if (
+        _running_run_count(state)
+        or (not state.active_work_items and state.active_run_count)
+    ) and not selected_item_is_ingest_job:
         controls.append(
             HomeControl(
                 "home-pause",
@@ -398,7 +664,9 @@ def build_home_controls(
     # the triage builder's own count-only fallback) keep today's
     # unconditional-when-failed behavior unchanged.
     retry_withheld = selected_item_is_failed and not selected_item.retry_available
-    if (_failed_run_count(state) or _failed_schedule_count(state)) and not retry_withheld:
+    if (
+        _failed_run_count(state) or _failed_schedule_count(state)
+    ) and not retry_withheld:
         failed_route = failed_item.detail_route if failed_item else "schedules"
         controls.append(
             HomeControl(
@@ -426,11 +694,20 @@ def build_home_controls(
                 detail_item.item_id if detail_item else None,
             )
         )
-        if not state.active_work_items or any(item.console_available for item in state.active_work_items):
+        if not state.active_work_items or any(
+            item.console_available for item in state.active_work_items
+        ):
             console_item = (
                 detail_item
                 if detail_item is not None and detail_item.console_available
-                else next((item for item in state.active_work_items if item.console_available), detail_item)
+                else next(
+                    (
+                        item
+                        for item in state.active_work_items
+                        if item.console_available
+                    ),
+                    detail_item,
+                )
             )
             controls.append(
                 HomeControl(
@@ -461,6 +738,26 @@ def build_home_controls(
                     chatbook_item.item_id,
                 )
             )
+    # T153: the block above only fires when some active/failed/running/
+    # paused/approval count is nonzero, so a selected RECENT-ONLY item (a
+    # done import, a chatbook artifact -- present only in
+    # ``state.recent_work_items``, bumping no active count) got no
+    # ``home-open-details`` control at all, even though it is the item the
+    # user actually selected. Append one, targeting the selected item,
+    # unless the count-driven block already covered it above (guards
+    # against a double ``home-open-details``).
+    if selected_item is not None and not any(
+        control.control_id == "home-open-details" for control in controls
+    ):
+        controls.append(
+            HomeControl(
+                "home-open-details",
+                "Open details",
+                selected_item.detail_route,
+                "work_details",
+                selected_item.item_id,
+            )
+        )
     if state.flashcards_due_count > 0 and (
         not selected_row_id or selected_row_id == HOME_FLASHCARDS_DUE_ROW_ID
     ):
@@ -471,6 +768,125 @@ def build_home_controls(
                 "study",
                 "flashcards_due",
                 None,
+            )
+        )
+    return tuple(controls)
+
+
+def build_home_content_counts_line(state: HomeDashboardInput) -> str:
+    """Build the compact real-content counts line for the idle canvas.
+
+    Only known, positive counts are included -- an unknown (``None``) or
+    zero count renders nothing, so an empty profile never grows a
+    zero-clutter counts row (T190 AC4).
+
+    Args:
+        state: Adapter-provided dashboard input.
+
+    Returns:
+        e.g. ``"Conversations: 5 · Notes: 3"``, or ``""`` when no known
+        positive counts exist.
+    """
+    parts = [
+        f"{label}: {count}"
+        for label, count in (
+            ("Conversations", state.conversation_count),
+            ("Notes", state.note_count),
+            ("Media", state.media_count),
+        )
+        if isinstance(count, int) and count > 0
+    ]
+    return " · ".join(parts)
+
+
+def build_home_resume_control(
+    state: HomeDashboardInput,
+    *,
+    now: datetime | None = None,
+) -> HomeControl | None:
+    """Build the one-click resume control for the newest content item.
+
+    The raw user title is markup-escaped HERE, exactly once, because the
+    control label flows straight into a Textual Button label (which parses
+    Rich markup) -- same hazard class as ``_ingest_job_title`` in the
+    active-work adapter.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        now: Reference time for the relative-age suffix (defaults to UTC
+            now; injectable for deterministic tests).
+
+    Returns:
+        The ``home-resume-latest`` control, or ``None`` when no resume
+        candidate exists. Note/media candidates target the Library deep
+        links (``target_route="library"``); conversation candidates target
+        Console (``target_route="chat"``). ``target_id`` carries the
+        content-kind prefix so the screen dispatch routes by kind.
+    """
+    if not state.resume_id:
+        return None
+    if state.resume_kind == HOME_RESUME_KIND_NOTE:
+        kind_label = "note"
+        target_route = "library"
+        fallback_title = "Latest note"
+        prefix = LOCAL_NOTE_ITEM_ID_PREFIX
+    elif state.resume_kind == HOME_RESUME_KIND_CONVERSATION:
+        kind_label = "conversation"
+        target_route = "chat"
+        fallback_title = "Latest conversation"
+        prefix = LOCAL_CONVERSATION_ITEM_ID_PREFIX
+    elif state.resume_kind == HOME_RESUME_KIND_MEDIA:
+        kind_label = "reading"
+        target_route = "library"
+        fallback_title = "Latest media"
+        prefix = LOCAL_MEDIA_ITEM_ID_PREFIX
+    else:
+        return None
+    title = state.resume_title.strip() or fallback_title
+    label = f"Resume {kind_label}: {escape_markup(title)}"
+    age = format_console_relative_age(
+        state.resume_updated_at, now=now or datetime.now(timezone.utc)
+    )
+    if age:
+        label = f"{label} ({age})"
+    return HomeControl(
+        HOME_RESUME_LATEST_CONTROL_ID,
+        label,
+        target_route,
+        "resume_latest",
+        f"{prefix}{state.resume_id}",
+    )
+
+
+def _home_idle_canvas_controls(
+    state: HomeDashboardInput,
+    next_action: HomeAction,
+) -> tuple[HomeControl, ...]:
+    """Build the T190 idle-canvas controls (resume row + start conversation).
+
+    ``home-start-conversation`` is only added when the next-best action is
+    not already the start-console suggestion -- when it is, the canvas's own
+    ``home-primary-action`` button IS the "Start a conversation" control and
+    a second identical button would just duplicate it.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        next_action: The already-chosen next best action for this canvas.
+
+    Returns:
+        Controls to prepend to the no-selection canvas's actions.
+    """
+    controls: list[HomeControl] = []
+    resume_control = build_home_resume_control(state)
+    if resume_control is not None:
+        controls.append(resume_control)
+    if state.console_ready and next_action.action_id != "start_console":
+        controls.append(
+            HomeControl(
+                HOME_START_CONVERSATION_CONTROL_ID,
+                "Start a conversation",
+                "chat",
+                "start_conversation",
             )
         )
     return tuple(controls)
@@ -492,7 +908,7 @@ def _status_summary_line(state: HomeDashboardInput) -> str:
 def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
     next_action = choose_next_best_action(state)
     approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
-    active_count = _active_run_count(state)
+    _active_run_count(state)
     approval_count = _pending_approval_count(state)
     status_summary = _status_summary_line(state)
     return HomeDashboard(
@@ -534,7 +950,7 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
                     if state.has_recent_work
                     else (
                         "No recent work yet",
-                        "Runs, chatbooks, imports, and schedules will appear here.",
+                        "Conversations, notes, media, runs, chatbooks, and imports will appear here.",
                     )
                 ),
             ),
@@ -548,17 +964,41 @@ def _normalized_status(item: HomeActiveWorkItem) -> str:
 
 
 def _count_items_for_status(state: HomeDashboardInput, statuses: frozenset[str]) -> int:
-    return sum(1 for item in state.active_work_items if _normalized_status(item) in statuses)
+    return sum(
+        1 for item in state.active_work_items if _normalized_status(item) in statuses
+    )
 
 
 def _first_item_for_status(
     state: HomeDashboardInput,
     statuses: frozenset[str],
 ) -> HomeActiveWorkItem | None:
-    return next((item for item in state.active_work_items if _normalized_status(item) in statuses), None)
+    return next(
+        (
+            item
+            for item in state.active_work_items
+            if _normalized_status(item) in statuses
+        ),
+        None,
+    )
 
 
-def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkItem | None:
+def _is_local_ingest_item(item: HomeActiveWorkItem) -> bool:
+    """True when ``item`` mirrors a Library ingest job.
+
+    Uses the same ``local:ingest:<job_id>`` item_id marker that
+    ``active_work_adapter._local_ingest_job_items`` stamps on ingest-mirrored
+    ``HomeActiveWorkItem``s (see also that module's
+    ``_is_local_ingest_job_id``). Duplicated rather than imported: this
+    module is a leaf (``active_work_adapter`` imports *from* it), so it
+    cannot import back without a cycle.
+    """
+    return item.item_id.startswith(LOCAL_INGEST_ITEM_ID_PREFIX)
+
+
+def _first_chatbook_artifact_item(
+    state: HomeDashboardInput,
+) -> HomeActiveWorkItem | None:
     return next(
         (
             item
@@ -570,7 +1010,9 @@ def _first_chatbook_artifact_item(state: HomeDashboardInput) -> HomeActiveWorkIt
 
 
 def _pending_approval_count(state: HomeDashboardInput) -> int:
-    return state.pending_approval_count or _count_items_for_status(state, _APPROVAL_STATUSES)
+    return state.pending_approval_count or _count_items_for_status(
+        state, _APPROVAL_STATUSES
+    )
 
 
 def _running_run_count(state: HomeDashboardInput) -> int:
@@ -629,9 +1071,13 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
 
 
 def _server_event_status_line(state: HomeDashboardInput) -> str:
-    event_state = str(state.server_event_state or SERVER_EVENT_STATE_UNAVAILABLE).strip().lower()
+    event_state = (
+        str(state.server_event_state or SERVER_EVENT_STATE_UNAVAILABLE).strip().lower()
+    )
     if event_state == SERVER_EVENT_STATE_AVAILABLE:
-        return f"Server events: {state.server_event_count} observed via server event feed"
+        return (
+            f"Server events: {state.server_event_count} observed via server event feed"
+        )
     if event_state == SERVER_EVENT_STATE_EMPTY:
         return "Server events: No observed server events"
     if event_state == SERVER_EVENT_STATE_REQUERY_REQUIRED:
@@ -660,7 +1106,10 @@ def _runtime_explanation_line(state: HomeDashboardInput) -> str:
         return "Authentication is required before server-backed work."
     if auth_state == SERVER_AUTH_SESSION_INVALID:
         return "Authentication expired. Reconnect before server-backed work."
-    if reachability == SERVER_REACHABILITY_REACHABLE and auth_state == SERVER_AUTH_AUTHENTICATED:
+    if (
+        reachability == SERVER_REACHABILITY_REACHABLE
+        and auth_state == SERVER_AUTH_AUTHENTICATED
+    ):
         return "Server mode is ready for authenticated work."
     return "Checking server readiness."
 
@@ -670,7 +1119,11 @@ def _server_status_label(state: HomeDashboardInput) -> str:
     reachability = str(state.server_reachability or UNKNOWN_RUN_STATUS).strip().lower()
     auth_state = str(state.server_auth_state or UNKNOWN_RUN_STATUS).strip().lower()
     if source != RUNTIME_SOURCE_SERVER:
-        return "Configured; local mode" if state.server_configured else "Not configured (local mode)"
+        return (
+            "Configured; local mode"
+            if state.server_configured
+            else "Not configured (local mode)"
+        )
     if not state.server_configured or not state.active_server_id:
         return "Missing active server"
     if reachability == SERVER_REACHABILITY_UNREACHABLE:
@@ -679,7 +1132,10 @@ def _server_status_label(state: HomeDashboardInput) -> str:
         return "Auth required"
     if auth_state == SERVER_AUTH_SESSION_INVALID:
         return "Auth expired"
-    if reachability == SERVER_REACHABILITY_REACHABLE and auth_state == SERVER_AUTH_AUTHENTICATED:
+    if (
+        reachability == SERVER_REACHABILITY_REACHABLE
+        and auth_state == SERVER_AUTH_AUTHENTICATED
+    ):
         return "Ready"
     return "Checking"
 
@@ -812,7 +1268,11 @@ def _canvas_primary_control_id(
         candidate = "home-approve"
     else:
         candidate = "home-open-details"
-    return candidate if any(control.control_id == candidate for control in controls) else ""
+    return (
+        candidate
+        if any(control.control_id == candidate for control in controls)
+        else ""
+    )
 
 
 def build_home_triage_state(
@@ -846,7 +1306,8 @@ def build_home_triage_state(
             # as active work rather than silently dropping.
             running_rows.append(_item_row(item, "running", reference_now))
     recent_rows = tuple(
-        _item_row(item, "recent", reference_now) for item in state.recent_work_items
+        _item_row(item, "recent", reference_now)
+        for item in combined_recent_work_items(state)
     )
 
     if state.flashcards_due_count > 0:
@@ -883,7 +1344,7 @@ def build_home_triage_state(
             "Recent",
             len(recent_rows),
             recent_rows,
-            "Runs, chatbooks, imports, and schedules will appear here.",
+            "Conversations, notes, media, runs, chatbooks, and imports will appear here.",
         ),
     )
 
@@ -921,7 +1382,8 @@ def build_home_triage_state(
         else:
             item = next(
                 i
-                for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
+                for i in tuple(state.active_work_items)
+                + combined_recent_work_items(state)
                 if i.item_id == selected.row_id
             )
             # M4: thread the resolved item so build_home_controls can gate
@@ -979,13 +1441,48 @@ def build_home_triage_state(
         # Count-only inputs (no item list) still expose their controls so
         # approvals/retries remain reachable without a selectable row.
         controls = build_home_controls(state)
+        # T190: the idle canvas mirrors real state -- resume-latest row and
+        # (when the provider is verifiably ready) a Start-a-conversation
+        # control, plus a compact real-content counts line. All three
+        # degrade to nothing on an empty/unknown profile, keeping the
+        # import-suggestion card exactly as before.
+        idle_controls = _home_idle_canvas_controls(state, next_action)
+        canvas_actions = idle_controls + controls
+        lines = [next_action.reason]
+        counts_line = build_home_content_counts_line(state)
+        if counts_line:
+            lines.append(counts_line)
+        primary_control_id = _canvas_primary_control_id(
+            UNKNOWN_RUN_STATUS, canvas_actions
+        )
+        if not primary_control_id and state.console_ready:
+            # Primary emphasis lands on whichever button actually starts a
+            # conversation: the dedicated idle control when present,
+            # otherwise the canvas's own next-action button (which IS the
+            # start-console suggestion in the ready+content case). With a
+            # recent conversation the terminal suggestion IS the resume
+            # (spec §4), so the next-action button takes primary over the
+            # generic start control -- the emphasized button should match
+            # the suggestion the canvas is showing.
+            if next_action.action_id == "resume_last_conversation":
+                primary_control_id = HOME_PRIMARY_ACTION_ID
+            elif any(
+                control.control_id == HOME_START_CONVERSATION_CONTROL_ID
+                for control in canvas_actions
+            ):
+                primary_control_id = HOME_START_CONVERSATION_CONTROL_ID
+            elif next_action.action_id == "start_console":
+                primary_control_id = HOME_PRIMARY_ACTION_ID
         canvas = HomeCanvasState(
             title=next_action.label,
-            lines=(next_action.reason,),
-            actions=controls,
+            lines=tuple(lines),
+            actions=canvas_actions,
             next_action=next_action,
+            # Only count-driven work controls push the next action out of
+            # the canvas toolbar into the below-toolbar callout; the T190
+            # idle controls keep it inline (single coherent idle card).
             next_action_is_canvas=not controls,
-            primary_control_id=_canvas_primary_control_id(UNKNOWN_RUN_STATUS, controls),
+            primary_control_id=primary_control_id,
         )
         selected_id = ""
 

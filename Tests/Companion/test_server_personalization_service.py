@@ -38,7 +38,10 @@ class FakePersonalizationClient:
 
     async def list_personalization_memories(self, **kwargs):
         self.calls.append(("list_personalization_memories", kwargs))
-        return {"items": [{"id": "mem-1", "type": "semantic", "content": "Memory"}], "total": 1}
+        return {
+            "items": [{"id": "mem-1", "type": "semantic", "content": "Memory"}],
+            "total": 1,
+        }
 
     async def export_personalization_memories(self):
         self.calls.append(("export_personalization_memories",))
@@ -50,7 +53,11 @@ class FakePersonalizationClient:
 
     async def create_personalization_memory(self, request_data):
         self.calls.append(("create_personalization_memory", request_data))
-        return {"id": "mem-created", "type": "semantic", "content": request_data.content}
+        return {
+            "id": "mem-created",
+            "type": "semantic",
+            "content": request_data.content,
+        }
 
     async def update_personalization_memory(self, memory_id, request_data):
         self.calls.append(("update_personalization_memory", memory_id, request_data))
@@ -163,7 +170,9 @@ async def test_server_personalization_service_re_resolves_provider_without_servi
 
 
 @pytest.mark.asyncio
-async def test_server_personalization_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_personalization_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakePersonalizationClient())
     build_provider_calls = []
 
@@ -171,7 +180,11 @@ async def test_server_personalization_service_from_config_returns_provider_backe
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(personalization_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        personalization_module,
+        "build_runtime_api_client_provider_from_config",
+        build_provider,
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerPersonalizationService.from_config(config)
@@ -205,7 +218,9 @@ async def test_server_personalization_service_delegates_and_normalizes_records()
     assert preferences["response_style"] == "concise"
     assert preferences["record_id"] == "server:personalization_preferences"
     assert purged["record_id"] == "server:personalization_lifecycle:purge"
-    assert all(item["backend"] == "server" for item in [profile, opt_in, preferences, purged])
+    assert all(
+        item["backend"] == "server" for item in [profile, opt_in, preferences, purged]
+    )
     assert client.calls[0] == ("get_personalization_profile",)
     assert client.calls[-1] == ("purge_personalization_data",)
 
@@ -215,7 +230,9 @@ async def test_server_personalization_service_delegates_memory_and_explanation_r
     client = FakePersonalizationClient()
     service = ServerPersonalizationService(client=client)
 
-    memories = await service.list_memories(memory_type="semantic", q="memory", page=2, size=25, include_hidden=True)
+    memories = await service.list_memories(
+        memory_type="semantic", q="memory", page=2, size=25, include_hidden=True
+    )
     exported = await service.export_memories()
     detail = await service.get_memory("mem-1")
     created = await service.create_memory({"content": "Created"})
@@ -234,17 +251,20 @@ async def test_server_personalization_service_delegates_memory_and_explanation_r
     assert validated["record_id"] == "server:personalization_memories:validate"
     assert imported["record_id"] == "server:personalization_memories:import"
     assert explanations["record_id"] == "server:personalization_explanations"
-    assert all(item["backend"] == "server" for item in [
-        memories,
-        exported,
-        detail,
-        created,
-        updated,
-        deleted,
-        validated,
-        imported,
-        explanations,
-    ])
+    assert all(
+        item["backend"] == "server"
+        for item in [
+            memories,
+            exported,
+            detail,
+            created,
+            updated,
+            deleted,
+            validated,
+            imported,
+            explanations,
+        ]
+    )
     assert client.calls[0] == (
         "list_personalization_memories",
         {
@@ -277,7 +297,9 @@ async def test_server_personalization_service_enforces_policy_actions():
     await service.import_memories({"memories": [{"content": "Imported"}]})
     await service.list_explanations()
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "personalization.profile.detail.server",
         "personalization.opt_in.update.server",
         "personalization.preferences.update.server",

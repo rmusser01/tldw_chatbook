@@ -1,5 +1,12 @@
 # TTS/Dictation Implementation - Complete Summary
 
+> **Retired history implementation (2026-08-01):** TASK-1331 determined
+> transcription history is not a product feature. The unshipped
+> `transcription_history.py` store and `transcription_history_viewer.py` were
+> removed by TASK-865; references to their encryption, export, or search
+> capabilities below are superseded. The retained production dictation UI is
+> `Dictation_Window_Improved.py`.
+
 ## Implementation Status: ✅ COMPLETE
 
 All requested improvements to the TTS and Dictation features have been successfully implemented.
@@ -20,14 +27,14 @@ All requested improvements to the TTS and Dictation features have been successfu
 
 ### 3. Privacy & Security ✅
 - Privacy-first defaults (local processing, no history)
-- Optional encrypted transcription history
+- No persisted transcription history
 - Auto-clear audio buffers
 - Local-only mode that restricts to on-device providers
 
 ### 4. Enhanced Features ✅
 - Expanded voice command system (`voice_commands.py`)
 - Voice input button widget for any text field
-- Transcription history viewer with search/export
+- No transcription-history viewer
 - Performance monitoring and metrics
 - Audio device troubleshooting dialog
 
@@ -56,14 +63,14 @@ All requested improvements to the TTS and Dictation features have been successfu
 - `/tldw_chatbook/UI/Dictation_Window_Improved.py` - Enhanced dictation UI
 - `/tldw_chatbook/Audio/dictation_service_lazy.py` - Lazy-loading service
 - `/tldw_chatbook/Audio/voice_commands.py` - Voice command system
-- `/tldw_chatbook/Audio/transcription_history.py` - Encrypted history
+- `/tldw_chatbook/Audio/transcription_history.py` - Retired; transcription history is not a product feature
 - `/tldw_chatbook/Audio/dictation_metrics.py` - Performance monitoring
 
 ### New Widgets
 - `/tldw_chatbook/Widgets/voice_input_button.py` - Reusable voice input
 - `/tldw_chatbook/Widgets/audio_troubleshooting_dialog.py` - Device diagnostics
 - `/tldw_chatbook/Widgets/voice_command_dialog.py` - Command configuration
-- `/tldw_chatbook/Widgets/transcription_history_viewer.py` - History browser
+- `/tldw_chatbook/Widgets/transcription_history_viewer.py` - Retired with the rejected history implementation
 - `/tldw_chatbook/Widgets/dictation_performance_widget.py` - Performance dashboard
 
 ### Event System
@@ -90,7 +97,7 @@ All requested improvements to the TTS and Dictation features have been successfu
 3. **Enhanced Privacy**
    - Privacy-first defaults
    - Optional features require explicit opt-in
-   - Encrypted storage options
+   - No transcription-history storage
    - Local-only processing mode
 
 4. **Better Integration**
@@ -114,7 +121,7 @@ All requested improvements to the TTS and Dictation features have been successfu
 1. Test voice input across different tabs (chat, notes, search)
 2. Verify privacy mode restricts to local providers only
 3. Test audio device switching and troubleshooting
-4. Verify encrypted history functionality
+4. Verify that dictation does not persist transcription history
 5. Test performance with long dictation sessions
 
 ## Usage Examples

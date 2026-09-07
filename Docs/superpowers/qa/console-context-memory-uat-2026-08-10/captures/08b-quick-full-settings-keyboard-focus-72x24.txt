@@ -1,0 +1,25 @@
+╭────────────╮
+tldw chatbook
+ ⌃1 Ho▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎re ▾
+──────▊▎──────
+Read▊▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▎ry
+┌─────▊ Streaming: on ▎─────┐
+││Co▊Response max  unknown tokens for the next reply▎││
+││▊Request       ~0 / 8,001 estimated input; model▃▎││
+││▊Conversation  ~0 / 8,001 max tokens▎││
+││▊Compaction    at 6,400 tokens▎││
+││▊Summarizes older turns. Automatic may add one extra▎││
+││▊model call.▎││
+││▊▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▎││
+││▊▊Ask▼▎▎││
+││▊▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▎││
+│└───▊▎───┘│
+└─────▊▼ more — scroll for conversation settings▎─────┘
+Pro▊▎em Pr
+▊ Context & memory…  Apply ▎
+┌─────▊▎─────┐
+│▊▎│
+│Com▊▎icta│
+│▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│
+└──────────────────────────────────────────────────────────────────────┘
+… F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit

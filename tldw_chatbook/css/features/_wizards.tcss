@@ -33,7 +33,9 @@
 .wizard-progress {
     layout: horizontal;
     align: center middle;
-    padding: 2;
+    /* TASK-21148 (UAT Z-3): 1-row padding — the old 2 spent four rows of
+       chrome before any step content at 40-row terminals. */
+    padding: 1 2;
     background: $panel;
     border-bottom: solid $primary-darken-2;
     height: auto;
@@ -108,7 +110,7 @@
 .wizard-step {
     width: 100%;
     height: 100%;
-    padding: 2;
+    padding: 1 2;
     display: block;
     visibility: hidden;
 }
@@ -136,6 +138,20 @@
     height: 5;
 }
 
+/* TASK-21142 (UAT N-2): Textual focus order is VISUAL (y, x) order, so the
+   footer adopts the Windows-wizard convention — progress text docked left,
+   right-aligned [Back][Next][Exit] cluster — making Next the first enabled
+   Tab stop after step content, before the abandon action. */
+.setup-navigation { align: right middle; }
+.setup-navigation .wizard-progress-text {
+    dock: left;
+    width: auto;
+    height: 100%;
+    content-align: left middle;
+    padding: 0 2;
+}
+.setup-navigation #wizard-cancel { height: 3; min-width: 12; }
+
 .wizard-progress-text {
     width: 1fr;
     text-align: center;
@@ -159,26 +175,6 @@
  * Content Type Selection
  * ======================================== */
 
-.wizard-step-title {
-    text-style: bold;
-    text-align: center;
-    margin-bottom: 1;
-}
-
-.wizard-step-subtitle {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: 2;
-}
-
-.content-type-grid {
-    layout: grid;
-    grid-size: 3 2;
-    grid-gutter: 2;
-    padding: 2;
-    margin-top: 2;
-    width: 100%;
-}
 
 .content-type-card {
     background: $panel;
@@ -198,11 +194,6 @@
     border: round $ds-focus-accent;
     color: $ds-focus-fg;
     text-style: bold underline;
-}
-
-.content-type-icon {
-    margin-bottom: 1;
-    text-align: center;
 }
 
 .content-type-title {
@@ -226,22 +217,6 @@
  * Content Selection
  * ======================================== */
 
-.smart-content-selector {
-    width: 100%;
-    height: 100%;
-}
-
-.selection-mode-set {
-    layout: horizontal;
-    margin-bottom: 2;
-    padding: 1;
-    background: $panel;
-    border: round $primary-darken-2;
-}
-
-.selection-mode-set RadioButton {
-    margin-right: 2;
-}
 
 .content-search-input {
     width: 100%;
@@ -252,28 +227,11 @@
     display: none;
 }
 
-.quick-selection-buttons {
-    layout: horizontal;
-    margin-bottom: 1;
-}
-
-.quick-selection-buttons Button {
-    margin-right: 1;
-    min-width: 12;
-}
 
 .preview-label {
     text-style: bold;
     margin-bottom: 1;
     color: $primary;
-}
-
-.content-list-container {
-    height: 25;
-    background: $surface;
-    border: round $primary-darken-2;
-    padding: 1;
-    overflow-y: auto;
 }
 
 .content-list {
@@ -291,33 +249,8 @@
     background: $panel 50%;
 }
 
-.content-item-row {
-    layout: horizontal;
-    align: left middle;
-}
 
-.content-item-checkbox {
-    margin-right: 1;
-}
 
-.content-item-icon {
-    margin-right: 1;
-    min-width: 3;
-    text-align: center;
-}
-
-.content-item-info {
-    width: 1fr;
-}
-
-.content-item-title {
-    text-style: bold;
-    margin-bottom: 0;
-}
-
-.content-item-subtitle {
-    color: $text-muted;
-}
 
 .placeholder-text {
     text-align: center;
@@ -456,17 +389,6 @@
  * Processing Step
  * ======================================== */
 
-.processing-container {
-    background: $panel;
-    border: round $primary;
-    padding: 2;
-    margin-bottom: 2;
-}
-
-.main-progress-bar {
-    height: 3;
-    margin-bottom: 2;
-}
 
 .progress-text {
     text-align: center;
@@ -495,21 +417,6 @@
     color: $text-muted;
 }
 
-.explanation-box {
-    background: $primary 10%;
-    border: round $primary;
-    padding: 2;
-}
-
-.explanation-title {
-    text-style: bold;
-    margin-bottom: 1;
-    color: $primary;
-}
-
-.explanation-text {
-    color: $text;
-}
 
 /* ========================================
  * Validation and Errors
@@ -532,15 +439,6 @@
 
 /* Progress bar animation removed - not supported in Textual */
 
-/* Loading state */
-.wizard-loading {
-    align: center middle;
-    height: 100%;
-}
-
-.wizard-loading LoadingIndicator {
-    margin-bottom: 2;
-}
 
 /* ========================================
  * Responsive adjustments
@@ -625,12 +523,6 @@ ExportOptionsStep .radio-option {
 
 ExportOptionsStep .checkbox-option {
     margin: 0 0 1 1;
-}
-
-ExportOptionsStep .compression-level {
-    margin-left: 3;
-    layout: horizontal;
-    height: 3;
 }
 
 /* Preview Confirm Step */
@@ -1041,12 +933,52 @@ ImportProgressStep .status-item.error {
     color: $error;
 }
 
+/* A type that imported nothing (all skipped) or only partly imported is not
+ * green -- the colour is part of the claim (task-19734). */
+ImportProgressStep .status-item.warning {
+    color: $warning;
+}
+
+/* The completion banner is coloured by the outcome it reports, so a run that
+ * imported nothing cannot be framed in the success palette (task-19734). */
 ImportProgressStep .completion-message {
     text-align: center;
     padding: 2;
     margin-top: 2;
+    background: $panel;
+    border: round $background-darken-1;
+}
+
+ImportProgressStep .completion-message.outcome-imported {
     background: $success 20%;
     border: round $success;
+}
+
+ImportProgressStep .completion-message.outcome-partial {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-skipped {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-empty {
+    background: $panel;
+    border: round $background-darken-1;
+}
+
+/* A chatbook that HAD items none of which were attempted is not the same as
+ * an empty one, and it is not a success either (task-19734). */
+ImportProgressStep .completion-message.outcome-excluded {
+    background: $warning 20%;
+    border: round $warning;
+}
+
+ImportProgressStep .completion-message.outcome-failed {
+    background: $error 20%;
+    border: round $error;
 }
 
 ImportProgressStep .completion-stats {
@@ -1150,3 +1082,450 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
     text-style: bold underline;
 }
+
+/* ── First-run setup wizard ─────────────────────────────────────────── */
+/* TASK-1495: padding/margins on this section were trimmed from their
+ * original values (welcome/provider padding "2 4" -> "1 4"; subtitle
+ * margin-bottom 2 -> 1) to reclaim just enough vertical budget for the
+ * Provider step's API-key Input to fit on screen at 120x40 alongside its
+ * (now-capped, see ".setup-choice-list" below) provider list -- see that
+ * rule's own comment for the full row-budget accounting. */
+.setup-welcome { padding: 1 4; }
+.setup-provider { padding: 0 2; }
+.setup-title { text-style: bold; text-align: center; margin-bottom: 1; }
+.setup-subtitle { color: $text-muted; margin-bottom: 1; }
+.setup-provider .setup-title,
+.setup-provider .setup-subtitle { margin-bottom: 0; }
+.setup-step-error {
+    color: $error;
+    background: $error 15%;
+    text-style: bold;
+    margin-top: 1;
+}
+/* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
+   the error class and rendered reassurance as a failure. */
+.setup-step-note { color: $text-muted; margin-top: 1; }
+.setup-field-label { margin-top: 1; }
+.setup-probe-status { color: $text-muted; margin-top: 1; }
+.setup-summary-row { height: 1; }
+.setup-summary-ok { color: $success; }
+.setup-summary-missing { color: $error; }
+
+/* TASK-1495: the step region clips without scrolling; primary inputs/CTAs
+ * can render below a hard fold with no scrollbar (Provider's API-key field
+ * and "Use this server" button; the Full-track Summary's exit buttons).
+ * Root cause -- BaseWizard.py (never modified) styles the shared
+ * ".wizard-step" class as "height: 100%" with no overflow, and each step's
+ * own content wrapper (a plain Vertical) inherits Textual's Vertical default
+ * of "height: 1fr; overflow: hidden hidden", so oversized content is clipped
+ * by the INNER wrapper before the outer ".wizard-steps-container"'s own
+ * "overflow-y: auto" (see above in this file) ever gets a chance to scroll
+ * anything -- that container's child (the active step) always measures
+ * exactly 100% of its parent, never "overflowing" it by definition.
+ *
+ * Both rules below are scoped to ".setup-step"/the setup wizard's own
+ * per-step classes (added in FirstRunSetupWizard.py, SetupStep.__init__ and
+ * each step's compose()) rather than editing ".wizard-step" or
+ * ".wizard-steps-container" directly, so the Chatbook create/import wizards
+ * (whose steps carry neither class) are byte-for-byte unaffected.
+ */
+.setup-step {
+    /* Height stays 100% (inherited from ".wizard-step") -- this becomes the
+     * actual scroll VIEWPORT for the step's content. */
+    overflow-y: auto;
+}
+
+.setup-welcome,
+.setup-provider,
+.setup-model,
+.setup-voice,
+.setup-rag,
+.setup-speech,
+.setup-tools,
+.setup-notes,
+.setup-appearance,
+.setup-protect,
+.setup-summary {
+    /* Size to natural content height instead of Vertical's default 1fr, so
+     * content taller than the step's 100%-height viewport actually
+     * registers as "overflow" for ".setup-step" above to scroll. */
+    height: auto;
+}
+
+/* Task 2.7: Voice keeps a stable compact control rhythm while the shared
+ * setup-step viewport owns scrolling at narrow and short terminal sizes. */
+.setup-voice {
+    padding: 0 2 1 2;
+}
+
+.setup-voice-segmented {
+    layout: horizontal;
+    height: 3;
+    min-height: 3;
+    border: solid $primary;
+    overflow: hidden hidden;
+}
+
+.setup-voice-segmented SetupRadioButton {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+}
+
+.setup-voice-segmented SetupRadioButton.-on {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.setup-voice-output-row {
+    height: 5;
+}
+
+.setup-voice-output-row > Vertical {
+    width: 1fr;
+    height: 5;
+}
+
+#setup-voice-sample-count {
+    height: 1;
+    text-align: right;
+    color: $text-muted;
+}
+
+#setup-voice-test {
+    margin-top: 1;
+}
+
+#setup-voice-status {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+/* Design intent #2/#3: a step's internal choice list (Provider's ~27-row
+ * catalog; Model's up-to-20 discovered models; Appearance's 20+ themes) must
+ * not by itself consume the whole step's visible height and push the rest
+ * of the step (the API-key field, Summary-style action rows) out of view.
+ * RadioSet is a VerticalScroll (Textual default height: auto, no cap) --
+ * capping it here gives it its OWN scrollbar so the step's remaining
+ * content stays on screen without any manual scrolling.
+ *
+ * A five-row minimum keeps the control from collapsing as asynchronous
+ * labels/statuses change; the seven-row cap exposes more choices when space
+ * is available without letting the catalog displace the key field or footer.
+ * At supported narrow sizes the containing .setup-step remains the scroll
+ * viewport, while the fixed progress/navigation regions stay on screen. */
+.setup-choice-list {
+    min-height: 5;
+    max-height: 7;
+    border: solid $primary;
+}
+
+.setup-choice-list:focus {
+    border: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+/* TASK-1495 AC #3: the Summary's exit actions are docked to the step
+ * viewport's bottom edge (the row is a direct child of the .setup-step
+ * scroll container -- see SummaryStep.compose). Docked widgets reserve
+ * their own space and never scroll with content, so "Start chatting" /
+ * "Done" stay visible however tall the read-back matrix grows. */
+.setup-summary-actions {
+    dock: bottom;
+    height: auto;
+    padding: 0 4 1 4;
+}
+.setup-summary-actions Button {
+    margin-right: 2;
+}
+
+/* TASK-1497: second structural cue for the selected radio row (the first is
+ * the ●/○ glyph swap in SetupRadioButton) — bold survives monochrome. */
+.setup-choice-list SetupRadioButton.-on {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border-left: thick $ds-focus-accent;
+    text-style: bold underline;
+}
+
+/* TASK-1501: aligned tool rows. Switch is 3 rows tall (bordered); without an
+ * explicit row height the unstyled Horizontals let successive switches'
+ * borders collide into the next row's label. */
+.setup-tool-row {
+    height: 3;
+    margin-bottom: 1;
+}
+.setup-tool-row Switch {
+    margin-right: 2;
+}
+.setup-tool-text {
+    width: 1fr;
+    height: auto;
+}
+.setup-tool-name {
+    text-style: bold;
+}
+.setup-tool-desc {
+    color: $text-muted;
+}
+
+/* TASK-1500/1507: tertiary controls (Show all themes…, Skip — explore on my
+ * own) — link-like: quiet until focused/hovered, clearly subordinate to the
+ * primary choices they sit under. */
+.setup-tertiary-button {
+    background: transparent;
+    border: none;
+    color: $text-muted;
+    text-style: underline;
+    height: 1;
+    min-width: 0;
+    padding: 0 1;
+    margin-top: 1;
+}
+.setup-tertiary-button:hover {
+    color: $text;
+    background: transparent;
+}
+.setup-tertiary-button:focus {
+    color: $text;
+    text-style: bold underline;
+}
+
+/* TASK-1498: section headers inside the provider list, and the pinned
+ * found-a-server banner above it. */
+.setup-choice-header {
+    color: $text-muted;
+    text-style: bold;
+    padding: 0 1;
+}
+.setup-detected-banner {
+    margin-bottom: 1;
+}
+
+#setup-provider-connection {
+    height: auto;
+    min-height: 7;
+}
+
+#setup-provider-endpoint {
+    width: 100%;
+    min-height: 3;
+}
+
+.setup-endpoint-value {
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+    color: $text-muted;
+}
+
+.setup-provider-connection-actions {
+    height: 3;
+    min-height: 3;
+    margin-top: 1;
+}
+
+.setup-provider-connection-actions Button {
+    min-width: 12;
+    margin-right: 1;
+}
+
+#setup-provider-auth-toggle {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+}
+
+#setup-provider-api-key {
+    width: 100%;
+    min-height: 3;
+}
+
+.setup-detection-results {
+    height: auto;
+    min-height: 3;
+    max-height: 8;
+    border: solid $primary;
+    margin-top: 1;
+}
+
+.setup-detection-results:focus {
+    border: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+/* TASK-1498: the wizard's own show/hide toggles (discovery banner + button,
+ * Keep/Replace/Clear row) — the repo's ".hidden" convention is styled only
+ * for specific widgets elsewhere, so scope a real display:none here. */
+.setup-provider .hidden {
+    display: none;
+}
+
+/* TASK-1505: persistent key-hints line docked under the wizard. */
+.setup-key-hints {
+    dock: bottom;
+    height: 1;
+    color: $text-muted;
+    text-align: center;
+    background: $panel;
+}
+
+/* TASK-21148 (UAT F-2/F-3): the tracker stacks each title UNDER its number
+   box, so the row needs box(3) + title(1) = 4 content rows and items size
+   themselves. The old fixed 4/3 caps clipped the stacked titles. */
+FirstRunSetupWizard SetupWizardContainer .wizard-progress {
+    height: auto;
+    max-height: 5;
+    padding: 0 1;
+    margin: 0;
+}
+
+.setup-progress-item {
+    height: auto;
+    min-width: 0;
+    margin: 0;
+}
+
+.setup-progress-item.-active .step-number {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: solid $ds-focus-accent;
+}
+
+.setup-progress-item.-active .step-title {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.setup-progress-item.-complete .step-number {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: solid $success;
+}
+
+.setup-progress-item.-complete .step-title {
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* TASK-21143 (UAT N-7): visited step whose probe failed — amber "!", never
+   the ✓ users read as "this part is OK". */
+.setup-progress-item.-attention .step-number {
+    background: $ds-surface-raised;
+    color: $warning;
+    border: solid $warning;
+    text-style: bold;
+}
+.setup-progress-item.-attention .step-title {
+    color: $warning;
+    text-style: bold;
+}
+
+.setup-progress-item.-upcoming .step-number {
+    background: $panel;
+    color: $text-muted;
+    border: solid $primary;
+}
+
+.setup-progress-item.-upcoming .step-title {
+    color: $text-muted;
+}
+
+/* TASK-1506: key input and its Test button share one row. */
+.setup-key-row {
+    height: 3;
+}
+.setup-key-row Input {
+    width: 1fr;
+}
+.setup-key-row Button {
+    margin-left: 1;
+    min-width: 8;
+}
+
+/* TASK-1505: with the key-hints line docked at the screen's bottom, the
+ * wizard container must yield that row — height:100% (the shared framework
+ * default) would push the navigation bar's last row off screen. Scoped to
+ * the setup wizard's own screen. */
+FirstRunSetupWizard SetupWizardContainer {
+    height: 1fr;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-title {
+    height: 3;
+    padding: 0 2;
+    margin: 0;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-steps-container {
+    height: 1fr;
+    padding: 0;
+    margin: 0;
+}
+
+FirstRunSetupWizard SetupWizardContainer .wizard-navigation {
+    height: 4;
+    min-height: 4;
+    padding: 0 2;
+    margin: 0;
+}
+
+FirstRunSetupWizard .setup-key-hints {
+    height: 1;
+    min-height: 1;
+}
+
+/* WizardProgress active-step states (TASK-16811): moved here from the
+   widget's DEFAULT_CSS so the real $ds-focus-* tokens apply (the local
+   fallbacks that used to sit beside them shadowed the bundle's values). */
+WizardProgress .step-number.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
+}
+
+WizardProgress .step-title.active {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* TASK-21148 (UAT Z-2): sub-minimum terminal nudge in the wizard chrome. */
+.setup-size-hint {
+    dock: bottom;
+    height: 1;
+    color: $warning;
+    text-align: center;
+}
+/* Explicit: the docked row must fully vanish when hidden — module concat
+   order must not decide whether .hidden wins. */
+.setup-size-hint.hidden { display: none; }
+
+/* TASK-21148 (UAT F-2/F-3): tracker titles under the number boxes; boxes
+   sized for two-digit steps. */
+.setup-progress-item .step-indicator-stack {
+    layout: vertical;
+    align: center top;
+    width: auto;
+    height: auto;
+}
+.setup-progress-item .step-number {
+    width: auto;
+    min-width: 4;
+    margin-right: 0;
+}
+.setup-progress-item .step-title {
+    margin-right: 0;
+    text-align: center;
+}
+
+
+/* TASK-21148 (UAT P-1/Z-3): collapsible sections inside steps spent ~3
+   blank rows before their first field. */
+.setup-step Collapsible > Contents { padding: 0 1; }
+.setup-step Collapsible > Contents .setup-field-label { margin-top: 0; }
+.setup-step Collapsible > Contents .setup-probe-status { margin-top: 0; }

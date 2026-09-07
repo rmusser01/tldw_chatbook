@@ -1,0 +1,241 @@
+"""Mid-run gate for Console message actions (TASK-232).
+
+With a run streaming, retry/regenerate/continue on an OLDER message used to
+spawn a new ``group="console-run"`` exclusive worker, which cancelled the
+in-flight run at worker-creation time — before the controller's
+``_active_run_rejection`` could reject the newcomer. Neither stream finalized:
+run_state stayed STREAMING and the row stayed status "streaming" (the same
+stuck-[streaming] face as TASK-228's V1, user-triggered). The screen must
+gate on ``run_state.is_send_allowed`` BEFORE spawning, exactly like the
+submit path does.
+"""
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
+
+ALREADY_RUNNING_COPY = "A run is already running in this tab."
+
+
+def _build_screen(*, with_persona_buddy: bool = False):
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "test-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "test-model"}
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    if with_persona_buddy:
+        assert app.ensure_persona_buddy_controller() is not None
+    screen = ChatScreen(app)
+    return app, screen
+
+
+def _seed_messages(screen):
+    """Return (failed_assistant, completed_assistant) messages in one session."""
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    pending = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    failed = store.mark_message_failed(pending.id)
+    completed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="done."
+    )
+    return failed, completed
+
+
+def _instrument(app, screen):
+    """Capture run_worker spawns and notify copy; return (spawned, notices)."""
+    spawned: list[dict] = []
+    notices: list[str] = []
+
+    def fake_run_worker(work, **kwargs):
+        spawned.append(kwargs)
+        if asyncio.iscoroutine(work):
+            work.close()  # never awaited by the fake
+        return SimpleNamespace(cancel=lambda: None)
+
+    screen.run_worker = fake_run_worker
+    app.notify = lambda message, **kwargs: notices.append(str(message))
+    return spawned, notices
+
+
+def _action_event(action_id: str, message_id: str):
+    return SimpleNamespace(
+        button=SimpleNamespace(id=f"console-message-action-{action_id}-{message_id}"),
+        stop=lambda: None,
+    )
+
+
+def _start_fake_run(screen) -> None:
+    controller = screen._ensure_console_chat_controller()
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+    )
+
+
+@pytest.mark.unit
+def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
+    """The real controller callbacks publish and settle exact Buddy owners."""
+    app, screen = _build_screen(with_persona_buddy=True)
+    controller = screen._ensure_console_chat_controller()
+    buddy = app.persona_buddy_controller
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING), session_id="session-a"
+    )
+    assert buddy.snapshot().state == "speaking"
+
+    controller.add_pending_round("session-a", "round-1")
+    controller.add_pending_round("session-a", "round-2")
+    assert buddy.snapshot().state == "approval_needed"
+    controller.discard_pending_round("session-a", "round-1")
+    assert buddy.snapshot().state == "approval_needed"
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+    )
+    assert buddy.snapshot().state == "idle"
+
+
+@pytest.mark.unit
+def test_persona_buddy_missing_controller_sink_is_noop():
+    """Controller-only construction remains valid when no Buddy sink exists."""
+    _app, screen = _build_screen()
+    controller = screen._ensure_console_chat_controller()
+    controller._buddy_sink = None
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+    )
+    controller.add_pending_round("session-a", "round-1")
+    controller.discard_pending_round("session-a", "round-1")
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
+    """Each actual run task carries the exact owner captured at validation."""
+    app, screen = _build_screen(with_persona_buddy=True)
+    controller = screen._ensure_console_chat_controller()
+    old_validating = asyncio.Event()
+    release_old = asyncio.Event()
+    new_validating = asyncio.Event()
+    release_new = asyncio.Event()
+
+    async def old_run() -> None:
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+        )
+        old_validating.set()
+        await release_old.wait()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED), session_id="session-a"
+        )
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.IDLE), session_id="session-a"
+        )
+
+    async def new_run() -> None:
+        await old_validating.wait()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+        )
+        new_validating.set()
+        await release_new.wait()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+        )
+
+    old_task = asyncio.create_task(old_run())
+    new_task = asyncio.create_task(new_run())
+    await new_validating.wait()
+    release_old.set()
+    await old_task
+
+    assert app.persona_buddy_controller.snapshot().state == "thinking"
+    assert controller._buddy_sink.active_owner_count("console-run") == 1
+
+    release_new.set()
+    await new_task
+    assert app.persona_buddy_controller.snapshot().state == "idle"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_id,target",
+    [
+        ("retry", "failed"),
+        ("regenerate", "completed"),
+        ("continue", "completed"),
+    ],
+)
+async def test_mid_run_action_notifies_instead_of_spawning(action_id, target):
+    """While a run is active, the action must NOT spawn a console-run worker
+    (which would cancel the in-flight stream) — it must notify and return."""
+    app, screen = _build_screen()
+    failed, completed = _seed_messages(screen)
+    _start_fake_run(screen)
+    spawned, notices = _instrument(app, screen)
+
+    message = failed if target == "failed" else completed
+    handled = await screen.handle_console_message_action(
+        _action_event(action_id, message.id)
+    )
+
+    assert handled is True
+    assert spawned == [], (
+        f"mid-run {action_id} spawned a console-run worker — this cancels the "
+        "in-flight stream before the controller gate can reject the action"
+    )
+    assert any(ALREADY_RUNNING_COPY in note for note in notices)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_id,target",
+    [
+        ("retry", "failed"),
+        ("regenerate", "completed"),
+        ("continue", "completed"),
+    ],
+)
+async def test_idle_action_still_spawns_console_run_worker(action_id, target):
+    """Regression guard: with no active run, the actions dispatch exactly one
+    worker in THIS session's per-session console-run group (parallel-agents
+    spec Sec3 — group=f"console-run-{session_id}", not the shared literal)."""
+    app, screen = _build_screen()
+    failed, completed = _seed_messages(screen)
+    spawned, notices = _instrument(app, screen)
+    controller = screen._ensure_console_chat_controller()
+    active_session_id = controller.store.active_session_id
+
+    message = failed if target == "failed" else completed
+    handled = await screen.handle_console_message_action(
+        _action_event(action_id, message.id)
+    )
+
+    assert handled is True
+    assert len(spawned) == 1
+    group = spawned[0].get("group")
+    assert isinstance(group, str) and group.startswith("console-run-"), group
+    assert group == f"console-run-{active_session_id}", group
+    assert spawned[0].get("exclusive") is True
+    assert not any(ALREADY_RUNNING_COPY in note for note in notices)

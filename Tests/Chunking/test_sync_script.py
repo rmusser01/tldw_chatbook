@@ -1,0 +1,462 @@
+# Tests/Chunking/test_sync_script.py
+"""Contract tests for the vendoring sync script (spec §5.2, §0 wrong-tree hazard)."""
+
+import importlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tomllib
+
+import pytest
+
+from Helper_Scripts import sync_chunking_engine as sync_helper
+
+REPO = Path(__file__).resolve().parents[2]
+ENGINE = REPO / "tldw_chatbook" / "Chunking" / "engine"
+SYNC = REPO / "Helper_Scripts" / "sync_chunking_engine.py"
+PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
+
+# The sync flow documents checking out a local worktree at the pin and running
+# the script with --source. TASK-19574: there is deliberately no built-in
+# fallback location any more (the old default, /tmp/tldw_server_sync, is a
+# /private/tmp path -- the standing rule here is never to keep work there,
+# since the macOS cleaner has destroyed a worktree in it three times). Point
+# TLDW_SERVER_SYNC_SOURCE at a local tldw_server worktree checked out at PIN
+# to run test_sync_idempotent_and_rejects_local_edits; when it is unset (or
+# the path is gone), that test SKIPS instead of falling through to
+# sync_chunking_engine.py's no-arg path -- which git-clones the ~1.0 GiB
+# upstream repo per invocation (three times for this one test) and, before
+# this task, never cleaned its temp clone up. This module must never itself
+# trigger that network clone.
+#
+# TASK-19574 Qodo review (PR #1999 finding 4): TLDW_SERVER_SYNC_SOURCE is a
+# maintainer-set env var pointing at their own local tldw_server worktree --
+# not user- or model-supplied input reaching the app at runtime -- so it is
+# deliberately not routed through path_validation.py's confine-to-a-
+# workspace-root helpers (see the matching disposition note in
+# sync_chunking_engine.py's main()). The `Path(SOURCE).exists()` check below
+# and the pytest.skip guard it feeds are the whole of what this seam needs:
+# a clear skip instead of a confusing failure or an accidental network clone.
+SOURCE = os.environ.get("TLDW_SERVER_SYNC_SOURCE")
+SYNC_TIMEOUT_SECONDS = 300
+SOURCE_CHECK_TIMEOUT_SECONDS = 10
+
+
+def _validated_source() -> Path:
+    """Return an explicitly configured source only after bounded pin validation."""
+    if not SOURCE:
+        pytest.skip(
+            "set TLDW_SERVER_SYNC_SOURCE to a local tldw_server checkout at the pin"
+        )
+    source = Path(SOURCE).expanduser().resolve()
+    if not source.is_dir():
+        pytest.skip(f"TLDW_SERVER_SYNC_SOURCE does not exist: {source}")
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=SOURCE_CHECK_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("timed out validating TLDW_SERVER_SYNC_SOURCE")
+    if result.returncode != 0:
+        pytest.fail(f"TLDW_SERVER_SYNC_SOURCE is not a Git checkout: {result.stderr}")
+    if result.stdout.strip() != PIN:
+        pytest.fail(
+            f"TLDW_SERVER_SYNC_SOURCE must be at pinned commit {PIN}; "
+            f"found {result.stdout.strip() or '<no HEAD>'}"
+        )
+    return source
+
+
+def _run_sync() -> subprocess.CompletedProcess:
+    """Run sync_chunking_engine.py --source SOURCE and capture the result.
+
+    Returns:
+        subprocess.CompletedProcess: the finished sync-script invocation
+            (returncode/stdout/stderr), so callers can assert on either a
+            successful sync or a FATAL failure message.
+    """
+    source = _validated_source()
+    cmd = [sys.executable, str(SYNC), "--source", str(source)]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        timeout=SYNC_TIMEOUT_SECONDS,
+    )
+
+
+def test_manifest_pins_upstream():
+    manifest = tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())
+    assert (
+        manifest["upstream"]["repo"] == "https://github.com/rmusser01/tldw_server.git"
+    )
+    assert manifest["upstream"]["branch"] == "dev"
+    assert manifest["upstream"]["commit"] == PIN
+    assert "chunker.py" in " ".join(manifest["files"]["vendored"])
+    assert "LICENSE" in manifest["files"]["extra"]
+    # GPLv3 §4: the licence text itself must ship with the vendored subtree
+    assert "LICENSES/GPL-3.0-only.txt" in manifest["files"]["extra"]
+    assert manifest["licence"]["spdx"] == "GPL-3.0-only"
+
+
+def test_validated_source_accepts_linked_git_worktree(tmp_path) -> None:
+    """A linked worktree has a .git file and remains a supported --source."""
+    repository = tmp_path / "repository"
+    linked = tmp_path / "linked"
+    repository.mkdir()
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Test User"],
+        check=True,
+    )
+    (repository / "tracked.txt").write_text("tracked\n")
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-m", "initial"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        capture_output=True,
+    )
+
+    assert (linked / ".git").is_file()
+    assert sync_helper._validated_source(str(linked)) == linked.resolve()
+
+
+def test_manifest_templates_vendored_not_excluded():
+    """Spec §6.1: vendoring templates.py is a MOVE from `excluded` to
+    `vendored` — the name left in both lists would make a sync run ambiguous."""
+    vendored = manifest_vendored()
+    excluded = manifest_excluded()
+    assert "templates.py" in vendored
+    assert "templates.py" not in excluded
+    # the spec's ambiguity warning, enforced generally: no file in both lists
+    assert not (set(vendored) & set(excluded)), (
+        f"files in both vendored and excluded: {sorted(set(vendored) & set(excluded))}"
+    )
+
+
+def test_manifest_auto_planner_vendored_not_excluded():
+    """Spec §4.1: vendoring auto_planner.py is the same MOVE pattern — never
+    in both lists (a sync run would be ambiguous about which list wins)."""
+    manifest = tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())
+    vendored = set(manifest["files"]["vendored"])
+    excluded = set(manifest["files"]["excluded"])
+    assert "auto_planner.py" in vendored and "auto_planner.py" not in excluded
+    assert not (vendored & excluded)  # spec §0.2: never both lists
+
+
+def test_manifest_propositions_vendored_not_excluded():
+    """2026-08-23 propositions spec §5: the 39th file is a MOVE from
+    `excluded` to `vendored` in BOTH the manifest and the sync script's
+    VENDORED list — never both lists."""
+    vendored = set(manifest_vendored())
+    excluded = set(manifest_excluded())
+    assert "strategies/propositions.py" in vendored
+    assert "strategies/propositions.py" not in excluded
+    assert not (vendored & excluded)
+    # the move is mirrored in the sync script's own list (single source per
+    # tool; the manifest documents, the script acts)
+    sync_src = SYNC.read_text()
+    assert '"strategies/propositions.py"' in sync_src
+
+
+def test_propositions_importable_zero_new_shims():
+    """2026-08-23 propositions spec §5: the file resolves with ZERO new
+    shims — its only server import (prompt_loader) lands on #1's existing
+    `_shims/Utils/prompt_loader` via the second rewrite rule; `..base` is
+    relative and already vendored."""
+    mod = importlib.import_module(
+        "tldw_chatbook.Chunking.engine.strategies.propositions"
+    )
+    from tldw_chatbook.Chunking.engine.strategies.propositions import (
+        PropositionChunkingStrategy,
+    )
+
+    assert callable(PropositionChunkingStrategy)
+    # the rewritten import binds to the existing shim, not a new one
+    from tldw_chatbook.Chunking._shims.Utils.prompt_loader import load_prompt
+
+    assert mod.load_prompt is load_prompt
+    # ...and no shim may reference the strategy back (zero shims, both ways)
+    shims_root = REPO / "tldw_chatbook" / "Chunking" / "_shims"
+    for py in shims_root.rglob("*.py"):
+        assert "engine.strategies.propositions" not in py.read_text(), (
+            f"{py.name} references the propositions strategy"
+        )
+
+
+def test_auto_planner_importable_zero_new_shims():
+    """Spec §4.1: auto_planner.py is stdlib-only at the pin, so the synced
+    file must carry no _shims reference at all — zero rewritten lines."""
+    from tldw_chatbook.Chunking.engine import auto_planner
+    from tldw_chatbook.Chunking.engine.auto_planner import plan_auto_chunking
+
+    assert callable(plan_auto_chunking)
+    # stdlib-only at the pin — the module must not import _shims at all
+    import inspect
+
+    assert "_shims" not in inspect.getsource(auto_planner)
+
+
+def test_engine_tree_complete():
+    # propositions vendoring (2026-08-23 spec §5): the manifest goes 37 -> 38
+    # entries and the engine tree 38 -> 39 .py files (counting the
+    # chatbook-authored __init__.py) — the spec's "39th file".
+    assert len(manifest_vendored()) == 38
+    assert len([p for p in ENGINE.rglob("*.py")]) == 39
+    for rel in manifest_vendored():
+        assert (ENGINE / rel).exists(), f"missing vendored file {rel}"
+    for rel in manifest_extra():
+        assert (ENGINE / rel).exists(), f"missing extra file {rel}"
+    # GPLv3 §4: the shipped extra really is the GPL-3.0 text, not a stub
+    gpl = (ENGINE / "LICENSES" / "GPL-3.0-only.txt").read_text(errors="ignore")
+    assert "GNU GENERAL PUBLIC LICENSE" in gpl
+    assert "Version 3, 29 June 2007" in gpl
+    # templates.py is vendored (spec §6.1) and importable (see below)
+    assert (ENGINE / "templates.py").exists()
+    # auto_planner.py is vendored (spec §4.1) and importable (see below)
+    assert (ENGINE / "auto_planner.py").exists()
+    # strategies/propositions.py is vendored (2026-08-23 spec §5) and
+    # importable (see below)
+    assert (ENGINE / "strategies" / "propositions.py").exists()
+    # descope-ruled / not-vendored files must NOT exist (spec §4 ledger)
+    for rel in (
+        "template_initialization.py",
+        "async_chunker.py",
+        "auto_boundary_assistant.py",
+        "utils/proposition_eval.py",
+    ):
+        assert not (ENGINE / rel).exists(), f"descoped file vendored: {rel}"
+    # upstream's own __init__ must not be vendored (chatbook-authored instead)
+    assert "load_and_log_configs" not in (ENGINE / "__init__.py").read_text()
+
+
+def test_templates_importable_zero_new_shims():
+    """Spec §6.1 import table: templates.py resolves with ZERO new shims.
+    Its only server import (is_truthy) lands on #1's `_shims.testing` via the
+    sync script's second rewrite rule; everything else is stdlib, loguru, or
+    already-vendored relative imports."""
+    mod = importlib.import_module("tldw_chatbook.Chunking.engine.templates")
+    # the surface chatbook consumes (spec §6.2/§6.3): processor + 2 dataclasses
+    assert hasattr(mod, "TemplateProcessor")
+    assert hasattr(mod, "TemplateStage")
+    assert hasattr(mod, "ChunkingTemplate")
+    # proof the rewritten import binds to the existing shim, not a new one
+    from tldw_chatbook.Chunking._shims.testing import is_truthy
+
+    assert mod.is_truthy is is_truthy
+
+
+def manifest_vendored():
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "vendored"
+    ]
+
+
+def manifest_extra():
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "extra"
+    ]
+
+
+def manifest_excluded():
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "excluded"
+    ]
+
+
+def test_no_server_imports_remain():
+    for py in ENGINE.rglob("*.py"):
+        src = py.read_text()
+        assert "tldw_Server_API" not in src, (
+            f"{py.name} still references upstream package"
+        )
+        assert "from app.core" not in src, f"{py.name} still references app.core"
+
+
+def test_sync_idempotent_and_rejects_local_edits() -> None:
+    """Two --source runs are a no-op, and a hand-edited vendored file fails
+    the third run loudly instead of being silently overwritten (spec §5.2).
+
+    Skips (rather than falling through to the no-arg network-clone path --
+    TASK-19574) when TLDW_SERVER_SYNC_SOURCE isn't set to an existing local
+    tldw_server worktree.
+    """
+    if not SOURCE or not Path(SOURCE).exists():
+        pytest.skip(
+            "TLDW_SERVER_SYNC_SOURCE is not set to an existing local "
+            f"tldw_server worktree checked out at pin {PIN}; skipping rather "
+            "than falling through to sync_chunking_engine.py's no-arg "
+            "network-clone path (TASK-19574 -- this test must never itself "
+            "trigger a ~1.0 GiB clone from GitHub). Set up a worktree with, "
+            "e.g.: git -C <tldw_server checkout> worktree add "
+            f"<dest> {PIN} && TLDW_SERVER_SYNC_SOURCE=<dest> pytest "
+            "Tests/Chunking/test_sync_script.py"
+        )
+    r1 = _run_sync()
+    assert r1.returncode == 0, r1.stderr
+    # second run is a no-op
+    r2 = _run_sync()
+    assert r2.returncode == 0, r2.stderr
+    # local modification → loud failure
+    victim = ENGINE / "constants.py"
+    original = victim.read_text()
+    victim.write_text(original + "\n# local edit\n")
+    try:
+        r3 = _run_sync()
+        assert r3.returncode != 0, "sync must fail loudly on local modifications"
+        assert "local modification" in (r3.stderr + r3.stdout).lower()
+    finally:
+        victim.write_text(original)
+
+
+def test_sync_skips_before_subprocess_when_configured_source_is_absent(
+    monkeypatch, tmp_path
+):
+    missing_source = tmp_path / "missing-tldw-server"
+    calls = []
+    monkeypatch.setattr(sys.modules[__name__], "SOURCE", str(missing_source))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(pytest.skip.Exception, match="TLDW_SERVER_SYNC_SOURCE"):
+        _run_sync()
+
+    assert calls == []
+
+
+def test_sync_validates_pin_before_starting_sync(monkeypatch, tmp_path):
+    source = tmp_path / "tldw-server"
+    (source / ".git").mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="wrong-pin\n", stderr="")
+
+    monkeypatch.setattr(sys.modules[__name__], "SOURCE", str(source))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(pytest.fail.Exception, match="pinned commit"):
+        _run_sync()
+
+    assert len(calls) == 1
+    assert calls[0][0][:3] == ["git", "-C", str(source.resolve())]
+    assert calls[0][1]["timeout"] == SOURCE_CHECK_TIMEOUT_SECONDS
+
+
+def test_sync_subprocess_has_bounded_timeout(monkeypatch, tmp_path):
+    source = tmp_path / "tldw-server"
+    (source / ".git").mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        stdout = f"{PIN}\n" if command[0] == "git" else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(sys.modules[__name__], "SOURCE", str(source))
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = _run_sync()
+
+    assert result.returncode == 0
+    sync_call = calls[-1]
+    assert sync_call[0][-2:] == ["--source", str(source.resolve())]
+    assert 0 < sync_call[1]["timeout"] <= 300
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_error"),
+    [
+        pytest.param(None, None, id="success"),
+        pytest.param("clone", subprocess.CalledProcessError, id="clone-failure"),
+        pytest.param("checkout", subprocess.TimeoutExpired, id="checkout-timeout"),
+        pytest.param("sync", RuntimeError, id="sync-failure"),
+    ],
+)
+def test_owned_temporary_clone_is_removed(
+    monkeypatch, tmp_path, failure_stage, expected_error
+):
+    owned_clone = tmp_path / "owned-clone"
+    subprocess_stages = []
+    sync_calls = []
+
+    def fake_mkdtemp(*, prefix):
+        assert prefix == "tldw_server_sync_"
+        owned_clone.mkdir()
+        return str(owned_clone)
+
+    def fake_run(command, **kwargs):
+        stage = "clone" if command[1] == "clone" else "checkout"
+        subprocess_stages.append(stage)
+        assert 0 < kwargs["timeout"] <= sync_helper.CLONE_TIMEOUT_SECONDS
+        if failure_stage == "clone" and stage == "clone":
+            raise subprocess.CalledProcessError(returncode=1, cmd=command)
+        if failure_stage == "checkout" and stage == "checkout":
+            raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0)
+
+    def fake_sync(worktree):
+        assert worktree == owned_clone
+        sync_calls.append(worktree)
+        if failure_stage == "sync":
+            raise RuntimeError("injected sync failure")
+        return 0
+
+    monkeypatch.setattr(sync_helper.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(sync_helper.subprocess, "run", fake_run)
+    monkeypatch.setattr(sync_helper, "_sync_worktree", fake_sync)
+
+    if expected_error is not None:
+        with pytest.raises(expected_error):
+            sync_helper._run_with_source(None)
+    else:
+        assert sync_helper._run_with_source(None) == 0
+
+    assert not owned_clone.exists()
+    expected_stages = ["clone"] if failure_stage == "clone" else ["clone", "checkout"]
+    assert subprocess_stages == expected_stages
+    expected_sync_calls = (
+        [] if failure_stage in {"clone", "checkout"} else [owned_clone]
+    )
+    assert sync_calls == expected_sync_calls
+
+
+def test_supplied_source_is_never_removed(monkeypatch, tmp_path):
+    supplied_source = tmp_path / "supplied-source"
+    (supplied_source / ".git").mkdir(parents=True)
+    sentinel = supplied_source / "sentinel.bin"
+    sentinel_bytes = b"caller-owned\x00source\xff"
+    sentinel.write_bytes(sentinel_bytes)
+
+    monkeypatch.setattr(sync_helper, "verify_clean", lambda source: None)
+    monkeypatch.setattr(sync_helper, "_sync_worktree", lambda source: 0)
+
+    assert sync_helper._run_with_source(str(supplied_source)) == 0
+    assert supplied_source.is_dir()
+    assert sentinel.read_bytes() == sentinel_bytes
+
+
+def test_explicit_empty_source_fails_instead_of_cloning(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        sync_helper.subprocess, "run", lambda *args, **kwargs: calls.append(args)
+    )
+
+    with pytest.raises(SystemExit, match="empty value"):
+        sync_helper._run_with_source("")
+
+    assert calls == []

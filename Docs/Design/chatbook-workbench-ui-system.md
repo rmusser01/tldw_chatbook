@@ -17,8 +17,9 @@ Chatbook's frame stays terminal-native, local-first, keyboard-first, and recover
 +-------------+------------------------------------------+-------------------+
 | Context     | Transcript / Event Stream                | Inspector         |
 | Workspace   |                                          | Provider/model    |
-| Staged      | Empty/loading/error/recovery/messages    | Tools/approvals   |
-| Sources     |                                          | Run evidence      |
+| Model       | Empty/loading/error/recovery/messages    | Tools/approvals   |
+| Agent       |                                          | Staged sources    |
+| Details     |                                          | Run evidence      |
 +-------------+------------------------------------------+-------------------+
 | Composer: ask, command, paste task...                   [Send] [Stop]       |
 +----------------------------------------------------------------------------+

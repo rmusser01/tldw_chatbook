@@ -1,0 +1,20 @@
+{
+  "conversation_preference_open": true,
+  "disk_library_open": true,
+  "media_effective_open": true,
+  "media_preference_open": true,
+  "shared_generation": 2,
+  "svg": "shared-library-latest-intent.svg",
+  "writes": [
+    [
+      "library.reader",
+      "library_open",
+      false
+    ],
+    [
+      "library.reader",
+      "library_open",
+      true
+    ]
+  ]
+}

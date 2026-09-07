@@ -1,9 +1,4 @@
-import json
-from types import SimpleNamespace
-
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 
 
@@ -47,7 +42,14 @@ class FakeDB:
 
     def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
         self.calls.append(("list_flashcards", deck_id, q, limit, offset))
-        return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}]
+        return [
+            {
+                "id": "card-local-1",
+                "deck_id": deck_id,
+                "front": "Question",
+                "back": "Answer",
+            }
+        ]
 
     def create_flashcard(self, payload):
         self.calls.append(("create_flashcard", payload))
@@ -60,7 +62,9 @@ class FakeDB:
     def update_flashcard(self, card_id, **payload):
         self.calls.append(("update_flashcard", card_id, payload))
         stored_payload = {
-            key: (" ".join(value) if key == "tags" and isinstance(value, list) else value)
+            key: (
+                " ".join(value) if key == "tags" and isinstance(value, list) else value
+            )
             for key, value in payload.items()
             if key != "expected_version" and value is not None
         }
@@ -73,7 +77,14 @@ class FakeDB:
 
     def get_due_flashcards(self, *, deck_id=None, limit=20):
         self.calls.append(("get_due_flashcards", deck_id, limit))
-        return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}]
+        return [
+            {
+                "id": "card-local-1",
+                "deck_id": deck_id,
+                "front": "Question",
+                "back": "Answer",
+            }
+        ]
 
     def update_flashcard_review(self, card_id, rating):
         self.calls.append(("update_flashcard_review", card_id, rating))
@@ -201,7 +212,9 @@ class FakeDB:
         return {"deleted": True}
 
     def create_flashcard_asset(self, *, original_filename, mime_type, content):
-        self.calls.append(("create_flashcard_asset", original_filename, mime_type, content))
+        self.calls.append(
+            ("create_flashcard_asset", original_filename, mime_type, content)
+        )
         return {
             "asset_uuid": "asset-local-1",
             "reference": "flashcard-asset://asset-local-1",
@@ -262,7 +275,11 @@ def test_local_study_service_updates_decks_and_refetches_record():
         (
             "update_deck",
             "deck-local-1",
-            {"name": "Biology Updated", "description": "Cells and genetics", "expected_version": 3},
+            {
+                "name": "Biology Updated",
+                "description": "Cells and genetics",
+                "expected_version": 3,
+            },
         ),
         ("get_deck", "deck-local-1"),
     ]
@@ -384,7 +401,9 @@ def test_local_study_service_deletes_and_moves_cards_with_expected_version():
     service = LocalStudyService(db=db)
 
     deleted = service.delete_flashcard("card-local-1", expected_version=2)
-    moved = service.move_flashcard("card-local-1", target_deck_id="deck-local-2", expected_version=2)
+    moved = service.move_flashcard(
+        "card-local-1", target_deck_id="deck-local-2", expected_version=2
+    )
 
     assert deleted is True
     assert moved["deck_id"] == "deck-local-2"
@@ -406,7 +425,9 @@ def test_local_study_service_deletes_deck_with_expected_version():
     assert db.calls == [("delete_deck", "deck-local-1", 4, False)]
 
 
-def test_local_study_service_persists_flashcard_templates_against_chachanotes_db(tmp_path):
+def test_local_study_service_persists_flashcard_templates_against_chachanotes_db(
+    tmp_path,
+):
     db_path = tmp_path / "study.db"
     db = CharactersRAGDB(db_path, client_id="test_client")
     service = LocalStudyService(db=db)
@@ -438,7 +459,9 @@ def test_local_study_service_persists_flashcard_templates_against_chachanotes_db
 
     assert created["id"]
     assert created["version"] == 1
-    assert created["placeholder_definitions"] == [{"name": "statement", "targets": ["front_template"]}]
+    assert created["placeholder_definitions"] == [
+        {"name": "statement", "targets": ["front_template"]}
+    ]
     assert listed["items"][0]["id"] == created["id"]
     assert updated["notes_template"] == "Updated focus: {{topic}}"
     assert updated["version"] == created["version"] + 1
@@ -465,7 +488,10 @@ def test_local_study_service_persists_flashcard_assets_against_chachanotes_db(tm
 
     assert asset["asset_uuid"]
     assert asset["reference"] == f"flashcard-asset://{asset['asset_uuid']}"
-    assert asset["markdown_snippet"] == f"![cell.png](flashcard-asset://{asset['asset_uuid']})"
+    assert (
+        asset["markdown_snippet"]
+        == f"![cell.png](flashcard-asset://{asset['asset_uuid']})"
+    )
     assert asset["mime_type"] == "image/png"
     assert asset["byte_size"] == len(b"fake-png")
     assert asset["original_filename"] == "cell.png"

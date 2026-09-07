@@ -1,0 +1,90 @@
+name: TASK-603 bounded dictation evidence
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  platform-evidence:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'task-603-platform-evidence'
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - evidence_name: linux-x86_64
+            os: ubuntu-24.04
+          - evidence_name: linux-aarch64
+            os: ubuntu-24.04-arm
+          - evidence_name: windows-x86_64
+            os: windows-2022
+          - evidence_name: macos-arm64
+            os: macos-15
+          - evidence_name: macos-x86_64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Initialize failure evidence
+        run: python .github/scripts/task603_dictation_evidence.py --initialize --evidence-name "${{ matrix.evidence_name }}" --output "$RUNNER_TEMP/task-603-platform-evidence.json"
+
+      - name: Install test dependencies
+        id: dependencies
+        continue-on-error: true
+        run: python -m pip install -e '.[dev]'
+
+      - name: Record dependency installation failure
+        if: steps.dependencies.outcome != 'success'
+        run: python .github/scripts/task603_dictation_evidence.py --record-failure dependency_install --failure-stage dependency_install --evidence-name "${{ matrix.evidence_name }}" --output "$RUNNER_TEMP/task-603-platform-evidence.json"
+
+      - name: Run bounded dictation contract tests
+        id: platform_tests
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python -m pytest \
+            Tests/STT/test_dispatch_coordinator.py::test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling \
+            Tests/STT/test_dispatch_coordinator.py::test_waiting_segments_coalesce_into_one_source_with_ordered_boundaries \
+            Tests/STT/test_dispatch_coordinator.py::test_pending_cancel_clears_gate_once_without_preempting_batch \
+            Tests/STT/test_dispatch_coordinator.py::test_processing_thread_exits_within_join_bound_while_dictation_waits \
+            Tests/Library/test_library_ingest_runner.py::test_dictation_reservation_gates_only_heavy_library_work \
+            Tests/Library/test_library_ingest_runner.py::test_library_terminal_hands_executor_to_pending_dictation_before_top_up \
+            Tests/Library/test_library_ingest_runner.py::test_shutdown_cooperatively_cancels_active_dictation_before_executor_close \
+            Tests/STT/test_transcription_service_facade.py::test_parakeet_streaming_reports_unsupported_without_consulting_the_bridge \
+            Tests/UI/test_console_dictation.py::test_console_mic_has_strict_wall_timer_and_visible_limit_transition \
+            Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press \
+            --timeout=60 \
+            --junitxml="$RUNNER_TEMP/task-603-junit.xml" \
+            -q
+
+      - name: Normalize platform evidence
+        if: always() && steps.dependencies.outcome == 'success'
+        run: python .github/scripts/task603_dictation_evidence.py --from-junit "$RUNNER_TEMP/task-603-junit.xml" --pytest-outcome "${{ steps.platform_tests.outcome }}" --evidence-name "${{ matrix.evidence_name }}" --output "$RUNNER_TEMP/task-603-platform-evidence.json"
+
+      - name: Validate platform evidence
+        if: always()
+        run: python .github/scripts/task603_dictation_evidence.py --validate "$RUNNER_TEMP/task-603-platform-evidence.json"
+
+      - name: Upload platform evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-603-platform-${{ matrix.evidence_name }}
+          path: ${{ runner.temp }}/task-603-platform-evidence.json
+          if-no-files-found: error

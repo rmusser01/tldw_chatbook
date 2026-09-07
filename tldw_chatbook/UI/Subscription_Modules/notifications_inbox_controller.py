@@ -71,7 +71,9 @@ class NotificationsInboxController:
             return []
         if self.store is None:
             return []
-        list_method = getattr(self.store, "list_notifications", None) or getattr(self.store, "list", None)
+        list_method = getattr(self.store, "list_notifications", None) or getattr(
+            self.store, "list", None
+        )
         if not callable(list_method):
             return []
         rows = await self._maybe_await(
@@ -130,10 +132,14 @@ class NotificationsInboxController:
             return False
         if self.store is None:
             return False
-        mark_method = getattr(self.store, "mark_read_notification", None) or getattr(self.store, "mark_read", None)
+        mark_method = getattr(self.store, "mark_read_notification", None) or getattr(
+            self.store, "mark_read", None
+        )
         if not callable(mark_method):
             return False
-        return bool(await self._maybe_await(mark_method(int(notification_id), is_read=is_read)))
+        return bool(
+            await self._maybe_await(mark_method(int(notification_id), is_read=is_read))
+        )
 
     async def dismiss(self, notification_id: int, *, is_dismissed: bool) -> bool:
         decision = await self._require_update_policy()
@@ -141,7 +147,13 @@ class NotificationsInboxController:
             return False
         if self.store is None:
             return False
-        dismiss_method = getattr(self.store, "dismiss", None) or getattr(self.store, "dismiss_notification", None)
+        dismiss_method = getattr(self.store, "dismiss", None) or getattr(
+            self.store, "dismiss_notification", None
+        )
         if not callable(dismiss_method):
             return False
-        return bool(await self._maybe_await(dismiss_method(int(notification_id), is_dismissed=is_dismissed)))
+        return bool(
+            await self._maybe_await(
+                dismiss_method(int(notification_id), is_dismissed=is_dismissed)
+            )
+        )

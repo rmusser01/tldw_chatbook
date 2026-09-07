@@ -3,66 +3,341 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine, Mapping
+import dataclasses
+import hashlib
+import inspect
 import json
+import os
+import re
+import sqlite3
+import threading
+import weakref
+from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from uuid import UUID
 
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.timer import Timer
-from textual.widgets import Button, Input, ListView, Static, TextArea
+from textual.widget import Widget
+from textual.worker import Worker
+from textual.widgets import (
+    Button,
+    Input,
+    ListView,
+    Select,
+    Static,
+    TabbedContent,
+    TextArea,
+)
 
 from ...Character_Chat.Character_Chat_Lib import (
+    CharacterCardImportOutcome,
+    CharacterCardTTSInspection,
+    count_character_page,
     export_character_card_to_json,
     export_character_card_to_png,
+    get_character_page_for_ui,
+    list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.expression_generation import (
+    EXPRESSION_PROMPT_STATES,
+    canonical_visual_identity_reactions,
+    compose_expression_prompt,
+    compose_visual_identity_prompt,
+)
+from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
+from ...Character_Chat.persona_list_paging import page_persona_profiles
+from ...Character_Chat.persona_visual_identity import (
+    LocalPersonaVisualIdentityAuthority,
+    capture_local_persona_visual_identity,
+    local_persona_visual_identity_is_current,
+    resolve_persona_visual_identity,
+)
+from ...Character_Chat.visual_identity import (
+    CANONICAL_EXPRESSION_SLOTS,
+    VisualIdentityCandidate,
+    VisualIdentityPublicationError,
+    VisualIdentityPublicationResult,
+    VisualIdentityResolution,
+    cleanup_visual_identity_publication_candidate,
+    create_visual_identity_candidate,
+    display_label_for_expression_key,
+    publish_visual_identity_candidate,
+    resolve_visual_identity,
+)
+from ...Character_Chat.world_book_import import normalize_world_book_import
+from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
+from ...Actor_Packs.contracts import ActorPackValidationError, validate_actor_portrait
+from ...Actor_Packs.controller import (
+    ActorPackExportControllerError,
+    ActorPackExportOutcome,
+    ActorPackExportRequest,
+)
+from ...Actor_Packs.creation import ActorPackCreationError, ActorPackCreationResult
+from ...Actor_Packs.export import ActorPackExportError
+from ...Actor_Packs.import_controller import (
+    ActorPackImportControllerError,
+    ActorPackImportOutcome,
+)
+from ...Actor_Packs.importer import ActorPackImportError, ActorPackImportReview
+from ...Actor_Packs.publication import (
+    ActorPackPublicationError,
+    capture_actor_pack_destination,
+)
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Utils.fts5_match_forms import quote_fts5_prefix
+from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
+from ...Constants import (
+    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+    ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION,
+    TAB_STTS,
+)
 from ...DB.ChaChaNotes_DB import ConflictError
-from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...DB.VisualIdentity_DB import VisualIdentityRepository
+from ...Media_Creation.generation_templates import GenerationTemplate, get_template
+from ...Persona_Visual.assets import load_persona_visual_asset
+from ...Persona_Visual.authoring import (
+    PersonaVisualAuthoringDraft,
+    add_persona_visual_custom_state,
+    clear_persona_visual_draft_state,
+    create_persona_visual_draft,
+    inspect_persona_visual_draft,
+    persona_visual_draft_from_graph,
+    persona_visual_draft_publication_snapshot,
+    replace_persona_visual_draft_state,
+)
+from ...Persona_Visual.authoring_workspace import (
+    PersonaVisualAuthoringWorkspace,
+    adopt_persona_visual_draft_sources,
+    cleanup_persona_visual_authoring_workspace,
+    create_persona_visual_authoring_workspace,
+    stage_persona_visual_authoring_asset,
+)
+from ...Persona_Visual.importer import (
+    PersonaVisualImportError,
+    PersonaVisualImportReview,
+    cleanup_persona_visual_import_review,
+    import_persona_visual_pack,
+    persona_visual_import_source_root,
+)
+from ...Persona_Visual.publication import (
+    PersonaVisualPublicationError,
+    PersonaVisualPublicationResult,
+    cleanup_persona_visual_publication_candidate,
+    publish_persona_visual,
+)
+from ...Persona_Visual.repository import PersonaVisualIdentity, PersonaVisualRepository
+from ...Persona_Visual.runtime import PersonaVisualCacheIdentity
+from ...Persona_Buddy import PersonaBuddySelection, PersonaBuddyVisualSnapshot
+from ...TTS import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    LoadedCharacterTTSAssignment,
+    LoadedTTSProfile,
+    PortableProfileAvailabilityObservation,
+    PortableProfileImportPlan,
+    PortableProfileImportResult,
+    ProfileRepositoryError,
+    TTSProfileAvailability,
+    TTSProfileAvailabilitySnapshot,
+    TTSProfileDraft,
+    TTSProfilePageSnapshot,
+)
+from ...TTS.profile_portability import PortableTTSProfile
+from ...tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+)
 from ...Utils.path_validation import validate_path_simple
-from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
+from ...Utils.paths import get_user_data_dir
+from ...Widgets.destination_rail import DestinationRailHandle
+from ...Widgets.Console.console_image_viewer_modal import (
+    AvatarViewRequested,
+    ConsoleImageViewerModal,
+)
+from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
-from ...Widgets.Persona_Widgets.persona_profile_editor_widget import PersonaProfileEditorWidget
+from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
+    PersonaProfileCardWidget,
+)
+from ...Widgets.Persona_Widgets.actor_pack_import_review import (
+    ActorPackImportReviewDialog,
+)
+from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
+    PersonaProfileEditorWidget,
+)
+from ...Widgets.Persona_Widgets.personas_policy_rules_editor import (
+    PersonaPolicyRulesChanged,
+)
+from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
+    PersonaVisualAddCustomRequested,
+    PersonaVisualCancelRequested,
+    PersonaVisualClearRequested,
+    PersonaVisualCustomStateDialog,
+    PersonaVisualImportRequested,
+    PersonaVisualPreviewRequested,
+    PersonaVisualReplaceRequested,
+    PersonaVisualSaveRequested,
+    PersonasPersonaVisualPackWidget,
+)
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
+from ...Widgets.Persona_Widgets.personas_visual_identity_pack_widget import (
+    PersonasVisualIdentityPackWidget,
+    VisualIdentityPackCancelRequested,
+    VisualIdentityPackGenerateAllRequested,
+)
+from ...Widgets.Persona_Widgets.personas_character_tts_widget import (
+    CharacterTTSProfileSuggestion,
+    CharacterTTSProfileOption,
+    CharacterTTSPresentationState,
+    PersonasCharacterTTSWidget,
+)
+from ...Widgets.Persona_Widgets.character_tts_portability_dialogs import (
+    CharacterTTSExistingAssignmentDialog,
+    CharacterTTSProfileCollisionDialog,
+)
+from ...Widgets.Persona_Widgets.personas_character_dictionaries import (
+    PersonasCharacterDictionariesWidget,
+    CharacterDictionaryAttachRequested,
+    CharacterDictionaryDetachRequested,
+)
+from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
+from ...Widgets.Persona_Widgets.personas_character_world_books import (
+    PersonasCharacterWorldBooksWidget,
+    CharacterWorldBookAttachRequested,
+    CharacterWorldBookDetachRequested,
+)
+from ...Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
 )
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
-from ...Widgets.Persona_Widgets.personas_library_pane import LibraryRow, PersonasLibraryPane
-from ...Widgets.Persona_Widgets.personas_messages import (
-    PersonaActionRequested,
-    PersonaEntitySelected,
-    PersonaSearchChanged,
+from ...Widgets.Persona_Widgets.personas_library_pane import (
+    LibraryRow,
+    PersonasLibraryPane,
 )
+from ...Widgets.Persona_Widgets.personas_messages import (
+    ActorPackImportRequested,
+    ActorPackExportRequested,
+    PersonaActionRequested,
+    PersonaBuddyActionRequested,
+    PersonaEntitySelected,
+    PersonaMarksChanged,
+    PersonaPageChanged,
+    PersonaSearchChanged,
+    PersonaSortCycleRequested,
+    PersonaTagFilterRequested,
+)
+from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterAvatarGenerateRequested,
     CharacterEditorCancelled,
+    CharacterExpressionClearRequested,
+    CharacterExpressionGenerateAllRequested,
+    CharacterExpressionGenerateRequested,
+    CharacterExpressionSetExportRequested,
+    CharacterExpressionSetImportRequested,
+    CharacterExpressionStylePickRequested,
+    CharacterExpressionUploadRequested,
+    CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
+    CharacterTTSActionRequested,
     ConversationRowSelected,
+    ConversationSearchChanged,
+    ConversationsRequested,
     EditCharacterRequested,
     EditorContentChanged,
-    EditPersonaRequested,
+    EditPersonaProfileRequested,
+    OlderConversationsRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
+    PreviewConfigureProviderRequested,
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
+    VisualIdentityAssetMetadata,
+    VisualIdentityPackClearRequested,
+    VisualIdentityPackGenerateRequested,
+    VisualIdentityPackMetadata,
+    VisualIdentityPackPreviewRequested,
+    VisualIdentityPackReplaceRequested,
+    VisualIdentityPackSaveRequested,
+)
+from ..stts_profile_library import (
+    TTSProfileEditorModal,
+    profile_action_error_copy,
+)
+from ..tts_profile_recovery import dependency_recovery_actions
+from ..Speech.speech_runtime_status import speech_tts_navigation_context
+from ..Speech.speech_settings_contracts import (
+    SpeechTTSNavigationIntent,
+    SpeechTTSNavigationTarget,
+)
+from ...Widgets.Persona_Widgets.personas_dictionary_detail import (
+    DictionaryAttachRequested,
+    DictionaryDetachRequested,
+    DictionaryEntriesReorderRequested,
+    DictionaryEntryAddRequested,
+    DictionaryEntryDeleteRequested,
+    DictionaryEntryUpdateRequested,
+    DictionaryExportRequested,
+    DictionarySettingsEdited,
+    DictionarySettingsSaveRequested,
+    DictionaryVersionRevertRequested,
+    DictionaryVersionViewRequested,
+    PersonasDictionaryDetailWidget,
+)
+from ...Widgets.Persona_Widgets.personas_dictionary_tryit import (
+    DictionaryTryItRunRequested,
+    PersonasDictionaryTryItWidget,
+)
+from ...Widgets.Persona_Widgets.conversation_attach_picker import (
+    ConversationAttachPicker,
+)
+from ...Widgets.Persona_Widgets.personas_lore_detail import (
+    LoreAttachRequested,
+    LoreBookEnableToggled,
+    LoreBookExportRequested,
+    LoreBookSettingsSaveRequested,
+    LoreDetachRequested,
+    LoreEntriesReorderRequested,
+    LoreEntryAddRequested,
+    LoreEntryDeleteRequested,
+    LoreEntryUpdateRequested,
+    PersonasLoreDetailWidget,
+)
+from ...Widgets.Persona_Widgets.personas_lore_tryit import (
+    LoreTryItRunRequested,
+    PersonasLoreTryItWidget,
 )
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
-from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
-from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
+from ...Widgets.Persona_Widgets.personas_state import (
+    MODE_LABELS,
+    PersonasWorkbenchState,
+)
+from ...Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from ..CCP_Modules.ccp_enhanced_handlers import setup_ccp_enhancements
@@ -70,26 +345,253 @@ from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from .destination_recovery import DestinationRecoveryState
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
     PersonasConversationsController,
 )
+from ..Persona_Modules.personas_preview_coordinator import (
+    get_personas_preview_coordinator,
+)
+from ...Character_Chat.character_generation import CharacterGenerationError
+from ...Character_Chat.world_book_import import format_imported_lorebook_note
+from ...Character_Chat.character_generation_controller import (
+    CharacterGenerationController,
+    build_gateway_runner,
+)
 from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
+
+if TYPE_CHECKING:
+    from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
+    from ...Chat.console_image_view import ConsoleImageRenderCache
+    from ...Image_Generation.capabilities import ResolvedReferenceImage
+    from ..Navigation.character_conversation_navigation import (
+        RoleplayCharacterConversationLink,
+        RoleplayDraftSnapshot,
+    )
+
+
+def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
+    """Load image configuration only when a persona image action runs."""
+
+    from ...Image_Generation.config import get_image_generation_config as load
+
+    return load(*args, **kwargs)
+
+
+def list_image_models_for_catalog() -> list[dict[str, Any]]:
+    """Load the image backend catalog only when persona generation needs it."""
+
+    from ...Image_Generation.listing import list_image_models_for_catalog as load
+
+    return load()
+
+
+def resolve_backend_reference_image_capability(*args: Any, **kwargs: Any) -> Any:
+    """Resolve reference-image support at the generation boundary."""
+
+    from ...Image_Generation.capabilities import (
+        resolve_backend_reference_image_capability as resolve,
+    )
+
+    return resolve(*args, **kwargs)
+
+
+def build_request(*args: Any, **kwargs: Any) -> Any:
+    """Build an image request only after persona generation is admitted."""
+
+    from ...Image_Generation.worker import build_request as build
+
+    return build(*args, **kwargs)
+
+
+def run_generation(*args: Any, **kwargs: Any) -> Any:
+    """Run image generation only after persona generation is admitted."""
+
+    from ...Image_Generation.worker import run_generation as run
+
+    return run(*args, **kwargs)
 
 
 logger = logger.bind(module="PersonasScreen")
 
 #: Modes rendered as chips in the strip; "import_export" is intentionally
 #: excluded until import/export is wired as an action rather than a mode.
-MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictionaries", "lore")
+#: "prompts" is retired (Task 7): prompt management now lives entirely
+#: inside Library (see the "prompts" route alias in ``screen_registry`` and
+#: ``shell_destinations``), so it is no longer offered as a Personas mode.
+MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "lore")
 
-PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
+#: One-line "what this mode is" copy, shown under the title and as chip tooltips.
+_MODE_DESCRIPTORS: dict[str, str] = {
+    "characters": "Characters — who the AI plays.",
+    # F-034: the descriptor teaches the genre convention (characters = who
+    # the AI plays, personas = who YOU play) instead of the vague "assistant
+    # profiles" - without reviving the retired human-identity framing.
+    "personas": "Personas — who you play in the chat.",
+    "prompts": "Prompts — moving to the Library.",
+    "dictionaries": "Dictionaries — text find/replace rules.",
+    "lore": "Lore — world facts injected on keywords.",
+}
+
+#: Modes genuinely coming to Roleplay — their chips carry the "· soon" marker.
+#: Departing modes (prompts) are deliberately excluded: they are leaving, not arriving.
+#: Lore (P2a Task 6) is now wired, so nothing remains here.
+_COMING_SOON_MODES: frozenset[str] = frozenset()
+
+#: Placeholder body per not-yet-built (or departing) mode; generic fallback for others.
+_MODE_PLACEHOLDER_BODY: dict[str, str] = {
+    "prompts": "Prompts are moving to the Library — you'll manage them there.",
+}
+_PLACEHOLDER_FALLBACK = "This mode is coming soon."
+#: Onboarding guidance shown in the Characters center pane when nothing is
+#: selected (task-436) and the library is TRULY empty (F-035): only then are
+#: New/Import the next action. With rows present the picker copy below is
+#: shown instead (reachable after a delete or a mode round-trip; first paint
+#: auto-selects, F-031).
+_CHARACTERS_EMPTY_GUIDANCE = (
+    "No characters yet — use [b]New[/b] or [b]Import[/b] to add one."
+)
+#: No-selection copy when the library HAS characters (F-035): the next
+#: action is picking one, not creating one.
+_CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
+#: F-037: reason shown on local-only actions (card Edit, inspector
+#: export/delete) while browsing server-owned characters.
+_SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+#: Rows per library page. ``page_offset`` is always kept a multiple of this so
+#: the pane's "start-end of N" label math stays exact.
+PERSONAS_LIBRARY_PAGE_SIZE = 50
+_SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
+_MAX_CHARACTER_ID = (1 << 63) - 1
+#: Display labels for the library sort keys (shared by the character sort cycle
+#: and the persona render path).
+_LIBRARY_SORT_LABELS: dict[str, str] = {
+    "relevance": "Relevance",
+    "name_asc": "Name",
+    "modified_desc": "Recent edit",
+    "created_desc": "Recent add",
+}
 PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
 PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
+PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP = "personas-character-import"
+_CHARACTER_TTS_WORKER_GROUP = "personas-character-tts"
+_CHARACTER_TTS_LOADING_COPY = "Loading voice profiles…"
+_CHARACTER_TTS_DISABLED_COPY = "Save/reopen before assigning."
+_CHARACTER_TTS_CHANGED_COPY = "Voice profiles changed; reselect to retry."
+
+
+class CharacterConversationLinkOutcome(str, Enum):
+    """Disposition of a pending Roleplay deep link."""
+
+    ABSENT = "absent"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CharacterTTSControlSnapshot:
+    """Exact service and authority tokens behind one rendered control state."""
+
+    request_generation: int
+    runtime_source: str
+    character_id: str
+    character_ref: CharacterRef
+    repository_generation: int
+    loaded_profiles: tuple[LoadedTTSProfile, ...]
+    availability: tuple[TTSProfileAvailability, ...]
+    current: AssignedTTSProfileSnapshot | None
+    assignment_count: int | None
+    configuration_revision: int
+    catalog_revision: int | None
+    expected_server_id: str | None
+    server_context_capture: object | None = dataclasses.field(
+        repr=False,
+        compare=False,
+    )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaBuddyActionAuthority:
+    """Immutable Workbench and app-owner authority for one explicit action."""
+
+    action: str
+    source: str
+    persona_id: str
+    revision: int
+    session_generation: int
+    scope_service: object = dataclasses.field(repr=False, compare=False)
+    controller: object = dataclasses.field(repr=False, compare=False)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ActorPackExportUIAuthority:
+    """Exact screen and selection authority for one app-owned export."""
+
+    source: str
+    actor_kind: str
+    local_actor_id: str
+    actor_revision: int
+    session_generation: int
+    screen: object = dataclasses.field(repr=False, compare=False)
+    controller: object = dataclasses.field(repr=False, compare=False)
+    service: object = dataclasses.field(repr=False, compare=False)
+
+
+class _CharacterTTSAuthorityUnavailable(RuntimeError):
+    """Stable character authority could not be proved."""
+
+
+class _CharacterTTSMixedSnapshot(RuntimeError):
+    """Repository or capability observations did not form one snapshot."""
+
+
+# Character editor avatar thumbnail box, in character cells. Must stay in
+# sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
+# personas_character_editor_widget.py - change one, change both.
+AVATAR_THUMB_COLS = 24
+AVATAR_THUMB_LINES = 10
+
+
+def _character_import_filters() -> Any:
+    """Build the file-picker filters for the Character Cards import dialog.
+
+    Module-level (rather than inline in ``_import_dialog_worker``) so the
+    primary "Character Cards" tester can be unit-tested without mounting the
+    screen. ``import_and_save_character_from_file`` only extracts embedded
+    card JSON from ``.png``/``.webp`` images and reads ``.json``/``.md`` as
+    text (task-431 AC#1): the broad "Character Cards" default matches the
+    image formats plus JSON, but deliberately excludes Markdown so a plain
+    docs folder doesn't read as a folder of character cards. Markdown import
+    stays available via its own dedicated sub-filter.
+    """
+    from ...Widgets.enhanced_file_picker import Filters
+
+    return Filters(
+        (
+            "Character Cards",
+            lambda p: p.suffix.lower() in (".json", ".png", ".webp"),
+        ),
+        ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+        (
+            "Card Images (PNG/WebP)",
+            lambda p: p.suffix.lower() in (".png", ".webp"),
+        ),
+        (
+            "Markdown Files",
+            lambda p: p.suffix.lower() in (".md", ".markdown"),
+        ),
+        ("All Files", lambda p: True),
+    )
+
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -98,25 +600,344 @@ PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
 PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
 PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
+#: Longest character-row meta line. One row, one line: the library row is a
+#: two-line cell (name + meta) and a wrapped snippet would reflow the list.
+CHARACTER_ROW_META_MAX_CHARS = 72
+
+
+def _character_row_meta(record: dict) -> str | None:
+    """Return the secondary line for a character library row.
+
+    Prefers a one-line description snippet, because that is what makes a row
+    recognizable in a library of many characters. The previous meta was the
+    last-modified date alone, which in practice was identical across rows and
+    so identified nothing. Falls back to the date when a character carries no
+    description, so nothing loses its subtitle.
+
+    Args:
+        record: Character summary record from the library query.
+
+    Returns:
+        A single-line meta string, or ``None`` when neither a description nor
+        a last-modified timestamp is available.
+    """
+    description = " ".join(str(record.get("description") or "").split())
+    if description:
+        if len(description) > CHARACTER_ROW_META_MAX_CHARS:
+            return description[: CHARACTER_ROW_META_MAX_CHARS - 1].rstrip() + "…"
+        return description
+    last_modified = str(record.get("last_modified") or "")
+    return last_modified[:10] if last_modified else None
+
+
 #: Center-area widgets toggled by ``_show_center``.
+_CHARACTER_DEEP_LINK_RECOVERY_ID = "#personas-character-link-recovery"
 _CENTER_VIEW_IDS: tuple[str, ...] = (
+    "#personas-dictionary-detail",
+    "#personas-lore-detail",
     "#ccp-character-card-view",
     "#ccp-character-editor-view",
     "#ccp-persona-card-view",
     "#ccp-persona-editor-view",
     _CONVERSATION_VIEW_ID,
+    _CHARACTER_DEEP_LINK_RECOVERY_ID,
     "#personas-mode-placeholder",
+    "#personas-characters-empty",
 )
+
+# TASK-31215: the four expensive center bodies keep their established root IDs,
+# while these stable lightweight slots preserve the detail stack's document
+# order before a workflow first needs them.
+_DEMAND_CENTER_VIEW_ROOTS: dict[str, str] = {
+    "character-editor": "#ccp-character-editor-view",
+    "persona-editor": "#ccp-persona-editor-view",
+    "dictionary-detail": "#personas-dictionary-detail",
+    "lore-detail": "#personas-lore-detail",
+}
+_DEMAND_CENTER_VIEW_SLOTS: dict[str, str] = {
+    "character-editor": "#personas-character-editor-slot",
+    "persona-editor": "#personas-persona-editor-slot",
+    "dictionary-detail": "#personas-dictionary-detail-slot",
+    "lore-detail": "#personas-lore-detail-slot",
+}
+
+
+class _CenterViewMountUnavailable(RuntimeError):
+    """Signal that a restore should retain its intent after a transient mount failure."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CharacterVisualIdentityLoadSnapshot:
+    """Authority captured before an editor pack-metadata worker starts."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    db: object | None
+    character_id: int | None
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _VisualIdentityPreviewSnapshot:
+    """Weak, path-free authority snapshot for one selected preview."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
+    db: object
+    character_id: int
+    screen_generation: int
+    editor_session_token: int
+    binding_id: int
+    pack_id: int
+    pack_version_id: int
+    source_kind: str
+    asset: VisualIdentityAssetMetadata
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _VisualIdentityAuthorSnapshot:
+    """Exact editor/browser authority for one unpublished candidate."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
+    db: object
+    character_id: int
+    screen_generation: int
+    editor_session_token: int
+    binding_id: int
+    pack_id: int
+    pack_version_id: int
+
+
+@dataclasses.dataclass(slots=True)
+class _VisualIdentityAuthoringState:
+    """One candidate plus cancellation shared by its provider calls."""
+
+    snapshot: _VisualIdentityAuthorSnapshot
+    candidate: VisualIdentityCandidate
+    cancel_event: threading.Event
+    authoritative_pack: VisualIdentityPackMetadata
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaVisualAuthorSnapshot:
+    """Exact local Persona editor authority for one isolated visual draft."""
+
+    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasPersonaVisualPackWidget]
+    db: object
+    local_service: object
+    persona_id: str
+    persona_revision: int
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaSharedVisualIdentityLoadSnapshot:
+    """Exact local Persona editor authority for Shared Identity metadata."""
+
+    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
+    db: object
+    local_service: object
+    persona_id: str
+    persona_revision: int
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PersonaSharedVisualIdentityAuthorSnapshot:
+    """Exact Persona/editor/pack authority for one unpublished reaction draft."""
+
+    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
+    db: object
+    local_service: object
+    persona_id: str
+    persona_revision: int
+    persona_authority: LocalPersonaVisualIdentityAuthority
+    screen_generation: int
+    editor_session_token: int
+    binding_id: int
+    pack_id: int
+    pack_version_id: int
+
+
+@dataclasses.dataclass(slots=True)
+class _PersonaSharedVisualIdentityAuthoringState:
+    """One Persona reaction candidate plus its cancellation authority."""
+
+    snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    candidate: VisualIdentityCandidate
+    cancel_event: threading.Event
+    authoritative_pack: VisualIdentityPackMetadata
+
+
+@dataclasses.dataclass(slots=True)
+class _PersonaVisualAuthoringState:
+    """One unpublished Persona Visual draft plus its private source lease."""
+
+    snapshot: _PersonaVisualAuthorSnapshot
+    draft: PersonaVisualAuthoringDraft
+    source_root: Path = dataclasses.field(repr=False)
+    workspace: PersonaVisualAuthoringWorkspace | None = dataclasses.field(
+        default=None, repr=False
+    )
+    import_review: PersonaVisualImportReview | None = dataclasses.field(
+        default=None, repr=False
+    )
+    dirty: bool = False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CharacterSaveAuthority:
+    """Editor identity allowed to reconcile one completed character save."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    selected_id: str | None
+    edit_mode: str
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ActorPackPortraitChoice:
+    """One immutable eligible local portrait option."""
+
+    character_id: int
+    name: str
+    revision: int
+    sha256: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ActorPackCreateSession:
+    """Workbench authority for one pack-ready actor draft."""
+
+    generation: int
+    actor_kind: str
+    source: str
+    editor_generation: int
+    editor_session_token: int
+    portrait_choices: tuple[_ActorPackPortraitChoice, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DrainedTaskResult:
+    """One task result observed after every outer cancellation is drained."""
+
+    completed: bool = False
+    value: Any = None
+    error: Exception | None = None
+    cancellation: asyncio.CancelledError | None = None
+
+
+async def _drain_async(
+    awaitable: Coroutine[Any, Any, Any], *, task_name: str
+) -> _DrainedTaskResult:
+    """Shield one critical task and report cancellation after it settles."""
+
+    task = asyncio.create_task(awaitable, name=task_name)
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return _DrainedTaskResult(
+                completed=True,
+                value=await asyncio.shield(task),
+                cancellation=cancellation,
+            )
+        except asyncio.CancelledError as exc:
+            if task.done() and task.cancelled():
+                try:
+                    task.result()
+                except asyncio.CancelledError as child_cancellation:
+                    return _DrainedTaskResult(
+                        cancellation=cancellation or child_cancellation
+                    )
+            if cancellation is None:
+                cancellation = exc
+        except Exception as exc:
+            return _DrainedTaskResult(error=exc, cancellation=cancellation)
+
+
+async def _drain_to_thread(
+    function: Callable[..., Any],
+    /,
+    *args: Any,
+    task_name: str,
+    **kwargs: Any,
+) -> _DrainedTaskResult:
+    """Shield one irreversible thread and report cancellation after it settles."""
+
+    return await _drain_async(
+        asyncio.to_thread(function, *args, **kwargs), task_name=task_name
+    )
+
+
+def _actor_pack_portrait_name(data: bytes) -> str:
+    """Infer the only supported bounded raster suffix without exposing a path."""
+
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "portrait.png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "portrait.jpg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "portrait.gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "portrait.webp"
+    raise ValueError("actor_pack_portrait_invalid")
+
+
+def _normalize_actor_pack_destination(value: object) -> Path:
+    """Append the Actor Pack suffix exactly once without resolving authority."""
+
+    if not isinstance(value, (str, Path)):
+        raise ValueError("actor_pack_export_destination_invalid")
+    destination = Path(value)
+    if destination.name in {"", ".", ".."}:
+        raise ValueError("actor_pack_export_destination_invalid")
+    if destination.suffix.lower() != ".tldw-actor-pack":
+        destination = destination.with_name(destination.name + ".tldw-actor-pack")
+    return destination
+
+
+def _actor_pack_export_filename(name: str) -> str:
+    """Return a portable, non-empty default archive filename."""
+
+    safe = "".join(char for char in name if char.isalnum() or char in " -_").strip()
+    return f"{safe or 'actor'}.tldw-actor-pack"
+
+
+def _actor_pack_import_error_copy(category: str | None) -> str:
+    """Map fixed backend categories to path-free recovery copy."""
+
+    return {
+        "actor_pack_import_cancelled": "Actor Pack import cancelled.",
+        "actor_pack_import_invalid": "This is not a valid Actor Pack.",
+        "actor_pack_import_unsupported": (
+            "This Actor Pack uses features this version cannot activate."
+        ),
+        "actor_pack_import_review_stale": (
+            "The actor or staged pack changed. Review the Actor Pack again."
+        ),
+        "actor_pack_import_identity_conflict": (
+            "This portable UUID belongs to a different actor kind."
+        ),
+        "actor_pack_import_disk_unavailable": (
+            "There is not enough verified private storage to import this pack."
+        ),
+    }.get(category, "Actor Pack import failed.")
+
+
+async def _join_task(task: asyncio.Task[Any]) -> Any:
+    """Await an existing task through the shared shield-and-drain boundary."""
+
+    return await task
 
 
 class PersonasScreen(BaseAppScreen):
-    """Characters, personas, prompts, dictionaries, and behavior profiles."""
-
-    #: Page size above which the loaded list may be truncated and FTS is used
-    #: instead of filtering the in-memory list. Must stay in sync with the
-    #: ``fetch_character_names(limit=1000)`` default in
-    #: ``Character_Chat/Character_Chat_Lib.py``, which caps the loaded list.
-    LIBRARY_FTS_THRESHOLD: int = 1000
+    """Characters, personas, dictionaries, and behavior profiles."""
 
     # Escape/Ctrl+S deliberately do NOT use priority=True: on Textual 8.2.7
     # neither Input nor TextArea (with the default tab_behavior="focus")
@@ -126,7 +947,9 @@ class PersonasScreen(BaseAppScreen):
     # unsaved-changes dialog prompts before anything is discarded).
     BINDINGS = [
         *BaseAppScreen.BINDINGS,
-        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True
+        ),
         Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
@@ -136,7 +959,7 @@ class PersonasScreen(BaseAppScreen):
         ),
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
-        Binding("ctrl+enter", "personas_attach", "Attach"),
+        Binding("ctrl+enter", "personas_attach", "Send to Console draft"),
         Binding("ctrl+s", "personas_save", "Save", show=False),
         Binding("escape", "personas_escape", "Back", show=False),
         # Ctrl+1..5 mirror the mode strip order (MODE_CHIP_ORDER).
@@ -144,15 +967,19 @@ class PersonasScreen(BaseAppScreen):
             Binding(
                 f"ctrl+{index + 1}",
                 f"personas_mode('{mode}')",
-                MODE_LABELS[mode],
+                MODE_LABELS.get(mode, mode),
                 show=False,
             )
             for index, mode in enumerate(MODE_CHIP_ORDER)
         ],
         # [ / ] cycle the mode strip. They are printable keys, so text widgets
         # consume them as input first; they only act from list/button focus.
-        Binding("left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False),
-        Binding("right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False),
+        Binding(
+            "left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False
+        ),
+        Binding(
+            "right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False
+        ),
     ]
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
@@ -169,7 +996,11 @@ class PersonasScreen(BaseAppScreen):
         ),
         WorkbenchPaneTarget(
             "personas-work-area",
-            ("personas-preview-input", "personas-preview-toggle"),
+            (
+                "personas-conversation-resume",
+                "personas-preview-input",
+                "personas-preview-toggle",
+            ),
         ),
         WorkbenchPaneTarget(
             "personas-inspector-pane",
@@ -188,10 +1019,16 @@ class PersonasScreen(BaseAppScreen):
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasScreen {
         background: $background;
     }
+
+    /* Red cue when the staged Console handoff provider is unready (task-523):
+       the "Blocked" badge word turns $ds-status-blocked. The rule CANNOT live
+       here — app-bundle CSS (`.ds-status-badge { color: $ds-text-primary }`)
+       outranks any widget DEFAULT_CSS regardless of specificity — so it lives
+       in the app-tier source css/components/_workbench.tcss instead. */
 
     #personas-mode-strip {
         height: 1;
@@ -223,14 +1060,17 @@ class PersonasScreen(BaseAppScreen):
 
     #personas-workbench {
         height: 1fr;
-        min-height: 20;
+        /* Keep below the worst-case available height (80x24 harness: ~13
+           lines after nav/header/status) so rows never spill under the
+           footer status bar; the ListView scrolls internally instead. */
+        min-height: 10;
         padding: 1;
     }
 
     #personas-workbench .destination-workbench-pane {
         min-width: 0;
         height: 100%;
-        min-height: 18;
+        min-height: 6;
         padding: 0 1;
     }
 
@@ -279,6 +1119,17 @@ class PersonasScreen(BaseAppScreen):
         min-height: 0;
     }
 
+    #personas-characters-empty {
+        width: 1fr;
+        height: 1fr;
+        /* F-035: left/top like the app's other empty states (cf.
+           .chat-empty-state) - centered in the void read as broken layout. */
+        content-align: left top;
+        text-align: left;
+        padding: 1 2;
+        color: $text-muted;
+    }
+
     #personas-library-rows {
         height: 1fr;
         min-height: 3;
@@ -294,24 +1145,68 @@ class PersonasScreen(BaseAppScreen):
     }
 
     #personas-conversation-actions {
-        height: 3;
-        min-height: 3;
+        height: 9;
+        min-height: 9;
         width: 100%;
     }
 
     #personas-conversation-actions Button {
-        width: auto;
         min-width: 0;
         height: 3;
-        margin-right: 1;
+        margin: 0;
+    }
+
+    #personas-conversation-resume,
+    #personas-conversation-continue-console,
+    #personas-conversation-navigation-actions {
+        width: 100%;
+        height: 3;
+    }
+
+    #personas-conversation-navigation-actions Button {
+        width: 1fr;
+    }
+
+    /* The character dictionaries + world-books sections sit alongside the
+       character card view (both visible when a character is selected), not
+       swapped by _show_center like the other detail-stack children. The
+       stack is a VerticalScroll and the card fills its viewport
+       (height: 100%), so the sections flow BELOW the fold in document
+       order and the user scrolls the center column down to them
+       (task-2231). This replaced the old bottom-docked wrapper: docked,
+       the two panels owned up to 16 lines even when empty, displaced the
+       card entirely at 100x30, and left a dead void between the panels at
+       170x50. Each section is now a one-line collapsed header by default,
+       so no explicit max-height cap is needed here (the panels' own
+       BUNDLED_CSS keeps every part height: auto, which the old cap existed
+       to force). */
+    #personas-character-attachments {
+        height: auto;
+        width: 100%;
     }
     """
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "personas", **kwargs)
-        self.state = PersonasWorkbenchState()
+        initial_runtime_source = "local"
+        for attribute in ("runtime_backend", "current_runtime_backend"):
+            candidate = getattr(app_instance, attribute, None)
+            if isinstance(candidate, str) and candidate in {"local", "server"}:
+                initial_runtime_source = candidate
+                break
+        self.runtime_backend = initial_runtime_source
+        self.state = PersonasWorkbenchState(runtime_source=initial_runtime_source)
+        # A selection + preview snapshot captured by save_state() before a
+        # navigation round-trip (task-434); consumed once by
+        # _apply_pending_restore() at the end of on_mount.
+        self._pending_restore: dict | None = None
         self._edit_mode: str = "view"
         self._guard_active: bool = False
+        self._center_view_lifecycle_generation = 0
+        self._center_view_mount_locks = {
+            view_key: asyncio.Lock() for view_key in _DEMAND_CENTER_VIEW_ROOTS
+        }
+        self._ready_center_views: dict[str, Widget] = {}
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
         # an in-flight dialog worker (exclusive=True) would orphan a modal
         # pushed via push_screen_wait, whose dismissal then calls
@@ -321,22 +1216,174 @@ class PersonasScreen(BaseAppScreen):
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
+        self._actor_pack_generation: int = 0
+        self._actor_pack_session: _ActorPackCreateSession | None = None
+        self._actor_pack_operation_task: asyncio.Task[Any] | None = None
+        self._actor_pack_cancel_event: threading.Event | None = None
+        self._actor_pack_portrait_generation: int = 0
+        self._actor_pack_export_operation: int | None = None
+        self._actor_pack_export_authority: _ActorPackExportUIAuthority | None = None
+        self._actor_pack_import_operation: int | None = None
+        self._actor_pack_import_review: ActorPackImportReview | None = None
+        # Image-gen P3 Task 3: (character_id, state) pairs with an expression
+        # generation worker currently in flight - refuses a re-entrant
+        # generate click for the same slot rather than racing two writes.
+        # Task 4 widens the key: the avatar state's character_id may be
+        # ``None`` (an unsaved character - avatar generation is allowed
+        # pre-save), and a Generate-all sweep additionally claims the
+        # ``"all"`` pseudo-state for its own single-flight guard.
+        self._expression_generate_inflight: set[tuple[int | None, str]] = set()
+        # Image-gen P3 Task 4: the style template picked via the "Style…"
+        # button, applied to every subsequent avatar/expression generation
+        # until changed. ``None`` means no style (plain prompt composition).
+        self._expression_generate_style: GenerationTemplate | None = None
+        self._visual_identity_authoring: _VisualIdentityAuthoringState | None = None
+        self._visual_identity_operation_task: asyncio.Task[Any] | None = None
+        self._visual_identity_operation_event: threading.Event | None = None
+        self._visual_identity_publication_inflight: bool = False
+        self._persona_shared_visual_identity_authority: (
+            LocalPersonaVisualIdentityAuthority | None
+        ) = None
+        self._persona_shared_visual_identity_authoring: (
+            _PersonaSharedVisualIdentityAuthoringState | None
+        ) = None
+        self._persona_shared_visual_identity_operation_task: (
+            asyncio.Task[Any] | None
+        ) = None
+        self._persona_shared_visual_identity_operation_event: threading.Event | None = (
+            None
+        )
+        self._persona_shared_visual_identity_publication_inflight = False
+        self._persona_visual_authoring: _PersonaVisualAuthoringState | None = None
+        self._persona_visual_generation = 0
+        self._persona_visual_operation_task: asyncio.Task[Any] | None = None
+        self._persona_visual_operation_event: threading.Event | None = None
+        self._persona_visual_publication_inflight = False
         self._profile_save_inflight: bool = False
+        self._profile_save_operation_inflight: bool = False
+        self._profile_save_completion: asyncio.Future[None] | None = None
+        self._persona_buddy_session_generation: int = 0
+        self._persona_buddy_action_lock = asyncio.Lock()
+        # Mirrors _profile_save_inflight for the character editor: guards
+        # against a re-entrant Save (double-click/Ctrl+S) while an earlier
+        # save for this session is still persisting.
+        self._character_save_inflight: bool = False
+        self._character_save_worker_handle: Any | None = None
+        self._actor_pack_save_worker_handle: Any | None = None
+        # ``_characters`` now holds only the CURRENT page of the library, not
+        # the whole (capped) list; ``_character_total`` is the full-library
+        # count for the active (search, tag) filter, cached under
+        # ``_count_cache_key`` so page-nav/sort reuse it and only a filter
+        # change recomputes it.
+        self._character_page_generation: int = 0
         self._characters: list[dict] = []
+        self._selected_server_character: tuple[str, dict] | None = None
+        self._character_total: int = 0
+        self._count_cache_key: tuple | None = None
+        self._character_tags: list[str] = []
         self._profiles: list[dict] = []
+        self._profile_total: int = 0
+        self._dictionaries_cache: list[dict] = []
+        self._selected_dictionary_version: int | None = None
+        self._lore_books_cache: list[dict] = []
+        self._dictionary_lore_request_generation: int = 0
+        # Full record + entries for the currently-selected lore book, kept in
+        # memory so Try-it can build a WorldInfoProcessor without a re-fetch.
+        self._selected_lore_book: dict | None = None
+        self._selected_lore_entries: list[dict] = []
+        self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
+        self._character_tts_request_generation = 0
+        self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
+        self._character_tts_presentation = CharacterTTSPresentationState.disabled()
+        self._character_tts_profile_suggestion: CharacterTTSProfileSuggestion | None = (
+            None
+        )
+        self._character_tts_suggestion_focus_pending = False
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
         self._workbench_compact: bool | None = None
+        self._workbench_narrow: bool | None = None
+        self._compact_active_pane = "work"
         self._library_rail_collapsed: bool = False
         self._inspector_rail_collapsed: bool = False
+        # Set by restore_state when the mount carries saved navigation state:
+        # a Console -> back round-trip keeps its own selection semantics
+        # (restored, or deliberately cleared), so first-paint auto-select
+        # (F-031) must not fire on those mounts.
+        self._restored_from_saved_state: bool = False
+        # F-040: the library pane's marked rows ((kind, item_id, name)
+        # triples) driving bulk Delete/Export; kept in step via
+        # PersonaMarksChanged.
+        self._marked_rows: tuple[tuple[str, str, str], ...] = ()
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
+        self._pending_character_conversation_link: (
+            RoleplayCharacterConversationLink | None
+        ) = None
+        self._character_conversation_return_target = None
+        self._pending_character_return_focus_id: str | None = None
         self.preview = PersonasPreviewController(self)
         setup_ccp_enhancements(self)
+
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Accept one bounded Voice Profile suggestion without assigning it."""
+
+        from ..Navigation.character_conversation_navigation import (
+            deserialize_roleplay_character_conversation_link,
+        )
+
+        if isinstance(context, Mapping) and set(context) == {
+            ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION
+        }:
+            payload = context.get(ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION)
+            if isinstance(payload, Mapping):
+                try:
+                    self._pending_character_conversation_link = (
+                        deserialize_roleplay_character_conversation_link(payload)
+                    )
+                except (TypeError, ValueError):
+                    logger.warning("Rejected invalid Roleplay conversation deep link")
+            return
+        if isinstance(context, Mapping) and set(context) == {
+            CHARACTER_NAV_CONTEXT_RETURN_FOCUS
+        }:
+            focus_id = context.get(CHARACTER_NAV_CONTEXT_RETURN_FOCUS)
+            if isinstance(focus_id, str) and re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9_-]{0,127}", focus_id
+            ):
+                self._pending_character_return_focus_id = focus_id
+            return
+
+        if not isinstance(context, Mapping) or set(context) != {
+            "view",
+            "voice_profile_suggestion",
+        }:
+            return
+        suggestion = context.get("voice_profile_suggestion")
+        if (
+            context.get("view") != "characters"
+            or type(suggestion) is not CharacterTTSProfileSuggestion
+        ):
+            return
+        self._character_tts_profile_suggestion = suggestion
+        self._character_tts_suggestion_focus_pending = True
+        if self.is_mounted and self.state.active_mode != "characters":
+            self.run_worker(
+                self._apply_mode("characters"),
+                group="personas_voice_profile_handoff",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    def _clear_character_tts_profile_suggestion(self) -> None:
+        """Drop only transient handoff guidance, never persisted assignment."""
+
+        self._character_tts_profile_suggestion = None
+        self._character_tts_suggestion_focus_pending = False
 
     # ===== Compose =====
 
@@ -347,40 +1394,54 @@ class PersonasScreen(BaseAppScreen):
             Textual compose result for the Personas content tree.
         """
         with Vertical(id="personas-shell"):
-            yield Static(
-                self._title_text(),
-                id="personas-title",
-                classes="ds-destination-header",
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Roleplay",
+                    subtitle=self._header_subtitle_text(),
+                    status="ready",
+                ),
+                id="personas-header",
             )
+            # F-033: one line carries both the mode descriptor and the live
+            # item count - the old standalone status strip ("Characters: N")
+            # and the library pane's duplicate count line are retired.
             yield Static(
-                "Create and manage behavior profiles - characters, personas, prompts, "
-                "dictionaries, and lore - and attach them to Console.",
+                self._purpose_line_text(),
                 id="personas-purpose",
                 classes="destination-purpose",
             )
-            yield Static(
-                self._status_row_text(),
-                id="personas-status-row",
-                classes="destination-status-row",
-            )
-            with DestinationModeStrip(id="personas-mode-strip", classes="destination-mode-strip"):
-                yield Static("Modes:", id="personas-mode-label", classes="destination-section")
-                for mode in MODE_CHIP_ORDER:
+            with DestinationModeStrip(
+                id="personas-mode-strip", classes="destination-mode-strip"
+            ):
+                yield Static(
+                    "Modes:", id="personas-mode-label", classes="destination-section"
+                )
+                for index, mode in enumerate(MODE_CHIP_ORDER):
                     classes = "personas-mode-chip"
                     if mode == self.state.active_mode:
                         classes = f"{classes} is-active"
+                    label = MODE_LABELS.get(mode, mode)
+                    if mode in _COMING_SOON_MODES:
+                        label = f"{label} · soon"
                     yield Button(
-                        MODE_LABELS[mode],
+                        label,
                         id=f"personas-mode-{mode}",
                         classes=classes,
-                        tooltip=f"Switch the workbench to {MODE_LABELS[mode]}.",
+                        # F-038: the chip tooltip discloses its Ctrl+N jump key
+                        # (the binding mirrors the strip order).
+                        tooltip=(
+                            f"{self._mode_descriptor_text(mode)} (Ctrl+{index + 1})"
+                        ),
                     )
-            with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
-                library_handle = ConsoleRailHandle(
+            with Horizontal(
+                id="personas-workbench", classes="ds-panel destination-workbench"
+            ):
+                library_handle = DestinationRailHandle(
                     label="Library",
                     button_id="personas-library-rail-open",
                     badge_id="personas-library-rail-badge",
                     side="left",
+                    open_tooltip="Open Library rail",
                     id="personas-library-rail-handle",
                 )
                 library_handle.styles.width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
@@ -398,25 +1459,109 @@ class PersonasScreen(BaseAppScreen):
                     library_pane.display = False
                 yield library_pane
 
-                with Vertical(id="personas-work-area", classes="destination-workbench-pane"):
-                    with Container(id="personas-detail-stack"):
-                        yield PersonasCharacterCardWidget()
-                        yield PersonasCharacterEditorWidget()
-                        yield PersonaProfileCardWidget()
-                        yield PersonaProfileEditorWidget()
-                        with Horizontal(id="personas-conversation-actions"):
-                            yield Button("Back to card", id="personas-conversation-back")
-                            yield Button(
-                                "Continue in Console",
-                                id="personas-conversation-continue-console",
-                            )
-                            yield Button(
-                                "Open in Library",
-                                id="personas-conversation-open-library",
-                            )
-                        yield PersonasConversationTranscriptWidget()
-                        yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
+                with Vertical(
+                    id="personas-work-area", classes="destination-workbench-pane"
+                ):
+                    # F-039: the preview toggle anchors the TOP of the center
+                    # canvas (immediately above the detail stack) so the
+                    # affordance reads as the canvas's own section instead of
+                    # a bar stranded at the work-area bottom.
                     yield PersonasPreviewPane(id="personas-preview-pane")
+                    # The center canvas is ONE scrollable column
+                    # (task-2231): the visible center view (e.g. the
+                    # character card) fills the viewport first, and the
+                    # character-attachment sections flow below it in
+                    # document order - the user scrolls down to them.
+                    # Collapsed sections cost one line each, so the card
+                    # keeps the whole viewport by default. (This replaced
+                    # the old bottom-docked wrapper, which let the two
+                    # empty panels displace the card at 100x30 and left a
+                    # dead void between them at 170x50.)
+                    # TASK-31215: stable, zero-demand slots preserve the
+                    # historical document order while their four expensive
+                    # bodies remain absent until a workflow first needs one.
+                    with VerticalScroll(id="personas-detail-stack"):
+                        yield PersonasCharacterCardWidget()
+                        character_editor_slot = Vertical(
+                            id="personas-character-editor-slot"
+                        )
+                        character_editor_slot.display = False
+                        character_editor_slot.styles.width = "100%"
+                        yield character_editor_slot
+                        with Vertical(id="personas-character-attachments"):
+                            yield PersonasCharacterDictionariesWidget()
+                            yield PersonasCharacterWorldBooksWidget()
+                        yield PersonaProfileCardWidget()
+                        persona_editor_slot = Vertical(
+                            id="personas-persona-editor-slot"
+                        )
+                        persona_editor_slot.display = False
+                        persona_editor_slot.styles.width = "100%"
+                        yield persona_editor_slot
+                        with Vertical(id="personas-conversation-actions"):
+                            yield Button(
+                                "Resume chat",
+                                id="personas-conversation-resume",
+                                classes="console-action-primary",
+                            )
+                            yield Button(
+                                # task-2232: the one secondary CTA verbatim -
+                                # continue_in_console stages the transcript as
+                                # a draft handoff (no auto-send).
+                                "Send transcript to Console draft",
+                                id="personas-conversation-continue-console",
+                                classes="console-action-secondary",
+                            )
+                            with Horizontal(
+                                id="personas-conversation-navigation-actions"
+                            ):
+                                yield Button(
+                                    "Back to conversations",
+                                    id="personas-conversation-back",
+                                    classes="console-action-subdued personas-conversation-navigation-action",
+                                )
+                                yield Button(
+                                    "Open in Library",
+                                    id="personas-conversation-open-library",
+                                    classes="console-action-subdued personas-conversation-navigation-action",
+                                )
+                        dictionary_detail_slot = Vertical(
+                            id="personas-dictionary-detail-slot"
+                        )
+                        dictionary_detail_slot.display = False
+                        dictionary_detail_slot.styles.width = "100%"
+                        yield dictionary_detail_slot
+                        lore_detail_slot = Vertical(id="personas-lore-detail-slot")
+                        lore_detail_slot.display = False
+                        lore_detail_slot.styles.width = "100%"
+                        yield lore_detail_slot
+                        yield PersonasConversationTranscriptWidget()
+                        yield Static(
+                            self._mode_placeholder_text("prompts"),
+                            id="personas-mode-placeholder",
+                        )
+                        yield Static(
+                            _CHARACTERS_EMPTY_GUIDANCE,
+                            id="personas-characters-empty",
+                            markup=True,
+                        )
+                        recovery = Vertical(id="personas-character-link-recovery")
+                        recovery.display = False
+                        with recovery:
+                            yield Static(
+                                "The requested character conversation is unavailable.",
+                                id="personas-character-link-recovery-copy",
+                            )
+                            yield Button(
+                                "Retry / Refresh",
+                                id="personas-character-link-retry",
+                            )
+                    tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
+                    tryit.display = False
+                    yield tryit
+                    lore_tryit = PersonasLoreTryItWidget(id="personas-lore-tryit")
+                    lore_tryit.display = False
+                    yield lore_tryit
 
                 inspector_pane = PersonasInspectorPane(
                     id="personas-inspector-pane",
@@ -426,11 +1571,12 @@ class PersonasScreen(BaseAppScreen):
                     inspector_pane.display = False
                 yield inspector_pane
 
-                inspector_handle = ConsoleRailHandle(
+                inspector_handle = DestinationRailHandle(
                     label="Inspector",
                     button_id="personas-inspector-rail-open",
                     badge_id="personas-inspector-rail-badge",
                     side="right",
+                    open_tooltip="Open Inspector rail",
                     id="personas-inspector-rail-handle",
                 )
                 inspector_handle.styles.width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
@@ -440,24 +1586,561 @@ class PersonasScreen(BaseAppScreen):
                     inspector_handle.display = False
                 yield inspector_handle
 
-    async def on_mount(self) -> None:
-        super().on_mount()
-        loading_manager = getattr(self, "loading_manager", None)
-        setup_loading = getattr(loading_manager, "setup", None)
-        if callable(setup_loading):
-            await setup_loading()
+    # ===== State persistence (task-434) =====
+    #
+    # A Personas -> Console -> back round-trip pushes/pops this screen, and
+    # ``BaseAppScreen``'s default save_state/restore_state only round-trips
+    # ``self.state_data`` (empty for this screen). Capture the workbench
+    # selection (``PersonasWorkbenchState``) and the ephemeral preview
+    # (greeting + turns, which live outside ``self.state``) so both survive.
+
+    def save_state(self) -> dict:
+        """Snapshot the workbench selection and preview for a later restore."""
+        state = dict(super().save_state() or {})
+        state["personas_workbench"] = dataclasses.asdict(self.state)
+        preview = getattr(self, "preview", None)
+        if preview is not None:
+            greeting = ""
+            try:
+                greeting = self.query_one(PersonasPreviewPane).greeting_text
+            except QueryError:
+                # Tolerate a save requested before/around the pane's lifetime.
+                pass
+            state["personas_preview"] = {
+                "greeting": greeting,
+                "history": [dict(m) for m in preview.history],
+                "seeded_for": preview.seeded_for,
+                "greeting_index": preview._current_greeting_index,
+            }
+        return state
+
+    def restore_state(self, state: dict) -> None:
+        """Seed ``self.state`` and stash the deferred re-selection payload.
+
+        Runs before this (fresh) screen mounts, so it only seeds state here;
+        the actual re-selection is applied by ``_apply_pending_restore`` once
+        the screen (and its widgets) exist.
+
+        All chip modes restore (F-040): a saved non-Characters mode seeds
+        ``self.state`` here and ``_apply_pending_restore`` runs the full
+        ``_apply_mode`` for it before re-selecting, so the mode's library
+        rows and mode-specific panes are live when the selection lands.
+
+        The round-trip flag is set only for payloads that can resolve (a
+        saved chip mode). An invalid payload, or one whose selection later
+        fails to apply, leaves the flag False so first-paint auto-select
+        (F-031) still rescues the mount instead of showing a dead paint.
+        """
+        super().restore_state(state)
+        if not isinstance(state, dict):
+            self._pending_restore = None
+            self._restored_from_saved_state = False
+            return
+        wb = state.get("personas_workbench")
+        # Only a payload that can actually resolve (a saved chip mode) counts
+        # as a navigation round-trip. An invalid/unsupported payload is not a
+        # restore at all, so first-paint auto-select (F-031) still fires -
+        # otherwise a stale saved state would land the user on the dead
+        # no-selection paint. A payload that then FAILS to apply its
+        # selection clears the flag again in _apply_pending_restore below.
+        self._restored_from_saved_state = (
+            isinstance(wb, dict) and wb.get("active_mode") in MODE_CHIP_ORDER
+        )
+        if self._restored_from_saved_state:
+            names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
+            self._advance_persona_buddy_session()
+            self.state = PersonasWorkbenchState(
+                **{k: v for k, v in wb.items() if k in names}
+            )
+            self._pending_restore = (
+                {
+                    "kind": self.state.selected_entity_kind,
+                    "id": self.state.selected_entity_id,
+                    "name": self.state.selected_entity_name,
+                    "preview": state.get("personas_preview"),
+                }
+                if self.state.selected_entity_id
+                else None
+            )
+        else:
+            self._pending_restore = None
+
+    async def _apply_pending_restore(self) -> None:
+        """Re-apply a selection saved before a navigation round-trip (task-434)."""
+        pending = getattr(self, "_pending_restore", None)
+        if not pending or not pending.get("id"):
+            return
+        kind = pending.get("kind")
+        entity_id = str(pending["id"])
+        name = str(pending.get("name") or "")
+        try:
+            # F-040: a saved non-Characters mode needs its full mode apply
+            # (library rows, Try-It panes, preview visibility) before the
+            # selection lands; ``switch_mode`` inside clears the seeded
+            # selection, which the dispatch below re-establishes.
+            saved_mode = self.state.active_mode
+            if saved_mode != "characters" and saved_mode in MODE_CHIP_ORDER:
+                await self._apply_mode(saved_mode)
+            if kind == "character":
+                await self._select_character(
+                    entity_id, name, restore_preview=pending.get("preview")
+                )
+            elif kind == "persona":
+                await self._select_profile(entity_id, name)
+            elif kind == "dictionary":
+                await self._select_dictionary(
+                    entity_id, name, raise_on_mount_failure=True
+                )
+            elif kind == "lore":
+                await self._select_lore_entry(
+                    entity_id, name, raise_on_mount_failure=True
+                )
+            self._pending_restore = None
+        except _CenterViewMountUnavailable:
+            # A missing record is terminal in the existing selection paths,
+            # but a failed Textual mount is transient. Keep the exact payload
+            # so an explicit retry can replay it instead of misclassifying the
+            # entity as deleted.
+            return
+        except Exception:
+            self._pending_restore = None
+            # A stale/deleted entity must degrade to a fully cleared selection,
+            # not just a blank center: leaving self.state's selection populated
+            # would let _console_action_allowed() keep attach/Start-Chat wrongly
+            # enabled and the inspector showing a stale selection. The flag is
+            # cleared too: this restore produced nothing, so the mount falls
+            # back to first-paint auto-select (F-031) instead of a dead paint.
+            logger.opt(exception=True).warning(
+                f"Could not restore Personas selection {kind}/{entity_id}; "
+                "clearing selection."
+            )
+            self._advance_persona_buddy_session()
+            self.state.clear_selection()
+            self._restored_from_saved_state = False
+            try:
+                await self.query_one(PersonasInspectorPane).clear_selection()
+            except QueryError:
+                pass
+            self._show_center(None)
+            self._sync_title_and_console_actions()
+
+    async def _auto_select_first_library_row(self) -> None:
+        """Select the first library row on a fresh first paint (F-031).
+
+        A non-empty library that opens with nothing selected paints a void
+        center and a disabled inspector; selecting the first row wakes the
+        card, actions, and preview instead. Skipped when a selection already
+        exists (including a successful restore) and on navigation
+        round-trips (``restore_state`` payloads keep their own selection
+        semantics, even the deliberately-cleared fallbacks). Runs the exact
+        ``_select_character`` path a row click takes, and never moves focus,
+        so the focus-steal guards are not involved. Mode switches
+        deliberately do NOT auto-select - this is a mount-time onboarding
+        behavior only.
+        """
+        if self._restored_from_saved_state:
+            return
+        if self._character_tts_profile_suggestion is not None:
+            return
+        if self.state.selected_entity_id:
+            return
+        # A fast user can start authoring while the initial library worker is
+        # still settling. Never let its onboarding auto-selection replace that
+        # newer editor session (demand mounting makes this race easier to hit).
+        if self._edit_mode != "view":
+            return
+        if self.state.active_mode != "characters":
+            return
+        first = next((r for r in self._characters if r.get("id") is not None), None)
+        if first is None:
+            return
+        try:
+            await self._select_character(
+                str(first["id"]), str(first.get("name") or "Unnamed")
+            )
+        except Exception:
+            # Auto-select is an onboarding convenience; a row that fails to
+            # load must degrade to the pre-selection guidance, never break
+            # the mount worker.
+            logger.opt(exception=True).warning(
+                "Personas first-paint auto-select failed; leaving no selection."
+            )
+            return
+        # _select_character runs outside _run_guarded here, so re-register
+        # the header/footer/console-action sync it normally gets from the
+        # guarded wrapper - the footer attach hint and header status must
+        # reflect the auto-selected row on first paint.
+        self._sync_title_and_console_actions()
+
+    def on_mount(self) -> None:
+        """Paint the shell now, load the library after (TASK-1320).
+
+        Synchronous by design. Mounting is awaited by the app's own navigation
+        handler, so awaiting the character read here ran it on the App's message
+        pump -- and `refresh_character_list()` reads every character through the
+        blocking `fetch_all_characters()`, so the app stopped responding
+        entirely until the library came back.
+
+        Everything that only arranges already-composed widgets stays here, so
+        the screen is laid out and readable immediately. Only the library read
+        and what genuinely depends on it is deferred, in its original order --
+        including the loading-manager setup, which the library read follows.
+
+        No super().on_mount(): the dispatcher already invokes
+        BaseAppScreen.on_mount separately for this Mount event.
+        """
         self._sync_responsive_workbench()
         self._sync_personas_rails()
-        self._sync_personas_rail_tooltips()
+        self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
+        self._sync_local_character_actions()
         self._show_center(None)
-        await self.character_handler.refresh_character_list()
-        self._register_footer_shortcuts()
+        self.run_worker(
+            self._load_after_mount(),
+            group="personas_initial_load",
+            # A load failure is a broken screen, never a dead app. Textual
+            # defaults this to True, so deferring mount work into a worker would
+            # otherwise turn a failed library read into an app exit.
+            exit_on_error=False,
+            exclusive=True,
+        )
+
+    @staticmethod
+    def _build_center_view(view_key: str) -> Widget:
+        """Construct one heavy Personas center body for first-use mounting."""
+        if view_key == "character-editor":
+            return PersonasCharacterEditorWidget()
+        if view_key == "persona-editor":
+            return PersonaProfileEditorWidget()
+        if view_key == "dictionary-detail":
+            return PersonasDictionaryDetailWidget(id="personas-dictionary-detail")
+        if view_key == "lore-detail":
+            return PersonasLoreDetailWidget(id="personas-lore-detail")
+        raise ValueError(f"Unknown Personas center view: {view_key}")
+
+    def _ready_center_view(self, view_key: str) -> Widget | None:
+        """Return a requested heavy root only after successful hydration."""
+        if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
+            raise ValueError(f"Unknown Personas center view: {view_key}")
+        existing = self._ready_center_views.get(view_key)
+        if existing is not None and existing.is_mounted:
+            return existing
+        self._ready_center_views.pop(view_key, None)
+        return None
+
+    def _hydrate_center_view(self, view_key: str, view: Widget) -> None:
+        """Apply screen-owned retained state before a new body is used."""
+        if view_key == "character-editor" and isinstance(
+            view, PersonasCharacterEditorWidget
+        ):
+            for control in view.query(PersonasCharacterTTSWidget):
+                control.apply_state(self._character_tts_presentation)
+        if view_key == "persona-editor" and isinstance(
+            view, PersonaProfileEditorWidget
+        ):
+            view.set_runtime_source(self.persona_handler.current_mode())
+
+    async def _ensure_center_view(self, view_key: str) -> Widget | None:
+        """Mount, hydrate, and cache one heavy center view on first use.
+
+        Concurrent requests for one body serialize through its lock and reuse
+        the first successful widget. Failures leave no readiness marker, so a
+        later user action can retry. A lifecycle-generation check prevents a
+        mount that finishes during teardown from hydrating detached UI.
+        """
+        if view_key not in _DEMAND_CENTER_VIEW_ROOTS:
+            raise ValueError(f"Unknown Personas center view: {view_key}")
+        existing = self._ready_center_view(view_key)
+        if existing is not None:
+            return existing
+
+        async with self._center_view_mount_locks[view_key]:
+            existing = self._ready_center_view(view_key)
+            if existing is not None:
+                return existing
+
+            generation = self._center_view_lifecycle_generation
+            body = self._build_center_view(view_key)
+            body.display = False
+            try:
+                slot = self.query_one(_DEMAND_CENTER_VIEW_SLOTS[view_key], Vertical)
+                await slot.mount(body)
+                if (
+                    generation != self._center_view_lifecycle_generation
+                    or not self.is_mounted
+                ):
+                    if body.is_mounted:
+                        await body.remove()
+                    return None
+                self._hydrate_center_view(view_key, body)
+                slot.display = True
+                self._ready_center_views[view_key] = body
+                return body
+            except asyncio.CancelledError:
+                if body.is_mounted:
+                    await body.remove()
+                raise
+            except Exception:
+                if body.is_mounted:
+                    await body.remove()
+                logger.opt(exception=True).warning(
+                    "Personas center view mount failed (view_key={}).", view_key
+                )
+                self._notify("Couldn't open this Personas view. Try again.", "error")
+                return None
+
+    async def _load_after_mount(self) -> None:
+        """Load the character library once the screen is already on screen."""
+        try:
+            # task-21106: Actor Pack crash recovery must land before this
+            # surface reads persona/library state (the coordinator docstring's
+            # "before affected surfaces mount"). Once-per-app-session — the
+            # guard lives on the coordinator, so re-mounts are a cached no-op —
+            # and off-thread, because a non-trivial recovery does real SQLite.
+            ensure_recovery = getattr(
+                self.app_instance, "ensure_actor_pack_recovery", None
+            )
+            if callable(ensure_recovery):
+                await asyncio.to_thread(ensure_recovery)
+            loading_manager = getattr(self, "loading_manager", None)
+            setup_loading = getattr(loading_manager, "setup", None)
+            if callable(setup_loading):
+                await setup_loading()
+            if self._closed or self._parent is None or self.app.screen is not self:
+                return
+            if self.state.runtime_source == "server":
+                await self._reload_character_page()
+            else:
+                await self.character_handler.refresh_character_list()
+            self._sync_title_and_console_actions()
+            deep_link_outcome = await self._apply_pending_character_conversation_link()
+            if deep_link_outcome is CharacterConversationLinkOutcome.ABSENT:
+                await self._apply_pending_restore()
+                await self._auto_select_first_library_row()
+            self.call_after_refresh(self._restore_character_return_focus)
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Personas initial load failed "
+                "(mode={}, runtime_backend={}, exception_category={}).",
+                getattr(self.state, "active_mode", None),
+                getattr(self.state, "runtime_source", None),
+                type(exc).__name__,
+            )
+            try:
+                self.notify("Couldn't load the character library.", severity="error")
+            except Exception:
+                pass
+
+    async def _apply_pending_character_conversation_link(
+        self, *, refresh_revision: bool = False,
+    ) -> CharacterConversationLinkOutcome:
+        """Consume one validated deep link only after exact authority revalidation."""
+
+        link = self._pending_character_conversation_link
+        if link is None:
+            return CharacterConversationLinkOutcome.ABSENT
+        prior_state = dataclasses.replace(self.state)
+        prior_return_target = self._character_conversation_return_target
+        prior_query = self.conversations._conversation_query
+        prior_requested = self.conversations._requested_conversation_id
+        prior_compact_pane = self._compact_active_pane
+        prior_browse = {
+            "_list_character_id": self.conversations._list_character_id,
+            "_conversation_rows": dict(self.conversations._conversation_rows),
+            "_conversation_activation_requests": dict(
+                self.conversations._conversation_activation_requests
+            ),
+            "_loaded_conversation_ids": set(
+                self.conversations._loaded_conversation_ids
+            ),
+            "_next_conversation_cursor": self.conversations._next_conversation_cursor,
+            "_has_more_conversations": self.conversations._has_more_conversations,
+            "_conversation_list_phase": self.conversations._conversation_list_phase,
+            "_conversation_list_attempt": self.conversations._conversation_list_attempt,
+            "_conversation_page_revision": self.conversations._conversation_page_revision,
+            "_conversation_attempt_boundaries": list(
+                self.conversations._conversation_attempt_boundaries
+            ),
+        }
+        try:
+            db = self._character_db()
+            if db.get_local_authority_id() != link.character.data_authority_id:
+                self._notify("The active Data Profile changed.", "warning")
+                self._show_character_link_recovery("The active Data Profile changed.")
+                return CharacterConversationLinkOutcome.REJECTED
+            card = db.get_character_card_by_id(link.character.character_id)
+            if not card:
+                self._notify("The saved character is unavailable.", "warning")
+                self._show_character_link_recovery(
+                    "The saved character is unavailable."
+                )
+                return CharacterConversationLinkOutcome.REJECTED
+            if link.conversation_id is not None:
+                if refresh_revision:
+                    link = dataclasses.replace(
+                        link,
+                        data_revision=await asyncio.to_thread(
+                            db.get_character_conversation_search_revision
+                        ),
+                    )
+                    self._pending_character_conversation_link = link
+                problem = await asyncio.to_thread(self.conversations.exact_link_problem, link)
+                if problem is not None:
+                    self._show_character_link_recovery(problem)
+                    return CharacterConversationLinkOutcome.REJECTED
+            self.state.runtime_source = "local"
+            self.state.active_mode = "characters"
+            self.conversations._conversation_query = str(link.query or "").strip()
+            if link.conversation_id is not None:
+                self.conversations.request_conversation_focus(link.conversation_id)
+            await self._select_character(
+                str(link.character.character_id),
+                str(card.get("name") or "Unnamed"),
+            )
+            self._character_conversation_return_target = link.return_target
+            self.conversations.synchronize_deep_link_query(link.query)
+            if link.return_target is not None:
+                navigation = self.query_one(
+                    "#personas-conversation-navigation-actions", Horizontal
+                )
+                if not self.query("#personas-conversation-back-source"):
+                    await navigation.mount(
+                        Button(
+                            "Back to Console",
+                            id="personas-conversation-back-source",
+                            classes="console-action-subdued personas-conversation-navigation-action",
+                        )
+                    )
+            for button in self.query("#personas-conversation-back-source"):
+                button.display = link.return_target is not None
+            self._sync_responsive_workbench()
+            if (
+                link.conversation_id is not None
+                and self.size.width <= 60
+                and not self.query_one(_CHARACTER_DEEP_LINK_RECOVERY_ID).display
+            ):
+                self._compact_active_pane = "inspector"
+                self._sync_personas_rails()
+                self.call_after_refresh(self.conversations.reveal_deep_link_row, link)
+            if link.conversation_id is None:
+                self._pending_character_conversation_link = None
+            return CharacterConversationLinkOutcome.APPLIED
+        except Exception:  # noqa: BLE001 - restore browse state after any destination callback failure
+            self.state = prior_state
+            self._character_conversation_return_target = prior_return_target
+            self.conversations.synchronize_deep_link_query(prior_query)
+            self.conversations._requested_conversation_id = prior_requested
+            self._compact_active_pane = prior_compact_pane
+            for attribute, value in prior_browse.items():
+                setattr(self.conversations, attribute, value)
+            self._show_character_link_recovery(
+                "The requested conversation could not be loaded."
+            )
+            logger.opt(exception=True).warning(
+                "Could not apply Roleplay conversation deep link"
+            )
+            return CharacterConversationLinkOutcome.DEFERRED
+
+    def _show_character_link_recovery(self, copy: str) -> None:
+        """Render a stable retry state while retaining the immutable link."""
+
+        self.conversations._requested_conversation_id = None
+        try:
+            self.query_one(
+                "#personas-character-link-recovery-copy", Static
+            ).update(copy)
+            self._show_center(_CHARACTER_DEEP_LINK_RECOVERY_ID)
+            if self.size.width <= 60:
+                self._compact_active_pane = "work"
+                self._sync_personas_rails()
+            self.query_one("#personas-character-link-retry", Button).focus()
+        except QueryError:
+            pass
+
+    @on(Button.Pressed, "#personas-character-link-retry")
+    async def _retry_character_conversation_link(self, event: Button.Pressed) -> None:
+        """Retry one retained link against freshly-read authority/card state."""
+
+        event.stop()
+        event.button.disabled = True
+        try:
+            await self._apply_pending_character_conversation_link(refresh_revision=True)
+        finally:
+            if self.is_mounted and self._pending_character_conversation_link is not None:
+                event.button.disabled = False
+
+    def _restore_character_return_focus(self) -> None:
+        focus_id = self._pending_character_return_focus_id
+        if focus_id is None:
+            return
+        try:
+            self.query_one(f"#{focus_id}").focus()
+        except QueryError:
+            return
+        self._pending_character_return_focus_id = None
+
+    def _set_persona_editor_runtime_source(self, runtime_source: str) -> None:
+        """Synchronize the screen state and mounted Persona editor source."""
+        normalized = str(runtime_source or "").strip().lower()
+        if normalized not in {"local", "server"}:
+            normalized = "local"
+        self.runtime_backend = normalized
+        self.state.runtime_source = normalized
+        try:
+            self.query_one(PersonaProfileEditorWidget).set_runtime_source(normalized)
+        except QueryError:
+            pass
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Reset source-scoped state and retarget the Persona editor."""
+        normalized = str(runtime_backend or "").strip().lower()
+        if normalized not in {"local", "server"}:
+            return
+        await self._drain_actor_pack_creation()
+        self._advance_persona_buddy_session()
+        self._next_character_page_generation()
+        active_mode = self.state.active_mode
+        self.runtime_backend = normalized
+        self._selected_server_character = None
+        self.character_handler.current_character_id = None
+        self.character_handler.current_character_data = {}
+        self.state.reset_for_runtime_source_change(normalized)
+        self._clear_character_tts_profile_suggestion()
+        self._invalidate_character_tts_controls()
+        self._set_persona_editor_runtime_source(normalized)
+        self._count_cache_key = None
+        self._characters = []
+        self._character_total = 0
+        self._update_purpose_line()
+        self._sync_local_character_actions()
+        if self.is_mounted:
+            if active_mode == "characters":
+                await self._display_character_page(
+                    [],
+                    total=0,
+                    offset=0,
+                    sort_label=(
+                        "Sort: Server order" if normalized == "server" else "Sort: Name"
+                    ),
+                    tag_label="Tag: All",
+                )
+            await self._apply_mode(active_mode)
+            self._sync_title_and_console_actions()
 
     async def on_unmount(self) -> None:
-        super().on_unmount()
+        """Invalidate deferred Personas work before releasing screen resources."""
+        self._center_view_lifecycle_generation += 1
+        self._ready_center_views.clear()
+        self._advance_persona_buddy_session()
+        self._cancel_actor_pack_export()
+        self._cancel_actor_pack_import()
+        self._character_tts_request_generation += 1
+        self._character_tts_snapshot = None
+        self._clear_character_tts_profile_suggestion()
+        await self._drain_actor_pack_creation()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
         self._cancel_search_debounce()
-        self._clear_footer_shortcuts()
         await self.preview.close_gateway()
 
     def on_resize(self, event: Any) -> None:
@@ -470,76 +2153,156 @@ class PersonasScreen(BaseAppScreen):
 
     def _sync_responsive_workbench(self) -> None:
         compact = self.size.width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
-        if self._workbench_compact == compact:
+        narrow = self.size.width <= 60
+        # At 52 columns each action gets one full-width terminal row.
+        try:
+            actions = self.query_one("#personas-conversation-actions")
+            navigation = self.query_one("#personas-conversation-navigation-actions")
+            navigation_rows = sum(button.display for button in navigation.query(Button))
+            actions.styles.height = 2 + navigation_rows if narrow else 9
+            actions.styles.min_height = 2 + navigation_rows if narrow else 9
+            for selector in (
+                "#personas-conversation-resume",
+                "#personas-conversation-continue-console",
+                "#personas-conversation-navigation-actions",
+            ):
+                row = self.query_one(selector)
+                row.styles.height = 1 if narrow else 3
+                row.styles.min_height = 1 if narrow else 3
+            navigation.styles.height = navigation_rows if narrow else 3
+            navigation.styles.min_height = navigation_rows if narrow else 3
+            for button in actions.query(Button):
+                button.styles.height = 1 if narrow else 3
+                button.styles.min_height = 1 if narrow else 3
+            self.query_one(PersonasConversationTranscriptWidget).set_compact(narrow)
+        except QueryError:
+            pass
+        if self._workbench_compact == compact and self._workbench_narrow == narrow:
             return
         try:
             workbench = self.query_one("#personas-workbench")
         except QueryError:
             return
         self._workbench_compact = compact
+        self._workbench_narrow = narrow
         workbench.set_class(compact, "personas-workbench-compact")
+        workbench.set_class(narrow, "personas-workbench-narrow")
         for pane_id in (
             "#personas-library-pane",
             "#personas-work-area",
             "#personas-inspector-pane",
         ):
             try:
-                self.query_one(pane_id).set_class(compact, "personas-workbench-compact-pane")
+                self.query_one(pane_id).set_class(
+                    compact, "personas-workbench-compact-pane"
+                )
             except QueryError:
                 continue
+        for pane_id in (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ):
+            pane = self.query_one(pane_id)
+            pane.styles.width = "1fr" if narrow else None
+            pane.styles.min_width = 0 if narrow else None
+        for handle_id in (
+            "#personas-library-rail-handle",
+            "#personas-inspector-rail-handle",
+        ):
+            handle = self.query_one(handle_id)
+            handle.styles.width = 3 if narrow else None
+            handle.styles.min_width = 3 if narrow else None
+            handle.styles.max_width = 3 if narrow else None
+        self._sync_personas_rails()
 
     def _sync_personas_rails(self) -> None:
         """Mirror Console/Notes collapsible rails for Library and Inspector."""
         if not self.is_mounted:
             return
         try:
+            if self.size.width <= 60:
+                library_active = self._compact_active_pane == "library"
+                inspector_active = self._compact_active_pane == "inspector"
+                preview_active = self.query_one(_CONVERSATION_VIEW_ID).display
+                self.query_one("#personas-library-pane").display = library_active
+                self.query_one("#personas-work-area").display = (
+                    self._compact_active_pane == "work"
+                )
+                self.query_one("#personas-inspector-pane").display = inspector_active
+                self.query_one("#personas-library-rail-handle").display = not (
+                    library_active or preview_active
+                )
+                self.query_one("#personas-inspector-rail-handle").display = not (
+                    inspector_active or preview_active
+                )
+                return
             library_open = not self._library_rail_collapsed
             inspector_open = not self._inspector_rail_collapsed
+            self.query_one("#personas-work-area").display = True
             self.query_one("#personas-library-pane").display = library_open
             self.query_one("#personas-library-rail-handle").display = not library_open
             self.query_one("#personas-inspector-pane").display = inspector_open
-            self.query_one("#personas-inspector-rail-handle").display = not inspector_open
-        except QueryError:
-            return
-
-    def _sync_personas_rail_tooltips(self) -> None:
-        """Set Personas-specific collapsed rail tooltips on shared handles."""
-        try:
-            self.query_one("#personas-library-rail-open", Button).tooltip = (
-                "Open Library rail"
-            )
-            self.query_one("#personas-inspector-rail-open", Button).tooltip = (
-                "Open Inspector rail"
-            )
+            self.query_one(
+                "#personas-inspector-rail-handle"
+            ).display = not inspector_open
         except QueryError:
             return
 
     # ===== Library rendering =====
 
-    async def refresh_character_library_list(self, characters: list[dict] | None) -> None:
-        """Destination-native hook called by ``CCPCharacterHandler``."""
+    async def refresh_character_library_list(
+        self, characters: list[dict] | None
+    ) -> None:
+        """Destination-native hook called by ``CCPCharacterHandler``.
+
+        This fires after character mutations (import/create/save/delete), so the
+        cached count may be stale; invalidate it before re-rendering the page so
+        ``_reload_character_page`` recomputes the total. ``_characters`` is set
+        here from the handler's list for compatibility, but the paged reload
+        below immediately replaces it with the current page only.
+        """
+        self._count_cache_key = None
+        if self.state.runtime_source == "server":
+            if self.state.active_mode == "characters":
+                await self._render_library_rows()
+            return
         self._characters = [dict(record) for record in (characters or [])]
-        self._update_status_row()
+        self._update_purpose_line()
         if self.state.active_mode != "characters":
             return
         try:
             await self._render_library_rows()
         except Exception:
             # Tolerate refreshes that race screen teardown.
-            logger.opt(exception=True).warning("Could not render the character library rows.")
+            logger.opt(exception=True).warning(
+                "Could not render the character library rows."
+            )
 
     @staticmethod
     def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
-        """Map id/name records onto library rows, skipping id-less records."""
-        return tuple(
-            LibraryRow(
-                item_id=str(record.get("id")),
-                kind=kind,
-                name=str(record.get("name") or "Unnamed"),
+        """Map id/name records onto library rows, skipping id-less records.
+
+        Character rows carry a ``YYYY-MM-DD`` last-modified meta line; personas
+        (id/name summaries) render without one.
+        """
+        rows: list[LibraryRow] = []
+        for record in records:
+            if record.get("id") is None:
+                continue
+            meta = None
+            if kind == "character":
+                meta = _character_row_meta(record)
+            name = str(record.get("name") or "Unnamed")
+            rows.append(
+                LibraryRow(
+                    item_id=str(record.get("id")),
+                    kind=kind,
+                    name=name,
+                    meta=meta,
+                )
             )
-            for record in records
-            if record.get("id") is not None
-        )
+        return tuple(rows)
 
     def _library_render_snapshot_is_current(
         self,
@@ -564,78 +2327,1432 @@ class PersonasScreen(BaseAppScreen):
         expected_query: str | None = None,
         expected_mode: str | None = None,
     ) -> None:
+        """Render the character library page.
+
+        Thin wrapper over :meth:`_reload_character_page` (which owns the paged
+        DB query, count cache, and its own post-await freshness re-check). The
+        snapshot args only gate a late debounced call before any DB work; they
+        are why the existing callers (refresh, mode-apply, debounced search)
+        need no changes.
+        """
         if not self._library_render_snapshot_is_current(
             expected_query=expected_query,
             expected_mode=expected_mode,
         ):
             return
+        await self._reload_character_page()
 
-        query = expected_query if expected_query is not None else self.state.search_query
-        total = len(self._characters)
-        filtered_total_unbounded = False
-        if query:
-            if total >= self.LIBRARY_FTS_THRESHOLD:
-                # Large library: use FTS so the full DB corpus is searched
-                # even when the loaded list is a page-size truncation. The
-                # query runs in a thread so the DB call never blocks the UI
-                # loop (the render lock below is only taken afterwards, so
-                # the await cannot deadlock it).
-                matched = await asyncio.to_thread(
-                    ccp_character_handler.search_characters_fts, query
-                )
-                filtered_total_unbounded = True
-            else:
-                # Small library: filter in-memory, case-insensitively on name.
-                q_lower = query.lower()
-                matched = [r for r in self._characters if q_lower in str(r.get("name") or "").lower()]
-            filtered = True
-        else:
-            matched = self._characters
-            filtered = False
-        if not self._library_render_snapshot_is_current(
-            expected_query=expected_query,
-            expected_mode=expected_mode,
-        ):
-            return
-        async with self._render_lock:
-            if not self._library_render_snapshot_is_current(
-                expected_query=expected_query,
-                expected_mode=expected_mode,
-            ):
-                return
-            rows = self._build_library_rows(matched, "character")
-            library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(
-                rows,
-                total=total,
-                noun="characters",
-                filtered=filtered,
-                filtered_total_unbounded=filtered_total_unbounded,
-            )
-            if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
-                library.mark_active_row("character", self.state.selected_entity_id)
+    def _character_sort_cycle(self) -> list[tuple[str, str]]:
+        """Ordered ``(key, label)`` sort options for the character library.
 
-    def _character_record(self, item_id: str | None) -> dict | None:
-        if item_id is None:
+        A "Relevance" option is prepended (and becomes the natural default) only
+        while a CHARACTERS-mode search is active, since relevance is FTS
+        search-scored and only the character library searches via FTS —
+        personas page in-memory and previously showed a "Relevance" option
+        that was silently remapped to name_asc (task-463 #4).
+        """
+        base = [
+            ("name_asc", _LIBRARY_SORT_LABELS["name_asc"]),
+            ("modified_desc", _LIBRARY_SORT_LABELS["modified_desc"]),
+            ("created_desc", _LIBRARY_SORT_LABELS["created_desc"]),
+        ]
+        if self.state.search_query and self.state.active_mode == "characters":
+            return [("relevance", _LIBRARY_SORT_LABELS["relevance"]), *base]
+        return base
+
+    def _fts_match_query(self) -> str | None:
+        """Wrap the raw search term as a quoted FTS5 prefix query, or None."""
+        term = (self.state.search_query or "").strip()
+        if not term:
             return None
-        for record in self._characters:
-            if str(record.get("id")) == str(item_id):
-                return record
+        return quote_fts5_prefix(term)
+
+    def _active_server_target(self) -> str | None:
+        """Return the exact active configured-target ID, when usable."""
+        value = getattr(self.app_instance, "active_server_id", None)
+        if type(value) is str and value and value == value.strip():
+            return value
         return None
 
-    def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
-        """Build recovery copy when persona profile listing is unavailable."""
+    def _publish_character_tts_presentation(
+        self,
+        state: CharacterTTSPresentationState,
+    ) -> None:
+        """Apply one immutable state to the card and editor controls."""
 
-        reason = str(exc).strip() or "The current backend did not return persona profiles."
+        self._character_tts_presentation = state
+        if not self.is_mounted:
+            return
+        for control in self.query(PersonasCharacterTTSWidget):
+            control.apply_state(state)
+        if (
+            state.suggested_profile_id is not None
+            and self._character_tts_suggestion_focus_pending
+        ):
+            self._character_tts_suggestion_focus_pending = False
+            self.call_after_refresh(self._focus_character_tts_profile_selector)
+        try:
+            self.query_one(PersonasInspectorPane).set_tts_export_available(
+                self._local_character_actions_allowed()
+                and state.selected_profile_id is not None
+            )
+        except QueryError:
+            pass
+
+    def _focus_character_tts_profile_selector(self) -> None:
+        """Focus the visible explicit assignment control after a valid handoff."""
+
+        try:
+            selector = self.query_one(
+                "#personas-character-card-tts .personas-character-tts-profile",
+                Select,
+            )
+        except QueryError:
+            return
+        selector.focus()
+
+    def _disable_character_tts_controls(
+        self,
+        status: str = _CHARACTER_TTS_DISABLED_COPY,
+    ) -> None:
+        self._character_tts_snapshot = None
+        self._publish_character_tts_presentation(
+            CharacterTTSPresentationState.disabled(status)
+        )
+
+    def _invalidate_character_tts_controls(
+        self,
+        status: str = _CHARACTER_TTS_DISABLED_COPY,
+    ) -> None:
+        self._character_tts_request_generation += 1
+        self._disable_character_tts_controls(status)
+
+    def _character_tts_request_is_current(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> bool:
+        """Return whether one population request still owns the visible character."""
+
+        return (
+            self.is_mounted
+            and request_generation == self._character_tts_request_generation
+            and self.state.active_mode == "characters"
+            and self.state.selected_entity_kind == "character"
+            and self.state.selected_entity_id == character_id
+            and self.state.runtime_source == runtime_source
+        )
+
+    async def _resolve_character_tts_authority(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> tuple[CharacterRef, str | None, object | None]:
+        """Resolve exact local/server authority without guessing identity."""
+
+        if not self._character_tts_request_is_current(
+            request_generation,
+            character_id,
+            runtime_source,
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        if runtime_source == "local":
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            get_local_authority_id = getattr(db, "get_local_authority_id", None)
+            if not callable(get_local_authority_id):
+                raise _CharacterTTSAuthorityUnavailable
+            try:
+                authority_id = await asyncio.to_thread(get_local_authority_id)
+                character_ref = CharacterRef(
+                    source="local",
+                    authority_id=authority_id,
+                    character_id=character_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise _CharacterTTSAuthorityUnavailable from None
+            if not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            ):
+                raise _CharacterTTSAuthorityUnavailable
+            return character_ref, None, None
+
+        if runtime_source != "server":
+            raise _CharacterTTSAuthorityUnavailable
+        expected_server_id = self._active_server_target()
+        selected = self._selected_server_character
+        if (
+            expected_server_id is None
+            or selected is None
+            or selected[0] != expected_server_id
+            or str(selected[1].get("id")) != character_id
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        provider = getattr(self.app_instance, "server_context_provider", None)
+        capture_context = getattr(
+            provider,
+            "capture_character_authority_context",
+            None,
+        )
+        context_is_current = getattr(
+            provider,
+            "is_character_authority_context_current",
+            None,
+        )
+        resolver = getattr(provider, "resolve_character_authority_id", None)
+        if (
+            not callable(capture_context)
+            or not callable(context_is_current)
+            or not callable(resolver)
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        try:
+            capture = capture_context(expected_server_id=expected_server_id)
+            if context_is_current(capture) is not True:
+                raise _CharacterTTSAuthorityUnavailable
+            authority_id = await resolver(
+                expected_server_id=expected_server_id,
+                context_capture=capture,
+            )
+            character_ref = CharacterRef(
+                source="server",
+                authority_id=authority_id,
+                character_id=character_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise _CharacterTTSAuthorityUnavailable from None
+        if (
+            not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            )
+            or self._active_server_target() != expected_server_id
+        ):
+            raise _CharacterTTSAuthorityUnavailable
+        try:
+            context_still_current = context_is_current(capture) is True
+        except Exception:
+            raise _CharacterTTSAuthorityUnavailable from None
+        if not context_still_current:
+            raise _CharacterTTSAuthorityUnavailable
+        return character_ref, expected_server_id, capture
+
+    def _character_tts_snapshot_context_is_current(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> bool:
+        if not self._character_tts_request_is_current(
+            snapshot.request_generation,
+            snapshot.character_id,
+            snapshot.runtime_source,
+        ):
+            return False
+        if snapshot.runtime_source == "local":
+            return snapshot.expected_server_id is None
+        if (
+            snapshot.runtime_source != "server"
+            or self._active_server_target() != snapshot.expected_server_id
+            or snapshot.server_context_capture is None
+        ):
+            return False
+        provider = getattr(self.app_instance, "server_context_provider", None)
+        context_is_current = getattr(
+            provider,
+            "is_character_authority_context_current",
+            None,
+        )
+        try:
+            return (
+                callable(context_is_current)
+                and context_is_current(snapshot.server_context_capture) is True
+            )
+        except Exception:
+            return False
+
+    async def _character_tts_authority_context_is_current(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> bool:
+        """Revalidate exact authority before publishing or using a snapshot."""
+
+        if not self._character_tts_snapshot_context_is_current(snapshot):
+            return False
+        if snapshot.runtime_source == "server":
+            return True
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        get_local_authority_id = getattr(db, "get_local_authority_id", None)
+        if not callable(get_local_authority_id):
+            return False
+        try:
+            authority_id = await asyncio.to_thread(get_local_authority_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+        return (
+            self._character_tts_snapshot_context_is_current(snapshot)
+            and type(authority_id) is str
+            and authority_id == snapshot.character_ref.authority_id
+        )
+
+    async def _character_tts_profile_service(self) -> Any:
+        loader = getattr(
+            self.app_instance,
+            "_ensure_tts_profile_service",
+            None,
+        )
+        if not callable(loader):
+            raise RuntimeError("profile service unavailable")
+        service = await loader()
+        if service is None:
+            raise RuntimeError("profile service unavailable")
+        return service
+
+    @staticmethod
+    def _character_tts_availability_map(
+        page: TTSProfilePageSnapshot,
+        availability: TTSProfileAvailabilitySnapshot,
+    ) -> dict[UUID, TTSProfileAvailability]:
+        if availability.repository_generation != page.repository_generation or {
+            profile.profile_id for profile in page.profiles
+        } != {item.profile_id for item in availability.profiles}:
+            raise _CharacterTTSMixedSnapshot
+        return {item.profile_id: item for item in availability.profiles}
+
+    async def _load_character_tts_snapshot(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> _CharacterTTSControlSnapshot | None:
+        (
+            character_ref,
+            expected_server_id,
+            capture,
+        ) = await self._resolve_character_tts_authority(
+            request_generation,
+            character_id,
+            runtime_source,
+        )
+        service = await self._character_tts_profile_service()
+        if not self._character_tts_request_is_current(
+            request_generation,
+            character_id,
+            runtime_source,
+        ):
+            return None
+
+        assigned = await service.get_assigned_profile(character_ref)
+        page = await service.list_profiles(search=None, offset=0)
+        if (
+            type(assigned) is not LoadedCharacterTTSAssignment
+            or type(page) is not TTSProfilePageSnapshot
+            or assigned.repository_generation != page.repository_generation
+        ):
+            raise _CharacterTTSMixedSnapshot
+        if not self._character_tts_request_is_current(
+            request_generation,
+            character_id,
+            runtime_source,
+        ):
+            return None
+
+        page_availability = await service.observe_availability(page)
+        if type(page_availability) is not TTSProfileAvailabilitySnapshot:
+            raise _CharacterTTSMixedSnapshot
+        availability_by_id = self._character_tts_availability_map(
+            page,
+            page_availability,
+        )
+        loaded_profiles = [
+            LoadedTTSProfile(
+                repository_generation=page.repository_generation,
+                profile=profile,
+            )
+            for profile in page.profiles
+        ]
+
+        suggestion = self._character_tts_profile_suggestion
+        if (
+            suggestion is not None
+            and suggestion.repository_generation != page.repository_generation
+        ):
+            self._clear_character_tts_profile_suggestion()
+            suggestion = None
+        if suggestion is not None and all(
+            loaded.profile.profile_id != suggestion.profile_id
+            for loaded in loaded_profiles
+        ):
+            try:
+                suggested_loaded = await service.get_profile(suggestion.profile_id)
+                if (
+                    type(suggested_loaded) is not LoadedTTSProfile
+                    or suggested_loaded.repository_generation
+                    != page.repository_generation
+                    or suggested_loaded.profile.profile_id != suggestion.profile_id
+                    or suggested_loaded.profile.revision != suggestion.profile_revision
+                ):
+                    self._clear_character_tts_profile_suggestion()
+                else:
+                    suggested_page = TTSProfilePageSnapshot(
+                        repository_generation=page.repository_generation,
+                        profiles=(suggested_loaded.profile,),
+                        total=1,
+                    )
+                    suggested_availability = await service.observe_availability(
+                        suggested_page
+                    )
+                    if (
+                        type(suggested_availability)
+                        is not TTSProfileAvailabilitySnapshot
+                        or suggested_availability.configuration_revision
+                        != page_availability.configuration_revision
+                        or suggested_availability.catalog_revision
+                        != page_availability.catalog_revision
+                    ):
+                        self._clear_character_tts_profile_suggestion()
+                    else:
+                        availability_by_id.update(
+                            self._character_tts_availability_map(
+                                suggested_page,
+                                suggested_availability,
+                            )
+                        )
+                        loaded_profiles.append(suggested_loaded)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._clear_character_tts_profile_suggestion()
+
+        current = assigned.snapshot
+        assignment_count: int | None = None
+        if current is not None:
+            if current.assignment.character_ref != character_ref:
+                raise _CharacterTTSMixedSnapshot
+            matching = next(
+                (
+                    loaded
+                    for loaded in loaded_profiles
+                    if loaded.profile.profile_id == current.profile.profile_id
+                ),
+                None,
+            )
+            if matching is not None and matching.profile != current.profile:
+                raise _CharacterTTSMixedSnapshot
+            if matching is None:
+                matching = LoadedTTSProfile(
+                    repository_generation=page.repository_generation,
+                    profile=current.profile,
+                )
+                assigned_page = TTSProfilePageSnapshot(
+                    repository_generation=page.repository_generation,
+                    profiles=(current.profile,),
+                    total=1,
+                )
+                assigned_availability = await service.observe_availability(
+                    assigned_page
+                )
+                if type(assigned_availability) is not TTSProfileAvailabilitySnapshot:
+                    raise _CharacterTTSMixedSnapshot
+                if (
+                    assigned_availability.configuration_revision
+                    != page_availability.configuration_revision
+                    or assigned_availability.catalog_revision
+                    != page_availability.catalog_revision
+                ):
+                    raise _CharacterTTSMixedSnapshot
+                availability_by_id.update(
+                    self._character_tts_availability_map(
+                        assigned_page,
+                        assigned_availability,
+                    )
+                )
+                loaded_profiles.append(matching)
+            assignment_count = await service.assignment_count(matching)
+            if type(assignment_count) is not int or assignment_count < 0:
+                raise _CharacterTTSMixedSnapshot
+
+        if (
+            assigned.repository_generation != page.repository_generation
+            or page_availability.repository_generation != page.repository_generation
+            or len(availability_by_id) != len(loaded_profiles)
+            or not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            )
+        ):
+            if not self._character_tts_request_is_current(
+                request_generation,
+                character_id,
+                runtime_source,
+            ):
+                return None
+            raise _CharacterTTSMixedSnapshot
+        availability = tuple(
+            availability_by_id[loaded.profile.profile_id] for loaded in loaded_profiles
+        )
+        snapshot = _CharacterTTSControlSnapshot(
+            request_generation=request_generation,
+            runtime_source=runtime_source,
+            character_id=character_id,
+            character_ref=character_ref,
+            repository_generation=page.repository_generation,
+            loaded_profiles=tuple(loaded_profiles),
+            availability=availability,
+            current=current,
+            assignment_count=assignment_count,
+            configuration_revision=page_availability.configuration_revision,
+            catalog_revision=page_availability.catalog_revision,
+            expected_server_id=expected_server_id,
+            server_context_capture=capture,
+        )
+        if not await self._character_tts_authority_context_is_current(snapshot):
+            return None
+        return snapshot
+
+    @staticmethod
+    def _character_tts_presentation_from_snapshot(
+        snapshot: _CharacterTTSControlSnapshot,
+        suggested_profile_id: UUID | None = None,
+    ) -> CharacterTTSPresentationState:
+        availability_by_id = {item.profile_id: item for item in snapshot.availability}
+        profiles = tuple(
+            CharacterTTSProfileOption(
+                profile_id=loaded.profile.profile_id,
+                display_name=loaded.profile.display_name,
+                availability=availability_by_id[loaded.profile.profile_id].state,
+                recovery_action=(
+                    availability_by_id[loaded.profile.profile_id].recovery_action
+                ),
+                dependency=availability_by_id[loaded.profile.profile_id].dependency,
+            )
+            for loaded in snapshot.loaded_profiles
+        )
+        current = snapshot.current
+        if current is None:
+            status = "Using the global speech default."
+            if suggested_profile_id is not None:
+                suggested = next(
+                    profile
+                    for profile in profiles
+                    if profile.profile_id == suggested_profile_id
+                )
+                status = (
+                    f"Suggested: {suggested.display_name}. Choose it from Voice "
+                    "Profile to assign it to this character."
+                )
+            return CharacterTTSPresentationState(
+                profiles=profiles,
+                selected_profile_id=None,
+                suggested_profile_id=suggested_profile_id,
+                status=status,
+                controls_enabled=True,
+            )
+
+        current_availability = availability_by_id[current.profile.profile_id]
+        count = snapshot.assignment_count
+        count_copy = (
+            "Assignment count unavailable"
+            if count is None
+            else f"Used by {count} character{'s' if count != 1 else ''}"
+        )
+        dependency = current_availability.dependency
+        if dependency.display:
+            status = (
+                f"{current.profile.display_name} · {dependency.display} · "
+                f"{count_copy}. Repair the compatible model dependency or remove "
+                "this assignment."
+            )
+        elif current_availability.state == "available":
+            status = f"{current.profile.display_name} · Available · {count_copy}."
+        elif current_availability.state == "unavailable":
+            status = (
+                f"{current.profile.display_name} · Unavailable · {count_copy}. "
+                "Repair the profile or remove this assignment."
+            )
+        elif current_availability.recovery_action == "refresh":
+            # audio.cpp's transient "unverified" -- Refresh is a real
+            # recovery for this provider, so naming it is honest.
+            status = (
+                f"{current.profile.display_name} · Unverified · {count_copy}. "
+                "Refresh or repair the profile; the assignment is preserved."
+            )
+        else:
+            # `recovery_action == "none"` means this provider has no
+            # catalog to preflight, so its "unverified" is permanent, not a
+            # transient glitch Refresh could resolve -- naming Refresh here
+            # would promise a recovery control can never perform (ADR-031).
+            # The state word itself also changes: bare "Unverified" would
+            # still misread as temporary even with an honest tail.
+            status = (
+                f"{current.profile.display_name} · No catalog check · "
+                f"{count_copy}. The exact selection is used as-is; the "
+                "assignment is preserved."
+            )
+        if dependency.advisory_display:
+            status = f"{status} {dependency.advisory_display}."
+        if suggested_profile_id is not None:
+            suggested = next(
+                profile
+                for profile in profiles
+                if profile.profile_id == suggested_profile_id
+            )
+            status = (
+                f"{status} Suggested: {suggested.display_name}. Choose it from "
+                "Voice Profile to replace this character's assignment."
+            )
+        return CharacterTTSPresentationState(
+            profiles=profiles,
+            selected_profile_id=current.profile.profile_id,
+            suggested_profile_id=suggested_profile_id,
+            status=status,
+            controls_enabled=True,
+            assignment_count=count,
+        )
+
+    def _validated_character_tts_suggestion(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> UUID | None:
+        """Return an exact fresh, assignable suggestion or clear it."""
+
+        suggestion = self._character_tts_profile_suggestion
+        if suggestion is None:
+            return None
+        loaded = next(
+            (
+                item
+                for item in snapshot.loaded_profiles
+                if item.profile.profile_id == suggestion.profile_id
+            ),
+            None,
+        )
+        availability = next(
+            (
+                item
+                for item in snapshot.availability
+                if item.profile_id == suggestion.profile_id
+            ),
+            None,
+        )
+        if (
+            snapshot.repository_generation != suggestion.repository_generation
+            or loaded is None
+            or loaded.repository_generation != suggestion.repository_generation
+            or loaded.profile.revision != suggestion.profile_revision
+            or availability is None
+            or availability.state == "unavailable"
+            or availability.dependency.reason != "none"
+        ):
+            self._clear_character_tts_profile_suggestion()
+            return None
+        return suggestion.profile_id
+
+    async def _character_tts_refresh_worker(
+        self,
+        request_generation: int,
+        character_id: str,
+        runtime_source: str,
+    ) -> None:
+        """Build and publish one coherent character profile snapshot."""
+
+        for attempt in range(2):
+            try:
+                snapshot = await self._load_character_tts_snapshot(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                )
+            except asyncio.CancelledError:
+                raise
+            except _CharacterTTSAuthorityUnavailable:
+                if self._character_tts_request_is_current(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                ):
+                    self._disable_character_tts_controls()
+                return
+            except _CharacterTTSMixedSnapshot:
+                if attempt == 0:
+                    continue
+                if self._character_tts_request_is_current(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                ):
+                    self._disable_character_tts_controls(_CHARACTER_TTS_CHANGED_COPY)
+                return
+            except Exception as error:
+                if self._character_tts_request_is_current(
+                    request_generation,
+                    character_id,
+                    runtime_source,
+                ):
+                    self._disable_character_tts_controls(
+                        profile_action_error_copy(error)
+                    )
+                return
+            if snapshot is None:
+                return
+            if self._character_tts_snapshot_context_is_current(snapshot):
+                self._character_tts_snapshot = snapshot
+                self._publish_character_tts_presentation(
+                    self._character_tts_presentation_from_snapshot(
+                        snapshot,
+                        self._validated_character_tts_suggestion(snapshot),
+                    )
+                )
+            return
+
+    def _queue_character_tts_refresh(self) -> None:
+        """Invalidate prior work and load the selected saved character."""
+
+        self._character_tts_request_generation += 1
+        request_generation = self._character_tts_request_generation
+        self._character_tts_snapshot = None
+        character_id = self.state.selected_entity_id
+        runtime_source = self.state.runtime_source
+        if (
+            not self.is_mounted
+            or self.state.active_mode != "characters"
+            or self.state.selected_entity_kind != "character"
+            or type(character_id) is not str
+            or not character_id
+            or runtime_source not in {"local", "server"}
+        ):
+            self._publish_character_tts_presentation(
+                CharacterTTSPresentationState.disabled()
+            )
+            return
+        self._publish_character_tts_presentation(
+            CharacterTTSPresentationState.disabled(_CHARACTER_TTS_LOADING_COPY)
+        )
+        self.run_worker(
+            self._character_tts_refresh_worker(
+                request_generation,
+                character_id,
+                runtime_source,
+            ),
+            group=_CHARACTER_TTS_WORKER_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @staticmethod
+    def _character_tts_profile_tokens(
+        snapshot: _CharacterTTSControlSnapshot,
+        profile_id: UUID,
+    ) -> tuple[LoadedTTSProfile, TTSProfileAvailability] | None:
+        loaded = next(
+            (
+                item
+                for item in snapshot.loaded_profiles
+                if item.profile.profile_id == profile_id
+            ),
+            None,
+        )
+        availability = next(
+            (item for item in snapshot.availability if item.profile_id == profile_id),
+            None,
+        )
+        if loaded is None or availability is None:
+            return None
+        return loaded, availability
+
+    def _publish_character_tts_action_error(
+        self,
+        snapshot: _CharacterTTSControlSnapshot,
+        error: BaseException,
+    ) -> None:
+        if not self._character_tts_snapshot_context_is_current(snapshot):
+            return
+        self._publish_character_tts_presentation(
+            dataclasses.replace(
+                self._character_tts_presentation,
+                status=profile_action_error_copy(error),
+            )
+        )
+
+    def _navigate_to_speech(
+        self,
+        *,
+        preset: object | None = None,
+    ) -> None:
+        context: dict[str, object] = {"view": "playground"}
+        if preset is not None:
+            context["profile_preset"] = preset
+        self.app.post_message(NavigateToScreen(TAB_STTS, context))
+
+    async def _character_tts_assignment_worker(
+        self,
+        action: str,
+        profile_id: UUID | None,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> None:
+        if not await self._character_tts_authority_context_is_current(snapshot):
+            return
+        current_assignment = (
+            None if snapshot.current is None else snapshot.current.assignment
+        )
+        try:
+            service = await self._character_tts_profile_service()
+            if not await self._character_tts_authority_context_is_current(snapshot):
+                return
+            if action == "assign" and profile_id is not None:
+                tokens = self._character_tts_profile_tokens(snapshot, profile_id)
+                if (
+                    tokens is None
+                    or tokens[1].state == "unavailable"
+                    or tokens[1].dependency.reason != "none"
+                ):
+                    return
+                loaded, _availability = tokens
+                await service.set_assignment(
+                    snapshot.character_ref,
+                    loaded,
+                    current_assignment,
+                )
+            else:
+                if current_assignment is None or (
+                    profile_id is not None
+                    and profile_id != current_assignment.profile_id
+                ):
+                    return
+                await service.detach_assignment(
+                    current_assignment,
+                    snapshot.repository_generation,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if isinstance(error, ProfileRepositoryError) and error.code in {
+                "conflict",
+                "stale",
+            }:
+                if self._character_tts_snapshot_context_is_current(snapshot):
+                    self._notify(
+                        "Voice assignment changed; refreshed current state.",
+                        "warning",
+                    )
+                    self._queue_character_tts_refresh()
+                return
+            self._publish_character_tts_action_error(snapshot, error)
+            return
+        if self._character_tts_snapshot_context_is_current(snapshot):
+            self._queue_character_tts_refresh()
+
+    async def _character_tts_preview_worker(
+        self,
+        profile_id: UUID,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> None:
+        tokens = self._character_tts_profile_tokens(snapshot, profile_id)
+        if tokens is None or not await self._character_tts_authority_context_is_current(
+            snapshot
+        ):
+            return
+        try:
+            service = await self._character_tts_profile_service()
+            if not await self._character_tts_authority_context_is_current(snapshot):
+                return
+            preset = service.preview_preset(*tokens)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._publish_character_tts_action_error(snapshot, error)
+            return
+        if await self._character_tts_authority_context_is_current(snapshot):
+            self._navigate_to_speech(preset=preset)
+
+    async def _character_tts_edit_worker(
+        self,
+        profile_id: UUID,
+        snapshot: _CharacterTTSControlSnapshot,
+    ) -> None:
+        tokens = self._character_tts_profile_tokens(snapshot, profile_id)
+        if tokens is None or not await self._character_tts_authority_context_is_current(
+            snapshot
+        ):
+            return
+        loaded, _availability = tokens
+        try:
+            service = await self._character_tts_profile_service()
+            count = snapshot.assignment_count
+            if count is None:
+                count = await service.assignment_count(loaded)
+            if (
+                type(count) is not int
+                or count < 0
+                or not await self._character_tts_authority_context_is_current(snapshot)
+            ):
+                return
+            draft = await self.app.push_screen_wait(
+                TTSProfileEditorModal(
+                    loaded,
+                    assignment_count=count,
+                    mode="edit",
+                )
+            )
+            if (
+                draft is None
+                or type(draft) is not TTSProfileDraft
+                or not await self._character_tts_authority_context_is_current(snapshot)
+            ):
+                return
+            await service.update_profile(loaded, draft)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if isinstance(error, ProfileRepositoryError) and error.code in {
+                "conflict",
+                "stale",
+            }:
+                if self._character_tts_snapshot_context_is_current(snapshot):
+                    self._notify(
+                        "Voice profile changed; refreshed current state.",
+                        "warning",
+                    )
+                    self._queue_character_tts_refresh()
+                return
+            self._publish_character_tts_action_error(snapshot, error)
+            return
+        if self._character_tts_snapshot_context_is_current(snapshot):
+            self._queue_character_tts_refresh()
+
+    @on(CharacterTTSActionRequested)
+    def _handle_character_tts_action_requested(
+        self,
+        message: CharacterTTSActionRequested,
+    ) -> None:
+        message.stop()
+        if message.action == "dismiss_suggestion":
+            self._clear_character_tts_profile_suggestion()
+            self._publish_character_tts_presentation(
+                dataclasses.replace(
+                    self._character_tts_presentation,
+                    suggested_profile_id=None,
+                    status=(
+                        "Using the global speech default."
+                        if self._character_tts_presentation.selected_profile_id is None
+                        else self._character_tts_presentation.status
+                    ),
+                )
+            )
+            return
+        snapshot = self._character_tts_snapshot
+        if snapshot is None or not self._character_tts_snapshot_context_is_current(
+            snapshot
+        ):
+            return
+        if message.action == "create":
+            self._navigate_to_speech()
+            return
+        if message.action in {
+            "open_audio_cpp_settings",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        }:
+            if message.profile_id is None:
+                return
+            tokens = self._character_tts_profile_tokens(snapshot, message.profile_id)
+            if tokens is None or message.action not in {
+                action.operation
+                for action in dependency_recovery_actions(tokens[1].dependency)
+            }:
+                return
+        if message.action == "open_audio_cpp_settings":
+            self.app.post_message(
+                NavigateToScreen(
+                    "settings",
+                    {
+                        "category": "speech-tts",
+                        **speech_tts_navigation_context(
+                            SpeechTTSNavigationTarget(
+                                "audio_cpp",
+                                SpeechTTSNavigationIntent.CONFIGURE,
+                            )
+                        ),
+                    },
+                )
+            )
+            return
+        if message.action in {"assign", "remove"}:
+            if message.action == "assign":
+                self._clear_character_tts_profile_suggestion()
+            self.run_worker(
+                self._character_tts_assignment_worker(
+                    message.action,
+                    message.profile_id,
+                    snapshot,
+                ),
+                group=_CHARACTER_TTS_WORKER_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
+            return
+        if message.profile_id is None:
+            return
+        if message.action in {
+            "preview",
+            "open_speech_lab_apply",
+            "generate_new_profile",
+        }:
+            self.run_worker(
+                self._character_tts_preview_worker(
+                    message.profile_id,
+                    snapshot,
+                ),
+                group=_CHARACTER_TTS_WORKER_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
+        elif message.action == "edit":
+            self.run_worker(
+                self._character_tts_edit_worker(
+                    message.profile_id,
+                    snapshot,
+                ),
+                group=_CHARACTER_TTS_WORKER_GROUP,
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    def _local_character_actions_allowed(self) -> bool:
+        """Return whether local character editor/DB seams still own this screen."""
+        return self.state.runtime_source == "local"
+
+    def _next_character_page_generation(self) -> int:
+        """Invalidate older page work and return this request's generation."""
+        self._character_page_generation += 1
+        return self._character_page_generation
+
+    def _sync_local_character_actions(self) -> None:
+        """Disable every local-only character action while browsing the server."""
+        if not self.is_mounted:
+            return
+        server_characters = (
+            self.state.active_mode == "characters"
+            and not self._local_character_actions_allowed()
+        )
+        try:
+            for selector in (
+                "#personas-library-new",
+                "#personas-library-import",
+                "#personas-library-duplicate",
+                "#personas-library-tag",
+            ):
+                self.query_one(selector, Button).disabled = server_characters
+
+            edit = self.query_one("#personas-card-edit-character", Button)
+            if server_characters:
+                edit.disabled = True
+                edit.tooltip = _SERVER_READ_ONLY_TOOLTIP
+            else:
+                edit.disabled = not (
+                    self.state.selected_entity_kind == "character"
+                    and self.state.selected_entity_id is not None
+                )
+                # Clear a stale server reason when leaving server browsing;
+                # the card widget owns the baseline tooltips otherwise.
+                if edit.tooltip == _SERVER_READ_ONLY_TOOLTIP:
+                    edit.tooltip = (
+                        None if not edit.disabled else "Select a character to edit."
+                    )
+
+            inspector = self.query_one(PersonasInspectorPane)
+            if server_characters:
+                for selector in (
+                    "#personas-export-json",
+                    "#personas-export-png",
+                    "#personas-delete",
+                ):
+                    # F-037: server browsing force-disables these local-only
+                    # actions; each one must say why.
+                    button = inspector.query_one(selector, Button)
+                    button.disabled = True
+                    button.tooltip = _SERVER_READ_ONLY_TOOLTIP
+            else:
+                # Restore the inspector's existing selection/unsaved gates after
+                # leaving server Characters mode.
+                inspector.set_unsaved(self.state.has_unsaved_changes)
+        except QueryError:
+            return
+
+    def _server_character_request_is_current(
+        self,
+        *,
+        generation: int,
+        expected_server_id: str | None,
+        mode: str,
+        query: str,
+        sort_key: str,
+        tag: str | None,
+        offset: int,
+    ) -> bool:
+        """Return whether one server page request still owns the library."""
+        return (
+            self._character_page_generation == generation
+            and self.state.runtime_source == "server"
+            and self._active_server_target() == expected_server_id
+            and self.state.active_mode == mode
+            and self.state.search_query == query
+            and self.state.sort_key == sort_key
+            and self.state.tag_filter == tag
+            and self.state.page_offset == offset
+        )
+
+    def _local_character_request_is_current(
+        self,
+        *,
+        generation: int,
+        runtime_source: str,
+        mode: str,
+        query: str,
+        sort_key: str,
+        tag: str | None,
+        offset: int,
+    ) -> bool:
+        """Return whether one local page request still owns the library."""
+        return (
+            self._character_page_generation == generation
+            and runtime_source == "local"
+            and self.state.runtime_source == runtime_source
+            and self.state.active_mode == mode
+            and self.state.search_query == query
+            and self.state.sort_key == sort_key
+            and self.state.tag_filter == tag
+            and self.state.page_offset == offset
+        )
+
+    @staticmethod
+    def _character_record_mapping(value: Any) -> dict | None:
+        """Return one detached character DTO mapping, if structurally valid."""
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            try:
+                value = model_dump(mode="json")
+            except Exception:
+                return None
+        if not isinstance(value, Mapping):
+            return None
+        return dict(value)
+
+    @staticmethod
+    def _server_character_id(value: Any) -> int | None:
+        """Return one server DTO's canonical positive numeric ID."""
+        if type(value) is not int or not (1 <= value <= _MAX_CHARACTER_ID):
+            return None
+        return value
+
+    @classmethod
+    def _server_character_rows(cls, response: Any) -> tuple[list[dict], int | None]:
+        """Normalize the existing list/query response shapes without widening them."""
+        response_mapping = cls._character_record_mapping(response)
+        total: int | None = None
+        if response_mapping is not None:
+            raw_items = response_mapping.get(
+                "items", response_mapping.get("characters", [])
+            )
+            raw_total = response_mapping.get("total")
+            if type(raw_total) is int and raw_total >= 0:
+                total = raw_total
+        elif isinstance(response, (list, tuple)):
+            raw_items = response
+        else:
+            raw_items = ()
+
+        rows: list[dict] = []
+        for value in raw_items if isinstance(raw_items, (list, tuple)) else ():
+            record = cls._character_record_mapping(value)
+            if record is None:
+                continue
+            character_id = cls._server_character_id(record.get("id"))
+            if character_id is None:
+                continue
+            record["id"] = character_id
+            rows.append(record)
+        return rows, total
+
+    async def _display_character_page(
+        self,
+        records: list[dict],
+        *,
+        total: int,
+        offset: int,
+        sort_label: str,
+        tag_label: str,
+        request_is_current: Callable[[], bool] | None = None,
+        commit_page_offset: bool = False,
+        commit_count_cache: bool = False,
+        count_cache_key: tuple | None = None,
+    ) -> None:
+        """Commit and render one already-fenced character page."""
+        async with self._render_lock:
+            if request_is_current is not None and not request_is_current():
+                return
+            if commit_page_offset:
+                self.state.page_offset = offset
+            if commit_count_cache:
+                self._count_cache_key = count_cache_key
+            self._characters = records
+            self._character_total = total
+            self._update_purpose_line()
+            try:
+                library = self.query_one(PersonasLibraryPane)
+            except QueryError:
+                return
+            await library.update_rows(
+                self._build_library_rows(records, "character"),
+                total=total,
+                noun="characters",
+                page_offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+            )
+            if request_is_current is not None and not request_is_current():
+                self._count_cache_key = None
+                self._characters = []
+                self._character_total = 0
+                self._update_purpose_line()
+                if self.state.active_mode != "characters":
+                    return
+                if self.state.runtime_source == "server":
+                    current_sort_label = "Sort: Server order"
+                    current_tag_label = "Tag: All"
+                else:
+                    current_sort_labels = dict(self._character_sort_cycle())
+                    current_sort_label = (
+                        f"Sort: {current_sort_labels.get(self.state.sort_key, 'Name')}"
+                    )
+                    current_tag_label = (
+                        f"Tag: {self.state.tag_filter}"
+                        if self.state.tag_filter
+                        else "Tag: All"
+                    )
+                library.set_sort_label(current_sort_label)
+                library.set_tag_label(current_tag_label)
+                await library.update_rows(
+                    (),
+                    total=0,
+                    noun="characters",
+                    page_offset=self.state.page_offset,
+                    page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+                )
+                return
+            library.set_sort_label(sort_label)
+            library.set_tag_label(tag_label)
+            if (
+                self.state.selected_entity_kind == "character"
+                and self.state.selected_entity_id
+            ):
+                library.mark_active_row("character", self.state.selected_entity_id)
+
+    async def _reload_server_character_page(
+        self, *, reset_offset: bool = False
+    ) -> None:
+        """Load one server-owned page through the existing character scope service."""
+        generation = self._next_character_page_generation()
+        if reset_offset:
+            self.state.page_offset = 0
+        mode = self.state.active_mode
+        query = self.state.search_query
+        sort_key = self.state.sort_key
+        tag = self.state.tag_filter
+        offset = self.state.page_offset
+        expected_server_id = self._active_server_target()
+
+        def request_is_current() -> bool:
+            return self._server_character_request_is_current(
+                generation=generation,
+                expected_server_id=expected_server_id,
+                mode=mode,
+                query=query,
+                sort_key=sort_key,
+                tag=tag,
+                offset=offset,
+            )
+
+        await self._display_character_page(
+            [],
+            total=0,
+            offset=offset,
+            sort_label="Sort: Server order",
+            tag_label="Tag: All",
+            request_is_current=request_is_current,
+            commit_count_cache=True,
+            count_cache_key=None,
+        )
+        if not request_is_current():
+            return
+        if expected_server_id is None:
+            return
+
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        method_name = "search_characters" if query else "list_characters"
+        load_characters = getattr(service, method_name, None)
+        if not callable(load_characters):
+            return
+        try:
+            if query:
+                response = await load_characters(
+                    query,
+                    mode="server",
+                    limit=min(
+                        offset + PERSONAS_LIBRARY_PAGE_SIZE + 1,
+                        _SERVER_CHARACTER_SEARCH_MAX_RESULTS,
+                    ),
+                )
+                page_start = offset
+            else:
+                response = await load_characters(
+                    mode="server",
+                    limit=PERSONAS_LIBRARY_PAGE_SIZE + 1,
+                    offset=offset,
+                )
+                page_start = 0
+            records, exact_total = self._server_character_rows(response)
+            page_end = page_start + PERSONAS_LIBRARY_PAGE_SIZE
+            page_records = records[page_start:page_end]
+            has_more = len(records) > page_end
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if not request_is_current():
+                return
+            logger.warning("Server character page load failed.")
+            self._notify("Could not load server characters.", "error")
+            return
+
+        if not request_is_current():
+            return
+
+        inferred_total = offset + len(page_records) + (1 if has_more else 0)
+        total = exact_total if exact_total is not None else inferred_total
+        display_total = max(total, inferred_total)
+        if query:
+            display_total = min(display_total, _SERVER_CHARACTER_SEARCH_MAX_RESULTS)
+        await self._display_character_page(
+            page_records,
+            total=display_total,
+            offset=offset,
+            sort_label="Sort: Server order",
+            tag_label="Tag: All",
+            request_is_current=request_is_current,
+        )
+
+    async def _reload_character_page(self, *, reset_offset: bool = False) -> None:
+        """Load and render one page of characters from the selected source.
+
+        Local DB count/list work remains off-thread. Server mode delegates to
+        the existing source-aware scope service and never consults local rows.
+        """
+        if self.state.runtime_source == "server":
+            await self._reload_server_character_page(reset_offset=reset_offset)
+            return
+        generation = self._next_character_page_generation()
+        if reset_offset:
+            self.state.page_offset = 0
+        runtime_source = self.state.runtime_source
+        mode = self.state.active_mode
+        query = self.state.search_query
+        sort_key = self.state.sort_key
+        tag = self.state.tag_filter
+        requested_offset = self.state.page_offset
+        page_offset = requested_offset
+        search = self._fts_match_query()
+        db = self._character_db()
+        if db is None:
+            return
+        cache_key = (search, tag)
+
+        def request_is_current() -> bool:
+            return self._local_character_request_is_current(
+                generation=generation,
+                runtime_source=runtime_source,
+                mode=mode,
+                query=query,
+                sort_key=sort_key,
+                tag=tag,
+                offset=requested_offset,
+            )
+
+        try:
+            if self._count_cache_key == cache_key:
+                total = self._character_total
+            else:
+                total = await asyncio.to_thread(
+                    count_character_page, db, search_term=search, tag=tag
+                )
+            # Clamp a now-out-of-range offset back onto the last page.
+            if page_offset > 0 and page_offset >= total:
+                page_offset = max(
+                    0,
+                    ((total - 1) // PERSONAS_LIBRARY_PAGE_SIZE)
+                    * PERSONAS_LIBRARY_PAGE_SIZE,
+                )
+            records = await asyncio.to_thread(
+                get_character_page_for_ui,
+                db,
+                limit=PERSONAS_LIBRARY_PAGE_SIZE,
+                offset=page_offset,
+                order_by=sort_key,
+                search_term=search,
+                tag=tag,
+            )
+        except Exception as exc:
+            if not request_is_current():
+                return
+            logger.opt(exception=True).warning("Character page load failed.")
+            self._notify(f"Could not load characters: {exc}", "error")
+            return
+        # Freshness guard: a filter/page/mode change during the off-thread reads
+        # supersedes this render. (is_mounted is deliberately NOT checked: it is
+        # still False while the initial on-mount refresh runs; teardown is
+        # tolerated instead by catching the pane QueryError below.)
+        if not request_is_current():
+            return
+        sort_labels = dict(self._character_sort_cycle())
+        await self._display_character_page(
+            records,
+            total=total,
+            offset=page_offset,
+            sort_label=f"Sort: {sort_labels.get(sort_key, 'Name')}",
+            tag_label=f"Tag: {tag}" if tag else "Tag: All",
+            request_is_current=request_is_current,
+            commit_page_offset=True,
+            commit_count_cache=True,
+            count_cache_key=cache_key,
+        )
+
+    async def _reload_active_library(self) -> None:
+        """Re-render whichever paginated library (characters/personas) is active."""
+        if self.state.active_mode == "characters":
+            await self._reload_character_page()
+        elif self.state.active_mode == "personas":
+            await self._render_profile_rows()
+
+    def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
+        """Build recovery copy when persona listing is unavailable."""
+
+        reason = str(exc).strip() or "The current backend did not return personas."
         disabled_tooltip = (
-            f"{reason} Retry Personas or use Characters until persona profiles are available."
+            f"{reason} Retry Personas or use Characters until personas are available."
         )
         return DestinationRecoveryState(
-            status_label="Persona profiles unavailable",
-            unavailable_what="Browse persona profiles in Personas",
+            status_label="Personas unavailable",
+            unavailable_what="Browse personas in Personas",
             why=reason,
             next_action=(
-                "Check the current runtime backend or retry after persona profile support is available"
+                "Check the current runtime backend or retry after persona support is available"
             ),
             recovery_action="Retry Personas or use Characters",
             authority_owner="persona scope service",
@@ -645,19 +3762,21 @@ class PersonasScreen(BaseAppScreen):
 
     @work(exclusive=True, group="personas-list-refresh")
     async def _refresh_profile_rows_worker(self) -> None:
-        """Fetch persona profile rows and render them while still in Personas mode."""
+        """Fetch persona rows and render them while still in Personas mode."""
         try:
             profiles = await self.persona_handler.refresh_persona_list(
                 raise_on_unavailable=True
             )
         except Exception as exc:
-            logger.opt(exception=True).warning("Could not refresh the persona profile list.")
+            logger.opt(exception=True).warning(
+                "Could not refresh the persona profile list."
+            )
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
-        self._update_status_row()
+        self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
             # A late result must not render persona rows into another mode.
             return
@@ -665,7 +3784,9 @@ class PersonasScreen(BaseAppScreen):
             await self._render_profile_rows()
         except Exception:
             # Tolerate refreshes that race screen teardown.
-            logger.opt(exception=True).warning("Could not render the persona profile rows.")
+            logger.opt(exception=True).warning(
+                "Could not render the persona profile rows."
+            )
 
     async def _render_profile_rows(
         self,
@@ -673,35 +3794,58 @@ class PersonasScreen(BaseAppScreen):
         expected_query: str | None = None,
         expected_mode: str | None = None,
     ) -> None:
+        if expected_query is None:
+            expected_query = self.state.search_query
+        if expected_mode is None:
+            expected_mode = "personas"
         if not self._library_render_snapshot_is_current(
             expected_query=expected_query,
             expected_mode=expected_mode,
         ):
             return
 
-        query = expected_query if expected_query is not None else self.state.search_query
-        total = len(self._profiles)
-        if query:
-            q_lower = query.lower()
-            matched = [r for r in self._profiles if q_lower in str(r.get("name") or "").lower()]
-            filtered = True
-        else:
-            matched = self._profiles
-            filtered = False
+        # Personas load <=100 rows into ``_profiles`` already, so filter, sort,
+        # and page them in-memory (no FTS, no tags). "relevance" is characters-
+        # only; fall back to name_asc for the persona list.
+        sort_key = (
+            self.state.sort_key if self.state.sort_key != "relevance" else "name_asc"
+        )
+        offset = self.state.page_offset
+        page_rows, total = page_persona_profiles(
+            self._profiles,
+            search_term=self.state.search_query,
+            sort_key=sort_key,
+            offset=offset,
+            page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+        )
+        # A narrowing filter can strand the offset past the filtered set; fall
+        # back to the last valid page so the list is never blank.
+        if not page_rows and total and offset >= total:
+            offset = (
+                (total - 1) // PERSONAS_LIBRARY_PAGE_SIZE
+            ) * PERSONAS_LIBRARY_PAGE_SIZE
+            self.state.page_offset = offset
+            page_rows, total = page_persona_profiles(
+                self._profiles,
+                search_term=self.state.search_query,
+                sort_key=sort_key,
+                offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+            )
         async with self._render_lock:
             if not self._library_render_snapshot_is_current(
                 expected_query=expected_query,
                 expected_mode=expected_mode,
             ):
                 return
-            rows = self._build_library_rows(matched, "persona_profile")
+            self._profile_total = total
+            rows = self._build_library_rows(page_rows, "persona")
             library = self.query_one(PersonasLibraryPane)
             recovery_state = self._profile_lookup_recovery_state
             await library.update_rows(
                 rows,
                 total=total,
-                noun="persona profiles",
-                filtered=filtered,
+                noun="personas",
                 recovery_copy=(
                     recovery_state.visible_copy if recovery_state is not None else None
                 ),
@@ -710,15 +3854,42 @@ class PersonasScreen(BaseAppScreen):
                     if recovery_state is not None
                     else "personas-library-recovery"
                 ),
+                page_offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
             )
-            if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
-                library.mark_active_row("persona_profile", self.state.selected_entity_id)
+            if recovery_state is None:
+                library.set_sort_label(
+                    f"Sort: {_LIBRARY_SORT_LABELS.get(sort_key, 'Name')}"
+                )
+            if (
+                self.state.selected_entity_kind == "persona"
+                and self.state.selected_entity_id
+            ):
+                library.mark_active_row("persona", self.state.selected_entity_id)
 
     @on(PersonaSearchChanged)
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
         message.stop()
         # Search does not change selection or center pane — no unsaved guard needed.
+        previous_query = self.state.search_query
         self.state.search_query = message.query.strip()
+        now_searching = bool(self.state.search_query)
+        was_searching = bool(previous_query)
+        if (
+            now_searching
+            and not was_searching
+            and self.state.active_mode == "characters"
+        ):
+            # First keystroke of a new character search: relevance ranking is the
+            # natural default (it only exists while a search is active).
+            self.state.sort_key = "relevance"
+        elif not now_searching and self.state.sort_key == "relevance":
+            # Search cleared: relevance is search-only, fall back to name.
+            self.state.sort_key = "name_asc"
+        # A changed search restarts paging and (for characters) invalidates the
+        # count cache so the new (search, tag) pair is recounted.
+        self.state.page_offset = 0
+        self._count_cache_key = None
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
@@ -726,6 +3897,84 @@ class PersonasScreen(BaseAppScreen):
             PERSONAS_SEARCH_DEBOUNCE_SECONDS,
             lambda: self._start_debounced_search_render(query=query, mode=mode),
         )
+
+    @on(PersonaSortCycleRequested)
+    async def _handle_sort_cycle(self, message: PersonaSortCycleRequested) -> None:
+        """Advance the library sort (characters + personas)."""
+        message.stop()
+        if self.state.active_mode not in ("characters", "personas"):
+            return
+        await self._cycle_sort()
+
+    async def _cycle_sort(self) -> None:
+        """Move ``sort_key`` to the next option and reload from page 0."""
+        cycle = [key for key, _ in self._character_sort_cycle()]
+        current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
+        self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
+        self.state.page_offset = 0
+        await self._reload_active_library()
+
+    @on(PersonaTagFilterRequested)
+    async def _handle_tag_filter(self, message: PersonaTagFilterRequested) -> None:
+        """Open the tag-filter picker (characters only)."""
+        message.stop()
+        if (
+            self.state.active_mode != "characters"
+            or not self._local_character_actions_allowed()
+            or self._io_dialog_active
+        ):
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._tag_filter_worker(), group="personas-io", exit_on_error=False
+        )
+
+    async def _tag_filter_worker(self) -> None:
+        """List tags off-thread, prompt for one, and apply the pick."""
+        try:
+            if self.state.runtime_source == "server":
+                return
+            db = self._character_db()
+            if db is None:
+                return
+            tags = await asyncio.to_thread(list_character_tags, db)
+            picked = await self.app.push_screen_wait(
+                TagFilterPicker(tags, self.state.tag_filter)
+            )
+            if picked is TagFilterPicker.CANCEL:
+                # Escape: leave the current filter untouched.
+                return
+            await self._apply_tag_filter(picked)  # None clears the filter
+        except Exception as exc:
+            logger.opt(exception=True).warning("Tag filter failed.")
+            self._notify(f"Tag filter failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _apply_tag_filter(self, tag: str | None) -> None:
+        """Set the characters tag filter, reset paging, and recount."""
+        self.state.tag_filter = tag
+        self.state.page_offset = 0
+        self._count_cache_key = None  # (search, tag) changed → recount
+        await self._reload_character_page()
+
+    @on(PersonaPageChanged)
+    async def _handle_page_changed(self, message: PersonaPageChanged) -> None:
+        message.stop()
+        await self._on_page_changed_delta(message.delta)
+
+    async def _on_page_changed_delta(self, delta: int) -> None:
+        """Move the page window by ``delta`` pages, clamped to the total."""
+        new_offset = self.state.page_offset + delta * PERSONAS_LIBRARY_PAGE_SIZE
+        total = (
+            self._character_total
+            if self.state.active_mode == "characters"
+            else self._profile_total
+        )
+        if new_offset < 0 or new_offset >= max(1, total):
+            return
+        self.state.page_offset = new_offset
+        await self._reload_active_library()
 
     def _cancel_search_debounce(self) -> None:
         """Cancel a pending search render when newer state supersedes it."""
@@ -759,7 +4008,9 @@ class PersonasScreen(BaseAppScreen):
                     expected_mode=mode,
                 )
             except Exception:
-                logger.opt(exception=True).warning("Could not re-render character rows after search.")
+                logger.opt(exception=True).warning(
+                    "Could not re-render character rows after search."
+                )
         elif mode == "personas":
             try:
                 await self._render_profile_rows(
@@ -767,7 +4018,23 @@ class PersonasScreen(BaseAppScreen):
                     expected_mode=mode,
                 )
             except Exception:
-                logger.opt(exception=True).warning("Could not re-render profile rows after search.")
+                logger.opt(exception=True).warning(
+                    "Could not re-render profile rows after search."
+                )
+        elif mode == "dictionaries":
+            try:
+                await self._render_dictionary_rows(query=query)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not re-render dictionary rows after search."
+                )
+        elif mode == "lore":
+            try:
+                await self._render_lore_rows(query=query)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not re-render lore rows after search."
+                )
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -810,6 +4077,167 @@ class PersonasScreen(BaseAppScreen):
             return fallback, False
         return dict(record), True
 
+    def _dictionary_scope_service(self) -> Any:
+        """The app-level dictionaries scope service, or None when absent."""
+        return getattr(self.app_instance, "chat_dictionary_scope_service", None)
+
+    @staticmethod
+    def _dictionary_row(record: dict) -> LibraryRow:
+        # list_dictionaries() ships a cheap entry_count instead of populated
+        # entries; fall back to len(entries) for any caller (e.g. the get
+        # path) that only sets the latter.
+        count = record.get("entry_count")
+        if count is None:
+            count = len(record.get("entries") or [])
+        state = "on" if record.get("enabled", record.get("is_active", True)) else "off"
+        return LibraryRow(
+            item_id=str(record.get("id")),
+            kind="dictionary",
+            name=str(record.get("name") or "Unnamed"),
+            meta=f"{count} entries · {state}",
+        )
+
+    async def _render_dictionary_rows(self, query: str = "") -> None:
+        """Fetch and render dictionary rows; degrade to recovery copy on failure."""
+        expected_mode = "dictionaries"
+        expected_query = query.strip()
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+        self._dictionary_lore_request_generation += 1
+        request_generation = self._dictionary_lore_request_generation
+
+        service = self._dictionary_scope_service()
+        recovery_copy: str | None = None
+        if service is None:
+            records: list[dict] = []
+            recovery_copy = (
+                "Dictionaries are unavailable: the service is not configured."
+            )
+        else:
+            try:
+                response = await service.list_dictionaries(
+                    mode="local", include_inactive=True
+                )
+                records = list(response.get("dictionaries") or [])
+            except Exception:
+                logger.warning("Could not list chat dictionaries.")
+                records = []
+                recovery_copy = (
+                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
+                )
+
+        needle = expected_query.lower()
+        visible = (
+            [r for r in records if needle in str(r.get("name", "")).lower()]
+            if needle
+            else records
+        )
+        rows = tuple(self._dictionary_row(r) for r in visible)
+        async with self._render_lock:
+            if (
+                request_generation != self._dictionary_lore_request_generation
+                or not self._library_render_snapshot_is_current(
+                    expected_query=expected_query,
+                    expected_mode=expected_mode,
+                )
+            ):
+                return
+            if recovery_copy is None:
+                self._dictionaries_cache = records
+            library = self.query_one(PersonasLibraryPane)
+            await library.update_rows(
+                rows,
+                total=len(records),
+                noun="dictionaries",
+                filtered=bool(needle),
+                recovery_copy=recovery_copy,
+            )
+
+    def _lore_manager(self) -> Any:
+        """A ``WorldBookManager`` bound to the app's local DB, or None when absent."""
+        from ...Character_Chat.world_book_manager import WorldBookManager
+
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        return WorldBookManager(db) if db is not None else None
+
+    @staticmethod
+    def _lore_row(record: dict) -> LibraryRow:
+        count = record.get("entry_count") or 0
+        state = "on" if record.get("enabled", True) else "off"
+        return LibraryRow(
+            item_id=str(record.get("id")),
+            kind="lore",
+            name=str(record.get("name") or "Unnamed"),
+            meta=f"{count} entries · {state}",
+        )
+
+    @staticmethod
+    def _list_world_books_with_counts(manager: Any) -> list[dict]:
+        """Sync helper run off-thread: list_world_books() plus a per-book entry count."""
+        books = manager.list_world_books(True)
+        for book in books:
+            book["entry_count"] = len(manager.get_world_book_entries(book["id"]))
+        return books
+
+    async def _render_lore_rows(self, query: str = "") -> None:
+        """Fetch and render lore/world-book rows; degrade to recovery copy on failure."""
+        expected_mode = "lore"
+        expected_query = query.strip()
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+        self._dictionary_lore_request_generation += 1
+        request_generation = self._dictionary_lore_request_generation
+
+        manager = self._lore_manager()
+        recovery_copy: str | None = None
+        if manager is None:
+            records: list[dict] = []
+            recovery_copy = "Lore is unavailable: the database is not configured."
+        else:
+            try:
+                records = await asyncio.to_thread(
+                    self._list_world_books_with_counts, manager
+                )
+            except Exception:
+                logger.opt(exception=True).warning("Could not list lore books.")
+                records = []
+                recovery_copy = (
+                    "Lore books could not be loaded.\nSwitch modes and back to retry."
+                )
+
+        needle = expected_query.lower()
+        visible = (
+            [r for r in records if needle in str(r.get("name", "")).lower()]
+            if needle
+            else records
+        )
+        rows = tuple(self._lore_row(r) for r in visible)
+        async with self._render_lock:
+            if (
+                request_generation != self._dictionary_lore_request_generation
+                or not self._library_render_snapshot_is_current(
+                    expected_query=expected_query,
+                    expected_mode=expected_mode,
+                )
+            ):
+                return
+            if recovery_copy is None:
+                self._lore_books_cache = records
+            library = self.query_one(PersonasLibraryPane)
+            await library.update_rows(
+                rows,
+                total=len(records),
+                noun="lore books",
+                filtered=bool(needle),
+                recovery_copy=recovery_copy,
+            )
+
     # ===== Mode switching =====
 
     @on(Button.Pressed, ".personas-mode-chip")
@@ -824,32 +4252,50 @@ class PersonasScreen(BaseAppScreen):
     def _handle_library_rail_collapse(self, event: Button.Pressed) -> None:
         event.stop()
         self._library_rail_collapsed = True
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
         self._sync_personas_rails()
 
     @on(Button.Pressed, "#personas-library-rail-open")
     def _handle_library_rail_open(self, event: Button.Pressed) -> None:
         event.stop()
         self._library_rail_collapsed = False
+        if self.size.width <= 60:
+            self._compact_active_pane = "library"
         self._sync_personas_rails()
 
     @on(Button.Pressed, "#personas-inspector-rail-collapse")
     def _handle_inspector_rail_collapse(self, event: Button.Pressed) -> None:
         event.stop()
         self._inspector_rail_collapsed = True
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
         self._sync_personas_rails()
 
     @on(Button.Pressed, "#personas-inspector-rail-open")
     def _handle_inspector_rail_open(self, event: Button.Pressed) -> None:
         event.stop()
         self._inspector_rail_collapsed = False
+        if self.size.width <= 60:
+            self._compact_active_pane = "inspector"
         self._sync_personas_rails()
 
     async def _apply_mode(self, mode: str) -> None:
+        self._advance_persona_buddy_session()
+        if mode != "characters":
+            self._clear_character_tts_profile_suggestion()
         self._cancel_search_debounce()
+        self._selected_server_character = None
+        # switch_mode resets sort_key/tag_filter/page_offset for a fresh window.
         self.state.switch_mode(mode)
+        self._invalidate_character_tts_controls()
+        self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         # switch_mode does not reset search_query; clear it explicitly and
         # reset the Input widget so the library starts unfiltered in the new mode.
         self.state.search_query = ""
+        # The (search, tag) pair changed, so the character count must be
+        # recomputed the next time the characters page loads.
+        self._count_cache_key = None
         try:
             self.query_one("#personas-library-search", Input).value = ""
         except Exception:
@@ -859,133 +4305,2482 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
                 chip_mode == mode, "is-active"
             )
-        self.query_one("#personas-status-row", Static).update(self._status_row_text())
+        self._update_purpose_line()
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        self._sync_local_character_actions()
+        is_dictionaries = mode == "dictionaries"
+        is_lore = mode == "lore"
+        self.query_one(PersonasPreviewPane).display = not (is_dictionaries or is_lore)
+        tryit = self.query_one(PersonasDictionaryTryItWidget)
+        tryit.display = is_dictionaries
+        if is_dictionaries:
+            tryit.set_ready(False, "Select a dictionary to preview substitutions.")
+        lore_tryit = self.query_one(PersonasLoreTryItWidget)
+        lore_tryit.display = is_lore
+        if is_lore:
+            lore_tryit.set_ready(False, "Select a lore book to preview injections.")
+        # The character dictionaries/world-books panels are only meaningful
+        # in Characters mode; they are not one of the exclusive
+        # _CENTER_VIEW_IDS pages (they sit alongside the character card
+        # rather than replacing it). They used to need a coarse
+        # mode-level toggle here, but every branch below already calls
+        # _show_center(...), which now gates
+        # #personas-character-attachments itself (single source of truth -
+        # see _show_center) - leaving Characters mode always lands on a
+        # non-character visible_id, so the wrapper is hidden there too.
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
+        # A mode switch clears the character context; reset the transcript
+        # speaker labels so a later reply never renders under a stale previous
+        # character's name (task-437). A character selection re-sets them.
+        self.query_one(PersonasPreviewPane).reset_speakers()
         await self.query_one(PersonasInspectorPane).clear_selection()
         if mode == "characters":
             await self._render_library_rows()
             self._show_center(None)
         elif mode == "personas":
             self._profile_lookup_recovery_state = None
-            await library.update_rows((), total=0, noun="persona profiles")
+            async with self._render_lock:
+                if self._library_render_snapshot_is_current(
+                    expected_query="",
+                    expected_mode=mode,
+                ):
+                    await library.update_rows((), total=0, noun="personas")
             self._show_center(None)
             self._refresh_profile_rows_worker()
+        elif mode == "dictionaries":
+            await self._render_dictionary_rows()
+            self._show_center(None)
+        elif mode == "lore":
+            await self._render_lore_rows()
+            self._show_center(None)
         else:
-            await library.update_rows((), total=0, noun=MODE_LABELS[mode].lower())
+            async with self._render_lock:
+                if self._library_render_snapshot_is_current(
+                    expected_query="",
+                    expected_mode=mode,
+                ):
+                    await library.update_rows(
+                        (),
+                        total=0,
+                        noun=MODE_LABELS.get(mode, mode).lower(),
+                    )
+            self.query_one("#personas-mode-placeholder", Static).update(
+                self._mode_placeholder_text(mode)
+            )
             self._show_center("#personas-mode-placeholder")
 
-    def _title_text(self) -> str:
-        """Live header line: destination identity plus the editing state.
-
-        "Local" deliberately stays out of the title - the status row directly
-        below already says "Source: Local" (de-dup, P3-15).
-        """
-        base = "Personas | Behavior profiles for chat and agents"
+    def _header_subtitle_text(self) -> str:
+        """Live header subtitle: destination purpose plus the editing state."""
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
-            return f"{base} | New {noun}{suffix}"
+            return f"New {noun}{suffix}"
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
-            return f"{base} | Editing {name}{suffix}"
-        return f"{base} | Ready"
+            return f"Editing {name}{suffix}"
+        # Upstream improvement kept: surface the selected entity in view mode
+        # when it has unsaved changes, instead of the bare purpose line.
+        if self.state.has_unsaved_changes and self.state.selected_entity_name:
+            return f"{self.state.selected_entity_name}{suffix}"
+        return "Author the pieces that shape a chat"
+
+    def _mode_descriptor_text(self, mode: str) -> str:
+        """The visible one-line meaning of a mode (falls back for un-described modes)."""
+        return _MODE_DESCRIPTORS.get(mode, MODE_LABELS.get(mode, mode))
+
+    def _mode_placeholder_text(self, mode: str) -> str:
+        """The inviting placeholder body for a not-yet-built (or departing) mode."""
+        return _MODE_PLACEHOLDER_BODY.get(mode, _PLACEHOLDER_FALLBACK)
 
     def _update_title(self) -> None:
-        """Refresh the header line; tolerate updates racing teardown."""
+        """Refresh the destination header; tolerate updates racing teardown."""
         try:
-            self.query_one("#personas-title", Static).update(self._title_text())
+            header = self.query_one("#personas-header", DestinationHeader)
         except Exception:
-            logger.opt(exception=True).debug("Could not update the personas title.")
+            logger.opt(exception=True).debug("Could not update the personas header.")
+            return
+        # Same input as the inspector's readiness line (task-440): a staged
+        # character/persona whose resolved provider would not answer must
+        # not claim "Ready" - the existing degraded-state badge ("Blocked")
+        # is the header's own established pattern (see stats_screen.py) for
+        # this, so no new header UI is introduced. The fuller "what to do"
+        # remedy text stays in the inspector's readiness line below it.
+        status = "blocked" if self._provider_send_block_reason() else "ready"
+        header.sync_state(
+            WorkbenchHeaderState(
+                title="Roleplay",
+                subtitle=self._header_subtitle_text(),
+                status=status,
+            )
+        )
 
-    def _status_row_text(self) -> str:
+    def _purpose_line_text(self) -> str:
+        """Mode descriptor plus the live item count on one line (F-033).
+
+        The count mirrors what the retired status strip showed: the paged
+        total for characters, the loaded profile count for personas, and the
+        cached list sizes for dictionaries/lore (empty until that mode's
+        first render lands, same as the old strip's pre-load "0").
+        """
         mode = self.state.active_mode
+        descriptor = self._mode_descriptor_text(mode)
+        count: int | None = None
         if mode == "characters":
-            return f"Characters: {len(self._characters)} | Source: Local | Attachments: Console"
-        if mode == "personas":
-            return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
-        return f"Mode: {MODE_LABELS[mode]} | Source: Local | Attachments: Console"
+            # ``_characters`` is now one page; the full-library count lives in
+            # ``_character_total``.
+            count = self._character_total
+        elif mode == "personas":
+            count = len(self._profiles)
+        elif mode == "dictionaries":
+            count = len(self._dictionaries_cache)
+        elif mode == "lore":
+            count = len(self._lore_books_cache)
+        if count is None:
+            return descriptor
+        return f"{descriptor.rstrip('.')} · {count}"
 
-    def _update_status_row(self) -> None:
-        """Refresh the status row text; tolerate refreshes racing teardown."""
+    def _update_purpose_line(self) -> None:
+        """Refresh the merged purpose/count line; tolerate teardown races."""
         try:
-            self.query_one("#personas-status-row", Static).update(self._status_row_text())
+            self.query_one("#personas-purpose", Static).update(
+                self._purpose_line_text()
+            )
         except Exception:
-            logger.opt(exception=True).debug("Could not update the personas status row.")
+            logger.opt(exception=True).debug(
+                "Could not update the personas purpose line."
+            )
 
     # ===== Selection =====
+
+    def _advance_persona_buddy_session(self) -> int:
+        """Invalidate every older Buddy action, including ABA transitions."""
+
+        self._persona_buddy_session_generation += 1
+        return self._persona_buddy_session_generation
+
+    def _capture_actor_pack_export_ui_authority(
+        self,
+        *,
+        source: str,
+        actor_kind: str,
+        local_actor_id: str,
+        actor_revision: int,
+    ) -> _ActorPackExportUIAuthority | None:
+        """Capture exact pre-picker Workbench, service, and controller authority."""
+
+        service = getattr(self.app_instance, "actor_pack_export_service", None)
+        controller = getattr(self.app_instance, "actor_pack_export_controller", None)
+        if (
+            source != "local"
+            or actor_kind not in {"character", "persona"}
+            or type(local_actor_id) is not str
+            or not local_actor_id
+            or type(actor_revision) is not int
+            or actor_revision < 1
+            or self.state.runtime_source != source
+            or self.state.selected_entity_kind != actor_kind
+            or self.state.selected_entity_id != local_actor_id
+            or service is None
+            or controller is None
+            or self._edit_mode != "view"
+        ):
+            return None
+        return _ActorPackExportUIAuthority(
+            source=source,
+            actor_kind=actor_kind,
+            local_actor_id=local_actor_id,
+            actor_revision=actor_revision,
+            session_generation=self._persona_buddy_session_generation,
+            screen=self,
+            controller=controller,
+            service=service,
+        )
+
+    def _actor_pack_export_preflight_is_current(
+        self, authority: _ActorPackExportUIAuthority
+    ) -> bool:
+        """Reject navigation, ABA selection, profile, or owner replacement."""
+
+        return (
+            authority.screen is self
+            and getattr(self.app_instance, "actor_pack_export_controller", None)
+            is authority.controller
+            and getattr(self.app_instance, "actor_pack_export_service", None)
+            is authority.service
+            and self.state.runtime_source == authority.source
+            and self.state.selected_entity_kind == authority.actor_kind
+            and self.state.selected_entity_id == authority.local_actor_id
+            and self._persona_buddy_session_generation == authority.session_generation
+            and self._edit_mode == "view"
+        )
+
+    def _start_actor_pack_export(
+        self,
+        request: ActorPackExportRequest,
+        authority: _ActorPackExportUIAuthority | None = None,
+    ) -> tuple[int, _ActorPackExportUIAuthority]:
+        """Submit one immutable request while the app retains task ownership."""
+
+        if self._actor_pack_export_operation is not None:
+            raise ValueError("actor_pack_export_busy")
+        controller = self.app_instance.actor_pack_export_controller
+        if authority is None:
+            authority = self._capture_actor_pack_export_ui_authority(
+                source=self.state.runtime_source,
+                actor_kind=self.state.selected_entity_kind,
+                local_actor_id=self.state.selected_entity_id,
+                actor_revision=getattr(self.state, "selected_entity_revision", 1),
+            )
+        if authority is None or not self._actor_pack_export_preflight_is_current(
+            authority
+        ):
+            raise ValueError("actor_pack_export_authority_changed")
+        operation = controller.start_export(request)
+        self._actor_pack_export_operation = operation
+        self._actor_pack_export_authority = authority
+        return operation, authority
+
+    async def _wait_actor_pack_export(
+        self,
+        operation: int,
+        authority: _ActorPackExportUIAuthority,
+    ) -> ActorPackExportOutcome | None:
+        """Return an outcome only to the unchanged submitting screen authority."""
+
+        controller = authority.controller
+        try:
+            outcome = await controller.wait(operation)
+            if not self._actor_pack_export_authority_is_current(authority):
+                return None
+            return outcome
+        finally:
+            if self._actor_pack_export_operation == operation:
+                self._actor_pack_export_operation = None
+                self._actor_pack_export_authority = None
+
+    def _actor_pack_export_authority_is_current(
+        self, authority: _ActorPackExportUIAuthority
+    ) -> bool:
+        """Check screen identity, exact selection, source, and ABA generation."""
+
+        return (
+            self._actor_pack_export_preflight_is_current(authority)
+            and self._actor_pack_export_authority is authority
+        )
+
+    async def _refresh_actor_pack_export_eligibility(
+        self,
+        *,
+        source: str,
+        actor_kind: str,
+        local_actor_id: str,
+        session_generation: int,
+    ) -> None:
+        """Resolve export eligibility off-loop and publish only to exact selection."""
+
+        inspector = self.query_one(PersonasInspectorPane)
+        if source != "local":
+            inspector.set_actor_pack_export_state(
+                source=source,
+                actor_kind=actor_kind,
+                local_actor_id=local_actor_id,
+                actor_revision=1,
+                eligible=False,
+                reason="Save a local copy first",
+            )
+            return
+        service = getattr(self.app_instance, "actor_pack_export_service", None)
+        if service is None:
+            inspector.set_actor_pack_export_state(
+                source=source,
+                actor_kind=actor_kind,
+                local_actor_id=local_actor_id,
+                actor_revision=1,
+                eligible=False,
+                reason="Actor or portrait is unavailable. Refresh and try again.",
+            )
+            return
+        try:
+            eligibility = await asyncio.to_thread(
+                service.capture_eligibility,
+                actor_kind,
+                local_actor_id,
+                source=source,
+            )
+        except (ActorPackExportError, OSError, ValueError):
+            eligibility = None
+        if (
+            service is not getattr(self.app_instance, "actor_pack_export_service", None)
+            or session_generation != self._persona_buddy_session_generation
+            or self.state.runtime_source != source
+            or self.state.selected_entity_kind != actor_kind
+            or self.state.selected_entity_id != local_actor_id
+        ):
+            return
+        if eligibility is None:
+            inspector.set_actor_pack_export_state(
+                source=source,
+                actor_kind=actor_kind,
+                local_actor_id=local_actor_id,
+                actor_revision=1,
+                eligible=False,
+                reason="Actor or portrait is unavailable. Refresh and try again.",
+            )
+            return
+        inspector.set_actor_pack_export_state(
+            source=source,
+            actor_kind=actor_kind,
+            local_actor_id=local_actor_id,
+            actor_revision=eligibility.actor_revision,
+            eligible=True,
+        )
+
+    def _cancel_actor_pack_export(self) -> None:
+        """Signal the app-owned operation without adopting or awaiting its task."""
+
+        operation = self._actor_pack_export_operation
+        authority = self._actor_pack_export_authority
+        self._actor_pack_export_operation = None
+        self._actor_pack_export_authority = None
+        if operation is not None and authority is not None:
+            authority.controller.cancel(operation)
+
+    def _cancel_actor_pack_import(self) -> None:
+        """Signal only the active import operation during screen teardown."""
+
+        controller = getattr(self.app_instance, "actor_pack_import_controller", None)
+        operation = self._actor_pack_import_operation
+        if operation is not None and controller is not None:
+            controller.cancel(operation)
+
+    @on(ActorPackExportRequested)
+    async def _handle_actor_pack_export(
+        self, message: ActorPackExportRequested
+    ) -> None:
+        """Open one fenced save flow for the explicitly selected actor."""
+
+        message.stop()
+        if self._io_dialog_active or self._actor_pack_export_operation is not None:
+            return
+        authority = self._capture_actor_pack_export_ui_authority(
+            source=message.source,
+            actor_kind=message.actor_kind,
+            local_actor_id=message.local_actor_id,
+            actor_revision=message.actor_revision,
+        )
+        if authority is None:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._actor_pack_export_dialog_worker(authority),
+            group="personas-io",
+        )
+
+    async def _actor_pack_export_dialog_worker(
+        self, authority: _ActorPackExportUIAuthority
+    ) -> None:
+        """Choose, confirm, attest, export, and report without retaining paths."""
+
+        from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
+
+        try:
+            if not self._actor_pack_export_preflight_is_current(authority):
+                return
+            picker = EnhancedFileSave(
+                title="Export Actor Pack",
+                default_filename=_actor_pack_export_filename(
+                    str(self.state.selected_entity_name or "actor")
+                ),
+                filters=Filters(
+                    (
+                        "Actor Packs",
+                        lambda path: path.suffix.lower() == ".tldw-actor-pack",
+                    ),
+                    ("All Files", lambda path: True),
+                ),
+                context="actor_pack_export",
+            )
+            selected = await self.app.push_screen_wait(picker)
+            if not selected or not self._actor_pack_export_preflight_is_current(
+                authority
+            ):
+                return
+            try:
+                destination = _normalize_actor_pack_destination(selected)
+                exists = await asyncio.to_thread(os.path.lexists, destination)
+            except (OSError, TypeError, ValueError):
+                self._notify("Actor Pack export destination is unavailable.", "error")
+                return
+            if exists:
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmationDialog(
+                        title="Replace Actor Pack?",
+                        message="Replace the existing Actor Pack archive?",
+                        confirm_label="Replace",
+                    )
+                )
+                if confirmed is not True:
+                    return
+            if not self._actor_pack_export_preflight_is_current(authority):
+                return
+            try:
+                eligibility = await asyncio.to_thread(
+                    authority.service.capture_eligibility,
+                    authority.actor_kind,
+                    authority.local_actor_id,
+                    source=authority.source,
+                )
+                if (
+                    eligibility.actor_revision != authority.actor_revision
+                    or not self._actor_pack_export_preflight_is_current(authority)
+                ):
+                    return
+                destination_contract = await asyncio.to_thread(
+                    capture_actor_pack_destination, destination
+                )
+                if not self._actor_pack_export_preflight_is_current(authority):
+                    return
+                request = authority.controller.create_request(
+                    actor_kind=authority.actor_kind,
+                    local_actor_id=authority.local_actor_id,
+                    source=authority.source,
+                    destination=destination_contract,
+                )
+                operation, active_authority = self._start_actor_pack_export(
+                    request, authority
+                )
+                outcome = await self._wait_actor_pack_export(
+                    operation, active_authority
+                )
+            except asyncio.CancelledError:
+                raise
+            except (
+                ActorPackExportControllerError,
+                ActorPackExportError,
+                ActorPackPublicationError,
+                OSError,
+                ValueError,
+            ):
+                self._notify("Actor Pack export failed.", "error")
+                return
+            if outcome is None:
+                return
+            if outcome.result is not None and outcome.result.committed:
+                if (
+                    outcome.result.durability
+                    == "actor_pack_export_durability_uncertain"
+                ):
+                    self._notify(
+                        "Actor Pack exported, but durability confirmation is unavailable.",
+                        "warning",
+                    )
+                else:
+                    self._notify(f"Exported {destination.name}.", "information")
+                return
+            if outcome.error_category == "actor_pack_export_cancelled":
+                return
+            if outcome.error_category == "actor_pack_export_authority_changed":
+                self._notify(
+                    "Actor Pack export stopped because the actor changed. Try again.",
+                    "warning",
+                )
+                return
+            self._notify("Actor Pack export failed.", "error")
+        finally:
+            self._io_dialog_active = False
+
+    @on(ActorPackImportRequested)
+    async def _handle_actor_pack_import(
+        self, message: ActorPackImportRequested
+    ) -> None:
+        """Open the dedicated review-first Actor Pack import flow."""
+
+        message.stop()
+        if self._io_dialog_active or self._actor_pack_import_operation is not None:
+            return
+        controller = getattr(self.app_instance, "actor_pack_import_controller", None)
+        importer = getattr(self.app_instance, "actor_pack_import_service", None)
+        if controller is None or importer is None:
+            self._notify("Actor Pack import is unavailable.", "error")
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._actor_pack_import_dialog_worker(controller, importer),
+            group="personas-io",
+        )
+
+    async def _actor_pack_import_dialog_worker(
+        self, controller: object, importer: object
+    ) -> None:
+        """Pick, inspect, review, confirm, and activate without retaining paths."""
+
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        review: ActorPackImportReview | None = None
+        try:
+            selected = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title="Import Actor Pack",
+                    filters=Filters(
+                        (
+                            "Actor Packs",
+                            lambda path: path.suffix.lower() == ".tldw-actor-pack",
+                        ),
+                    ),
+                    context="actor_pack_import",
+                )
+            )
+            if not selected:
+                return
+            archive_path = Path(selected).resolve()
+            while True:
+                request = controller.create_request(archive_path)
+                operation = controller.start_inspection(request)
+                self._actor_pack_import_operation = operation
+                inspected = await controller.wait(operation)
+                self._actor_pack_import_operation = None
+                if not isinstance(inspected, ActorPackImportOutcome):
+                    self._notify("Actor Pack import failed.", "error")
+                    return
+                if inspected.error_category is not None:
+                    self._notify(
+                        _actor_pack_import_error_copy(inspected.error_category), "error"
+                    )
+                    return
+                if type(inspected.review) is not ActorPackImportReview:
+                    self._notify("Actor Pack import failed.", "error")
+                    return
+                review = inspected.review
+                self._actor_pack_import_review = review
+                preview = await asyncio.to_thread(
+                    importer.read_portrait_preview, review
+                )
+                action = await self.app.push_screen_wait(
+                    ActorPackImportReviewDialog(review, preview)
+                )
+                if action is None:
+                    return
+                if action == "update_existing":
+                    confirmed = await self.app.push_screen_wait(
+                        ConfirmationDialog(
+                            title="Update existing actor?",
+                            message=(
+                                "Apply only the portable fields and visual sections "
+                                "shown in the review? Omitted visual sections will be "
+                                "preserved."
+                            ),
+                            confirm_label="Update actor",
+                        )
+                    )
+                    if confirmed is not True:
+                        return
+                operation = controller.start_activation(review, action)
+                self._actor_pack_import_operation = operation
+                activated = await controller.wait(operation)
+                self._actor_pack_import_operation = None
+                if not isinstance(activated, ActorPackImportOutcome):
+                    self._notify("Actor Pack import failed.", "error")
+                    return
+                if (
+                    activated.result is None
+                    and activated.error_category == "actor_pack_import_review_stale"
+                ):
+                    self._notify(
+                        _actor_pack_import_error_copy(activated.error_category),
+                        "warning",
+                    )
+                    await asyncio.to_thread(controller.discard_review, review)
+                    review = None
+                    self._actor_pack_import_review = None
+                    continue
+                if activated.result is None:
+                    self._notify(
+                        _actor_pack_import_error_copy(activated.error_category), "error"
+                    )
+                    return
+                result = activated.result
+                self._actor_pack_import_review = None
+                review = None
+                refresh_errors = await self._refresh_after_actor_pack_activation(result)
+                suffix = (
+                    " Some views could not refresh."
+                    if activated.refresh_errors or refresh_errors
+                    else ""
+                )
+                self._notify(f"Actor Pack activated.{suffix}", "information")
+                return
+        except asyncio.CancelledError:
+            raise
+        except (
+            ActorPackImportControllerError,
+            ActorPackImportError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
+            self._notify("Actor Pack import failed.", "error")
+        finally:
+            self._actor_pack_import_operation = None
+            self._actor_pack_import_review = None
+            if review is not None:
+                await asyncio.to_thread(controller.discard_review, review)
+            self._io_dialog_active = False
+
+    async def _refresh_after_actor_pack_activation(
+        self, result: object
+    ) -> tuple[str, ...]:
+        """Refresh each affected mounted consumer without undoing a commit."""
+
+        errors: list[str] = []
+        actor_kind = getattr(result, "actor_kind", None)
+        actor_id = getattr(result, "local_actor_id", None)
+        sections = set(getattr(result, "sections", ()) or ())
+        try:
+            if actor_kind == "character" and self.state.active_mode == "characters":
+                await self.character_handler.refresh_character_list()
+            elif actor_kind == "persona" and self.state.active_mode == "personas":
+                await self._refresh_profile_rows_worker()
+        except Exception:
+            errors.append("actor_pack_import_refresh_failed")
+
+        for mounted in tuple(getattr(self.app, "screen_stack", ())):
+            session = getattr(mounted, "_session", None)
+            callbacks: list[tuple[object, tuple[object, ...]]] = [
+                (
+                    getattr(session, "invalidate_visual_identity_actor", None),
+                    (actor_kind, actor_id),
+                )
+            ]
+            if actor_kind == "persona" and "persona-runtime" in sections:
+                callbacks.append(
+                    (
+                        getattr(session, "invalidate_persona_visual_identity", None),
+                        (actor_id,),
+                    )
+                )
+            for callback, arguments in callbacks:
+                if not callable(callback):
+                    continue
+                try:
+                    response = callback(*arguments)
+                    if inspect.isawaitable(response):
+                        await response
+                except Exception:
+                    errors.append("actor_pack_import_refresh_failed")
+        if actor_kind == "persona":
+            reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+            if callable(reconcile):
+                try:
+                    response = reconcile()
+                    if inspect.isawaitable(response):
+                        await response
+                except Exception:
+                    errors.append("actor_pack_import_refresh_failed")
+        return tuple(errors)
 
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
         message.stop()
+        # Explicit user intent supersedes a restore payload retained after a
+        # transient view-mount failure.
+        self._pending_restore = None
         if message.entity_kind == "character":
             await self._run_guarded(
                 lambda: self._select_character(message.entity_id, message.entity_name)
             )
-        elif message.entity_kind == "persona_profile":
+        elif message.entity_kind == "persona":
             await self._run_guarded(
                 lambda: self._select_profile(message.entity_id, message.entity_name)
             )
-        # Prompts, dictionaries, and lore are wired in follow-up tasks.
+        elif message.entity_kind == "dictionary":
+            await self._run_guarded(
+                lambda: self._select_dictionary(message.entity_id, message.entity_name)
+            )
+        elif message.entity_kind == "lore":
+            await self._run_guarded(
+                lambda: self._select_lore_entry(message.entity_id, message.entity_name)
+            )
+        # Prompts are not wired here: prompt management is retired from
+        # Personas and lives entirely inside Library (Task 7).
 
-    async def _select_character(self, entity_id: str, entity_name: str) -> None:
+    @on(PersonaMarksChanged)
+    def _handle_marks_changed(self, message: PersonaMarksChanged) -> None:
+        """Track the library's marked set and re-gate bulk actions (F-040)."""
+        message.stop()
+        self._marked_rows = message.marks
+        try:
+            self.query_one(PersonasInspectorPane).set_marked_count(len(message.marks))
+        except QueryError:
+            pass
+
+    async def _fetch_server_character(self, entity_id: str) -> tuple[str, dict] | None:
+        """Fetch one server card and prove its source target and numeric ID."""
+        if (
+            type(entity_id) is not str
+            or re.fullmatch(r"[1-9][0-9]{0,18}", entity_id) is None
+        ):
+            return None
+        character_id = int(entity_id)
+        if character_id > _MAX_CHARACTER_ID:
+            return None
+
+        expected_server_id = self._active_server_target()
+        if expected_server_id is None:
+            return None
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        get_character = getattr(service, "get_character", None)
+        if not callable(get_character):
+            return None
+        try:
+            response = await get_character(character_id, mode="server")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Server character detail load failed.")
+            self._notify("Could not load the server character.", "error")
+            return None
+        if (
+            self.state.runtime_source != "server"
+            or self._active_server_target() != expected_server_id
+        ):
+            return None
+
+        record = self._character_record_mapping(response)
+        if (
+            record is None
+            or self._server_character_id(record.get("id")) != character_id
+        ):
+            return None
+        record["id"] = character_id
+        return expected_server_id, record
+
+    async def _select_character(
+        self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
+    ) -> None:
+        self.conversations.close_conversation_preview()
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
+            self._sync_personas_rails()
+        session_generation = self._advance_persona_buddy_session()
+        server_record: dict | None = None
+        if self.state.runtime_source == "server":
+            fetched = await self._fetch_server_character(entity_id)
+            if fetched is None:
+                return
+            server_target, server_record = fetched
+            entity_name = str(server_record.get("name") or entity_name or "Unnamed")
+            server_record["name"] = entity_name
+            self._selected_server_character = (
+                server_target,
+                dict(server_record),
+            )
+        else:
+            self._selected_server_character = None
+
         self.state.select_entity(
             entity_kind="character",
             entity_id=entity_id,
             entity_name=entity_name,
         )
+        self.query_one(PersonasPreviewPane).set_speakers(character=entity_name)
         self._edit_mode = "view"
         self.query_one(PersonasLibraryPane).mark_active_row("character", entity_id)
-        await self.character_handler.load_character(entity_id)
+        if server_record is None:
+            await self.character_handler.load_character(entity_id)
+        else:
+            self.query_one(PersonasCharacterCardWidget).load_character(server_record)
+        self._queue_character_tts_refresh()
         self._show_center("#ccp-character-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="character", authority="Local")
+        inspector.show_selection(name=entity_name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
-        # Drop any previous character's rows immediately and show a loading
-        # placeholder; the worker fills the panel in once the listing returns
-        # (or replaces the placeholder with the empty-state copy).
+
         self.conversations.reset()
-        await inspector.show_conversations_loading()
-        self.conversations.load_conversations(entity_id)
-        # Seed the ephemeral preview with the character's greeting. The list
-        # rows are id/name-only summaries and load_character only SCHEDULES a
-        # thread worker, so the full record (with first_message) is usually
-        # not available yet here. Instant path: when the handler already holds
-        # this character's full card (re-selection), seed now; otherwise clear
-        # the preview and let the CharacterMessage.Loaded handler seed it.
-        record = self._full_character_record(entity_id)
-        await self.preview.reset_for_character(
-            character_id=entity_id,
-            character_name=entity_name,
-            record=record,
+        if server_record is None:
+            # Local-only auxiliary data stays behind the local boundary.
+            self.run_worker(
+                self._render_inspector_avatar(),
+                group="inspector-avatar",
+                exclusive=True,
+            )
+            await self.conversations.load_conversations(entity_id)
+        else:
+            inspector.set_avatar_thumbnail(None)
+            # F-036: a server character with no saved conversations gets the
+            # same empty-state copy the local path renders via the
+            # controller, not a bare Conversations header.
+            await inspector.show_conversations((), empty_copy="No saved conversations.")
+            edit_button = self.query_one("#personas-card-edit-character", Button)
+            edit_button.disabled = True
+            edit_button.tooltip = _SERVER_READ_ONLY_TOOLTIP
+
+        if restore_preview is not None:
+            await self.preview.restore_conversation(
+                greeting=str(restore_preview.get("greeting") or ""),
+                history=list(restore_preview.get("history") or []),
+                seeded_for=entity_id,
+                greeting_index=int(restore_preview.get("greeting_index") or 0),
+            )
+        else:
+            await self.preview.reset_for_character(
+                character_id=entity_id,
+                character_name=entity_name,
+                record=server_record or self._full_character_record(entity_id),
+            )
+        if server_record is None:
+            await self._refresh_character_dictionaries()
+            await self._refresh_character_worldbooks()
+        self._sync_local_character_actions()
+        await self._refresh_actor_pack_export_eligibility(
+            source=self.state.runtime_source,
+            actor_kind="character",
+            local_actor_id=entity_id,
+            session_generation=session_generation,
         )
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
+        session_generation = self._advance_persona_buddy_session()
+        source = self.persona_handler.current_mode()
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
         self.state.select_entity(
-            entity_kind="persona_profile",
+            entity_kind="persona",
             entity_id=entity_id,
             entity_name=entity_name,
         )
         self._edit_mode = "view"
-        self.query_one(PersonasLibraryPane).mark_active_row("persona_profile", entity_id)
-        record = await self._fetch_profile_record(entity_id)
+        self.query_one(PersonasLibraryPane).mark_active_row("persona", entity_id)
+        record, complete = await self._fetch_profile_record_checked(entity_id)
+        if (
+            session_generation != self._persona_buddy_session_generation
+            or getattr(self.app_instance, "character_persona_scope_service", None)
+            is not scope_service
+            or self.state.active_mode != "personas"
+            or self.state.runtime_source != source
+            or self.persona_handler.current_mode() != source
+            or self.state.selected_entity_kind != "persona"
+            or self.state.selected_entity_id != entity_id
+        ):
+            return
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="persona_profile", authority="Local")
+        revision = record.get("version")
+        inspector.show_selection(
+            name=entity_name,
+            kind="persona",
+            source=source,
+            entity_id=entity_id,
+            revision=revision if type(revision) is int else None,
+            profile_current=complete,
+            active=(
+                record.get("is_active", True) is True
+                and record.get("deleted", False) is False
+            ),
+        )
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_buddy_status()
         self._sync_inspector_console_actions()
         # Persona profiles have no conversation linkage in the local data.
         self.conversations.reset()
         await inspector.show_conversations(())
         # Profiles have no first_message concept; start the preview empty.
         await self.preview.reset("")
+        await self._refresh_actor_pack_export_eligibility(
+            source=source,
+            actor_kind="persona",
+            local_actor_id=entity_id,
+            session_generation=session_generation,
+        )
+
+    async def _select_dictionary(
+        self,
+        entity_id: str,
+        entity_name: str,
+        *,
+        raise_on_mount_failure: bool = False,
+    ) -> None:
+        """Load one dictionary into the center detail; inspector shows the selection."""
+        self._advance_persona_buddy_session()
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        try:
+            record = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load dictionary {entity_id}."
+            )
+            self._notify(f"Could not load dictionary: {exc}", "error")
+            return
+        detail = await self._ensure_center_view("dictionary-detail")
+        if not isinstance(detail, PersonasDictionaryDetailWidget):
+            if raise_on_mount_failure:
+                raise _CenterViewMountUnavailable("dictionary-detail")
+            return
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        raw_version = record.get("version")
+        self._selected_dictionary_version = (
+            int(raw_version) if raw_version is not None else None
+        )
+        self.state.select_entity(
+            entity_kind="dictionary", entity_id=entity_id, entity_name=entity_name
+        )
+        detail.load_dictionary(record)
+        detail.load_statistics(
+            self._dictionary_statistics(record, entity_id),
+            list(record.get("entries") or []),
+        )
+        self._show_center("#personas-dictionary-detail")
+        library = self.query_one(PersonasLibraryPane)
+        library.mark_active_row("dictionary", entity_id)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=entity_name, kind="dictionary")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
+        self.query_one(PersonasDictionaryTryItWidget).set_ready(
+            True, "Run the preview to see what this dictionary changes."
+        )
+        self._sync_inspector_console_actions()
+        self._update_title()
+        self._update_purpose_line()
+        await self._refresh_dictionary_versions(record=record)
+        await self._refresh_dictionary_attachments()
+
+    @staticmethod
+    def _dictionary_statistics(record: dict, entity_id: str | int) -> dict | None:
+        """The Stats-tab payload, derived from the record already in hand.
+
+        Selecting a dictionary used to load the same row TWICE -- once for the
+        detail and once inside ``get_statistics`` -- so the second load is
+        derived here instead (task-15469). Never raises: a malformed record
+        degrades to ``None``, which the widget renders as "service stats
+        unavailable", exactly as a failed ``get_statistics`` call did.
+        """
+        try:
+            return statistics_from_record(record, dictionary_id=int(entity_id))
+        except Exception:
+            logger.warning("Could not derive dictionary statistics")
+            return None
+
+    @staticmethod
+    def _load_lore_book_and_entries(
+        manager: Any, book_id: int
+    ) -> tuple[dict | None, list[dict]]:
+        """Sync helper run off-thread: the book record plus its entries in one hop."""
+        record = manager.get_world_book(book_id)
+        if record is None:
+            return None, []
+        entries = manager.get_world_book_entries(book_id)
+        return record, entries
+
+    async def _select_lore_entry(
+        self,
+        entity_id: str,
+        entity_name: str,
+        *,
+        raise_on_mount_failure: bool = False,
+    ) -> None:
+        self._advance_persona_buddy_session()
+        """Load one lore/world book into the center detail; inspector shows the selection."""
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
+            return
+        try:
+            record, entries = await asyncio.to_thread(
+                self._load_lore_book_and_entries, manager, int(entity_id)
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not load lore book {entity_id}.")
+            self._notify(f"Could not load lore book: {exc}", "error")
+            return
+        if record is None:
+            self._notify("Lore book not found.", "error")
+            return
+        detail = await self._ensure_center_view("lore-detail")
+        if not isinstance(detail, PersonasLoreDetailWidget):
+            if raise_on_mount_failure:
+                raise _CenterViewMountUnavailable("lore-detail")
+            return
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        raw_version = record.get("version")
+        self._selected_lore_book_version = (
+            int(raw_version) if raw_version is not None else None
+        )
+        self._selected_lore_book = record
+        self._selected_lore_entries = entries
+        self.state.select_entity(
+            entity_kind="lore", entity_id=entity_id, entity_name=entity_name
+        )
+        detail.load_book({**record, "entries": entries})
+        self._show_center("#personas-lore-detail")
+        library = self.query_one(PersonasLibraryPane)
+        library.mark_active_row("lore", entity_id)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=entity_name, kind="lore")
+        # Drop any previous character's portrait: the rail must never show a
+        # face that belongs to a different selection.
+        inspector.set_avatar_thumbnail(None)
+        self.query_one(PersonasLoreTryItWidget).set_ready(
+            True, "Run the preview to see what this lore book injects."
+        )
+        self._sync_inspector_console_actions()
+        self._update_title()
+        self._update_purpose_line()
+        await self._refresh_lore_attachments()
+
+    async def _refresh_lore_attachments(self) -> None:
+        """Reload the Attachments tab for the selected lore book."""
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "lore" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            rows = await asyncio.to_thread(
+                manager.get_conversations_for_world_book, int(entity_id)
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not load lore attachments.")
+            self._notify(f"Could not load attachments: {exc}", "error")
+            rows = []  # clear stale rows on failure rather than leave a lying table
+        # Guard against a stale write: if the user switched books while the query
+        # was in flight, a newer refresh now owns the table — don't clobber it.
+        if (
+            self.state.selected_entity_id != entity_id
+            or self.state.selected_entity_kind != "lore"
+        ):
+            return
+        try:
+            self.query_one(PersonasLoreDetailWidget).load_attachments(rows)
+        except QueryError:
+            pass
+
+    async def _refresh_dictionary_statistics(self, record: dict) -> None:
+        """Re-feed the Stats tab for the given loaded record (best-effort).
+
+        Args:
+            record: The freshly loaded dictionary record (post save/revert)
+                whose entries seed the client-side stats enrichment.
+        """
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        self.query_one(PersonasDictionaryDetailWidget).load_statistics(
+            self._dictionary_statistics(record, entity_id),
+            list(record.get("entries") or []),
+        )
+
+    @on(DictionarySettingsEdited)
+    def _handle_dictionary_settings_edited(
+        self, message: DictionarySettingsEdited
+    ) -> None:
+        message.stop()
+        if self.state.selected_entity_kind != "dictionary":
+            return
+        if self.state.has_unsaved_changes != message.is_dirty:
+            self.state.has_unsaved_changes = message.is_dirty
+            self._update_title()
+            self._sync_inspector_console_actions()
+
+    @on(DictionarySettingsSaveRequested)
+    async def _handle_dictionary_settings_save(
+        self, message: DictionarySettingsSaveRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "dictionary"
+            or not self.state.selected_entity_id
+        ):
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        payload = dict(message.payload)
+        if not payload.get("name"):
+            detail.set_status("A name is required.")
+            return
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        entity_id = self.state.selected_entity_id
+        try:
+            record = await service.update_dictionary(
+                int(entity_id),
+                payload,
+                mode="local",
+                expected_version=self._selected_dictionary_version,
+            )
+        except ConflictError:
+            detail.set_status(
+                "Save failed: the dictionary changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not save dictionary {entity_id}."
+            )
+            detail.set_status(f"Save failed: {exc}")
+            return
+        raw_version = record.get("version")
+        self._selected_dictionary_version = (
+            int(raw_version) if raw_version is not None else None
+        )
+        self.state.has_unsaved_changes = False
+        self.state.selected_entity_name = str(record.get("name") or "")
+        self.query_one(PersonasInspectorPane).show_selection(
+            name=self.state.selected_entity_name, kind="dictionary"
+        )
+        detail.load_dictionary(record)
+        await self._refresh_dictionary_statistics(record)
+        detail.set_status("Saved.")
+        self._update_title()
+        await self._render_dictionary_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        self._sync_inspector_console_actions()
+        await self._refresh_dictionary_versions()
+
+    _MARKDOWN_LOSSY_FIELDS = (
+        "regex/type, probability, group, max replacements, timed effects, "
+        "enabled, case-sensitivity, priority"
+    )
+
+    @on(DictionaryExportRequested)
+    async def _handle_dictionary_export(
+        self, message: DictionaryExportRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "dictionary"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._dictionary_export_worker(message.fmt), group="personas-io"
+        )
+
+    async def _confirm_lossy_markdown_export(self) -> bool:
+        """True when the user accepted the lossy-markdown warning."""
+        dialog = ConfirmationDialog(
+            title="Export Markdown",
+            message=(
+                "Markdown keeps only pattern and replacement text. These fields "
+                f"are DROPPED: {self._MARKDOWN_LOSSY_FIELDS}. Use JSON for a full backup."
+            ),
+            confirm_label="Export anyway",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not show the lossy-export dialog."
+            )
+            return False
+
+    async def _dictionary_export_worker(self, fmt: str) -> None:
+        """Export the selected dictionary to a JSON or markdown file.
+
+        Args:
+            fmt: Export format - ``"json"`` for a full-fidelity backup or
+                ``"markdown"`` for a lossy, human-readable summary.
+        """
+        try:
+            if fmt == "markdown" and not await self._confirm_lossy_markdown_export():
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                if fmt == "json":
+                    response = await service.export_json(int(entity_id), mode="local")
+                    body = json.dumps(response, indent=2, ensure_ascii=False)
+                    extension = "json"
+                else:
+                    response = await service.export_markdown(
+                        int(entity_id), mode="local"
+                    )
+                    body = str(response.get("content") or "")
+                    extension = "md"
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not export dictionary {entity_id}."
+                )
+                detail.set_status(f"Export failed: {exc}")
+                return
+            name = str(self.state.selected_entity_name or "dictionary")
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "dictionary"
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            exports_dir = get_user_data_dir() / "exports"
+            temp = None
+            try:
+                exports_dir.mkdir(parents=True, exist_ok=True)
+                target = exports_dir / f"{slug}-{stamp}.{extension}"
+                temp = exports_dir / f".{slug}-{stamp}.{extension}.tmp"
+                temp.write_text(body, encoding="utf-8")
+                temp.replace(target)
+            except OSError as exc:
+                logger.opt(exception=True).warning("Could not write the export file.")
+                if temp is not None:
+                    temp.unlink(missing_ok=True)
+                detail.set_status(f"Export failed: {exc}")
+                return
+            detail.set_status(f"Exported to {target}")
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Unexpected error exporting dictionary {fmt!r}."
+            )
+            self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _reload_selected_dictionary_entries(self) -> bool:
+        """Re-fetch entries + version after a mutation (positional ids shift).
+
+        Returns:
+            True on success; False on an internal failure path (already
+            surfaced via ``detail.set_status``), so callers know not to
+            clobber that status with a blanket "".
+        """
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
+            return False
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            record = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not reload dictionary {entity_id} entries."
+            )
+            detail.set_status(f"Reload failed: {exc}")
+            return False
+        raw_version = record.get("version")
+        self._selected_dictionary_version = (
+            int(raw_version) if raw_version is not None else None
+        )
+        detail.update_entries(list(record.get("entries") or []))
+        detail.load_statistics(
+            self._dictionary_statistics(record, entity_id),
+            list(record.get("entries") or []),
+        )
+        await self._render_dictionary_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+        await self._refresh_dictionary_versions(record=record)
+        return True
+
+    async def _refresh_dictionary_versions(self, *, record: dict | None = None) -> None:
+        """Feed the Versions tab for the selected dictionary (best-effort).
+
+        Args:
+            record: The record the caller just loaded, when it has one. It
+                seeds a missing history baseline so the service does not load
+                the same row again (task-15469).
+        """
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        kwargs = {} if record is None else {"record": record}
+        try:
+            response = await service.list_versions(
+                int(entity_id), mode="local", **kwargs
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not list dictionary {entity_id} versions."
+            )
+            detail.load_versions([])
+            return
+        detail.load_versions(list(response.get("versions") or []))
+
+    async def _refresh_dictionary_attachments(self) -> None:
+        """Re-feed the Attachments tab for the selected dictionary (best-effort)."""
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            response = await service.list_dictionary_conversations(
+                int(entity_id), mode="local"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not list conversations for dictionary {entity_id}."
+            )
+            detail.load_attachments([])
+            return
+        detail.load_attachments(list(response.get("conversations") or []))
+
+    @on(DictionaryAttachRequested)
+    async def _handle_dictionary_attach(
+        self, message: DictionaryAttachRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "dictionary"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_attach_worker(), group="personas-io")
+
+    async def _dictionary_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                convs = await asyncio.to_thread(self._list_attachable_conversations)
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "Could not load conversations for the attach picker."
+                )
+                detail.set_status(f"Attach failed: {exc}")
+                return
+            from ...Widgets.Persona_Widgets.dictionary_attach_picker import (
+                DictionaryAttachPicker,
+            )
+
+            try:
+                picked = await self.app.push_screen_wait(DictionaryAttachPicker(convs))
+            except Exception:
+                logger.warning("Could not show the dictionary attach picker.")
+                return
+            if not picked:
+                return
+            try:
+                await service.attach_to_conversation(
+                    int(entity_id), str(picked), mode="local"
+                )
+            except ConflictError:
+                detail.set_status(
+                    "Attach failed: the conversation changed since it was loaded. Try again."
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not attach dictionary {entity_id}."
+                )
+                detail.set_status(f"Attach failed: {exc}")
+                return
+            await self._refresh_dictionary_attachments()
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_conversations(self) -> list[dict]:
+        """Conversations offered by the attach picker (title + string id). Sync DB read."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None or not hasattr(db, "search_conversations_page"):
+            return []
+        # search_conversations_page(query, *, limit=50, offset=0, ...) always
+        # returns a (rows, total, elapsed_seconds) tuple; unwrap defensively
+        # in case a future/alternate DB implementation returns a bare list.
+        page = db.search_conversations_page(
+            query="", scope_type="all", limit=200, offset=0
+        )
+        results = page[0] if isinstance(page, tuple) else page
+        rows = []
+        for conv in results or []:
+            if conv.get("id") is None:
+                continue
+            rows.append(
+                {
+                    "conversation_id": str(conv.get("id")),
+                    "title": str(conv.get("title") or "(untitled)"),
+                }
+            )
+        return rows
+
+    @on(DictionaryDetachRequested)
+    async def _handle_dictionary_detach(
+        self, message: DictionaryDetachRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            await service.detach_from_conversation(
+                int(entity_id), str(message.conversation_id), mode="local"
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not detach dictionary {entity_id}."
+            )
+            detail.set_status(f"Detach failed: {exc}")
+            return
+        await self._refresh_dictionary_attachments()
+
+    # ===== Character dictionary attach/detach (Roleplay P1f) =====
+
+    async def _refresh_character_dictionaries(self) -> None:
+        """Re-feed the character dictionaries panel (best-effort)."""
+        if self.state.runtime_source == "server":
+            return
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if (
+            service is None
+            or self.state.selected_entity_kind != "character"
+            or not entity_id
+        ):
+            return
+        panel = self.query_one(PersonasCharacterDictionariesWidget)
+        try:
+            response = await service.list_character_dictionaries(
+                int(entity_id), mode="local"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not list dictionaries for character {entity_id}."
+            )
+            panel.load_character_dictionaries([])
+            return
+        panel.load_character_dictionaries(list(response.get("dictionaries") or []))
+
+    async def _refresh_character_worldbooks(self) -> None:
+        """Re-feed the character world-books panel (best-effort)."""
+        if self.state.runtime_source == "server":
+            return
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            rows = await asyncio.to_thread(
+                manager.get_world_books_for_character, int(entity_id)
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not list world books for character {entity_id}."
+            )
+            rows = []
+        if (
+            self.state.selected_entity_id != entity_id
+            or self.state.selected_entity_kind != "character"
+        ):
+            return
+        try:
+            self.query_one(PersonasCharacterWorldBooksWidget).load_world_books(rows)
+        except QueryError:
+            pass
+
+    @on(CharacterDictionaryAttachRequested)
+    async def _handle_character_dictionary_attach(
+        self, message: CharacterDictionaryAttachRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if (
+            self.state.selected_entity_kind != "character"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._character_dictionary_attach_worker(), group="personas-io")
+
+    async def _character_dictionary_attach_worker(self) -> None:
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            char_id = int(entity_id)
+            try:
+                dicts = await asyncio.to_thread(
+                    self._list_attachable_dictionaries, char_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load dictionaries for the attach picker."
+                )
+                return
+            try:
+                picked = await self.app.push_screen_wait(DictionaryPicker(dicts))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the dictionary picker."
+                )
+                return
+            if not picked:
+                return
+            if not self._local_character_actions_allowed():
+                return
+            try:
+                await service.attach_to_character(int(picked), char_id, mode="local")
+            except ConflictError:
+                self._notify(
+                    "Attach failed: the character changed since it was loaded. Try again.",
+                    "warning",
+                )
+                return
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not attach dictionary to character {char_id}."
+                )
+                return
+            await self._refresh_character_dictionaries()
+            await self._sync_character_editor_dictionaries(char_id)
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_dictionaries(self, character_id: int) -> list[dict]:
+        """Local dictionaries NOT already attached to this character (sync DB read)."""
+        if not self._local_character_actions_allowed():
+            return []
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        from ...Character_Chat import Chat_Dictionary_Lib as cdl
+
+        attached = set()
+        record = db.get_character_card_by_id(int(character_id))
+        for block in cdl.load_character_dictionaries(record):
+            attached.add(block.get("name"))
+        rows = []
+        for d in (
+            cdl.list_chat_dictionaries(db, limit=1000, include_disabled=True) or []
+        ):
+            name = d.get("name")
+            did = d.get("id")
+            if name in attached:
+                continue
+            rows.append({"dictionary_id": int(did), "name": str(name)})
+        return rows
+
+    async def _sync_character_editor_dictionaries(self, character_id: int) -> None:
+        """Keep the editor's base coherent after an out-of-band attach/detach."""
+        if not self._local_character_actions_allowed():
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        try:
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(character_id)
+            )
+        except Exception:
+            return
+        if not record:
+            return
+        ext = (
+            record.get("extensions")
+            if isinstance(record.get("extensions"), dict)
+            else {}
+        )
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except Exception:
+            return
+        if int(editor._character_data.get("id") or 0) == int(character_id):
+            editor.sync_attached_dictionaries(
+                ext.get("chat_dictionaries") or [], record.get("version")
+            )
+
+    @on(CharacterDictionaryDetachRequested)
+    async def _handle_character_dictionary_detach(
+        self, message: CharacterDictionaryDetachRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if (
+            service is None
+            or self.state.selected_entity_kind != "character"
+            or not entity_id
+        ):
+            return
+        char_id = int(entity_id)
+        try:
+            await service.detach_from_character(
+                char_id, str(message.dictionary_name), mode="local"
+            )
+        except ConflictError:
+            self._notify(
+                "Detach failed: the character changed since it was loaded. Try again.",
+                "warning",
+            )
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not detach dictionary from character {char_id}."
+            )
+            return
+        await self._refresh_character_dictionaries()
+        await self._sync_character_editor_dictionaries(char_id)
+
+    @on(CharacterWorldBookAttachRequested)
+    async def _handle_character_worldbook_attach(
+        self, message: CharacterWorldBookAttachRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if (
+            self.state.selected_entity_kind != "character"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._character_worldbook_attach_worker(), group="personas-io")
+
+    async def _character_worldbook_attach_worker(self) -> None:
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            entity_id = self.state.selected_entity_id
+            manager = self._lore_manager()
+            if manager is None or not entity_id:
+                return
+            char_id = int(entity_id)
+            try:
+                books = await asyncio.to_thread(
+                    self._list_attachable_world_books, char_id
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not load world books for the attach picker."
+                )
+                self._notify("Attach failed: could not list world books.", "error")
+                return
+            try:
+                picked = await self.app.push_screen_wait(WorldBookPicker(books))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the world-book picker."
+                )
+                return
+            if picked is None:
+                return
+            if not self._local_character_actions_allowed():
+                return
+            try:
+                await asyncio.to_thread(
+                    manager.attach_world_book_to_character, int(picked), char_id
+                )
+            except ConflictError:
+                self._notify(
+                    "Attach failed: the character changed since it was loaded. Try again.",
+                    "warning",
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not attach world book to character {char_id}."
+                )
+                self._notify(f"Attach failed: {exc}", "error")
+                return
+            await self._refresh_character_worldbooks()
+            await self._sync_character_editor_worldbooks(char_id)
+            self._notify("Attached to character.", "information")
+        finally:
+            self._io_dialog_active = False
+
+    def _list_attachable_world_books(self, character_id: int) -> list[dict]:
+        """Standalone world books NOT already attached to this character (sync DB read)."""
+        if not self._local_character_actions_allowed():
+            return []
+        manager = self._lore_manager()
+        if manager is None:
+            return []
+        attached = {
+            str(r.get("name"))
+            for r in manager.get_world_books_for_character(int(character_id))
+        }
+        rows = []
+        for b in manager.list_world_books(include_disabled=False) or []:
+            name = b.get("name")
+            if str(name) in attached:
+                continue
+            rows.append({"world_book_id": int(b.get("id")), "name": str(name)})
+        return rows
+
+    async def _sync_character_editor_worldbooks(self, character_id: int) -> None:
+        """Keep the editor's base coherent after an out-of-band attach/detach."""
+        if not self._local_character_actions_allowed():
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        try:
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(character_id)
+            )
+        except Exception:
+            return
+        if not record:
+            return
+        ext = (
+            record.get("extensions")
+            if isinstance(record.get("extensions"), dict)
+            else {}
+        )
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except Exception:
+            return
+        if int(editor._character_data.get("id") or 0) == int(character_id):
+            editor.sync_attached_world_books(
+                ext.get(CHARACTER_WORLD_BOOKS_KEY) or [], record.get("version")
+            )
+
+    @on(CharacterWorldBookDetachRequested)
+    async def _handle_character_worldbook_detach(
+        self, message: CharacterWorldBookDetachRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        char_id = int(entity_id)
+        try:
+            await asyncio.to_thread(
+                manager.detach_world_book_from_character, char_id, str(message.name)
+            )
+        except ConflictError:
+            self._notify(
+                "Detach failed: the character changed since it was loaded. Try again.",
+                "warning",
+            )
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not detach world book from character {char_id}."
+            )
+            return
+        await self._refresh_character_worldbooks()
+        await self._sync_character_editor_worldbooks(char_id)
+        self._notify("Detached from character.", "information")
+
+    @on(DictionaryVersionViewRequested)
+    async def _handle_dictionary_version_view(
+        self, message: DictionaryVersionViewRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if service is None or not entity_id:
+            return
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        try:
+            record = await service.get_version(
+                int(entity_id), message.revision, mode="local"
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load version {message.revision}."
+            )
+            detail.set_status(f"Could not load version: {exc}")
+            return
+        detail.show_version_snapshot(record)
+
+    @on(DictionaryVersionRevertRequested)
+    async def _handle_dictionary_version_revert(
+        self, message: DictionaryVersionRevertRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._dictionary_revert_worker(message.revision), group="personas-io"
+        )
+
+    async def _confirm_dictionary_revert(self, revision: int) -> bool:
+        """True when the user confirmed the revert (worker context required)."""
+        dialog = ConfirmationDialog(
+            title="Revert",
+            message=f"Revert to revision {revision}? Current settings and entries are replaced.",
+            confirm_label="Revert",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not show the revert confirmation dialog."
+            )
+            return False
+
+    async def _dictionary_revert_worker(self, revision: int) -> None:
+        """Confirm, then revert the selected dictionary to a prior version.
+
+        Args:
+            revision: The version number to revert the dictionary to.
+        """
+        try:
+            if not await self._confirm_dictionary_revert(revision):
+                return
+            entity_id = self.state.selected_entity_id
+            service = self._dictionary_scope_service()
+            if service is None or not entity_id:
+                return
+            detail = self.query_one(PersonasDictionaryDetailWidget)
+            try:
+                record = await service.revert_version(
+                    int(entity_id), revision, mode="local"
+                )
+            except ConflictError:
+                detail.set_status(
+                    "Revert failed: the dictionary changed since it was loaded. Reselect and try again."
+                )
+                return
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not revert to revision {revision}."
+                )
+                detail.set_status(f"Revert failed: {exc}")
+                return
+            raw_version = record.get("version")
+            self._selected_dictionary_version = (
+                int(raw_version) if raw_version is not None else None
+            )
+            self.state.selected_entity_name = str(record.get("name") or "")
+            self.query_one(PersonasInspectorPane).show_selection(
+                name=self.state.selected_entity_name,
+                kind="dictionary",
+            )
+            detail.load_dictionary(record)
+            await self._refresh_dictionary_statistics(record)
+            detail.set_status(f"Reverted to revision {revision}.")
+            await self._render_dictionary_rows(query=self.state.search_query)
+            self.query_one(PersonasLibraryPane).mark_active_row("dictionary", entity_id)
+            await self._refresh_dictionary_versions()
+        except Exception as exc:
+            # The revert call itself is already guarded above; this covers the
+            # post-revert refresh steps (widget/state updates, row re-render),
+            # which were previously unguarded and could crash the app.
+            logger.opt(exception=True).error(
+                f"Unexpected error reverting to revision {revision}."
+            )
+            self._notify(f"Revert failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _run_dictionary_entry_op(
+        self, op: Callable[[Any], Awaitable[Any]], failure: str
+    ) -> None:
+        """One guarded service mutation + the mandatory entries reload."""
+        service = self._dictionary_scope_service()
+        detail = self.query_one(PersonasDictionaryDetailWidget)
+        if service is None or self.state.selected_entity_kind != "dictionary":
+            return
+        try:
+            await op(service)
+        except ConflictError:
+            detail.set_status(
+                "Change failed: the dictionary changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(failure)
+            detail.set_status(f"{failure}: {exc}")
+            return
+        if await self._reload_selected_dictionary_entries():
+            detail.set_status("")
+        # else: the reload already set its own "Reload failed: ..." status -
+        # blanking it here would silently hide that failure from the user.
+
+    @on(DictionaryEntryAddRequested)
+    async def _handle_dictionary_entry_add(
+        self, message: DictionaryEntryAddRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        await self._run_dictionary_entry_op(
+            lambda service: service.add_entry(
+                int(entity_id), message.payload, mode="local"
+            ),
+            "Could not add the entry",
+        )
+
+    @on(DictionaryEntryUpdateRequested)
+    async def _handle_dictionary_entry_update(
+        self, message: DictionaryEntryUpdateRequested
+    ) -> None:
+        message.stop()
+        await self._run_dictionary_entry_op(
+            lambda service: service.update_entry(
+                message.entry_id, message.payload, mode="local"
+            ),
+            "Could not update the entry",
+        )
+
+    @on(DictionaryEntryDeleteRequested)
+    async def _handle_dictionary_entry_delete(
+        self, message: DictionaryEntryDeleteRequested
+    ) -> None:
+        message.stop()
+        await self._run_dictionary_entry_op(
+            lambda service: service.delete_entry(message.entry_id, mode="local"),
+            "Could not delete the entry",
+        )
+
+    @on(DictionaryEntriesReorderRequested)
+    async def _handle_dictionary_entries_reorder(
+        self, message: DictionaryEntriesReorderRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        await self._run_dictionary_entry_op(
+            lambda service: service.reorder_entries(
+                int(entity_id), {"entry_ids": list(message.entry_ids)}, mode="local"
+            ),
+            "Could not reorder entries",
+        )
+
+    @on(DictionaryTryItRunRequested)
+    async def _handle_dictionary_tryit_run(
+        self, message: DictionaryTryItRunRequested
+    ) -> None:
+        message.stop()
+        tryit = self.query_one(PersonasDictionaryTryItWidget)
+        entity_id = self.state.selected_entity_id
+        service = self._dictionary_scope_service()
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
+            tryit.show_error("Select a dictionary first.")
+            return
+        record = next(
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)),
+            None,
+        )
+        token_budget = int((record or {}).get("max_tokens") or 1000)
+        try:
+            response = await service.process_text(
+                {
+                    "text": message.text,
+                    "dictionary_id": int(entity_id),
+                    "token_budget": token_budget,
+                },
+                mode="local",
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Try-it preview failed for dictionary {entity_id}."
+            )
+            tryit.show_error(f"Couldn't run the preview: {exc}")
+            return
+        tryit.render_result(
+            str(response.get("text") or message.text),
+            str(response.get("processed_text") or ""),
+            response.get("diagnostics"),
+        )
+
+    # ===== Lore (world books) =====
+
+    async def _reload_selected_lore_entries(self) -> bool:
+        """Re-fetch entries for the selected lore book after a mutation.
+
+        Returns:
+            True on success; False on an internal failure path (already
+            surfaced via ``detail.set_status``), so callers know not to
+            clobber that status with a blanket "".
+        """
+        entity_id = self.state.selected_entity_id
+        manager = self._lore_manager()
+        if (
+            manager is None
+            or self.state.selected_entity_kind != "lore"
+            or not entity_id
+        ):
+            return False
+        detail = self.query_one(PersonasLoreDetailWidget)
+        try:
+            entries = await asyncio.to_thread(
+                manager.get_world_book_entries, int(entity_id)
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} entries."
+            )
+            detail.set_status(f"Reload failed: {exc}")
+            return False
+        self._selected_lore_entries = entries
+        detail.update_entries(entries)
+        await self._render_lore_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+        return True
+
+    async def _run_lore_entry_op(
+        self, op: Callable[[Any], Awaitable[Any]], failure: str
+    ) -> None:
+        """One guarded manager mutation (off-thread) + the mandatory entries reload."""
+        manager = self._lore_manager()
+        detail = self.query_one(PersonasLoreDetailWidget)
+        if manager is None or self.state.selected_entity_kind != "lore":
+            return
+        try:
+            await op(manager)
+        except ConflictError:
+            detail.set_status(
+                "Change failed: the lore book changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(failure)
+            detail.set_status(f"{failure}: {exc}")
+            return
+        if await self._reload_selected_lore_entries():
+            detail.set_status("")
+        # else: the reload already set its own "Reload failed: ..." status -
+        # blanking it here would silently hide that failure from the user.
+
+    @on(LoreEntryAddRequested)
+    async def _handle_lore_entry_add(self, message: LoreEntryAddRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        payload = message.payload
+        await self._run_lore_entry_op(
+            lambda manager: asyncio.to_thread(
+                manager.create_world_book_entry,
+                int(entity_id),
+                keys=payload.get("keys", []),
+                content=payload.get("content", ""),
+                enabled=payload.get("enabled", True),
+                position=payload.get("position", "before_char"),
+                insertion_order=payload.get("insertion_order", 0),
+                priority=payload.get("priority", 0),
+                selective=payload.get("selective", False),
+                secondary_keys=payload.get("secondary_keys", []),
+                case_sensitive=payload.get("case_sensitive", False),
+                regex=payload.get("regex", False),
+            ),
+            "Could not add the entry",
+        )
+
+    @on(LoreEntryUpdateRequested)
+    async def _handle_lore_entry_update(
+        self, message: LoreEntryUpdateRequested
+    ) -> None:
+        message.stop()
+        payload = message.payload
+        await self._run_lore_entry_op(
+            lambda manager: asyncio.to_thread(
+                manager.update_world_book_entry, int(message.entry_id), **payload
+            ),
+            "Could not update the entry",
+        )
+
+    @on(LoreEntryDeleteRequested)
+    async def _handle_lore_entry_delete(
+        self, message: LoreEntryDeleteRequested
+    ) -> None:
+        message.stop()
+        await self._run_lore_entry_op(
+            lambda manager: asyncio.to_thread(
+                manager.delete_world_book_entry, int(message.entry_id)
+            ),
+            "Could not delete the entry",
+        )
+
+    @on(LoreEntriesReorderRequested)
+    async def _handle_lore_entries_reorder(
+        self, message: LoreEntriesReorderRequested
+    ) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            return
+        entry_ids = list(message.entry_ids)
+
+        async def _op(manager: Any) -> None:
+            for index, entry_id in enumerate(entry_ids):
+                await asyncio.to_thread(
+                    manager.update_world_book_entry,
+                    int(entry_id),
+                    insertion_order=index,
+                )
+
+        await self._run_lore_entry_op(_op, "Could not reorder entries")
+
+    @on(LoreBookSettingsSaveRequested)
+    async def _handle_lore_settings_save(
+        self, message: LoreBookSettingsSaveRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
+            return
+        detail = self.query_one(PersonasLoreDetailWidget)
+        payload = dict(message.payload)
+        if not payload.get("name"):
+            detail.set_status("A name is required.")
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
+            return
+        entity_id = self.state.selected_entity_id
+        try:
+            ok = await asyncio.to_thread(
+                manager.update_world_book,
+                int(entity_id),
+                name=payload.get("name"),
+                description=payload.get("description"),
+                scan_depth=payload.get("scan_depth"),
+                token_budget=payload.get("token_budget"),
+                recursive_scanning=payload.get("recursive_scanning"),
+                enabled=payload.get("enabled"),
+                expected_version=self._selected_lore_book_version,
+            )
+        except ConflictError:
+            detail.set_status(
+                "Save failed: the lore book changed since it was loaded. Reselect and try again."
+            )
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Could not save lore book {entity_id}.")
+            detail.set_status(f"Save failed: {exc}")
+            return
+        if not ok:
+            # update_world_book() only returns False (rather than raising)
+            # when expected_version was None and the row vanished/mismatched;
+            # world_books.version is NOT NULL so this path is effectively
+            # unreachable once a book is selected, but stay defensive.
+            detail.set_status("Save failed: the lore book could not be found.")
+            return
+        try:
+            record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} after save."
+            )
+            record = None
+        if record is not None:
+            raw_version = record.get("version")
+            self._selected_lore_book_version = (
+                int(raw_version) if raw_version is not None else None
+            )
+            self._selected_lore_book = record
+            self.state.selected_entity_name = str(record.get("name") or "")
+            self.query_one(PersonasInspectorPane).show_selection(
+                name=self.state.selected_entity_name, kind="lore"
+            )
+        detail.set_status("Saved.")
+        self._update_title()
+        await self._render_lore_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+        self._sync_inspector_console_actions()
+
+    @on(LoreBookExportRequested)
+    async def _handle_lore_export(self, message: LoreBookExportRequested) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._lore_export_worker(), group="personas-io")
+
+    async def _lore_export_worker(self) -> None:
+        """Save the selected world book to a user-chosen JSON path."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
+
+        try:
+            manager = self._lore_manager()
+            entity_id = self.state.selected_entity_id
+            if manager is None or not entity_id:
+                return
+            try:
+                data = await asyncio.to_thread(
+                    manager.export_world_book, int(entity_id)
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not export world book {entity_id}."
+                )
+                self._notify(f"Export failed: {exc}", "error")
+                return
+            raw_name = str(data.get("name") or "world_book")
+            safe_name = "".join(
+                c for c in raw_name if c.isalnum() or c in " -_"
+            ).rstrip()
+            default_filename = f"{safe_name or 'world_book'}.json"
+            picker = EnhancedFileSave(
+                title="Export World Book",
+                default_filename=default_filename,
+                filters=Filters(
+                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    ("All Files", lambda p: True),
+                ),
+                context="lore_export",
+            )
+            try:
+                target = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the export file dialog."
+                )
+                return
+            if not target:
+                return
+            body = json.dumps(data, indent=2, ensure_ascii=False)
+            try:
+                validated = validate_path_simple(str(target))
+            except (ValueError, OSError) as exc:
+                logger.opt(exception=True).warning(
+                    f"Rejected world-book export path {target}."
+                )
+                self._notify(f"Export failed: {exc}", "error")
+                return
+            # Atomic write: temp file + replace, so an interruption can't leave a
+            # truncated/corrupt export (mirrors the dictionary export flow).
+            temp = validated.parent / f".{validated.name}.tmp"
+            try:
+                await asyncio.to_thread(temp.write_text, body, "utf-8")
+                await asyncio.to_thread(temp.replace, validated)
+            except OSError as exc:
+                logger.opt(exception=True).warning(
+                    f"Could not write world-book export to {validated}."
+                )
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                self._notify(f"Export failed: {exc}", "error")
+                return
+            self._notify(f"Exported to {validated}", "information")
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Unexpected error exporting world book {self.state.selected_entity_id}."
+            )
+            self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    @on(LoreBookEnableToggled)
+    async def _handle_lore_enable_toggled(self, message: LoreBookEnableToggled) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        entity_id = self.state.selected_entity_id
+        detail = self.query_one(PersonasLoreDetailWidget)
+        try:
+            await asyncio.to_thread(
+                manager.update_world_book, int(entity_id), enabled=message.enabled
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not toggle lore book {entity_id}."
+            )
+            self._notify(f"Toggle failed: {exc}", "error")
+            # Revert the switch to the last-known-good value.
+            detail.apply_enabled(not message.enabled)
+            return
+        # update_world_book bumped world_books.version — resync the tracked
+        # version (and record) exactly like the settings-save path does, so a
+        # subsequent "Save settings" in the same selection doesn't send a stale
+        # expected_version and hit a spurious ConflictError.
+        try:
+            record = await asyncio.to_thread(manager.get_world_book, int(entity_id))
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not reload lore book {entity_id} after toggle."
+            )
+            record = None
+        if record is not None:
+            raw_version = record.get("version")
+            self._selected_lore_book_version = (
+                int(raw_version) if raw_version is not None else None
+            )
+            self._selected_lore_book = record
+        elif self._selected_lore_book is not None:
+            self._selected_lore_book["enabled"] = bool(message.enabled)
+        await self._render_lore_rows(query=self.state.search_query)
+        self.query_one(PersonasLibraryPane).mark_active_row("lore", entity_id)
+
+    @on(LoreAttachRequested)
+    async def _handle_lore_attach(self, message: LoreAttachRequested) -> None:
+        message.stop()
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not self.state.selected_entity_id
+        ):
+            return
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._lore_attach_worker(), group="personas-io")
+
+    async def _lore_attach_worker(self) -> None:
+        try:
+            entity_id = self.state.selected_entity_id
+            manager = self._lore_manager()
+            if manager is None or not entity_id:
+                return
+            try:
+                convs = await asyncio.to_thread(self._list_attachable_conversations)
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "Could not list conversations for attach."
+                )
+                self._notify(f"Attach failed: {exc}", "error")
+                return
+            try:
+                picked = await self.app.push_screen_wait(
+                    ConversationAttachPicker(convs)
+                )
+            except Exception:
+                logger.warning("Could not show the world-book attach picker.")
+                return
+            if not picked:
+                return
+            try:
+                await asyncio.to_thread(
+                    manager.associate_world_book_with_conversation,
+                    str(picked),
+                    int(entity_id),
+                )
+            except Exception as exc:
+                logger.warning("Could not attach the world book.")
+                self._notify(f"Attach failed: {exc}", "error")
+                return
+            await self._refresh_lore_attachments()
+            self._notify("Attached to conversation.", "information")
+        finally:
+            self._io_dialog_active = False
+
+    @on(LoreDetachRequested)
+    async def _handle_lore_detach(self, message: LoreDetachRequested) -> None:
+        message.stop()
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "lore" or not entity_id:
+            return
+        manager = self._lore_manager()
+        if manager is None:
+            return
+        try:
+            await asyncio.to_thread(
+                manager.disassociate_world_book_from_conversation,
+                str(message.conversation_id),
+                int(entity_id),
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not detach the world book.")
+            self._notify(f"Detach failed: {exc}", "error")
+            return
+        await self._refresh_lore_attachments()
+        self._notify("Detached from conversation.", "information")
+
+    @on(LoreTryItRunRequested)
+    async def _handle_lore_tryit_run(self, message: LoreTryItRunRequested) -> None:
+        message.stop()
+        tryit = self.query_one(PersonasLoreTryItWidget)
+        entity_id = self.state.selected_entity_id
+        if (
+            self.state.selected_entity_kind != "lore"
+            or not entity_id
+            or self._selected_lore_book is None
+        ):
+            tryit.show_error("Select a lore book first.")
+            return
+        book = {**self._selected_lore_book, "entries": self._selected_lore_entries}
+        # Recent-turn history is out of P2a's authoring scope: no conversation
+        # is trivially available here, so history is always [] regardless of
+        # the pull-history switch (message.pull_history).
+        history: list[dict] = []
+        try:
+            result, diagnostics = await asyncio.to_thread(
+                self._run_lore_scan, book, message.text, history
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Try-it preview failed for lore book {entity_id}."
+            )
+            tryit.show_error(f"Couldn't run the preview: {exc}")
+            return
+        tryit.render_result(result.get("injections") or {}, diagnostics.to_dict())
+
+    @staticmethod
+    def _run_lore_scan(book: dict, text: str, history: list[dict]) -> tuple[dict, Any]:
+        """Sync helper run off-thread: build the processor and scan in one hop."""
+        from ...Character_Chat.world_info_processor import WorldInfoProcessor
+
+        processor = WorldInfoProcessor(world_books=[book])
+        return processor.process_messages_with_diagnostics(text, history)
 
     # ===== Saved conversations =====
 
@@ -994,7 +6789,9 @@ class PersonasScreen(BaseAppScreen):
         return ccp_character_handler._default_character_db()
 
     @on(ConversationRowSelected)
-    async def _handle_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+    async def _handle_conversation_row_selected(
+        self, message: ConversationRowSelected
+    ) -> None:
         message.stop()
         if (
             self.state.active_mode != "characters"
@@ -1002,21 +6799,91 @@ class PersonasScreen(BaseAppScreen):
         ):
             return
         conversation_id = str(message.conversation_id)
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
+            self._sync_personas_rails()
         await self._run_guarded(
             lambda: self.conversations.open_conversation(conversation_id)
         )
 
+    @on(OlderConversationsRequested)
+    async def _handle_older_conversations_requested(
+        self, message: OlderConversationsRequested
+    ) -> None:
+        message.stop()
+        if (
+            self.state.active_mode != "characters"
+            or self.state.runtime_source != "local"
+            or self.state.selected_entity_kind != "character"
+            or self.state.selected_entity_id is None
+        ):
+            return
+        await self.conversations.request_older_conversations()
+
+    @on(ConversationsRequested)
+    def _handle_conversations_requested(self, message: ConversationsRequested) -> None:
+        message.stop()
+        self._return_to_conversations()
+
+    @on(ConversationSearchChanged)
+    async def _handle_conversation_search_changed(
+        self, message: ConversationSearchChanged
+    ) -> None:
+        message.stop()
+        if (
+            self.state.active_mode == "characters"
+            and self.state.runtime_source == "local"
+            and self.state.selected_entity_kind == "character"
+        ):
+            await self.conversations.search_conversations(message.query)
+
     @on(Button.Pressed, "#personas-conversation-back")
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
         event.stop()
+        self._return_to_conversations()
+
+    def _return_to_conversations(self) -> None:
+        """Reveal and focus the conversation list from card or preview."""
+
+        self.conversations.close_conversation_preview()
         self._show_center("#ccp-character-card-view")
-        self._register_footer_shortcuts()
-        self._focus_conversations_list()
+        self._sync_title_and_console_actions()
+        if self.size.width <= 60:
+            # Reveal the destination before hiding the currently focused work
+            # pane.  Otherwise Textual repairs focus to the first control in
+            # the inspector (the search field) as the Back button disappears.
+            self.query_one("#personas-inspector-pane").display = True
+            self._focus_conversations_list(force=True)
+            self._compact_active_pane = "inspector"
+            self._sync_personas_rails()
+            self.set_timer(
+                0.01, lambda: self._focus_conversations_list(force=True)
+            )
+            return
+        self._focus_conversations_list(force=True)
+
+    @on(Button.Pressed, "#personas-conversation-back-source")
+    def _handle_conversation_back_source(self, event: Button.Pressed) -> None:
+        event.stop()
+        target = self._character_conversation_return_target
+        if target is None:
+            return
+        self.post_message(
+            NavigateToScreen(
+                target.screen_id,
+                {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: target.focus_id},
+            )
+        )
 
     @on(Button.Pressed, "#personas-conversation-open-library")
     def _handle_conversation_open_library(self, event: Button.Pressed) -> None:
         event.stop()
         self.conversations.open_in_library()
+
+    @on(Button.Pressed, "#personas-conversation-resume")
+    def _handle_conversation_resume(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.conversations.resume_in_console()
 
     @on(Button.Pressed, "#personas-conversation-continue-console")
     def _handle_conversation_continue_console(self, event: Button.Pressed) -> None:
@@ -1039,16 +6906,26 @@ class PersonasScreen(BaseAppScreen):
     ) -> bool:
         """Single seam for staging Personas context into Console.
 
-        Builds a ``ChatHandoffPayload`` with the workbench's fixed
-        source/runtime identity ("personas" / local) and the selection
-        metadata from ``PersonasWorkbenchState.selected_metadata()``, then
-        hands it to the app's ``open_chat_with_handoff``. Returns ``True``
-        when a payload was staged.
+        Builds a ``ChatHandoffPayload`` with the workbench source/runtime
+        identity and the selection metadata from
+        ``PersonasWorkbenchState.selected_metadata()``, then hands it to the
+        app's ``open_chat_with_handoff``. Returns ``True`` when a payload was
+        staged.
         """
         open_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_handoff):
             self._notify("Console handoff is unavailable.", "warning")
             return False
+        runtime_source = self.state.runtime_source
+        if runtime_source not in {"local", "server"}:
+            runtime_source = (
+                self.runtime_backend
+                if self.runtime_backend in {"local", "server"}
+                else "local"
+            )
+        active_server_profile_id = None
+        if runtime_source == "server":
+            active_server_profile_id = self._active_server_target()
         payload = ChatHandoffPayload.from_source_content(
             source="personas",
             item_type=item_type,
@@ -1058,12 +6935,13 @@ class PersonasScreen(BaseAppScreen):
             source_id=source_id,
             suggested_prompt=suggested_prompt,
             display_summary=display_summary,
-            runtime_backend="local",
-            source_owner="local",
-            source_selector_state="local",
+            runtime_backend=runtime_source,
+            source_owner=runtime_source,
+            source_selector_state=runtime_source,
+            active_server_profile_id=active_server_profile_id,
             metadata={
                 **self.state.selected_metadata(),
-                "backend": "local",
+                "backend": runtime_source,
                 **(extra_metadata or {}),
             },
         )
@@ -1073,10 +6951,18 @@ class PersonasScreen(BaseAppScreen):
     def _console_action_allowed(self) -> bool:
         """True when a saved character/persona profile selection is attachable."""
         return bool(
-            self.state.selected_entity_id
-            and self.state.selected_entity_kind in ("character", "persona_profile")
+            not self._conversation_preview_is_open()
+            and self.state.selected_entity_id
+            and self.state.selected_entity_kind in ("character", "persona")
             and not self.state.has_unsaved_changes
         )
+
+    def _conversation_preview_is_open(self) -> bool:
+        """Return whether the read-only saved-conversation preview is visible."""
+        try:
+            return bool(self.query_one(_CONVERSATION_VIEW_ID).display)
+        except QueryError:
+            return False
 
     def _console_action_block_reason(self) -> str:
         """Return a readable reason for a blocked screen-owned Console action.
@@ -1088,9 +6974,41 @@ class PersonasScreen(BaseAppScreen):
             return "unsaved edits"
         if not self.state.selected_entity_id:
             return "select an item"
-        if self.state.selected_entity_kind not in ("character", "persona_profile"):
+        if self.state.selected_entity_kind == "dictionary":
+            return "attach arrives in a later update"
+        if self.state.selected_entity_kind not in ("character", "persona"):
             return "select a character or persona"
         return "unavailable"
+
+    def _provider_send_block_reason(self) -> str | None:
+        """Actionable reason the staged Console handoff send would fail, if any.
+
+        Reuses ``PersonasPreviewController.console_handoff_readiness`` - a
+        config/env-only mirror of the provider a fresh Start-Chat/Attach
+        Console session actually resolves (chat_defaults; the native Console
+        never reads character_defaults) - so this never duplicates
+        provider-resolution logic and stays cheap enough to run on every
+        selection sync (task-440).
+
+        Returns:
+            ``None`` when the handoff provider would answer (or no
+            character/persona is staged, so the question does not apply),
+            else a short actionable reason suitable for the inspector/header
+            readiness copy.
+        """
+        # Precedence (Qodo #824-2): the provider question is only OPERATIVE
+        # when the Console action gate itself passes — otherwise the header
+        # would claim provider-"Blocked" while the inspector carries the
+        # no-selection/unsaved guidance (two conflicting readiness stories
+        # for one staged intent). With the gate closed the inspector carries
+        # the action reason and the header keeps its pre-task-440 semantics;
+        # provider readiness surfaces the moment the action gate opens.
+        if not self._console_action_allowed():
+            return None
+        if self.state.selected_entity_kind not in ("character", "persona"):
+            return None
+        ready, reason = self.preview.console_handoff_readiness()
+        return None if ready else reason
 
     def _sync_inspector_console_actions(self) -> None:
         """Push the single screen-owned Console gate into the inspector pane."""
@@ -1102,7 +7020,38 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_console_actions_enabled(
             allowed,
             reason=None if allowed else self._console_action_block_reason(),
+            provider_block_reason=self._provider_send_block_reason(),
         )
+
+    def _sync_inspector_buddy_status(self) -> None:
+        """Push exact app-owned Buddy ownership and visibility into Inspector."""
+
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        snapshot = controller.snapshot() if controller is not None else None
+        selection = getattr(snapshot, "selection", None)
+        inspector.set_buddy_status(
+            source=(
+                selection.source if type(selection) is PersonaBuddySelection else None
+            ),
+            persona_id=(
+                selection.local_persona_id
+                if type(selection) is PersonaBuddySelection
+                else None
+            ),
+            enabled=getattr(snapshot, "enabled", False) is True,
+            open=getattr(snapshot, "open", True) is True,
+        )
+
+    def sync_persona_buddy_reconciled_state(self) -> None:
+        """Refresh Inspector affordances for this mounted active Workbench."""
+
+        if not self.is_mounted or not self.is_active:
+            return
+        self._sync_inspector_buddy_status()
 
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
@@ -1128,7 +7077,7 @@ class PersonasScreen(BaseAppScreen):
             record, complete = await self._fetch_profile_record_checked(entity_id)
             if not complete:
                 self._notify(
-                    "Persona profile is not fully loaded; try reselecting it.",
+                    "Persona is not fully loaded; try reselecting it.",
                     "warning",
                 )
                 return None
@@ -1144,12 +7093,23 @@ class PersonasScreen(BaseAppScreen):
         return "\n".join(lines)
 
     async def _attach_selection_to_console(self, *, intent: str) -> None:
-        """Stage the selected card in Console (intent: "attach" or "start_chat")."""
+        """Stage the selected card in Console (intent: "attach" or "start_chat").
+
+        The inspector labels these by intent (F-032): "attach" is the
+        "Send to Console draft" button, "start_chat" is "Chat now".
+        """
         if not self._console_action_allowed():
             # The inspector disables these buttons without a saved selection;
             # this is a defensive re-check (and the ctrl+enter guard).
             self._notify("Select a saved item before using Console actions.", "warning")
             return
+        if intent == "start_chat":
+            # Chat now needs a ready handoff provider (task-523 per-intent);
+            # defense-in-depth against a press racing a config change.
+            block = self._provider_send_block_reason()
+            if block:
+                self._notify(f"Chat now blocked: {block}", "warning")
+                return
         kind = str(self.state.selected_entity_kind)
         name = self.state.selected_entity_name or "Unnamed"
         body = await self._selection_handoff_body()
@@ -1187,14 +7147,242 @@ class PersonasScreen(BaseAppScreen):
         # The legacy CCP route launched a blank main-chat tab directly via the
         # chat tab container, but that container is only queryable while the
         # chat screen is mounted - never true from a pushed destination
-        # screen. The workbench therefore routes Start Chat through the
+        # screen. The workbench therefore routes Chat now through the
         # app-level open_chat_with_handoff API with an explicit intent marker.
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
 
+    def _persona_buddy_action_context_is_current(
+        self,
+        authority: _PersonaBuddyActionAuthority,
+    ) -> bool:
+        """Revalidate every Workbench owner behind one explicit Buddy action."""
+
+        return bool(
+            self.is_mounted
+            and getattr(self.app_instance, "character_persona_scope_service", None)
+            is authority.scope_service
+            and getattr(self.app, "persona_buddy_controller", None)
+            is authority.controller
+            and self._persona_buddy_session_generation == authority.session_generation
+            and self.state.active_mode == "personas"
+            and self.state.runtime_source == authority.source
+            and self.persona_handler.current_mode() == authority.source
+            and self.state.selected_entity_kind == "persona"
+            and self.state.selected_entity_id == authority.persona_id
+            and not self.state.has_unsaved_changes
+        )
+
+    @staticmethod
+    def _persona_buddy_record_is_eligible(
+        record: Mapping[str, object], authority: _PersonaBuddyActionAuthority
+    ) -> bool:
+        """Return whether a complete record still matches local action authority."""
+
+        return bool(
+            authority.source == "local"
+            and str(record.get("id") or "") == authority.persona_id
+            and type(record.get("version")) is int
+            and record.get("version") == authority.revision
+            and record.get("is_active", True) is True
+            and record.get("deleted", False) is False
+        )
+
+    @staticmethod
+    async def _fetch_persona_buddy_action_record(
+        authority: _PersonaBuddyActionAuthority,
+    ) -> Mapping[str, object] | None:
+        """Fetch a full record only through the request's captured service."""
+
+        getter = getattr(authority.scope_service, "get_persona_profile", None)
+        if not callable(getter):
+            return None
+        try:
+            record = await getter(authority.persona_id, mode=authority.source)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Persona Buddy action profile refresh failed "
+                "(category=profile_unavailable)."
+            )
+            return None
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(mode="json")
+        return record if isinstance(record, Mapping) else None
+
+    @on(PersonaBuddyActionRequested)
+    def _handle_persona_buddy_action(
+        self, message: PersonaBuddyActionRequested
+    ) -> None:
+        """Capture one action session and run it as a replaceable screen worker."""
+
+        message.stop()
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        # Explicit Buddy actions are the feature's entry point, so when the
+        # passive read yields None they must CONSTRUCT the lazy controller
+        # (TASK-21103): a profile whose preferences still say disabled reads
+        # None from the persona_buddy_controller property, and "Use for
+        # Buddy" from that state has to be able to enable it end to end.
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        if controller is None:
+            ensure = getattr(self.app, "ensure_persona_buddy_controller", None)
+            if callable(ensure):
+                controller = ensure()
+        authority = _PersonaBuddyActionAuthority(
+            action=message.action,
+            source=message.source,
+            persona_id=message.persona_id,
+            revision=message.revision,
+            session_generation=self._advance_persona_buddy_session(),
+            scope_service=scope_service,
+            controller=controller,
+        )
+        self.run_worker(
+            self._run_persona_buddy_action(authority),
+            group="personas-buddy-action",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _run_persona_buddy_action(
+        self, authority: _PersonaBuddyActionAuthority
+    ) -> None:
+        """Persist one explicit action behind exact ABA-safe authority."""
+
+        scope_service = authority.scope_service
+        controller = authority.controller
+        if (
+            authority.source != "local"
+            or scope_service is None
+            or controller is None
+            or not self._persona_buddy_action_context_is_current(authority)
+        ):
+            self._notify(
+                "Persona Buddy is available for active local Personas.", "warning"
+            )
+            return
+
+        record = await self._fetch_persona_buddy_action_record(authority)
+        if (
+            record is None
+            or not self._persona_buddy_action_context_is_current(authority)
+            or not self._persona_buddy_record_is_eligible(record, authority)
+        ):
+            if self._persona_buddy_action_context_is_current(authority):
+                self._notify(
+                    "Persona Buddy is available for active local Personas.", "warning"
+                )
+            return
+
+        selection = PersonaBuddySelection("local", authority.persona_id)
+        async with self._persona_buddy_action_lock:
+            if not self._persona_buddy_action_context_is_current(authority):
+                return
+            current = controller.current_preferences()
+            if authority.action == "use":
+                changes: dict[str, object] = {
+                    "selection": selection,
+                    "enabled": True,
+                    "open": True,
+                }
+            elif current.selection != selection:
+                self._notify("Use this Persona for Buddy first.", "warning")
+                return
+            elif authority.action == "show":
+                changes = {"enabled": True, "open": True}
+            elif authority.action == "close":
+                changes = {"open": False}
+            else:
+                changes = {"enabled": False}
+
+            candidate = dataclasses.replace(current, **changes)
+            if candidate != current:
+
+                async def restore_previous_action_fields() -> None:
+                    latest_preferences = controller.current_preferences()
+                    rollback = dataclasses.replace(
+                        latest_preferences,
+                        **{field: getattr(current, field) for field in changes},
+                    )
+                    if rollback != latest_preferences:
+                        await controller.update_preferences(rollback)
+
+                try:
+                    await controller.update_preferences(candidate)
+                except asyncio.CancelledError:
+                    if not self._persona_buddy_action_context_is_current(authority):
+                        await restore_previous_action_fields()
+                    raise
+                except Exception:
+                    logger.warning(
+                        "Persona Buddy preference update failed "
+                        "(category=preference_update_failed)."
+                    )
+                    if self._persona_buddy_action_context_is_current(authority):
+                        self._notify(
+                            "Persona Buddy preference could not be saved.", "error"
+                        )
+                    return
+                if not self._persona_buddy_action_context_is_current(authority):
+                    await restore_previous_action_fields()
+                    return
+                preferences = controller.current_preferences()
+                if any(
+                    getattr(preferences, field) != value
+                    for field, value in changes.items()
+                ):
+                    self._notify(
+                        "Persona Buddy preference could not be saved.", "error"
+                    )
+                    return
+            self._sync_inspector_buddy_status()
+
+        record = await self._fetch_persona_buddy_action_record(authority)
+        if (
+            record is None
+            or not self._persona_buddy_action_context_is_current(authority)
+            or not self._persona_buddy_record_is_eligible(record, authority)
+        ):
+            return
+        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+        if callable(reconcile):
+            try:
+                await reconcile()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Persona Buddy view refresh failed (category=view_refresh_failed)."
+                )
+                if self._persona_buddy_action_context_is_current(authority):
+                    self._notify(
+                        "Persona Buddy was updated, but its view could not refresh.",
+                        "warning",
+                    )
+            if not self._persona_buddy_action_context_is_current(authority):
+                return
+
     @on(CharacterMessage.Loaded)
     async def _handle_character_loaded(self, message: CharacterMessage.Loaded) -> None:
         message.stop()
+        if self.state.runtime_source == "server":
+            cached = self._selected_server_character
+            if cached is not None:
+                target, record = cached
+            else:
+                target, record = None, None
+            if (
+                target == self._active_server_target()
+                and record is not None
+                and str(record.get("id")) == str(self.state.selected_entity_id)
+            ):
+                self.character_handler.current_character_id = record["id"]
+                self.character_handler.current_character_data = dict(record)
+                self.query_one(PersonasCharacterCardWidget).load_character(record)
+            return
         await self.preview.handle_character_loaded(
             character_id=str(message.character_id),
             card_data=message.card_data,
@@ -1211,9 +7399,25 @@ class PersonasScreen(BaseAppScreen):
         self.preview.handle_reset()
 
     @on(PreviewOpenInConsoleRequested)
-    def _handle_preview_open_console(self, message: PreviewOpenInConsoleRequested) -> None:
+    def _handle_preview_open_console(
+        self, message: PreviewOpenInConsoleRequested
+    ) -> None:
         message.stop()
         self.preview.open_in_console()
+
+    @on(PreviewConfigureProviderRequested)
+    def _handle_preview_configure(
+        self, message: PreviewConfigureProviderRequested
+    ) -> None:
+        message.stop()
+        self.preview.open_provider_settings()
+
+    @on(PreviewGreetingSelected)
+    async def _handle_preview_greeting_selected(
+        self, message: PreviewGreetingSelected
+    ) -> None:
+        message.stop()
+        await self.preview.handle_greeting_selected(message.index)
 
     # ===== Create / edit =====
 
@@ -1222,25 +7426,83 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if message.action == "create":
             if self.state.active_mode == "characters":
+                if not self._local_character_actions_allowed():
+                    return
                 await self._run_guarded(self._begin_create_character)
             elif self.state.active_mode == "personas":
                 await self._run_guarded(self._begin_create_profile)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._begin_create_dictionary)
+            elif self.state.active_mode == "lore":
+                await self._run_guarded(self._begin_create_lore)
             # Creation in the remaining modes is wired in follow-up tasks.
+        elif message.action == "create_actor_pack":
+            await self._run_guarded(self._begin_create_actor_pack)
         elif message.action == "import":
-            # Character-card import only; the library pane hides the Import
-            # button outside Characters mode, so other modes are a no-op.
-            if self.state.active_mode != "characters":
-                return
-            await self._run_guarded(self._open_import_dialog)
-        # Delete and the rest are wired in follow-up tasks.
+            if self.state.active_mode == "characters":
+                if not self._local_character_actions_allowed():
+                    return
+                await self._run_guarded(self._open_import_dialog)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._open_dictionary_import_dialog)
+            elif self.state.active_mode == "lore":
+                await self._run_guarded(self._open_lore_import_dialog)
+        elif message.action == "duplicate":
+            if self.state.active_mode == "characters":
+                if not self._local_character_actions_allowed():
+                    return
+                await self._run_guarded(self._duplicate_selected_character)
+            elif self.state.active_mode == "dictionaries":
+                await self._run_guarded(self._duplicate_selected_dictionary)
+            elif self.state.active_mode == "lore":
+                await self._run_guarded(self._duplicate_selected_lore)
+        elif message.action == "toggle_enabled":
+            if self.state.active_mode == "dictionaries" and message.entity_id:
+                await self._toggle_dictionary_enabled(message.entity_id)
+        # Delete is wired via the generic Inspector "#personas-delete" seam
+        # (_begin_delete_selection / _delete_entity), same as dictionaries -
+        # not this action-requested handler. The rest are wired in follow-up
+        # tasks.
 
-    async def _begin_create_character(self) -> None:
+    async def _begin_create_character(self, *, actor_pack: bool = False) -> None:
+        if not self._local_character_actions_allowed():
+            return
+        editor = await self._ensure_center_view("character-editor")
+        if not isinstance(editor, PersonasCharacterEditorWidget):
+            return
+        self._advance_persona_buddy_session()
+        self._discard_visual_identity_authoring()
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - must not bleed into this new one.
+        self._reset_expression_generate_style()
         self._edit_mode = "create"
         self.state.clear_selection()
+        self._invalidate_character_tts_controls()
+        # A new session starts unclaimed - re-arms the save-in-place dedup
+        # guard (see _handle_save_requested) even if the previous session
+        # ended on a successful save.
+        self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonasCharacterEditorWidget).new_character()
+        editor.new_character(actor_pack=actor_pack)
+        if actor_pack:
+            self._actor_pack_generation += 1
+            self._actor_pack_session = _ActorPackCreateSession(
+                generation=self._actor_pack_generation,
+                actor_kind="character",
+                source="local",
+                editor_generation=self._character_editor_generation,
+                editor_session_token=editor.visual_identity_session_token,
+            )
+        else:
+            self._invalidate_actor_pack_session()
+        # A new character never has an avatar or expression images, but a
+        # stale thumbnail from the previous editor session must not linger
+        # under the new one. A brand-new character has no id yet, so the
+        # expression slots render empty (and stay disabled - see
+        # PersonasCharacterEditorWidget._sync_expression_slots_enabled).
+        await self._render_all_character_editor_thumbnails(None)
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Create mode: the previous selection's identity (and conversation
@@ -1253,11 +7515,25 @@ class PersonasScreen(BaseAppScreen):
         self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
+        editor = await self._ensure_center_view("persona-editor")
+        if not isinstance(editor, PersonaProfileEditorWidget):
+            return
+        self._invalidate_actor_pack_session()
+        self._advance_persona_buddy_session()
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
+        # A new session starts unclaimed - re-arms the save-in-place dedup
+        # guard (see _handle_profile_save_requested) even if the previous
+        # session ended on a successful save.
+        self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
         # Change-based dirty tracking: the session starts clean (see
         # _begin_create_character).
-        self.query_one(PersonaProfileEditorWidget).new_persona()
+        editor.new_persona(runtime_source=self.persona_handler.current_mode())
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Same identity reset as _begin_create_character: no stale selection.
@@ -1265,27 +7541,2481 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation_editing()
         self.call_after_refresh(self._focus_editor_name)
 
-    @on(EditPersonaRequested)
-    async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
+    async def _begin_create_actor_pack(self) -> None:
+        """Open the canonical editor in one local pack-ready creation mode."""
+
+        if self.state.active_mode == "characters":
+            if not self._local_character_actions_allowed():
+                return
+            await self._begin_create_character(actor_pack=True)
+            return
+        if self.state.active_mode != "personas":
+            return
+        if self.persona_handler.current_mode() != "local":
+            self._notify("Save a local copy first", "warning", timeout=None)
+            return
+        request_generation = self._actor_pack_generation
+        database = getattr(self.app_instance, "chachanotes_db", None)
+        list_cards = getattr(database, "list_character_cards", None)
+        if not callable(list_cards):
+            self._notify("No eligible local portrait Character.", "warning")
+            return
+        outcome = await _drain_to_thread(
+            list_cards,
+            limit=256,
+            offset=0,
+            include_image=True,
+            task_name="personas-actor-pack-portrait-list",
+        )
+        if outcome.cancellation is not None:
+            raise outcome.cancellation
+        if (
+            request_generation != self._actor_pack_generation
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+        ):
+            return
+        if outcome.error is not None or not isinstance(outcome.value, list):
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        eligibility = await _drain_to_thread(
+            self._eligible_actor_pack_portraits,
+            outcome.value,
+            task_name="personas-actor-pack-portrait-validation",
+        )
+        if eligibility.cancellation is not None:
+            raise eligibility.cancellation
+        if (
+            request_generation != self._actor_pack_generation
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+        ):
+            return
+        if eligibility.error is not None:
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        choices = eligibility.value
+        if not isinstance(choices, tuple):
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        if not choices:
+            self._notify("No eligible local portrait Character.", "warning")
+            return
+        editor = await self._ensure_center_view("persona-editor")
+        if not isinstance(editor, PersonaProfileEditorWidget):
+            return
+        self._advance_persona_buddy_session()
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
+        self._edit_mode = "create"
+        self.state.clear_selection()
+        self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
+        editor.begin_actor_pack_creation(
+            tuple((choice.name, choice.character_id) for choice in choices)
+        )
+        self._actor_pack_generation += 1
+        self._actor_pack_session = _ActorPackCreateSession(
+            generation=self._actor_pack_generation,
+            actor_kind="persona",
+            source="local",
+            editor_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+            portrait_choices=choices,
+        )
+        self._show_center("#ccp-persona-editor-view")
+        inspector = self.query_one(PersonasInspectorPane)
+        await inspector.clear_selection()
+        inspector.show_validation_editing()
+        self.call_after_refresh(self._focus_editor_name)
+
+    @staticmethod
+    def _eligible_actor_pack_portraits(
+        records: list[object],
+    ) -> tuple[_ActorPackPortraitChoice, ...]:
+        choices: list[_ActorPackPortraitChoice] = []
+        for raw in records:
+            if not isinstance(raw, Mapping):
+                continue
+            character_id = raw.get("id")
+            revision = raw.get("version")
+            name = raw.get("name")
+            portrait = raw.get("image")
+            if (
+                type(character_id) is not int
+                or character_id < 1
+                or type(revision) is not int
+                or revision < 1
+                or type(name) is not str
+                or not name.strip()
+                or type(portrait) is not bytes
+            ):
+                continue
+            try:
+                validate_actor_portrait(_actor_pack_portrait_name(portrait), portrait)
+            except (ActorPackValidationError, ValueError):
+                continue
+            choices.append(
+                _ActorPackPortraitChoice(
+                    character_id=character_id,
+                    name=name.strip(),
+                    revision=revision,
+                    sha256=hashlib.sha256(portrait).hexdigest(),
+                )
+            )
+        return tuple(
+            sorted(choices, key=lambda choice: (choice.name, choice.character_id))
+        )
+
+    def _invalidate_actor_pack_session(self) -> None:
+        self._actor_pack_generation += 1
+        self._actor_pack_session = None
+        if self._actor_pack_cancel_event is not None:
+            self._actor_pack_cancel_event.set()
+
+    def _actor_pack_session_is_current(self, session: _ActorPackCreateSession) -> bool:
+        if (
+            self._actor_pack_session is not session
+            or session.generation != self._actor_pack_generation
+            or session.source != "local"
+            or self._edit_mode != "create"
+            or not self.is_mounted
+        ):
+            return False
+        if session.actor_kind == "character":
+            editor = self._editor_or_none()
+            return (
+                self.state.active_mode == "characters"
+                and self._local_character_actions_allowed()
+                and editor is not None
+                and session.editor_generation == self._character_editor_generation
+                and session.editor_session_token == editor.visual_identity_session_token
+            )
+        if session.actor_kind == "persona":
+            try:
+                editor = self.query_one(PersonaProfileEditorWidget)
+            except QueryError:
+                return False
+            return (
+                self.state.active_mode == "personas"
+                and self.persona_handler.current_mode() == "local"
+                and session.editor_generation == self._persona_visual_generation
+                and session.editor_session_token == editor.persona_visual_session_token
+            )
+        return False
+
+    def _begin_actor_pack_operation(
+        self,
+        session: _ActorPackCreateSession,
+        *,
+        portrait_generation: int | None,
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        task = asyncio.current_task()
+        active = self._actor_pack_operation_task
+        if (
+            task is None
+            or (active is not None and not active.done())
+            or not self._actor_pack_session_is_current(session)
+            or (
+                session.actor_kind == "character"
+                and portrait_generation != self._actor_pack_portrait_generation
+            )
+        ):
+            return None
+        event = threading.Event()
+        self._actor_pack_operation_task = task
+        self._actor_pack_cancel_event = event
+        return task, event
+
+    def _finish_actor_pack_operation(self, task: asyncio.Task[Any]) -> None:
+        if self._actor_pack_operation_task is task:
+            self._actor_pack_operation_task = None
+            self._actor_pack_cancel_event = None
+        self._character_save_inflight = False
+        self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
+
+    async def _refresh_stale_actor_pack_commit(
+        self,
+        result: ActorPackCreationResult,
+        session: _ActorPackCreateSession,
+    ) -> None:
+        """Surface a committed result without retargeting newer UI authority."""
+
+        if self._actor_pack_session is session:
+            self._actor_pack_generation += 1
+            self._actor_pack_session = None
+        if result.actor_kind == "character":
+            await self.character_handler.refresh_character_list()
+        elif result.actor_kind == "persona":
+            try:
+                profiles = await self.persona_handler.refresh_persona_list(
+                    raise_on_unavailable=True
+                )
+            except Exception:
+                profiles = []
+            self._profiles = [dict(record) for record in (profiles or [])]
+            self._update_purpose_line()
+            if self.is_mounted and self.state.active_mode == "personas":
+                await self._render_profile_rows()
+        self._notify("Actor Pack created in background.", "information")
+
+    async def _drain_actor_pack_creation(self) -> None:
+        event = self._actor_pack_cancel_event
+        task = self._actor_pack_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if event is not None:
+            event.set()
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            outcome = await _drain_async(
+                _join_task(task), task_name="personas-actor-pack-operation-drain"
+            )
+            cancellation = outcome.cancellation
+        self._invalidate_actor_pack_session()
+        if cancellation is not None:
+            raise cancellation
+
+    @work(exclusive=True, group="personas-actor-pack-create")
+    async def _create_actor_pack_worker(
+        self,
+        data: dict[str, Any],
+        session: _ActorPackCreateSession,
+        portrait: bytes | None = None,
+        portrait_generation: int | None = None,
+    ) -> None:
+        admitted = self._begin_actor_pack_operation(
+            session, portrait_generation=portrait_generation
+        )
+        if admitted is None:
+            self._character_save_inflight = False
+            self._profile_save_inflight = False
+            self._profile_save_operation_inflight = False
+            return
+        task, cancel_event = admitted
+        service = getattr(self.app_instance, "actor_pack_creation_service", None)
+        if service is None:
+            self._notify("Actor Pack creation is unavailable.", "error")
+            self._finish_actor_pack_operation(task)
+            return
+        try:
+            if session.actor_kind == "character":
+                if type(portrait) is not bytes:
+                    self._notify("Portrait required.", "warning")
+                    return
+                request = dict(data)
+                request.pop("image", None)
+                request.pop("avatar", None)
+                if "first_mes" in request and "first_message" not in request:
+                    request["first_message"] = request.pop("first_mes")
+                outcome = await _drain_to_thread(
+                    service.create_character,
+                    request,
+                    portrait_name=_actor_pack_portrait_name(portrait),
+                    portrait_bytes=bytes(portrait),
+                    cancel_requested=cancel_event.is_set,
+                    authority_guard=lambda: not cancel_event.is_set(),
+                    task_name="personas-create-character-actor-pack",
+                )
+            else:
+                character_id = data.get("character_card_id")
+                choice = next(
+                    (
+                        item
+                        for item in session.portrait_choices
+                        if item.character_id == character_id
+                    ),
+                    None,
+                )
+                if choice is None:
+                    self._notify("Portrait Character required.", "warning")
+                    return
+                outcome = await _drain_to_thread(
+                    service.create_persona,
+                    dict(data),
+                    source="local",
+                    expected_portrait_revision=choice.revision,
+                    expected_portrait_sha256=choice.sha256,
+                    cancel_requested=cancel_event.is_set,
+                    authority_guard=lambda: not cancel_event.is_set(),
+                    task_name="personas-create-persona-actor-pack",
+                )
+            if outcome.cancellation is not None:
+                raise outcome.cancellation
+            if outcome.error is not None:
+                self._show_actor_pack_creation_error(outcome.error, session)
+                return
+            result = outcome.value
+            result_is_current = (
+                type(result) is ActorPackCreationResult
+                and self._actor_pack_session_is_current(session)
+                and (
+                    session.actor_kind != "character"
+                    or self._actor_pack_portrait_is_current(
+                        portrait, portrait_generation
+                    )
+                )
+            )
+            if type(result) is ActorPackCreationResult and not result_is_current:
+                await self._refresh_stale_actor_pack_commit(result, session)
+                return
+            if not result_is_current:
+                return
+            if session.actor_kind == "character":
+                editor = self._editor_or_none()
+                authority = (
+                    _CharacterSaveAuthority(
+                        editor_ref=weakref.ref(editor),
+                        selected_id=None,
+                        edit_mode="create",
+                        screen_generation=self._character_editor_generation,
+                        editor_session_token=editor.visual_identity_session_token,
+                    )
+                    if editor is not None
+                    else None
+                )
+                if authority is None:
+                    return
+                await self._after_character_save(
+                    result.local_actor_id,
+                    str(data.get("name") or ""),
+                    authority=authority,
+                )
+                if (
+                    not self.is_mounted
+                    or editor.parent is None
+                    or self.state.active_mode != "characters"
+                    or self.state.selected_entity_id != result.local_actor_id
+                    or self._edit_mode != "edit"
+                ):
+                    return
+                editor.mark_actor_pack_created(result.portable_uuid)
+            else:
+                saved = dict(data)
+                saved.update({"id": result.local_actor_id, "version": 1})
+                await self._after_profile_save(saved, source="local")
+                editor = self.query_one(PersonaProfileEditorWidget)
+                if (
+                    not self.is_mounted
+                    or editor.parent is None
+                    or self.state.active_mode != "personas"
+                    or self.state.selected_entity_id != result.local_actor_id
+                    or self.persona_handler.current_mode() != "local"
+                    or self._edit_mode != "edit"
+                ):
+                    return
+                editor.mark_actor_pack_created(result.portable_uuid)
+            self._actor_pack_generation += 1
+            self._actor_pack_session = None
+            self._notify("Actor Pack identity created.", "information")
+        except (ActorPackCreationError, ValueError) as exc:
+            self._show_actor_pack_creation_error(exc, session)
+        finally:
+            self._finish_actor_pack_operation(task)
+
+    def _show_actor_pack_creation_error(
+        self, error: BaseException, session: _ActorPackCreateSession
+    ) -> None:
+        if not self._actor_pack_session_is_current(session):
+            return
+        copy = "Actor Pack creation failed."
+        if (
+            isinstance(error, ActorPackCreationError)
+            and error.user_message == "Save a local copy first"
+        ):
+            copy = error.user_message
+        self._notify(copy, "error")
+
+    def _note_actor_pack_portrait_change(self) -> None:
+        """Fence a running Character creation when its staged portrait changes."""
+
+        self._actor_pack_portrait_generation += 1
+        session = self._actor_pack_session
+        if (
+            session is not None
+            and session.actor_kind == "character"
+            and self._actor_pack_cancel_event is not None
+        ):
+            self._actor_pack_cancel_event.set()
+
+    def _actor_pack_portrait_is_current(
+        self, portrait: bytes | None, generation: int | None
+    ) -> bool:
+        editor = self._editor_or_none()
+        return (
+            type(portrait) is bytes
+            and generation == self._actor_pack_portrait_generation
+            and editor is not None
+            and editor.current_avatar_bytes() == portrait
+        )
+
+    def _unique_dictionary_name(self, base: str) -> str:
+        """Disambiguate against the loaded list (name column is UNIQUE)."""
+        existing = {str(r.get("name") or "") for r in self._dictionaries_cache}
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base} {suffix}" in existing:
+            suffix += 1
+        return f"{base} {suffix}"
+
+    async def _begin_create_dictionary(self) -> None:
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
+        detail = await self._ensure_center_view("dictionary-detail")
+        if not isinstance(detail, PersonasDictionaryDetailWidget):
+            return
+        name = self._unique_dictionary_name("Untitled dictionary")
+        try:
+            record = await service.create_dictionary({"name": name}, mode="local")
+        except ConflictError:
+            self._notify("A dictionary with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create a dictionary.")
+            self._notify(f"Create failed: {exc}", "error")
+            return
+        await self._render_dictionary_rows(query=self.state.search_query)
+        await self._select_dictionary(
+            str(record.get("id")), str(record.get("name") or name)
+        )
+        # Land the user in Settings to rename immediately.
+        try:
+            self.query_one(
+                "#personas-dict-tabs", TabbedContent
+            ).active = "personas-dict-tab-settings"
+            self.query_one("#personas-dict-name", Input).focus()
+        except QueryError:
+            pass
+
+    async def _duplicate_selected_character(self) -> None:
+        """Copy the selected character card under a disambiguated name.
+
+        Task-443 AC2: characters had no Duplicate seam (only dictionaries and
+        lore did). Mirrors ``_duplicate_selected_dictionary``/
+        ``_duplicate_selected_lore``: read the full source record off the UI
+        thread, disambiguate the name against the cached list, and reuse the
+        existing create seam (``ccp_character_handler.create_character`` -
+        the same helper Save-as-new-character already calls) rather than a
+        new duplication engine.
+        """
+        if not self._local_character_actions_allowed():
+            return
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            self._notify("Select a character to duplicate.", "warning")
+            return
+        try:
+            source = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load character {entity_id} to duplicate."
+            )
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not source:
+            self._notify(f"Could not load character {entity_id} to duplicate.", "error")
+            return
+        if not self._local_character_actions_allowed():
+            return
+        base_name = str(source.get("name") or "Character")
+        base = f"{base_name} (copy)"
+        existing = {
+            str(c.get("name") or "") for c in self.character_handler.character_list
+        }
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{base_name} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description"),
+            "personality": source.get("personality"),
+            "scenario": source.get("scenario"),
+            "image": source.get("image"),
+            "post_history_instructions": source.get("post_history_instructions"),
+            "first_message": source.get("first_message"),
+            "message_example": source.get("message_example"),
+            "creator_notes": source.get("creator_notes"),
+            "system_prompt": source.get("system_prompt"),
+            "alternate_greetings": source.get("alternate_greetings"),
+            "tags": source.get("tags"),
+            "creator": source.get("creator"),
+            "character_version": source.get("character_version"),
+            "extensions": source.get("extensions"),
+        }
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            new_id = await asyncio.to_thread(
+                ccp_character_handler.create_character, payload
+            )
+        except ConflictError:
+            self._notify("A character with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the character.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not new_id:
+            self._notify(
+                "Duplicate failed: character creation returned no id.", "error"
+            )
+            return
+        if not self._local_character_actions_allowed():
+            return
+        await self.character_handler.refresh_character_list()
+        await self._select_character(str(new_id), name)
+
+    async def _duplicate_selected_dictionary(self) -> None:
+        service = self._dictionary_scope_service()
+        entity_id = self.state.selected_entity_id
+        if (
+            service is None
+            or self.state.selected_entity_kind != "dictionary"
+            or not entity_id
+        ):
+            self._notify("Select a dictionary to duplicate.", "warning")
+            return
+        try:
+            source = await service.get_dictionary(int(entity_id), mode="local")
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load dictionary {entity_id} to duplicate."
+            )
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        base = f"{source.get('name') or 'Dictionary'} (copy)"
+        existing = {str(r.get("name") or "") for r in self._dictionaries_cache}
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{source.get('name') or 'Dictionary'} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description") or "",
+            "max_tokens": source.get("max_tokens") or 1000,
+            "enabled": bool(source.get("enabled", source.get("is_active", True))),
+            "entries": [
+                {
+                    "pattern": e.get("pattern"),
+                    "replacement": e.get("replacement"),
+                    "probability": e.get("probability"),
+                    "group": e.get("group"),
+                    "timed_effects": e.get("timed_effects"),
+                    "max_replacements": e.get("max_replacements"),
+                    "type": e.get("type"),
+                    "enabled": e.get("enabled", True),
+                    "case_sensitive": e.get("case_sensitive", False),
+                    "priority": e.get("priority", 0),
+                }
+                for e in source.get("entries") or []
+            ],
+        }
+        try:
+            record = await service.create_dictionary(payload, mode="local")
+        except ConflictError:
+            self._notify("A dictionary with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the dictionary.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        # create_dictionary ignores strategy (column default); set it after.
+        source_strategy = str(source.get("strategy") or "sorted_evenly")
+        if source_strategy != "sorted_evenly":
+            try:
+                record = await service.update_dictionary(
+                    int(record["id"]), {"strategy": source_strategy}, mode="local"
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "Could not copy the strategy onto the duplicate."
+                )
+                self._notify(
+                    f"Duplicated, but the strategy could not be copied ({exc}). Set it in Settings.",
+                    "warning",
+                )
+        await self._render_dictionary_rows(query=self.state.search_query)
+        await self._select_dictionary(
+            str(record.get("id")), str(record.get("name") or name)
+        )
+
+    def _unique_lore_name(self, base: str) -> str:
+        """Disambiguate against the loaded list (world_books.name is UNIQUE)."""
+        existing = {str(r.get("name") or "") for r in self._lore_books_cache}
+        if base not in existing:
+            return base
+        suffix = 2
+        while f"{base} {suffix}" in existing:
+            suffix += 1
+        return f"{base} {suffix}"
+
+    async def _begin_create_lore(self) -> None:
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
+            return
+        detail = await self._ensure_center_view("lore-detail")
+        if not isinstance(detail, PersonasLoreDetailWidget):
+            return
+        name = self._unique_lore_name("Untitled world book")
+        try:
+            book_id = await asyncio.to_thread(manager.create_world_book, name)
+        except ConflictError:
+            self._notify("A lore book with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not create a lore book.")
+            self._notify(f"Create failed: {exc}", "error")
+            return
+        await self._render_lore_rows(query=self.state.search_query)
+        await self._select_lore_entry(str(book_id), name)
+        # Land the user in Settings to rename immediately.
+        try:
+            self.query_one(
+                "#personas-lore-tabs", TabbedContent
+            ).active = "personas-lore-tab-settings"
+            self.query_one("#personas-lore-name", Input).focus()
+        except QueryError:
+            pass
+
+    async def _duplicate_selected_lore(self) -> None:
+        manager = self._lore_manager()
+        entity_id = self.state.selected_entity_id
+        if (
+            manager is None
+            or self.state.selected_entity_kind != "lore"
+            or not entity_id
+        ):
+            self._notify("Select a lore book to duplicate.", "warning")
+            return
+        try:
+            source = await asyncio.to_thread(manager.export_world_book, int(entity_id))
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load lore book {entity_id} to duplicate."
+            )
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        base = f"{source.get('name') or 'World book'} (copy)"
+        existing = {str(r.get("name") or "") for r in self._lore_books_cache}
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{source.get('name') or 'World book'} (copy {suffix})"
+            suffix += 1
+        try:
+            new_id = await asyncio.to_thread(
+                manager.import_world_book, source, name_override=name
+            )
+        except ConflictError:
+            self._notify("A lore book with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the lore book.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        await self._render_lore_rows(query=self.state.search_query)
+        await self._select_lore_entry(str(new_id), name)
+
+    async def _toggle_dictionary_enabled(self, entity_id: str) -> None:
+        """Flip a dictionary's enabled flag from the rail (space on the row)."""
+        service = self._dictionary_scope_service()
+        if service is None:
+            return
+        record = next(
+            (r for r in self._dictionaries_cache if str(r.get("id")) == str(entity_id)),
+            None,
+        )
+        if record is None:
+            return
+        target = not bool(record.get("enabled", record.get("is_active", True)))
+        try:
+            # expected_version is deliberately omitted: this write only ever
+            # sets the enabled column, so last-write-wins is safe for a
+            # boolean flip (no risk of clobbering an unrelated field edit).
+            updated = await service.update_dictionary(
+                int(entity_id), {"enabled": target}, mode="local"
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not toggle dictionary {entity_id}."
+            )
+            self._notify(f"Toggle failed: {exc}", "error")
+            return
+        is_selected = str(self.state.selected_entity_id) == str(entity_id)
+        if is_selected:
+            raw_version = updated.get("version")
+            self._selected_dictionary_version = (
+                int(raw_version) if raw_version is not None else None
+            )
+            self.query_one(PersonasDictionaryDetailWidget).apply_enabled(
+                bool(updated.get("enabled", updated.get("is_active", True)))
+            )
+        await self._render_dictionary_rows(query=self.state.search_query)
+        library = self.query_one(PersonasLibraryPane)
+        if self.state.selected_entity_id:
+            library.mark_active_row("dictionary", self.state.selected_entity_id)
+        if not is_selected:
+            # The user was browsing an unselected row; keep the cursor there
+            # instead of letting the selected-row re-mark above steal it.
+            library.highlight_row("dictionary", entity_id)
+
+    @on(EditPersonaProfileRequested)
+    async def _handle_persona_edit_requested(
+        self, message: EditPersonaProfileRequested
+    ) -> None:
         message.stop()
         if str(message.persona_id) != (self.state.selected_entity_id or ""):
-            self._notify("Selection out of sync; reselect the persona profile.", "warning")
+            self._notify("Selection out of sync; reselect the persona.", "warning")
             return
+        self._advance_persona_buddy_session()
         record = await self._fetch_profile_record(str(message.persona_id))
+        editor = await self._ensure_center_view("persona-editor")
+        if not isinstance(editor, PersonaProfileEditorWidget):
+            return
         self._edit_mode = "edit"
+        # A new session starts unclaimed (see _begin_create_profile).
+        self._profile_save_inflight = False
+        self._profile_save_operation_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonaProfileEditorWidget).load_persona(record)
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
+        editor.load_persona(
+            record,
+            runtime_source=self.persona_handler.current_mode(),
+        )
+        self._persona_shared_visual_identity_authority = None
+        shared_identity_snapshot = self._persona_shared_visual_identity_snapshot(editor)
+        if shared_identity_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_shared_visual_identity(
+                    shared_identity_snapshot
+                ),
+                group="personas-shared-visual-identity-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
+        # Task 11: reflect the loaded record's policy rules in the
+        # inspector's read-only summary (the editor owns editing).
+        try:
+            self.query_one(PersonasInspectorPane).show_policy_rules(
+                record.get("policy_rules") or []
+            )
+        except QueryError:
+            pass
+        visual_snapshot = self._persona_visual_snapshot(editor)
+        if visual_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_visual(visual_snapshot),
+                group="personas-persona-visual-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
         inspector.show_validation_editing()
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
 
-    @on(EditCharacterRequested)
-    def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
+    def _persona_shared_visual_identity_snapshot(
+        self, editor: PersonaProfileEditorWidget | None = None
+    ) -> _PersonaSharedVisualIdentityLoadSnapshot | None:
+        """Capture one saved local Persona editor before metadata I/O."""
+
+        if self._edit_mode != "edit" or self.persona_handler.current_mode() != "local":
+            return None
+        try:
+            editor = editor or self.query_one(PersonaProfileEditorWidget)
+            data = editor.collect()
+        except (QueryError, ValueError):
+            return None
+        persona_id = data.get("id")
+        persona_revision = data.get("version")
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        local_service = getattr(scope, "local_service", None)
+        if (
+            type(persona_id) is not str
+            or not persona_id
+            or type(persona_revision) is not int
+            or persona_revision < 1
+            or db is None
+            or local_service is None
+        ):
+            return None
+        return _PersonaSharedVisualIdentityLoadSnapshot(
+            editor_ref=weakref.ref(editor),
+            db=db,
+            local_service=local_service,
+            persona_id=persona_id,
+            persona_revision=persona_revision,
+            screen_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+        )
+
+    def _persona_shared_visual_identity_snapshot_is_current(
+        self,
+        snapshot: _PersonaSharedVisualIdentityLoadSnapshot,
+    ) -> bool:
+        """Fence local source, editor, revision, profile, and service identity."""
+
+        editor = snapshot.editor_ref()
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        if (
+            editor is None
+            or not self.is_mounted
+            or self._edit_mode != "edit"
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+            or self._persona_visual_generation != snapshot.screen_generation
+            or getattr(self.app_instance, "chachanotes_db", None) is not snapshot.db
+            or getattr(scope, "local_service", None) is not snapshot.local_service
+            or editor.persona_visual_session_token != snapshot.editor_session_token
+        ):
+            return False
+        try:
+            current_editor = self.query_one(PersonaProfileEditorWidget)
+            data = current_editor.collect()
+        except (QueryError, ValueError):
+            return False
+        if (
+            current_editor is not editor
+            or not editor.display
+            or data.get("id") != snapshot.persona_id
+            or data.get("version") != snapshot.persona_revision
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _unbound_persona_shared_visual_identity_metadata() -> (
+        VisualIdentityPackMetadata
+    ):
+        """Return canonical path-free slots for creating a Persona binding."""
+
+        return VisualIdentityPackMetadata(
+            binding_id=0,
+            pack_id=0,
+            pack_version_id=0,
+            title="Shared Visual Identity reactions",
+            source_kind="unbound",
+            default_expression_key="neutral",
+            assets=tuple(
+                VisualIdentityAssetMetadata(
+                    asset_id=-index,
+                    expression_key=key,
+                    original_label=key,
+                    display_label=display_label_for_expression_key(key),
+                    content_type="",
+                    is_animated=False,
+                )
+                for index, key in enumerate(CANONICAL_EXPRESSION_SLOTS, start=1)
+            ),
+        )
+
+    async def _configure_persona_shared_visual_identity(
+        self, snapshot: _PersonaSharedVisualIdentityLoadSnapshot
+    ) -> None:
+        """Mount one bound or canonical-unbound local Persona pack browser."""
+
+        if not self._persona_shared_visual_identity_snapshot_is_current(snapshot):
+            return
+        try:
+            authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            graph = await asyncio.to_thread(
+                VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                "persona",
+                snapshot.persona_id,
+            )
+            checked_authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            metadata = (
+                self._visual_identity_pack_metadata(graph)
+                if graph is not None
+                else self._unbound_persona_shared_visual_identity_metadata()
+            )
+        except (sqlite3.Error, TypeError, ValueError, OverflowError):
+            authority = None
+            metadata = None
+        editor = snapshot.editor_ref()
+        if (
+            authority is None
+            or authority.persona_revision != snapshot.persona_revision
+            or checked_authority != authority
+            or metadata is None
+            or editor is None
+            or not self._persona_shared_visual_identity_snapshot_is_current(snapshot)
+        ):
+            if (
+                editor is not None
+                and self._persona_shared_visual_identity_snapshot_is_current(snapshot)
+            ):
+                await editor.show_shared_visual_identity_unavailable()
+            return
+        mounted = await editor.show_shared_visual_identity_pack(metadata)
+        if not self._persona_shared_visual_identity_snapshot_is_current(snapshot):
+            await editor.discard_shared_visual_identity_pack(mounted)
+            return
+        try:
+            mounted_authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            final_graph = await asyncio.to_thread(
+                VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                "persona",
+                snapshot.persona_id,
+            )
+            final_authority = await asyncio.to_thread(
+                capture_local_persona_visual_identity,
+                snapshot.local_service,
+                snapshot.persona_id,
+            )
+            final_metadata = (
+                self._visual_identity_pack_metadata(final_graph)
+                if final_graph is not None
+                else self._unbound_persona_shared_visual_identity_metadata()
+            )
+        except (sqlite3.Error, TypeError, ValueError, OverflowError):
+            final_metadata = None
+        if (
+            final_metadata != metadata
+            or mounted_authority != authority
+            or final_authority != authority
+            or not self._persona_shared_visual_identity_snapshot_is_current(snapshot)
+        ):
+            await editor.discard_shared_visual_identity_pack(mounted)
+            if self._persona_shared_visual_identity_snapshot_is_current(snapshot):
+                await editor.show_shared_visual_identity_unavailable()
+            return
+        self._persona_shared_visual_identity_authority = authority
+
+    def _persona_shared_visual_identity_author_snapshot(
+        self,
+    ) -> _PersonaSharedVisualIdentityAuthorSnapshot | None:
+        """Capture the active local Persona reaction editor without service I/O."""
+
+        authority = self._persona_shared_visual_identity_authority
+        if authority is None:
+            return None
+        try:
+            editor = self.query_one(PersonaProfileEditorWidget)
+            browser = editor.query_one(PersonasVisualIdentityPackWidget)
+            data = editor.collect()
+        except (QueryError, ValueError):
+            return None
+        pack = browser.pack
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        local_service = getattr(scope, "local_service", None)
+        if (
+            pack is None
+            or db is None
+            or local_service is None
+            or not self.is_mounted
+            or self.state.active_mode != "personas"
+            or self._edit_mode != "edit"
+            or self.persona_handler.current_mode() != "local"
+            or not editor.display
+            or data.get("id") != authority.persona_id
+            or data.get("version") != authority.persona_revision
+        ):
+            return None
+        return _PersonaSharedVisualIdentityAuthorSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            local_service=local_service,
+            persona_id=authority.persona_id,
+            persona_revision=authority.persona_revision,
+            persona_authority=authority,
+            screen_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+            binding_id=pack.binding_id,
+            pack_id=pack.pack_id,
+            pack_version_id=pack.pack_version_id,
+        )
+
+    def _persona_shared_visual_identity_author_snapshot_is_current(
+        self, snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    ) -> bool:
+        """Fence the mounted Persona reaction editor without blocking I/O."""
+
+        editor = snapshot.editor_ref()
+        browser = snapshot.browser_ref()
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        if (
+            editor is None
+            or browser is None
+            or not self.is_mounted
+            or self.state.active_mode != "personas"
+            or self._edit_mode != "edit"
+            or self.persona_handler.current_mode() != "local"
+            or self._persona_visual_generation != snapshot.screen_generation
+            or getattr(self.app_instance, "chachanotes_db", None) is not snapshot.db
+            or getattr(scope, "local_service", None) is not snapshot.local_service
+            or editor.persona_visual_session_token != snapshot.editor_session_token
+            or self._persona_shared_visual_identity_authority
+            != snapshot.persona_authority
+            or not editor.display
+            or not browser.is_mounted
+        ):
+            return False
+        try:
+            data = editor.collect()
+            current_browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except (QueryError, ValueError):
+            return False
+        pack = browser.pack
+        return bool(
+            current_browser is browser
+            and data.get("id") == snapshot.persona_id
+            and data.get("version") == snapshot.persona_revision
+            and pack is not None
+            and (pack.binding_id, pack.pack_id, pack.pack_version_id)
+            == (snapshot.binding_id, snapshot.pack_id, snapshot.pack_version_id)
+        )
+
+    async def _persona_shared_visual_identity_authority_is_current(
+        self, snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    ) -> bool:
+        """Re-read exact local Persona authority off-loop after an await."""
+
+        if not self._persona_shared_visual_identity_author_snapshot_is_current(
+            snapshot
+        ):
+            return False
+        current = await asyncio.to_thread(
+            capture_local_persona_visual_identity,
+            snapshot.local_service,
+            snapshot.persona_id,
+        )
+        return current == snapshot.persona_authority and (
+            self._persona_shared_visual_identity_author_snapshot_is_current(snapshot)
+        )
+
+    def _begin_persona_shared_visual_identity_operation(
+        self, snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        """Admit one Persona reaction operation without overlapping work."""
+
+        task = asyncio.current_task()
+        active = self._persona_shared_visual_identity_operation_task
+        state = self._persona_shared_visual_identity_authoring
+        if (
+            task is None
+            or self._profile_save_operation_inflight
+            or (active is not None and not active.done())
+            or (state is not None and state.snapshot != snapshot)
+        ):
+            return None
+        event = state.cancel_event if state is not None else threading.Event()
+        self._persona_shared_visual_identity_operation_task = task
+        self._persona_shared_visual_identity_operation_event = event
+        browser = snapshot.browser_ref()
+        if browser is not None and browser.parent is not None:
+            browser.set_preparing(True)
+        return task, event
+
+    def _finish_persona_shared_visual_identity_operation(
+        self,
+        task: asyncio.Task[Any],
+        browser: PersonasVisualIdentityPackWidget | None,
+    ) -> None:
+        """Release serialization only after the admitted operation drains."""
+
+        if self._persona_shared_visual_identity_operation_task is not task:
+            return
+        self._persona_shared_visual_identity_operation_task = None
+        if self._persona_shared_visual_identity_authoring is None:
+            self._persona_shared_visual_identity_operation_event = None
+        if (
+            browser is not None
+            and browser.parent is not None
+            and self._persona_shared_visual_identity_author_snapshot() is not None
+        ):
+            browser.set_preparing(False)
+
+    def _persona_shared_visual_identity_has_unsaved_authoring(self) -> bool:
+        task = self._persona_shared_visual_identity_operation_task
+        return self._persona_shared_visual_identity_authoring is not None or (
+            task is not None and not task.done()
+        )
+
+    async def _drain_persona_shared_visual_identity_authoring(self) -> None:
+        """Signal and drain Persona reaction work before discarding its draft."""
+
+        event = self._persona_shared_visual_identity_operation_event
+        state = self._persona_shared_visual_identity_authoring
+        if event is None and state is not None:
+            event = state.cancel_event
+        if event is not None:
+            event.set()
+        task = self._persona_shared_visual_identity_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            drained = await _drain_async(
+                _join_task(task),
+                task_name="personas-persona-reaction-pack-drain",
+            )
+            cancellation = drained.cancellation
+        self._discard_persona_shared_visual_identity_authoring()
+        if cancellation is not None:
+            raise cancellation
+
+    def _discard_persona_shared_visual_identity_authoring(self) -> None:
+        """Discard only the unpublished Persona reaction candidate."""
+
+        state = self._persona_shared_visual_identity_authoring
+        self._persona_shared_visual_identity_authoring = None
+        if state is None:
+            return
+        state.cancel_event.set()
+        try:
+            state.candidate.cancel()
+        except VisualIdentityPublicationError:
+            pass
+        browser = state.snapshot.browser_ref()
+        if (
+            browser is not None
+            and browser.parent is not None
+            and self._persona_shared_visual_identity_author_snapshot_is_current(
+                state.snapshot
+            )
+        ):
+            browser.pack = state.authoritative_pack
+            browser.apply_filter(
+                browser.query_one("#personas-visual-identity-filter", Input).value
+            )
+            browser.reset_staged()
+
+    async def _persona_shared_visual_identity_candidate(
+        self,
+        snapshot: _PersonaSharedVisualIdentityAuthorSnapshot,
+        event: threading.Event,
+    ) -> _PersonaSharedVisualIdentityAuthoringState | None:
+        """Create one authority-fenced Persona reaction candidate off-loop."""
+
+        current = self._persona_shared_visual_identity_authoring
+        if current is not None and current.snapshot == snapshot:
+            return current
+        self._discard_persona_shared_visual_identity_authoring()
+        try:
+            candidate = await asyncio.to_thread(
+                create_visual_identity_candidate,
+                snapshot.db,
+                actor_kind="persona",
+                actor_id=snapshot.persona_id,
+                actor_authority=snapshot.persona_authority.cache_identity,
+                actor_guard=lambda: local_persona_visual_identity_is_current(
+                    snapshot.local_service, snapshot.persona_authority
+                ),
+            )
+        except (ValueError, sqlite3.Error, RuntimeError):
+            return None
+        expected = (
+            snapshot.binding_id or None,
+            snapshot.pack_id or None,
+            snapshot.pack_version_id or None,
+        )
+        actual = (
+            candidate.old_binding_id,
+            candidate.old_pack_id,
+            candidate.old_version_id,
+        )
+        if (
+            actual != expected
+            or event.is_set()
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            event.set()
+            candidate.cancel()
+            return None
+        browser = snapshot.browser_ref()
+        authoritative_pack = browser.pack if browser is not None else None
+        if authoritative_pack is None:
+            candidate.cancel()
+            return None
+        state = _PersonaSharedVisualIdentityAuthoringState(
+            snapshot=snapshot,
+            candidate=candidate,
+            cancel_event=event,
+            authoritative_pack=authoritative_pack,
+        )
+        self._persona_shared_visual_identity_authoring = state
+        return state
+
+    async def _stage_persona_shared_visual_identity_replacement(
+        self, asset: VisualIdentityAssetMetadata, data: bytes
+    ) -> bool:
+        snapshot = self._persona_shared_visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if snapshot is None or browser is None or asset not in browser.pack.assets:
+            return False
+        admission = self._begin_persona_shared_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            state = await self._persona_shared_visual_identity_candidate(
+                snapshot, event
+            )
+            if state is None:
+                return False
+            await asyncio.to_thread(
+                state.candidate.stage_replacement,
+                asset.expression_key,
+                data,
+                source="upload",
+            )
+            if (
+                event.is_set()
+                or not await self._persona_shared_visual_identity_authority_is_current(
+                    snapshot
+                )
+            ):
+                self._discard_persona_shared_visual_identity_authoring()
+                return False
+            browser.set_staged_change(asset.expression_key, "replace")
+            return True
+        except (ValueError, VisualIdentityPublicationError):
+            return False
+        finally:
+            self._finish_persona_shared_visual_identity_operation(task, browser)
+
+    async def _stage_persona_shared_visual_identity_clear(
+        self, asset: VisualIdentityAssetMetadata
+    ) -> bool:
+        snapshot = self._persona_shared_visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if snapshot is None or browser is None or asset not in browser.pack.assets:
+            return False
+        admission = self._begin_persona_shared_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            state = await self._persona_shared_visual_identity_candidate(
+                snapshot, event
+            )
+            if state is None:
+                return False
+            await asyncio.to_thread(state.candidate.stage_clear, asset.expression_key)
+            if (
+                event.is_set()
+                or not await self._persona_shared_visual_identity_authority_is_current(
+                    snapshot
+                )
+            ):
+                self._discard_persona_shared_visual_identity_authoring()
+                return False
+            browser.set_staged_change(asset.expression_key, "clear")
+            return True
+        except (ValueError, VisualIdentityPublicationError):
+            return False
+        finally:
+            self._finish_persona_shared_visual_identity_operation(task, browser)
+
+    async def _save_persona_shared_visual_identity_pack(self) -> bool:
+        """Publish one Persona reaction candidate and reconcile exact consumers."""
+
+        state = self._persona_shared_visual_identity_authoring
+        if (
+            state is None
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                state.snapshot
+            )
+        ):
+            return False
+        admission = self._begin_persona_shared_visual_identity_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, _event = admission
+        browser = state.snapshot.browser_ref()
+        published = False
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            if browser is not None:
+                browser.set_saving(True)
+            self._persona_shared_visual_identity_publication_inflight = True
+            outcome = await _drain_to_thread(
+                publish_visual_identity_candidate,
+                state.snapshot.db,
+                state.candidate,
+                user_data_dir=get_user_data_dir(),
+                task_name="personas-persona-reaction-pack-publish",
+            )
+            cancellation = outcome.cancellation
+            error = outcome.error
+            if isinstance(error, VisualIdentityPublicationError):
+                token = error.cleanup_candidate_relpath
+                if token is not None:
+                    cleanup = await _drain_to_thread(
+                        cleanup_visual_identity_publication_candidate,
+                        state.snapshot.db,
+                        token,
+                        user_data_dir=get_user_data_dir(),
+                        task_name="personas-persona-reaction-pack-cleanup",
+                    )
+                    if cancellation is None:
+                        cancellation = cleanup.cancellation
+            if outcome.error is not None or not isinstance(
+                outcome.value, VisualIdentityPublicationResult
+            ):
+                if await self._persona_shared_visual_identity_authority_is_current(
+                    state.snapshot
+                ):
+                    self._notify("Reaction pack was not saved.", "error")
+                return False
+            result = outcome.value
+            published = True
+            self._persona_shared_visual_identity_authoring = None
+
+            async def reconcile() -> None:
+                await self._invalidate_visual_identity_publication(result)
+                if not await self._persona_shared_visual_identity_authority_is_current(
+                    state.snapshot
+                ):
+                    return
+                editor = state.snapshot.editor_ref()
+                if editor is None:
+                    return
+                await self._configure_persona_shared_visual_identity(
+                    _PersonaSharedVisualIdentityLoadSnapshot(
+                        editor_ref=weakref.ref(editor),
+                        db=state.snapshot.db,
+                        local_service=state.snapshot.local_service,
+                        persona_id=state.snapshot.persona_id,
+                        persona_revision=state.snapshot.persona_revision,
+                        screen_generation=state.snapshot.screen_generation,
+                        editor_session_token=state.snapshot.editor_session_token,
+                    )
+                )
+
+            reconciled = await _drain_async(
+                reconcile(), task_name="personas-persona-reaction-pack-reconcile"
+            )
+            if cancellation is None:
+                cancellation = reconciled.cancellation
+            return True
+        finally:
+            self._persona_shared_visual_identity_publication_inflight = False
+            if browser is not None and browser.parent is not None:
+                if published:
+                    browser.reset_staged()
+                elif self._persona_shared_visual_identity_author_snapshot_is_current(
+                    state.snapshot
+                ):
+                    browser.set_saving(False)
+            self._finish_persona_shared_visual_identity_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    def _request_persona_shared_visual_identity_cancel(self) -> None:
+        """Signal in-flight draft work or discard an idle unpublished draft."""
+
+        if self._persona_shared_visual_identity_publication_inflight:
+            return
+        event = self._persona_shared_visual_identity_operation_event
+        task = self._persona_shared_visual_identity_operation_task
+        if event is not None and task is not None and not task.done():
+            event.set()
+            return
+        self._discard_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_operation_event = None
+
+    def _persona_visual_snapshot(
+        self, editor: PersonaProfileEditorWidget | None = None
+    ) -> _PersonaVisualAuthorSnapshot | None:
+        """Capture one saved local Persona editor and its persistence authority."""
+
+        if self._edit_mode != "edit" or self.persona_handler.current_mode() != "local":
+            return None
+        try:
+            editor = editor or self.query_one(PersonaProfileEditorWidget)
+            browser = editor.query_one(PersonasPersonaVisualPackWidget)
+            data = editor.collect()
+        except (QueryError, ValueError):
+            return None
+        persona_id = data.get("id")
+        persona_revision = data.get("version")
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        scope = getattr(self.app_instance, "character_persona_scope_service", None)
+        local_service = getattr(scope, "local_service", None)
+        if (
+            type(persona_id) is not str
+            or not persona_id
+            or type(persona_revision) is not int
+            or isinstance(persona_revision, bool)
+            or persona_revision < 0
+            or db is None
+            or local_service is None
+        ):
+            return None
+        return _PersonaVisualAuthorSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            local_service=local_service,
+            persona_id=persona_id,
+            persona_revision=persona_revision,
+            screen_generation=self._persona_visual_generation,
+            editor_session_token=editor.persona_visual_session_token,
+        )
+
+    def _persona_visual_snapshot_is_current(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> bool:
+        """Return whether the exact local editor/browser authority still owns UI."""
+
+        editor = snapshot.editor_ref()
+        browser = snapshot.browser_ref()
+        if editor is None or browser is None or not self.is_mounted:
+            return False
+        if (
+            self._persona_visual_generation != snapshot.screen_generation
+            or self._edit_mode != "edit"
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+            or editor.persona_visual_session_token != snapshot.editor_session_token
+        ):
+            return False
+        try:
+            current_editor = self.query_one(PersonaProfileEditorWidget)
+            current_browser = current_editor.query_one(PersonasPersonaVisualPackWidget)
+            data = current_editor.collect()
+        except (QueryError, ValueError):
+            return False
+        return (
+            current_editor is editor
+            and current_browser is browser
+            and data.get("id") == snapshot.persona_id
+            and data.get("version") == snapshot.persona_revision
+        )
+
+    @staticmethod
+    def _load_persona_visual_authoring_draft(
+        snapshot: _PersonaVisualAuthorSnapshot,
+    ) -> PersonaVisualAuthoringDraft:
+        repository = PersonaVisualRepository(snapshot.db)
+        graph = repository.get_active_persona_pack(snapshot.persona_id)
+        if graph is None:
+            return create_persona_visual_draft(
+                persona_id=snapshot.persona_id,
+                persona_revision=snapshot.persona_revision,
+                title="Persona Visual",
+            )
+        source_keys = {
+            asset.asset_key: repository._get_active_asset_storage_key(
+                graph.identity, asset
+            )
+            for asset in graph.assets
+        }
+        return persona_visual_draft_from_graph(
+            graph,
+            source_storage_keys=source_keys,
+        )
+
+    async def _configure_persona_visual(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> None:
+        """Load path-free draft metadata off-loop and mount only if still current."""
+
+        browser = snapshot.browser_ref()
+        if browser is not None:
+            browser.set_availability("loading")
+        try:
+            draft = await asyncio.to_thread(
+                self._load_persona_visual_authoring_draft, snapshot
+            )
+            inventory = inspect_persona_visual_draft(draft)
+        except Exception:
+            logger.warning(
+                "Persona Visual draft load failed (category=repository_read_failed)."
+            )
+            if self._persona_visual_snapshot_is_current(snapshot):
+                browser = snapshot.browser_ref()
+                if browser is not None:
+                    browser.set_availability("unavailable")
+            return
+        if not self._persona_visual_snapshot_is_current(snapshot):
+            return
+        state = _PersonaVisualAuthoringState(
+            snapshot=snapshot,
+            draft=draft,
+            source_root=get_user_data_dir(),
+        )
+        self._persona_visual_authoring = state
+        browser = snapshot.browser_ref()
+        if browser is not None:
+            browser.show_inventory(inventory, dirty=False)
+
+    def _persona_visual_has_unsaved_authoring(self) -> bool:
+        state = self._persona_visual_authoring
+        task = self._persona_visual_operation_task
+        return bool(
+            (state is not None and state.dirty)
+            or self._persona_visual_publication_inflight
+            or (task is not None and not task.done())
+        )
+
+    def _cleanup_persona_visual_state(
+        self, state: _PersonaVisualAuthoringState
+    ) -> None:
+        if state.workspace is not None:
+            if not cleanup_persona_visual_authoring_workspace(state.workspace):
+                logger.warning(
+                    "Persona Visual draft cleanup refused (category=cleanup_failed)."
+                )
+        if state.import_review is not None:
+            try:
+                cleanup_persona_visual_import_review(
+                    state.import_review,
+                    staging_root=get_user_data_dir() / "persona_visual" / "imports",
+                )
+            except Exception:
+                logger.warning(
+                    "Persona Visual import cleanup refused (category=cleanup_failed)."
+                )
+
+    def _discard_persona_visual_authoring(self) -> None:
+        state = self._persona_visual_authoring
+        self._persona_visual_authoring = None
+        if state is not None:
+            self._cleanup_persona_visual_state(state)
+
+    async def _discard_persona_visual_authoring_async(self) -> None:
+        state = self._persona_visual_authoring
+        self._persona_visual_authoring = None
+        if state is not None:
+            outcome = await _drain_to_thread(
+                self._cleanup_persona_visual_state,
+                state,
+                task_name="personas-persona-visual-draft-cleanup",
+            )
+            if outcome.error is not None:
+                logger.warning(
+                    "Persona Visual draft cleanup failed (category=cleanup_failed)."
+                )
+            if outcome.cancellation is not None:
+                raise outcome.cancellation
+
+    def _begin_persona_visual_operation(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        current = asyncio.current_task()
+        if (
+            current is None
+            or self._profile_save_operation_inflight
+            or self._persona_visual_publication_inflight
+            or not self._persona_visual_snapshot_is_current(snapshot)
+        ):
+            if self._profile_save_operation_inflight:
+                self._notify(
+                    "Wait for Persona Save to finish before editing visuals.",
+                    "warning",
+                )
+            return None
+        active = self._persona_visual_operation_task
+        if active is not None and not active.done():
+            return None
+        event = threading.Event()
+        self._persona_visual_operation_task = current
+        self._persona_visual_operation_event = event
+        return current, event
+
+    def _finish_persona_visual_operation(
+        self, task: asyncio.Task[Any], browser: PersonasPersonaVisualPackWidget | None
+    ) -> None:
+        if self._persona_visual_operation_task is task:
+            self._persona_visual_operation_task = None
+            self._persona_visual_operation_event = None
+        if browser is not None and browser.parent is not None:
+            browser.set_busy(None)
+
+    async def _drain_persona_visual_authoring(self) -> None:
+        event = self._persona_visual_operation_event
+        task = self._persona_visual_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if event is not None:
+            event.set()
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            outcome = await _drain_async(
+                _join_task(task), task_name="personas-persona-visual-operation-drain"
+            )
+            cancellation = outcome.cancellation
+        await self._discard_persona_visual_authoring_async()
+        if cancellation is not None:
+            raise cancellation
+
+    def _show_persona_visual_state(self, state: _PersonaVisualAuthoringState) -> bool:
+        if (
+            self._persona_visual_authoring is not state
+            or not self._persona_visual_snapshot_is_current(state.snapshot)
+        ):
+            return False
+        browser = state.snapshot.browser_ref()
+        if browser is None:
+            return False
+        # Task 11 fix round 1: surface the imported pack's carried
+        # policy-rule count on every re-render of an import-backed state
+        # (and clear it when the review is gone — e.g. a local edit or a
+        # fresh authoring draft replaced the import).
+        browser.show_policy_rule_notice(
+            review.policy_rule_count
+            if (review := state.import_review) is not None
+            else 0
+        )
+        browser.show_inventory(
+            inspect_persona_visual_draft(state.draft),
+            dirty=state.dirty,
+        )
+        return True
+
+    @staticmethod
+    def _prepare_persona_visual_workspace(
+        state: _PersonaVisualAuthoringState,
+        profile_root: Path,
+    ) -> tuple[PersonaVisualAuthoringWorkspace, PersonaVisualAuthoringDraft]:
+        workspace = create_persona_visual_authoring_workspace(profile_root)
+        if not state.draft.assets:
+            return workspace, state.draft
+        return adopt_persona_visual_draft_sources(
+            workspace,
+            state.draft,
+            source_root=state.source_root,
+        )
+
+    async def _stage_persona_visual_clear(self, state_key: str) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        try:
+            if browser is not None:
+                browser.set_busy("preparing")
+            draft = clear_persona_visual_draft_state(state.draft, state=state_key)
+            if event.is_set() or not self._persona_visual_snapshot_is_current(
+                state.snapshot
+            ):
+                return False
+            state.draft = draft
+            state.dirty = True
+            return self._show_persona_visual_state(state)
+        except Exception:
+            self._notify("Persona Visual draft could not be changed.", "error")
+            return False
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+
+    async def _stage_persona_visual_custom(
+        self, state_key: str, label: str, kind: str
+    ) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        try:
+            if browser is not None:
+                browser.set_busy("preparing")
+            draft = add_persona_visual_custom_state(
+                state.draft,
+                state=state_key,
+                label=label,
+                kind=kind,
+            )
+            if event.is_set() or not self._persona_visual_snapshot_is_current(
+                state.snapshot
+            ):
+                return False
+            state.draft = draft
+            state.dirty = True
+            return self._show_persona_visual_state(state)
+        except Exception:
+            self._notify("Custom Persona Visual state is invalid.", "error")
+            return False
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+
+    async def _stage_persona_visual_replacement(
+        self, state_key: str, data: bytes
+    ) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        profile_root = get_user_data_dir()
+        cancellation: asyncio.CancelledError | None = None
+        pending_workspace: PersonaVisualAuthoringWorkspace | None = None
+        try:
+            if browser is not None:
+                browser.set_busy("preparing")
+            preparation = await _drain_to_thread(
+                self._prepare_persona_visual_workspace,
+                state,
+                profile_root,
+                task_name="personas-persona-visual-workspace-prepare",
+            )
+            cancellation = preparation.cancellation
+            if preparation.error is not None:
+                raise preparation.error
+            if not preparation.completed or not isinstance(preparation.value, tuple):
+                return False
+            workspace, draft = preparation.value
+            pending_workspace = workspace
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    workspace,
+                    task_name="personas-persona-visual-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                pending_workspace = None
+                return False
+            staging = await _drain_to_thread(
+                stage_persona_visual_authoring_asset,
+                workspace,
+                data,
+                state=state_key,
+                task_name="personas-persona-visual-asset-stage",
+            )
+            cancellation = cancellation or staging.cancellation
+            if staging.error is not None:
+                raise staging.error
+            if not staging.completed or not isinstance(staging.value, tuple):
+                return False
+            workspace, asset = staging.value
+            draft = replace_persona_visual_draft_state(
+                draft,
+                state=state_key,
+                asset=asset,
+            )
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    workspace,
+                    task_name="personas-persona-visual-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                pending_workspace = None
+                return False
+            old_workspace = state.workspace
+            old_review = state.import_review
+            state.workspace = workspace
+            pending_workspace = None
+            state.import_review = None
+            state.source_root = profile_root
+            state.draft = draft
+            state.dirty = True
+            if old_workspace is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    old_workspace,
+                    task_name="personas-persona-visual-old-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+            if old_review is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_import_review,
+                    old_review,
+                    staging_root=profile_root / "persona_visual" / "imports",
+                    task_name="personas-persona-visual-old-import-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                if cleanup.error is not None:
+                    logger.warning(
+                        "Persona Visual import cleanup refused "
+                        "(category=cleanup_failed)."
+                    )
+            return self._show_persona_visual_state(state)
+        except Exception:
+            logger.warning(
+                "Persona Visual replacement failed (category=image_invalid)."
+            )
+            self._notify(
+                "Persona Visual replacement failed. Choose another image.", "error"
+            )
+            return False
+        finally:
+            if pending_workspace is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    pending_workspace,
+                    task_name="personas-persona-visual-failed-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                if cleanup.error is not None or cleanup.value is not True:
+                    logger.warning(
+                        "Persona Visual workspace cleanup refused "
+                        "(category=cleanup_failed)."
+                    )
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    async def _preview_persona_visual_state(self, state_key: str) -> bool:
+        state = self._persona_visual_authoring
+        if state is None:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            if browser is not None:
+                browser.set_busy("previewing")
+            inventory = inspect_persona_visual_draft(state.draft)
+            row = next(
+                (item for item in inventory.rows if item.state == state_key), None
+            )
+            if row is None or row.asset_key is None:
+                if browser is not None:
+                    browser.set_preview_unavailable(state=state_key)
+                return False
+            asset = next(
+                item
+                for item in state.draft.assets
+                if item.metadata.asset_key == row.asset_key
+            )
+            loading = await _drain_to_thread(
+                load_persona_visual_asset,
+                state.source_root,
+                storage_key=asset.source_storage_key,
+                metadata=asset.metadata,
+                selected_frame=0,
+                task_name="personas-persona-visual-preview-load",
+            )
+            cancellation = loading.cancellation
+            if loading.error is not None:
+                raise loading.error
+            if not loading.completed:
+                return False
+            loaded = loading.value
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                return False
+            from ...Chat.console_image_view import ConsoleImageRenderCache
+
+            if getattr(self, "_avatar_render_cache", None) is None:
+                self._avatar_render_cache = ConsoleImageRenderCache()
+            cache = self._avatar_render_cache
+            cache_key = (
+                f"persona-visual-{state.snapshot.persona_id}-"
+                f"{state.draft.revision}-{state_key}"
+            )
+            preparation = await _drain_to_thread(
+                cache.prepare,
+                cache_key,
+                loaded.data,
+                task_name="personas-persona-visual-preview-prepare",
+            )
+            cancellation = cancellation or preparation.cancellation
+            if preparation.error is not None:
+                raise preparation.error
+            ok = bool(preparation.value) if preparation.completed else False
+            if (
+                not ok
+                or cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                if browser is not None:
+                    browser.set_preview_unavailable(state=state_key)
+                return False
+            renderable = self._build_avatar_pixels(cache, cache_key)
+            if browser is None or renderable is None:
+                return False
+            browser.set_preview(renderable, state=state_key)
+            return True
+        except Exception:
+            if browser is not None and self._persona_visual_snapshot_is_current(
+                state.snapshot
+            ):
+                browser.set_preview_unavailable(state=state_key)
+            return False
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    async def _import_persona_visual_from_path(self, path: str) -> bool:
+        state = self._persona_visual_authoring
+        if state is None or Path(path).suffix.lower() != ".tldw-persona-vpack":
+            if state is not None:
+                self._notify("Choose a Persona Visual pack file.", "warning")
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        browser = state.snapshot.browser_ref()
+        profile_root = get_user_data_dir()
+        staging_root = profile_root / "persona_visual" / "imports"
+        cancellation: asyncio.CancelledError | None = None
+
+        async def cleanup_review(review: PersonaVisualImportReview) -> None:
+            nonlocal cancellation
+            cleanup = await _drain_to_thread(
+                cleanup_persona_visual_import_review,
+                review,
+                staging_root=staging_root,
+                task_name="personas-persona-visual-import-cleanup",
+            )
+            cancellation = cancellation or cleanup.cancellation
+            if cleanup.error is not None:
+                logger.warning(
+                    "Persona Visual import cleanup refused (category=cleanup_failed)."
+                )
+
+        try:
+            if browser is not None:
+                browser.set_busy("importing")
+            outcome = await _drain_to_thread(
+                import_persona_visual_pack,
+                path,
+                staging_root=staging_root,
+                persona_id=state.snapshot.persona_id,
+                persona_revision=state.snapshot.persona_revision,
+                expected_identity=state.draft.expected_identity,
+                cancel_event=event,
+                task_name="personas-persona-visual-import",
+            )
+            cancellation = outcome.cancellation
+            if outcome.error is not None or not isinstance(
+                outcome.value, PersonaVisualImportReview
+            ):
+                category = (
+                    outcome.error.category
+                    if isinstance(outcome.error, PersonaVisualImportError)
+                    else "persona_visual_import_failed"
+                )
+                self._notify(f"Persona Visual import failed ({category}).", "error")
+                return False
+            review = outcome.value
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not outcome.completed
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                await cleanup_review(review)
+                return False
+            source = await _drain_to_thread(
+                persona_visual_import_source_root,
+                review,
+                staging_root=staging_root,
+                task_name="personas-persona-visual-import-source",
+            )
+            cancellation = cancellation or source.cancellation
+            if source.error is not None or not source.completed:
+                await cleanup_review(review)
+                return False
+            source_root = source.value
+            if (
+                cancellation is not None
+                or event.is_set()
+                or not self._persona_visual_snapshot_is_current(state.snapshot)
+            ):
+                await cleanup_review(review)
+                return False
+            old_workspace = state.workspace
+            old_review = state.import_review
+            state.workspace = None
+            state.import_review = review
+            state.source_root = source_root
+            state.draft = review.draft
+            state.dirty = True
+            if old_workspace is not None:
+                cleanup = await _drain_to_thread(
+                    cleanup_persona_visual_authoring_workspace,
+                    old_workspace,
+                    task_name="personas-persona-visual-old-workspace-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+            if old_review is not None:
+                await cleanup_review(old_review)
+            return self._show_persona_visual_state(state)
+        finally:
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    def _persona_visual_authority_guard(
+        self, snapshot: _PersonaVisualAuthorSnapshot
+    ) -> bool:
+        """Re-read exact local Persona eligibility for publication."""
+
+        try:
+            record = snapshot.local_service.get_persona_profile(snapshot.persona_id)
+        except Exception:
+            return False
+        return bool(
+            isinstance(record, Mapping)
+            and str(record.get("id") or "") == snapshot.persona_id
+            and type(record.get("version")) is int
+            and record.get("version") == snapshot.persona_revision
+            and not bool(record.get("deleted", False))
+            and bool(record.get("is_active", True))
+        )
+
+    async def _invalidate_persona_visual_publication(
+        self, result: PersonaVisualPublicationResult
+    ) -> None:
+        """Invalidate only exact old/new Persona identities in mounted consumers."""
+
+        identities = tuple(
+            identity
+            for identity in (result.old_identity, result.new_identity)
+            if isinstance(identity, PersonaVisualIdentity)
+        )
+        for screen in tuple(getattr(self.app, "screen_stack", ())):
+            session = getattr(screen, "_session", None)
+            invalidate = getattr(session, "invalidate_persona_visual_identities", None)
+            if not callable(invalidate):
+                continue
+            try:
+                response = invalidate(result.new_identity.persona_id, identities)
+                if asyncio.iscoroutine(response):
+                    await response
+            except Exception:
+                logger.warning(
+                    "Persona Visual invalidation failed "
+                    "(category=cache_invalidation_failed)."
+                )
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        if controller is None:
+            return
+        snapshot = controller.snapshot()
+        selection = getattr(snapshot, "selection", None)
+        if type(selection) is not PersonaBuddySelection or selection.source != "local":
+            return
+        actor_identities = tuple(
+            identity
+            for identity in identities
+            if identity.persona_id == selection.local_persona_id
+        )
+        if not actor_identities:
+            return
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        getter = getattr(scope_service, "get_persona_profile", None)
+        if not callable(getter):
+            return
+        try:
+            record = await getter(selection.local_persona_id, mode="local")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Persona Buddy publication authority refresh failed "
+                "(category=profile_unavailable)."
+            )
+            return
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(mode="json")
+        revision = record.get("version") if isinstance(record, Mapping) else None
+        if (
+            not isinstance(record, Mapping)
+            or str(record.get("id") or "") != selection.local_persona_id
+            or type(revision) is not int
+            or record.get("is_active", True) is not True
+            or record.get("deleted", False) is not False
+            or result.new_identity.persona_id != selection.local_persona_id
+            or result.new_identity.persona_revision != revision
+        ):
+            return
+        latest = controller.snapshot()
+        if (
+            getattr(self.app, "persona_buddy_controller", None) is not controller
+            or getattr(self.app_instance, "character_persona_scope_service", None)
+            is not scope_service
+            or latest.selection != selection
+            or latest.generation != snapshot.generation
+            or latest.preferences_generation != snapshot.preferences_generation
+            or latest.profile_generation != snapshot.profile_generation
+        ):
+            return
+        visual = latest.visual
+        if visual is not None and type(visual) is not PersonaBuddyVisualSnapshot:
+            return
+        if visual is not None and visual.available:
+            captured_visual = snapshot.visual
+            if (
+                type(captured_visual) is not PersonaBuddyVisualSnapshot
+                or not captured_visual.available
+                or visual.graph_identity != captured_visual.graph_identity
+                or visual.cache_identity != captured_visual.cache_identity
+                or visual.persona_id != selection.local_persona_id
+                or visual.persona_revision != revision
+                or type(visual.graph_identity) is not PersonaVisualIdentity
+                or visual.graph_identity not in actor_identities
+                or type(visual.cache_identity) is not PersonaVisualCacheIdentity
+                or visual.cache_identity.graph != visual.graph_identity
+                or visual.cache_identity.requested_state != visual.requested_state
+                or visual.cache_identity.resolved_state != visual.resolved_state
+                or visual.cache_identity.animation_id != visual.animation_id
+            ):
+                return
+        elif visual is not None:
+            if (
+                visual != snapshot.visual
+                or visual.persona_id != selection.local_persona_id
+                or visual.persona_revision != revision
+                or visual.graph_identity is not None
+                or visual.cache_identity is not None
+            ):
+                return
+        elif snapshot.visual is not None:
+            return
+        controller.invalidate_profile()
+        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+        if callable(reconcile):
+            try:
+                await reconcile()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Persona Buddy publication refresh failed "
+                    "(category=view_refresh_failed)."
+                )
+
+    async def _save_persona_visual_pack(self) -> bool:
+        state = self._persona_visual_authoring
+        if state is None or not state.dirty:
+            return False
+        admission = self._begin_persona_visual_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, _event = admission
+        browser = state.snapshot.browser_ref()
+        profile_root = get_user_data_dir()
+        cancellation: asyncio.CancelledError | None = None
+        published = False
+        try:
+            if browser is not None:
+                browser.set_busy("saving")
+            self._persona_visual_publication_inflight = True
+            try:
+                publication = persona_visual_draft_publication_snapshot(state.draft)
+            except Exception:
+                self._notify("Persona Visual draft is incomplete.", "warning")
+                return False
+            outcome = await _drain_to_thread(
+                publish_persona_visual,
+                PersonaVisualRepository(state.snapshot.db),
+                publication,
+                source_root=state.source_root,
+                profile_root=profile_root,
+                authority_guard=lambda: self._persona_visual_authority_guard(
+                    state.snapshot
+                ),
+                task_name="personas-persona-visual-publish",
+            )
+            cancellation = outcome.cancellation
+            if isinstance(outcome.error, PersonaVisualPublicationError):
+                cleanup_candidate = outcome.error.cleanup_candidate
+                if cleanup_candidate is not None:
+                    cleanup = await _drain_to_thread(
+                        cleanup_persona_visual_publication_candidate,
+                        PersonaVisualRepository(state.snapshot.db),
+                        cleanup_candidate,
+                        profile_root=profile_root,
+                        task_name="personas-persona-visual-cleanup",
+                    )
+                    cancellation = cancellation or cleanup.cancellation
+                if self._persona_visual_snapshot_is_current(state.snapshot):
+                    self._notify(
+                        f"Persona Visual pack was not saved ({outcome.error.category}).",
+                        "error",
+                    )
+                return False
+            if outcome.error is not None:
+                logger.warning(
+                    "Persona Visual publication failed (category=publication_failed)."
+                )
+                if self._persona_visual_snapshot_is_current(state.snapshot):
+                    self._notify("Persona Visual pack was not saved.", "error")
+                return False
+            if not outcome.completed or not isinstance(
+                outcome.value, PersonaVisualPublicationResult
+            ):
+                return False
+            result = outcome.value
+            published = True
+            self._persona_visual_authoring = None
+
+            async def reconcile() -> None:
+                await self._invalidate_persona_visual_publication(result)
+                if self._persona_visual_snapshot_is_current(state.snapshot):
+                    await self._configure_persona_visual(state.snapshot)
+
+            reconciliation = await _drain_async(
+                reconcile(), task_name="personas-persona-visual-reconcile"
+            )
+            cancellation = cancellation or reconciliation.cancellation
+            if reconciliation.error is not None:
+                logger.warning(
+                    "Persona Visual publication committed but refresh failed "
+                    "(category=refresh_failed)."
+                )
+                self._notify(
+                    "Persona Visual pack saved, but the editor could not refresh.",
+                    "warning",
+                )
+            else:
+                self._notify("Persona Visual pack saved.", "information")
+            return True
+        finally:
+            self._persona_visual_publication_inflight = False
+            if published:
+                cleanup = await _drain_to_thread(
+                    self._cleanup_persona_visual_state,
+                    state,
+                    task_name="personas-persona-visual-source-cleanup",
+                )
+                cancellation = cancellation or cleanup.cancellation
+                if cleanup.error is not None:
+                    logger.warning(
+                        "Persona Visual source cleanup failed "
+                        "(category=cleanup_failed)."
+                    )
+            self._finish_persona_visual_operation(task, browser)
+            if cancellation is not None:
+                raise cancellation
+
+    async def _cancel_persona_visual_authoring(self) -> None:
+        event = self._persona_visual_operation_event
+        task = self._persona_visual_operation_task
+        cancellation: asyncio.CancelledError | None = None
+        if self._persona_visual_publication_inflight:
+            return
+        if event is not None:
+            event.set()
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            outcome = await _drain_async(
+                _join_task(task), task_name="personas-persona-visual-cancel-drain"
+            )
+            cancellation = outcome.cancellation
+        state = self._persona_visual_authoring
+        snapshot = state.snapshot if state is not None else None
+        await self._discard_persona_visual_authoring_async()
+        if snapshot is not None and self._persona_visual_snapshot_is_current(snapshot):
+            await self._configure_persona_visual(snapshot)
+        if cancellation is not None:
+            raise cancellation
+
+    @on(PersonaVisualPreviewRequested)
+    def _handle_persona_visual_preview_requested(
+        self, message: PersonaVisualPreviewRequested
+    ) -> None:
         message.stop()
+        self.run_worker(
+            self._preview_persona_visual_state(message.state),
+            group="personas-persona-visual-preview",
+            exit_on_error=False,
+        )
+
+    @on(PersonaVisualClearRequested)
+    def _handle_persona_visual_clear_requested(
+        self, message: PersonaVisualClearRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._stage_persona_visual_clear(message.state),
+            group="personas-persona-visual-authoring",
+            exit_on_error=False,
+        )
+
+    @on(PersonaVisualReplaceRequested)
+    def _handle_persona_visual_replace_requested(
+        self, message: PersonaVisualReplaceRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._persona_visual_replace_dialog(message.state),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _persona_visual_replace_dialog(self, state_key: str) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            path = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title=f"Replace {state_key} Persona Visual",
+                    filters=Filters(
+                        (
+                            "Image Files",
+                            lambda value: (
+                                value.suffix.lower()
+                                in {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+                            ),
+                        )
+                    ),
+                    context="persona_visual_replacement",
+                )
+            )
+            if not path:
+                return
+            try:
+                data = await asyncio.to_thread(self._read_avatar_image_bytes, str(path))
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "Persona Visual replacement read failed "
+                    "(category=image_read_failed, error_type={}).",
+                    type(exc).__name__,
+                )
+                self._notify(
+                    "Persona Visual replacement failed. Choose another image.",
+                    "error",
+                )
+                return
+            await self._stage_persona_visual_replacement(state_key, data)
+        finally:
+            self._io_dialog_active = False
+
+    @on(PersonaVisualAddCustomRequested)
+    def _handle_persona_visual_add_custom_requested(
+        self, message: PersonaVisualAddCustomRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._persona_visual_custom_dialog(),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _persona_visual_custom_dialog(self) -> None:
+        try:
+            result = await self.app.push_screen_wait(PersonaVisualCustomStateDialog())
+            if result is None:
+                return
+            state_key, label, kind = result
+            await self._stage_persona_visual_custom(state_key, label, kind)
+        finally:
+            self._io_dialog_active = False
+
+    @on(PersonaVisualImportRequested)
+    def _handle_persona_visual_import_requested(
+        self, message: PersonaVisualImportRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._persona_visual_import_dialog(),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _persona_visual_import_dialog(self) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            path = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title="Import Persona Visual Pack (.tldw-persona-vpack)",
+                    filters=Filters(
+                        (
+                            "Persona Visual Packs",
+                            lambda value: value.suffix.lower() == ".tldw-persona-vpack",
+                        )
+                    ),
+                    context="persona_visual_pack_import",
+                )
+            )
+            if path:
+                await self._import_persona_visual_from_path(str(path))
+        finally:
+            self._io_dialog_active = False
+
+    @on(PersonaVisualSaveRequested)
+    def _handle_persona_visual_save_requested(
+        self, message: PersonaVisualSaveRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._save_persona_visual_pack(),
+            group="personas-persona-visual-save",
+            exit_on_error=False,
+        )
+
+    @on(PersonaVisualCancelRequested)
+    def _handle_persona_visual_cancel_requested(
+        self, message: PersonaVisualCancelRequested
+    ) -> None:
+        message.stop()
+        self.run_worker(
+            self._cancel_persona_visual_authoring(),
+            group="personas-persona-visual-cancel",
+            exit_on_error=False,
+        )
+
+    @on(EditCharacterRequested)
+    async def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if str(message.character_id) != (self.state.selected_entity_id or ""):
             self._notify("Selection out of sync; reselect the character.", "warning")
             return
@@ -1293,17 +10023,208 @@ class PersonasScreen(BaseAppScreen):
         if record is None:
             self._notify("Character data is not loaded yet.", severity="warning")
             return
+        editor = await self._ensure_center_view("character-editor")
+        if not isinstance(editor, PersonasCharacterEditorWidget):
+            return
+        self._discard_visual_identity_authoring()
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - opening this (possibly different)
+        # character must not silently inherit the previous session's style.
+        self._reset_expression_generate_style()
         self._edit_mode = "edit"
+        # A new session starts unclaimed (see _begin_create_character).
+        self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonasCharacterEditorWidget).load_character(record)
+        editor.load_character(record, visual_identity_pending=True)
+        # Read only active-pack metadata first. Bound characters mount the
+        # lazy pack browser; unbound characters take the legacy three-slot
+        # path byte-for-behavior. DB work stays off the message pump.
+        character_id = editor.expression_character_id()
+        snapshot = _CharacterVisualIdentityLoadSnapshot(
+            editor_ref=weakref.ref(editor),
+            db=getattr(self.app_instance, "chachanotes_db", None),
+            character_id=character_id,
+            screen_generation=self._character_editor_generation,
+            editor_session_token=editor.visual_identity_session_token,
+        )
+        self.run_worker(
+            self._configure_character_visual_identity(snapshot),
+            group="personas-visual-identity-load",
+            exit_on_error=False,
+            exclusive=True,
+        )
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
         inspector.show_validation_editing()
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
+
+    async def _configure_character_visual_identity(
+        self,
+        snapshot: _CharacterVisualIdentityLoadSnapshot,
+    ) -> None:
+        """Mount pack metadata or preserve the legacy expression controls."""
+
+        editor = snapshot.editor_ref()
+        if editor is None or not self._character_visual_identity_load_is_current(
+            snapshot
+        ):
+            return
+        read_ok, graph = await self._read_character_visual_identity_graph(snapshot)
+        if not read_ok:
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        if not self._character_visual_identity_load_is_current(snapshot):
+            return
+        try:
+            metadata = self._visual_identity_pack_metadata(graph)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        read_ok, live_graph = await self._read_character_visual_identity_graph(snapshot)
+        if not read_ok:
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        try:
+            live_metadata = self._visual_identity_pack_metadata(live_graph)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        if not self._character_visual_identity_load_is_current(snapshot):
+            return
+        if metadata != live_metadata:
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+
+        mounted = await editor.show_visual_identity_pack(metadata)
+        if not self._character_visual_identity_load_is_current(snapshot):
+            await editor.discard_visual_identity_pack(mounted)
+            return
+        read_ok, final_graph = await self._read_character_visual_identity_graph(
+            snapshot
+        )
+        if not read_ok:
+            await editor.discard_visual_identity_pack(mounted)
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        try:
+            final_metadata = self._visual_identity_pack_metadata(final_graph)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
+            await editor.discard_visual_identity_pack(mounted)
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        if not self._character_visual_identity_load_is_current(snapshot):
+            await editor.discard_visual_identity_pack(mounted)
+            return
+        if final_metadata != metadata:
+            await editor.discard_visual_identity_pack(mounted)
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        if metadata is None:
+            await self._render_all_character_editor_thumbnails(snapshot.character_id)
+            if not self._character_visual_identity_load_is_current(snapshot):
+                return
+
+    @staticmethod
+    async def _read_character_visual_identity_graph(
+        snapshot: _CharacterVisualIdentityLoadSnapshot,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Read one graph with fixed-category, privacy-safe failure logging."""
+
+        if snapshot.character_id is None or snapshot.db is None:
+            return True, None
+        try:
+            graph = await asyncio.to_thread(
+                VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                "character",
+                snapshot.character_id,
+            )
+        except sqlite3.Error:
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=database)."
+            )
+            return False, None
+        except (TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
+            return False, None
+        return True, graph
+
+    async def _show_visual_identity_unavailable(
+        self, snapshot: _CharacterVisualIdentityLoadSnapshot
+    ) -> None:
+        """Present a fenced, non-authoring metadata failure state."""
+
+        editor = snapshot.editor_ref()
+        if editor is None or not self._character_visual_identity_load_is_current(
+            snapshot
+        ):
+            return
+        status = await editor.show_visual_identity_unavailable()
+        if not self._character_visual_identity_load_is_current(snapshot):
+            await editor.discard_visual_identity_pack(status)
+
+    def _character_visual_identity_load_is_current(
+        self, snapshot: _CharacterVisualIdentityLoadSnapshot
+    ) -> bool:
+        """Check the complete editor authority captured before metadata I/O."""
+
+        editor = snapshot.editor_ref()
+        return bool(
+            editor is not None
+            and self.is_mounted
+            and self.state.active_mode == "characters"
+            and self._character_editor_generation == snapshot.screen_generation
+            and getattr(self.app_instance, "chachanotes_db", None) is snapshot.db
+            and editor.display
+            and editor.expression_character_id() == snapshot.character_id
+            and editor.visual_identity_session_token == snapshot.editor_session_token
+            and self._editor_or_none() is editor
+        )
+
+    @staticmethod
+    def _visual_identity_pack_metadata(
+        graph: dict[str, Any] | None,
+    ) -> VisualIdentityPackMetadata | None:
+        """Build the complete path-free identity used for live graph checks."""
+
+        if graph is None:
+            return None
+
+        pack_row = graph["pack"]
+        version_row = graph["version"]
+        return VisualIdentityPackMetadata(
+            binding_id=int(graph["binding"]["id"]),
+            pack_id=int(pack_row["id"]),
+            pack_version_id=int(version_row["id"]),
+            title=str(pack_row["title"]),
+            source_kind=str(pack_row["source_kind"]),
+            default_expression_key=str(version_row["default_expression_key"]),
+            assets=tuple(
+                VisualIdentityAssetMetadata(
+                    asset_id=int(asset["id"]),
+                    expression_key=str(asset["expression_key"]),
+                    original_label=str(asset["original_expression_key"]),
+                    display_label=str(asset["display_label"]),
+                    content_type=str(asset["content_type"]),
+                    is_animated=bool(asset["is_animated"]),
+                )
+                for asset in graph["assets"]
+            ),
+        )
 
     @on(EditorContentChanged)
     def _handle_editor_content_changed(self, message: EditorContentChanged) -> None:
@@ -1318,6 +10239,10 @@ class PersonasScreen(BaseAppScreen):
             # A stray Changed outside an editing session (e.g. racing a
             # save/cancel finisher) must not resurrect the dirty flag.
             return
+        # A genuinely new edit re-arms the save-in-place dedup guard (see
+        # _handle_profile_save_requested) - harmless no-op for a character
+        # edit, which does not use this flag.
+        self._profile_save_inflight = False
         if self.state.has_unsaved_changes:
             return
         self.state.has_unsaved_changes = True
@@ -1328,7 +10253,7 @@ class PersonasScreen(BaseAppScreen):
         self._set_active_row_unsaved(True)
         # Attach availability changed (unsaved edits block Console actions),
         # and the title gains the "- unsaved" segment.
-        self._register_footer_shortcuts()
+        self._sync_title_and_console_actions()
 
     def _set_active_row_unsaved(self, unsaved: bool) -> None:
         """Badge (or un-badge) the selected library row for the edit session."""
@@ -1344,12 +10269,23 @@ class PersonasScreen(BaseAppScreen):
             pane.set_row_unsaved(None, None, False)
 
     def _full_character_record(self, character_id: str) -> dict | None:
-        """Return the handler's fully-loaded card, or ``None`` when stale.
+        """Return the selected source's fully-loaded card, or ``None`` when stale.
 
         The list rows in ``_characters`` are id/name-only; falling back to
         them would feed the editor (and a later save) empty fields, so a
         mismatch deliberately returns ``None``.
         """
+        if self.state.runtime_source == "server":
+            cached = self._selected_server_character
+            if cached is None:
+                return None
+            target, record = cached
+            if (
+                target == self._active_server_target()
+                and str(record.get("id")) == character_id
+            ):
+                return dict(record)
+            return None
         loaded = self.character_handler.current_character_data
         if loaded and str(self.character_handler.current_character_id) == character_id:
             return dict(loaded)
@@ -1397,9 +10333,13 @@ class PersonasScreen(BaseAppScreen):
         return data
 
     async def _stage_character_avatar_from_path(self, path: str) -> None:
+        if not self._local_character_actions_allowed():
+            return
         session_token = self._character_editor_session_token()
         if session_token is None:
-            self._notify("Open a character editor before uploading an avatar.", "warning")
+            self._notify(
+                "Open a character editor before uploading an avatar.", "warning"
+            )
             return
         try:
             image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
@@ -1407,7 +10347,9 @@ class PersonasScreen(BaseAppScreen):
             self._notify(str(exc), "error")
             return
         except OSError as exc:
-            logger.opt(exception=True).error(f"Error reading avatar image from {path}: {exc}")
+            logger.opt(exception=True).error(
+                f"Error reading avatar image from {path}: {exc}"
+            )
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         if self._character_editor_session_token() != session_token:
@@ -1417,8 +10359,11 @@ class PersonasScreen(BaseAppScreen):
                 f"current_session={self._character_editor_session_token()!r}"
             )
             return
+        if not self._local_character_actions_allowed():
+            return
         try:
             self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
+            self._note_actor_pack_portrait_change()
         except Exception as exc:
             logger.opt(exception=True).error(
                 "Could not stage avatar image in editor. "
@@ -1431,6 +10376,2877 @@ class PersonasScreen(BaseAppScreen):
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         self._notify("Avatar staged. Save the character to persist it.", "information")
+        await self._render_character_editor_avatar()
+
+    # --- LLM-assisted character generation ---------------------------------------
+
+    def _character_generation_controller(self) -> CharacterGenerationController:
+        """Return the controller used to generate character text.
+
+        Generation goes through the Console provider gateway, so it uses
+        whatever provider and model Console is already configured with; the
+        author never configures a second one. Tests substitute
+        ``_generation_controller_override``.
+        """
+        override = getattr(self, "_generation_controller_override", None)
+        if override is not None:
+            return override
+        runner = build_gateway_runner(
+            gateway_factory=self.preview.ensure_gateway,
+            selection_factory=lambda: (
+                PersonasPreviewController._selection_from_defaults(
+                    getattr(self.app_instance, "app_config", {}) or {}, "chat_defaults"
+                )
+            ),
+        )
+        return CharacterGenerationController(runner=runner)
+
+    def _editor_or_none(self) -> "PersonasCharacterEditorWidget | None":
+        try:
+            return self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return None
+
+    async def _run_field_generation(self, field: str) -> None:
+        """Generate one field and offer the result as a preview.
+
+        The field itself is never written here: the editor shows the result and
+        the author accepts or discards it.
+        """
+        if not self._local_character_actions_allowed():
+            return
+        editor = self._editor_or_none()
+        if editor is None:
+            return
+        # Live editor values, not the saved record: an author generating a
+        # personality right after typing a description expects that description
+        # to inform it.
+        record = editor.get_character_data()
+        controller = self._character_generation_controller()
+        editor.set_generation_busy(field, True)
+        # Show the text as it arrives: a long generation otherwise leaves the
+        # preview blank behind a disabled button with nothing to read.
+        editor.show_generation_preview(field, "")
+        try:
+            text = await controller.generate_field(
+                field,
+                record,
+                context_mode=editor.generation_context_mode,
+                on_chunk=lambda partial: editor.update_generation_preview(
+                    field, partial
+                ),
+            )
+        except CharacterGenerationError as exc:
+            editor.clear_generation_preview()
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        except Exception as exc:  # defensive: never leave the button stuck
+            logger.opt(exception=True).warning("Character field generation failed.")
+            editor.clear_generation_preview()
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        finally:
+            editor.set_generation_busy(field, False)
+        editor.show_generation_preview(field, text)
+
+    @on(Button.Pressed, ".personas-generate-button")
+    def _generate_field_pressed(self, event: Button.Pressed) -> None:
+        """Start a generation for the field whose button was pressed."""
+        event.stop()
+        if not self._local_character_actions_allowed():
+            return
+        field = PersonasCharacterEditorWidget.field_for_generate_button(
+            str(event.button.id or "")
+        )
+        if field is None:
+            return
+        self.run_worker(
+            self._run_field_generation(field),
+            group="character-generation",
+            exclusive=True,
+        )
+
+    async def _run_whole_character_generation(self, concept: str) -> None:
+        """Draft a whole character and fill the editor's empty fields."""
+        if not self._local_character_actions_allowed():
+            return
+        editor = self._editor_or_none()
+        if editor is None:
+            return
+        controller = self._character_generation_controller()
+        try:
+            fields = await controller.generate_whole_character(concept)
+        except CharacterGenerationError as exc:
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        except Exception as exc:  # defensive: never leave the author stuck
+            logger.opt(exception=True).warning("Whole-character generation failed.")
+            self._notify(f"Could not generate: {exc}", "error")
+            return
+        filled = editor.apply_generated_character(fields)
+        editor.set_concept_row_visible(False)
+        if filled:
+            self._notify(f"Filled {len(filled)} empty field(s).", "information")
+        else:
+            # Honest: the request succeeded, it just had nowhere to land.
+            self._notify(
+                "Nothing was filled: every generated field already has content.",
+                "warning",
+            )
+
+    @on(Button.Pressed, "#personas-char-editor-concept-run")
+    def _concept_run_pressed(self, event: Button.Pressed) -> None:
+        """Draft a whole character from the concept the author typed."""
+        event.stop()
+        if not self._local_character_actions_allowed():
+            return
+        editor = self._editor_or_none()
+        concept = editor.concept_text if editor is not None else ""
+        if not concept:
+            self._notify("Describe the character first, in a line or two.", "warning")
+            return
+        self.run_worker(
+            self._run_whole_character_generation(concept),
+            group="character-generation",
+            exclusive=True,
+        )
+
+    @on(Button.Pressed, "#personas-char-editor-generate-regenerate")
+    def _regenerate_pressed(self, event: Button.Pressed) -> None:
+        """Re-run the generation for the field currently being previewed."""
+        event.stop()
+        if not self._local_character_actions_allowed():
+            return
+        editor = self._editor_or_none()
+        field = editor.pending_generation_field if editor is not None else None
+        if field is None:
+            return
+        self.run_worker(
+            self._run_field_generation(field),
+            group="character-generation",
+            exclusive=True,
+        )
+
+    @on(AvatarViewRequested)
+    def _handle_avatar_view_requested(self, message: AvatarViewRequested) -> None:
+        """Open the full-size portrait viewer for the Inspector thumb (task-1534)."""
+        message.stop()
+        cache = getattr(self, "_avatar_render_cache", None)
+        selected_id = str(self.state.selected_entity_id or "")
+        pil = None
+        if cache is not None and selected_id:
+            pil = cache.get_pil(f"inspector-avatar-{selected_id}")
+        if pil is None:
+            return
+        self.app.push_screen(
+            ConsoleImageViewerModal(
+                pil,
+                title=self.state.selected_entity_name or "Character portrait",
+            )
+        )
+
+    async def _render_inspector_avatar(self) -> None:
+        """Decode and mount the selected character's Inspector portrait.
+
+        Reuses the editor thumbnail's decode path (off-thread via
+        ``ConsoleImageRenderCache``, then ``_fit_avatar_cell_size`` /
+        ``_build_avatar_pixels``), so the Inspector cannot reintroduce the
+        oversized-Pixels cropping those helpers already solve. Clears the box
+        for selections with no embedded portrait.
+        """
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        if self.state.runtime_source == "server":
+            inspector.set_avatar_thumbnail(None)
+            return
+        if self.state.selected_entity_kind != "character":
+            inspector.set_avatar_thumbnail(None)
+            return
+        selected_id_raw = self.state.selected_entity_id
+        # Read the portrait straight from the DB rather than from the card
+        # widget: `load_character` fills that widget through the character
+        # handler (worker + call_from_thread), so reading it here races the
+        # load and yields no bytes on the first selection.
+        db = self._character_db()
+        if db is None or selected_id_raw is None:
+            inspector.set_avatar_thumbnail(None)
+            return
+        try:
+            record = await asyncio.to_thread(
+                db.get_character_card_by_id, int(selected_id_raw)
+            )
+        except Exception:
+            logger.opt(exception=True).debug("Inspector portrait fetch failed.")
+            inspector.set_avatar_thumbnail(None)
+            return
+        image = (record or {}).get("image")
+        data = image if isinstance(image, (bytes, bytearray)) else None
+        if not data:
+            inspector.set_avatar_thumbnail(None)
+            return
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        selected_id = str(self.state.selected_entity_id or "")
+        cache_key = f"inspector-avatar-{selected_id}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug("Inspector portrait decode failed.")
+            ok = False
+        # The selection can change while the decode is in flight; a late
+        # render must not paint another character's face into the rail -- and
+        # a late FAILURE must not blank the portrait of whoever is selected
+        # now, so the staleness check comes before any clearing.
+        if (
+            self.state.runtime_source != "local"
+            or str(self.state.selected_entity_id or "") != selected_id
+        ):
+            return
+        if not ok or not self.is_mounted:
+            inspector.set_avatar_thumbnail(None)
+            return
+        renderable = None
+        if mode == "graphics":
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+
+                pil = cache.get_pil(cache_key)
+                if pil is not None:
+                    renderable = _GraphicsImage(pil)
+                    w_cells, h_cells = self._fit_avatar_cell_size(pil.width, pil.height)
+                    renderable.styles.width = w_cells
+                    renderable.styles.height = h_cells
+            except Exception:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        else:
+            renderable = self._build_avatar_pixels(cache, cache_key)
+        inspector.set_avatar_thumbnail(renderable)
+
+    async def _render_character_editor_avatar(self) -> None:
+        """Decode and mount the character editor's avatar thumbnail off-thread.
+
+        Also re-syncs the editor's text status Static (``_set_avatar_status_
+        from_record``), since the Remove path clears ``image`` directly
+        without going through ``set_avatar_image``. A session-token guard
+        drops a late render if a different editor session (a new
+        create/edit, a save-in-place, or a cancel) started while the decode
+        was in flight.
+        """
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor._set_avatar_status_from_record()
+        data = editor.current_avatar_bytes()
+        if not data:
+            editor.set_avatar_thumbnail(None)
+            return
+        token = self._character_editor_generation
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        # Accessor confirmed against chat_screen.py's own
+        # resolve_default_mode call site and this file's existing
+        # app_config reads (e.g. _provider_readiness_app_config): screen
+        # instances always carry a real app_instance (set in
+        # BaseAppScreen.__init__), so a plain getattr default is enough.
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        # Per-session cache key: avoids one character's decode racing
+        # another's under the same slot if a second editor session opens
+        # before the first's off-thread decode finishes (the fixed-key
+        # alternative would let a slower A-session overwrite a faster
+        # B-session's cache entry after B's own token check already passed).
+        cache_key = f"char-editor-avatar-{token}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug("Character avatar decode failed.")
+            ok = False
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while decoding
+        renderable = None
+        if ok:
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as _GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = _GraphicsImage(pil)
+                        # Fixed cell size (matches the thumb box CSS), not
+                        # just max-width/max-height: textual_image's "auto"
+                        # sizing resolves its render region from the parent
+                        # container's settled layout, and mounting a widget
+                        # at runtime (vs. compose-time) can paint one tick
+                        # before that settles, asking the renderer to scale
+                        # to a transient 0-width/height region - which PIL's
+                        # resize() raises on. A fixed size is resolvable
+                        # without waiting on parent layout, so it sidesteps
+                        # the race outright. Both dims must stay explicit
+                        # ints (not "auto") to avoid reintroducing that
+                        # crash, so the fit below is computed in cells
+                        # rather than left to the renderer.
+                        w_cells, h_cells = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = w_cells
+                        renderable.styles.height = h_cells
+                except Exception:
+                    renderable = self._build_avatar_pixels(cache, cache_key)
+            else:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        editor.set_avatar_thumbnail(renderable)
+
+    @staticmethod
+    def _fit_avatar_cell_size(pixel_width: int, pixel_height: int) -> tuple[int, int]:
+        """Fit a PIL image's pixel size into the avatar thumb box, in cells.
+
+        Terminal cells are roughly twice as tall (in pixels) as they are
+        wide, so the image's aspect ratio is first converted from pixels to
+        "cell units" (halving the height) before fitting it into the
+        ``AVATAR_THUMB_COLS`` x ``AVATAR_THUMB_LINES`` box. Both returned
+        dimensions are explicit ints >= 1 - leaving either as "auto" is what
+        reintroduced the 0-size ``ValueError`` this rendering path already
+        works around (see the caller's comment).
+
+        Args:
+            pixel_width: Source image width in pixels.
+            pixel_height: Source image height in pixels.
+
+        Returns:
+            ``(width_cells, height_cells)``, each clamped to
+            ``[1, AVATAR_THUMB_COLS]`` / ``[1, AVATAR_THUMB_LINES]``.
+        """
+        if pixel_width <= 0 or pixel_height <= 0:
+            return AVATAR_THUMB_COLS, AVATAR_THUMB_LINES
+        # Aspect ratio expressed in cell units (width-cells : height-cells).
+        cell_aspect = pixel_width / (pixel_height / 2)
+        box_aspect = AVATAR_THUMB_COLS / AVATAR_THUMB_LINES
+        if cell_aspect >= box_aspect:
+            # Image is relatively wider than the box - fit to width.
+            w_cells = AVATAR_THUMB_COLS
+            h_cells = max(1, round(AVATAR_THUMB_COLS / cell_aspect))
+        else:
+            # Image is relatively taller than the box - fit to height.
+            h_cells = AVATAR_THUMB_LINES
+            w_cells = max(1, round(AVATAR_THUMB_LINES * cell_aspect))
+        w_cells = max(1, min(AVATAR_THUMB_COLS, w_cells))
+        h_cells = max(1, min(AVATAR_THUMB_LINES, h_cells))
+        return w_cells, h_cells
+
+    @staticmethod
+    def _build_avatar_pixels(cache: "ConsoleImageRenderCache", cache_key: str):
+        """Build a quadrant-mosaic renderable sized to the avatar thumb box.
+
+        ``cache.get_pixels`` thumbnails to the 80x40 chat-transcript box,
+        which is far larger than the character editor's compact avatar
+        preview; reusing it produces an oversized grid that Rich does not
+        reflow, so the small thumb container just crops it to a top-left
+        sliver. This instead pulls the cached full-size PIL image and bakes
+        it to the avatar box via the quadrant mosaic (2x2 subpixels per
+        cell -- double the horizontal detail of the old half-block Pixels
+        renderer, same universal Block Elements font coverage).
+
+        Args:
+            cache: The render cache holding the decoded avatar image.
+            cache_key: The per-session cache key ``prepare`` was called with.
+
+        Returns:
+            A mosaic ``Text`` renderable fitted to the avatar box, or
+            ``None`` when the image is not (or no longer) cached.
+        """
+        from ...Utils.mosaic_render import mosaic_from_image
+
+        pil = cache.get_pil(cache_key)
+        if pil is None:
+            return None
+        return mosaic_from_image(
+            pil, AVATAR_THUMB_COLS, AVATAR_THUMB_LINES, fit="cover"
+        )
+
+    async def _render_all_character_editor_thumbnails(
+        self, character_id: int | None
+    ) -> None:
+        """Render the avatar thumbnail plus all 3 expression-state thumbnails.
+
+        Called whenever the character editor session's identity changes: a
+        new create/edit session opens, or a save assigns a brand-new
+        character its first id (Roleplay P3d-1 Task 4). ``character_id``
+        gates the expression slots - ``None`` (a still-unsaved character)
+        clears them instead of reading the DB, since there is no row to read.
+
+        Args:
+            character_id: The loaded character's row id, or ``None`` when
+                the editor session has not been saved yet.
+        """
+        await self._render_character_editor_avatar()
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        if character_id is None:
+            for state in EXPRESSION_IMAGE_STATES:
+                editor.set_expression_thumbnail(state, None)
+            return
+        for state in EXPRESSION_IMAGE_STATES:
+            await self._render_character_expression_slot(character_id, state)
+
+    @on(VisualIdentityPackPreviewRequested)
+    def _handle_visual_identity_preview_requested(
+        self, message: VisualIdentityPackPreviewRequested
+    ) -> None:
+        """Decode only the selected pack asset in a fenced screen worker."""
+
+        message.stop()
+        if self.state.active_mode == "personas":
+            snapshot = self._persona_shared_visual_identity_author_snapshot()
+            browser = snapshot.browser_ref() if snapshot is not None else None
+            if (
+                snapshot is not None
+                and browser is not None
+                and browser.selected_asset == message.asset
+            ):
+                self.run_worker(
+                    self._render_persona_shared_visual_identity_preview(
+                        snapshot, message.asset
+                    ),
+                    group="personas-shared-visual-identity-preview",
+                    exit_on_error=False,
+                    exclusive=True,
+                )
+            return
+        editor = self._editor_or_none()
+        if editor is None:
+            return
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            return
+        try:
+            browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except QueryError:
+            return
+        pack = browser.pack
+        if pack is None or browser.selected_asset != message.asset:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        snapshot = _VisualIdentityPreviewSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            character_id=character_id,
+            screen_generation=self._character_editor_generation,
+            editor_session_token=editor.visual_identity_session_token,
+            binding_id=pack.binding_id,
+            pack_id=pack.pack_id,
+            pack_version_id=pack.pack_version_id,
+            source_kind=pack.source_kind,
+            asset=message.asset,
+        )
+        self.run_worker(
+            self._render_visual_identity_pack_preview(snapshot),
+            group="personas-visual-identity-preview",
+            exit_on_error=False,
+            exclusive=True,
+        )
+
+    async def _render_persona_shared_visual_identity_preview(
+        self,
+        snapshot: _PersonaSharedVisualIdentityAuthorSnapshot,
+        asset: VisualIdentityAssetMetadata,
+    ) -> None:
+        """Resolve and paint one Persona reaction under complete authority."""
+
+        browser = snapshot.browser_ref()
+        if browser is None or snapshot.pack_version_id == 0:
+            if browser is not None:
+                browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        try:
+            resolution = await asyncio.to_thread(
+                resolve_persona_visual_identity,
+                snapshot.db,
+                snapshot.local_service,
+                persona_id=snapshot.persona_id,
+                requested_state="idle",
+                manual_expression_key=asset.expression_key,
+            )
+        except (TypeError, ValueError, OverflowError, sqlite3.Error):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        if (
+            browser.selected_asset != asset
+            or resolution.pack_id != snapshot.pack_id
+            or resolution.pack_version_id != snapshot.pack_version_id
+            or resolution.asset_id != asset.asset_id
+            or not resolution.image_bytes
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        from ...Chat.console_image_view import ConsoleImageRenderCache
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        cache_key = (
+            "personas-persona-shared-visual-preview-"
+            f"{snapshot.screen_generation}-{hash(resolution.cache_identity)}"
+        )
+        try:
+            decoded = await asyncio.to_thread(
+                cache.prepare, cache_key, bytes(resolution.image_bytes)
+            )
+        except Exception:
+            decoded = False
+        if (
+            not decoded
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        latest = await asyncio.to_thread(
+            resolve_persona_visual_identity,
+            snapshot.db,
+            snapshot.local_service,
+            persona_id=snapshot.persona_id,
+            requested_state="idle",
+            manual_expression_key=asset.expression_key,
+        )
+        if (
+            latest.cache_identity != resolution.cache_identity
+            or latest.image_bytes != resolution.image_bytes
+            or browser.selected_asset != asset
+            or not await self._persona_shared_visual_identity_authority_is_current(
+                snapshot
+            )
+        ):
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        renderable = self._build_avatar_pixels(cache, cache_key)
+        if renderable is None:
+            browser.set_preview_unavailable(asset_id=asset.asset_id)
+            return
+        browser.set_preview(renderable, asset_id=asset.asset_id)
+
+    def _visual_identity_snapshot_is_current(
+        self,
+        snapshot: _VisualIdentityPreviewSnapshot,
+        resolution: VisualIdentityResolution | None = None,
+    ) -> bool:
+        """Check editor session, active browser, and selected metadata identity."""
+
+        editor = snapshot.editor_ref()
+        browser = snapshot.browser_ref()
+        if (
+            editor is None
+            or browser is None
+            or not self.is_mounted
+            or self.state.active_mode != "characters"
+            or self._character_editor_generation != snapshot.screen_generation
+            or getattr(self.app_instance, "chachanotes_db", None) is not snapshot.db
+            or not editor.display
+            or editor.expression_character_id() != snapshot.character_id
+            or editor.visual_identity_session_token != snapshot.editor_session_token
+            or not browser.is_mounted
+        ):
+            return False
+        try:
+            current_browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except QueryError:
+            return False
+        pack = browser.pack
+        if (
+            current_browser is not browser
+            or pack is None
+            or pack.binding_id != snapshot.binding_id
+            or pack.pack_id != snapshot.pack_id
+            or pack.pack_version_id != snapshot.pack_version_id
+            or pack.source_kind != snapshot.source_kind
+            or browser.selected_asset != snapshot.asset
+        ):
+            return False
+        if resolution is None:
+            return True
+        return (
+            resolution.actor_kind == "character"
+            and resolution.actor_id == str(snapshot.character_id)
+            and resolution.manual_expression_key == snapshot.asset.expression_key
+            and resolution.resolved_expression_key == snapshot.asset.expression_key
+            and resolution.pack_id == snapshot.pack_id
+            and resolution.pack_version_id == snapshot.pack_version_id
+            and resolution.asset_id == snapshot.asset.asset_id
+            and resolution.storage_source == snapshot.source_kind
+            and resolution.content_type == snapshot.asset.content_type
+            and resolution.is_animated == snapshot.asset.is_animated
+            and bool(resolution.image_bytes)
+        )
+
+    @staticmethod
+    def _visual_identity_graph_matches_snapshot(
+        snapshot: _VisualIdentityPreviewSnapshot,
+        graph: dict[str, Any] | None,
+    ) -> bool:
+        """Check the live binding graph without reading or decoding asset bytes."""
+
+        if graph is None:
+            return False
+        binding = graph["binding"]
+        pack = graph["pack"]
+        version = graph["version"]
+        asset = next(
+            (
+                row
+                for row in graph["assets"]
+                if str(row["expression_key"]) == snapshot.asset.expression_key
+            ),
+            None,
+        )
+        return bool(
+            asset is not None
+            and int(binding["id"]) == snapshot.binding_id
+            and int(pack["id"]) == snapshot.pack_id
+            and int(version["id"]) == snapshot.pack_version_id
+            and str(pack["source_kind"]) == snapshot.source_kind
+            and int(asset["id"]) == snapshot.asset.asset_id
+            and str(asset["content_type"]) == snapshot.asset.content_type
+            and bool(asset["is_animated"]) == snapshot.asset.is_animated
+        )
+
+    @staticmethod
+    def _visual_identity_resolution_identity(
+        resolution: VisualIdentityResolution,
+    ) -> tuple[object, ...]:
+        """Return every source field that can distinguish selected pixels."""
+
+        return (
+            resolution.actor_kind,
+            resolution.actor_id,
+            resolution.requested_expression_key,
+            resolution.manual_expression_key,
+            resolution.resolved_expression_key,
+            resolution.pack_id,
+            resolution.pack_version_id,
+            resolution.asset_id,
+            resolution.expression_id,
+            resolution.storage_source,
+            resolution.storage_relpath,
+            resolution.content_type,
+            resolution.is_animated,
+            resolution.resolution_source,
+            resolution.fallback_reason,
+            resolution.cache_identity,
+        )
+
+    async def _render_visual_identity_pack_preview(
+        self,
+        snapshot: _VisualIdentityPreviewSnapshot,
+    ) -> None:
+        """Resolve and decode one selected preview without exposing paths."""
+
+        def show_unavailable() -> None:
+            if not self._visual_identity_snapshot_is_current(snapshot):
+                return
+            browser = snapshot.browser_ref()
+            if browser is not None:
+                browser.set_preview_unavailable(asset_id=snapshot.asset.asset_id)
+
+        coordinator = get_personas_preview_coordinator(self.app_instance)
+        async with coordinator.serialize():
+            if not self._visual_identity_snapshot_is_current(snapshot):
+                return
+            try:
+                resolution = await coordinator.run_sync(
+                    resolve_visual_identity,
+                    snapshot.db,
+                    actor_kind="character",
+                    actor_id=snapshot.character_id,
+                    requested_state="idle",
+                    manual_expression_key=snapshot.asset.expression_key,
+                )
+            except (TypeError, ValueError, OverflowError):
+                logger.opt(exception=True).debug(
+                    "Personas Visual Identity preview resolution failed for character {}.",
+                    snapshot.character_id,
+                )
+                show_unavailable()
+                return
+            if not self._visual_identity_snapshot_is_current(snapshot, resolution):
+                show_unavailable()
+                return
+
+            from ...Chat.console_image_view import (
+                ConsoleImageRenderCache,
+                resolve_default_mode,
+            )
+
+            if getattr(self, "_avatar_render_cache", None) is None:
+                self._avatar_render_cache = ConsoleImageRenderCache()
+            cache = self._avatar_render_cache
+            cache_key = (
+                "personas-visual-identity-preview-"
+                f"{snapshot.screen_generation}-{resolution.pack_version_id}-"
+                f"{snapshot.asset.asset_id}-{hash(resolution.cache_identity)}"
+            )
+            try:
+                ok = await coordinator.run_sync(
+                    cache.prepare, cache_key, bytes(resolution.image_bytes)
+                )
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Personas Visual Identity preview decode failed."
+                )
+                show_unavailable()
+                return
+            if not ok or not self._visual_identity_snapshot_is_current(
+                snapshot, resolution
+            ):
+                show_unavailable()
+                return
+            try:
+                graph = await coordinator.run_sync(
+                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                    "character",
+                    snapshot.character_id,
+                )
+            except (TypeError, ValueError, OverflowError):
+                show_unavailable()
+                return
+            if not self._visual_identity_snapshot_is_current(
+                snapshot, resolution
+            ) or not self._visual_identity_graph_matches_snapshot(snapshot, graph):
+                show_unavailable()
+                return
+            try:
+                latest = await coordinator.run_sync(
+                    resolve_visual_identity,
+                    snapshot.db,
+                    actor_kind="character",
+                    actor_id=snapshot.character_id,
+                    requested_state="idle",
+                    manual_expression_key=snapshot.asset.expression_key,
+                )
+            except (TypeError, ValueError, OverflowError):
+                show_unavailable()
+                return
+            if not self._visual_identity_snapshot_is_current(
+                snapshot, latest
+            ) or self._visual_identity_resolution_identity(
+                latest
+            ) != self._visual_identity_resolution_identity(resolution):
+                show_unavailable()
+                return
+
+            mode = resolve_default_mode(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
+            renderable = None
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = GraphicsImage(pil)
+                        width, height = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = width
+                        renderable.styles.height = height
+                except Exception:
+                    renderable = self._build_avatar_pixels(cache, cache_key)
+            else:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+            if renderable is None or not self._visual_identity_snapshot_is_current(
+                snapshot, latest
+            ):
+                show_unavailable()
+                return
+            browser = snapshot.browser_ref()
+            if browser is not None:
+                browser.set_preview(renderable, asset_id=snapshot.asset.asset_id)
+
+    def _visual_identity_author_snapshot(self) -> _VisualIdentityAuthorSnapshot | None:
+        """Capture the active bound editor and immutable pack identity."""
+
+        editor = self._editor_or_none()
+        if editor is None or not self._character_editor_is_active():
+            return None
+        character_id = editor.expression_character_id()
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if character_id is None or db is None:
+            return None
+        try:
+            browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except QueryError:
+            return None
+        pack = browser.pack
+        if pack is None:
+            return None
+        return _VisualIdentityAuthorSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            character_id=character_id,
+            screen_generation=self._character_editor_generation,
+            editor_session_token=editor.visual_identity_session_token,
+            binding_id=pack.binding_id,
+            pack_id=pack.pack_id,
+            pack_version_id=pack.pack_version_id,
+        )
+
+    def _visual_identity_author_snapshot_is_current(
+        self, snapshot: _VisualIdentityAuthorSnapshot
+    ) -> bool:
+        current = self._visual_identity_author_snapshot()
+        return current == snapshot
+
+    def _begin_visual_identity_operation(
+        self, snapshot: _VisualIdentityAuthorSnapshot
+    ) -> tuple[asyncio.Task[Any], threading.Event] | None:
+        """Admit one screen-wide authoring operation without queuing duplicates."""
+
+        if self._character_save_inflight:
+            self._notify(
+                "Wait for Character Save to finish before editing reactions.",
+                "warning",
+            )
+            return None
+        task = asyncio.current_task()
+        active = self._visual_identity_operation_task
+        state = self._visual_identity_authoring
+        if (
+            task is None
+            or (active is not None and not active.done())
+            or (state is not None and state.snapshot != snapshot)
+        ):
+            return None
+        event = state.cancel_event if state is not None else threading.Event()
+        self._visual_identity_operation_task = task
+        self._visual_identity_operation_event = event
+        browser = snapshot.browser_ref()
+        if browser is not None and browser.parent is not None:
+            browser.set_preparing(True)
+        return task, event
+
+    def _finish_visual_identity_operation(
+        self,
+        task: asyncio.Task[Any],
+        browser: PersonasVisualIdentityPackWidget | None = None,
+    ) -> None:
+        if self._visual_identity_operation_task is task:
+            self._visual_identity_operation_task = None
+            if self._visual_identity_authoring is None:
+                self._visual_identity_operation_event = None
+            current = self._visual_identity_author_snapshot()
+            if (
+                browser is not None
+                and browser.parent is not None
+                and current is not None
+                and current.browser_ref() is browser
+            ):
+                try:
+                    browser.set_preparing(False)
+                except QueryError:
+                    pass
+
+    def _visual_identity_has_unsaved_authoring(self) -> bool:
+        task = self._visual_identity_operation_task
+        return self._visual_identity_authoring is not None or (
+            task is not None and not task.done()
+        )
+
+    async def _drain_visual_identity_authoring(self) -> None:
+        """Signal, drain, then discard the one unpublished operation."""
+
+        event = self._visual_identity_operation_event
+        state = self._visual_identity_authoring
+        if event is None and state is not None:
+            event = state.cancel_event
+        if event is not None:
+            event.set()
+        task = self._visual_identity_operation_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._discard_visual_identity_authoring()
+
+    def _discard_visual_identity_authoring(self) -> None:
+        """Cancel provider work and discard only the unpublished candidate."""
+
+        state = getattr(self, "_visual_identity_authoring", None)
+        self._visual_identity_authoring = None
+        if state is None:
+            return
+        state.cancel_event.set()
+        try:
+            state.candidate.cancel()
+        except VisualIdentityPublicationError:
+            pass
+        browser = state.snapshot.browser_ref()
+        if (
+            browser is not None
+            and browser.parent is not None
+            and self._visual_identity_author_snapshot_is_current(state.snapshot)
+        ):
+            try:
+                browser.pack = state.authoritative_pack
+                browser.apply_filter(
+                    browser.query_one("#personas-visual-identity-filter", Input).value
+                )
+                browser.reset_staged()
+            except QueryError:
+                pass
+
+    async def _visual_identity_candidate(
+        self,
+        snapshot: _VisualIdentityAuthorSnapshot,
+        event: threading.Event,
+    ) -> _VisualIdentityAuthoringState | None:
+        current = self._visual_identity_authoring
+        if current is not None and current.snapshot == snapshot:
+            return current
+        self._discard_visual_identity_authoring()
+        try:
+            candidate = await asyncio.to_thread(
+                create_visual_identity_candidate,
+                snapshot.db,
+                actor_kind="character",
+                actor_id=snapshot.character_id,
+            )
+        except (ValueError, sqlite3.Error, RuntimeError):
+            logger.debug("Visual Identity candidate unavailable (category=validation).")
+            self._notify(
+                "Reaction pack is no longer available; reopen the editor.", "warning"
+            )
+            return None
+        authority = (
+            candidate.old_binding_id,
+            candidate.old_pack_id,
+            candidate.old_version_id,
+        )
+        expected = (snapshot.binding_id, snapshot.pack_id, snapshot.pack_version_id)
+        if (
+            authority != expected
+            or event.is_set()
+            or not self._visual_identity_author_snapshot_is_current(snapshot)
+        ):
+            event.set()
+            candidate.cancel()
+            return None
+        browser = snapshot.browser_ref()
+        authoritative_pack = browser.pack if browser is not None else None
+        if authoritative_pack is None:
+            event.set()
+            candidate.cancel()
+            return None
+        state = _VisualIdentityAuthoringState(
+            snapshot=snapshot,
+            candidate=candidate,
+            cancel_event=event,
+            authoritative_pack=authoritative_pack,
+        )
+        self._visual_identity_authoring = state
+        return state
+
+    async def _stage_visual_identity_replacement(
+        self,
+        asset: VisualIdentityAssetMetadata,
+        data: bytes,
+        *,
+        source: str,
+    ) -> bool:
+        """Validate and stage one upload/generated result, never activate it."""
+
+        snapshot = self._visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if (
+            snapshot is None
+            or browser is None
+            or asset not in (browser.pack.assets if browser.pack else ())
+        ):
+            return False
+        admission = self._begin_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            state = await self._visual_identity_candidate(snapshot, event)
+            if state is None:
+                return False
+            try:
+                await asyncio.to_thread(
+                    state.candidate.stage_replacement,
+                    asset.expression_key,
+                    data,
+                    source=source,
+                )
+            except (ValueError, VisualIdentityPublicationError) as exc:
+                self._notify(f"Reaction image was not staged: {exc}", "error")
+                return False
+            if event.is_set() or not self._visual_identity_author_snapshot_is_current(
+                snapshot
+            ):
+                self._discard_visual_identity_authoring()
+                return False
+            browser.set_staged_change(
+                asset.expression_key,
+                "generate" if source == "generated" else "replace",
+            )
+            return True
+        finally:
+            self._finish_visual_identity_operation(task, browser)
+
+    async def _stage_visual_identity_clear(
+        self, asset: VisualIdentityAssetMetadata
+    ) -> bool:
+        """Stage one intentional omission while leaving the active version intact."""
+
+        snapshot = self._visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if (
+            snapshot is None
+            or browser is None
+            or asset not in (browser.pack.assets if browser.pack else ())
+        ):
+            return False
+        admission = self._begin_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            state = await self._visual_identity_candidate(snapshot, event)
+            if state is None:
+                return False
+            try:
+                await asyncio.to_thread(
+                    state.candidate.stage_clear, asset.expression_key
+                )
+            except (ValueError, VisualIdentityPublicationError) as exc:
+                self._notify(f"Reaction image was not cleared: {exc}", "error")
+                return False
+            if event.is_set() or not self._visual_identity_author_snapshot_is_current(
+                snapshot
+            ):
+                self._discard_visual_identity_authoring()
+                return False
+            browser.set_staged_change(asset.expression_key, "clear")
+            return True
+        finally:
+            self._finish_visual_identity_operation(task, browser)
+
+    @staticmethod
+    def _visual_identity_direction(
+        candidate: VisualIdentityCandidate, asset: VisualIdentityAssetMetadata
+    ) -> str:
+        """Read the retained asset's generation direction, with a stable fallback."""
+
+        row = next(
+            (
+                stored
+                for stored in candidate.assets
+                if str(stored.get("expression_key")) == asset.expression_key
+            ),
+            {},
+        )
+        context = row.get("source_context_json", row.get("source_context", {}))
+        if isinstance(context, str):
+            try:
+                context = json.loads(context)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                context = {}
+        direction = (
+            context.get("visual_direction") if isinstance(context, dict) else None
+        )
+        return str(direction or asset.display_label)
+
+    @staticmethod
+    def _canonical_visual_identity_assets() -> tuple[VisualIdentityAssetMetadata, ...]:
+        """Build path-free metadata for every approved reaction row."""
+
+        return tuple(
+            VisualIdentityAssetMetadata(
+                asset_id=-(index + 1),
+                expression_key=reaction.expression_key,
+                original_label=reaction.original_label,
+                display_label=reaction.display_label,
+                content_type="image/png",
+                is_animated=False,
+            )
+            for index, reaction in enumerate(canonical_visual_identity_reactions())
+        )
+
+    @staticmethod
+    def _restore_candidate_reaction_rows(
+        candidate: VisualIdentityCandidate,
+        assets: tuple[VisualIdentityAssetMetadata, ...],
+    ) -> None:
+        """Make canonical rows omitted by a user version stageable again."""
+
+        known = {str(row["expression_key"]) for row in candidate.assets}
+        directions = {
+            reaction.expression_key: reaction.visual_direction
+            for reaction in canonical_visual_identity_reactions()
+        }
+        missing = tuple(
+            {
+                "id": asset.asset_id,
+                "expression_key": asset.expression_key,
+                "original_expression_key": asset.original_label,
+                "display_label": asset.display_label,
+                "bytes": 0,
+                "source_context_json": json.dumps(
+                    {"visual_direction": directions[asset.expression_key]}
+                ),
+            }
+            for asset in assets
+            if asset.expression_key not in known
+        )
+        if missing:
+            candidate.assets += missing
+
+    async def _visual_identity_reference(
+        self, snapshot: _VisualIdentityAuthorSnapshot
+    ) -> ResolvedReferenceImage:
+        resolution = await asyncio.to_thread(
+            resolve_visual_identity,
+            snapshot.db,
+            actor_kind="character",
+            actor_id=snapshot.character_id,
+            requested_state="idle",
+        )
+        if (
+            not self._visual_identity_author_snapshot_is_current(snapshot)
+            or resolution.actor_kind != "character"
+            or resolution.actor_id != str(snapshot.character_id)
+            or resolution.pack_id != snapshot.pack_id
+            or resolution.pack_version_id != snapshot.pack_version_id
+            or not resolution.image_bytes
+            or not resolution.content_type
+        ):
+            raise ValueError("visual_identity_reference_changed")
+        return ResolvedReferenceImage(
+            file_id=resolution.asset_id or f"pack-{snapshot.pack_version_id}",
+            filename=None,
+            mime_type=resolution.content_type,
+            width=None,
+            height=None,
+            bytes_len=len(resolution.image_bytes),
+            content=bytes(resolution.image_bytes),
+            temp_path=None,
+        )
+
+    async def _run_visual_identity_generation_request(self, request: Any) -> Any:
+        """Shield and drain one blocking adapter call when its task is cancelled."""
+
+        task = asyncio.create_task(asyncio.to_thread(run_generation, request))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            request.cancel_event.set()
+            try:
+                await task
+            except Exception:
+                pass
+            raise
+
+    async def _generate_visual_identity_assets(
+        self, assets: tuple[VisualIdentityAssetMetadata, ...]
+    ) -> bool:
+        snapshot = self._visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        if snapshot is None or browser is None or not assets:
+            return False
+        admission = self._begin_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            return await self._generate_visual_identity_assets_admitted(
+                snapshot, browser, assets, event
+            )
+        finally:
+            self._finish_visual_identity_operation(task, browser)
+
+    async def _generate_visual_identity_assets_admitted(
+        self,
+        snapshot: _VisualIdentityAuthorSnapshot,
+        browser: PersonasVisualIdentityPackWidget,
+        assets: tuple[VisualIdentityAssetMetadata, ...],
+        event: threading.Event,
+    ) -> bool:
+        cfg = get_image_generation_config()
+        backend = str(getattr(cfg, "default_backend", "") or "")
+        capability = resolve_backend_reference_image_capability(backend, config=cfg)
+        if not capability.supported:
+            self._notify(
+                f"Image backend '{backend}' does not support a reference image.",
+                "warning",
+            )
+            return False
+        try:
+            reference = await self._visual_identity_reference(snapshot)
+        except (TypeError, ValueError, sqlite3.Error, RuntimeError):
+            self._notify("The current character reference is unavailable.", "warning")
+            return False
+        if event.is_set():
+            return False
+        state = await self._visual_identity_candidate(snapshot, event)
+        if state is None:
+            return False
+        self._restore_candidate_reaction_rows(state.candidate, assets)
+        semaphore = asyncio.Semaphore(3)
+        editor = snapshot.editor_ref()
+        if editor is None:
+            self._discard_visual_identity_authoring()
+            return False
+        name = editor._input("name").value
+        description = editor._area("description").text
+        personality = editor._area("personality").text
+        style = getattr(self, "_expression_generate_style", None)
+
+        async def generate(asset: VisualIdentityAssetMetadata) -> None:
+            if event.is_set() or not self._visual_identity_author_snapshot_is_current(
+                snapshot
+            ):
+                raise RuntimeError("visual_identity_generation_cancelled")
+            prompt, negative, params = compose_visual_identity_prompt(
+                name=name,
+                description=description,
+                personality=personality,
+                label=asset.display_label,
+                visual_direction=self._visual_identity_direction(
+                    state.candidate, asset
+                ),
+                style_template=style,
+            )
+            request = build_request(
+                backend=backend,
+                prompt=prompt,
+                negative_prompt=negative or None,
+                seed=-1,
+                image_format="png",
+                width=params.get("width"),
+                height=params.get("height"),
+                steps=params.get("steps"),
+                cfg_scale=params.get("cfg_scale"),
+                reference_image=reference,
+                cancel_event=event,
+            )
+            async with semaphore:
+                if (
+                    event.is_set()
+                    or not self._visual_identity_author_snapshot_is_current(snapshot)
+                ):
+                    raise RuntimeError("visual_identity_generation_cancelled")
+                try:
+                    result = await self._run_visual_identity_generation_request(request)
+                except Exception:
+                    event.set()
+                    raise
+            if event.is_set() or not self._visual_identity_author_snapshot_is_current(
+                snapshot
+            ):
+                raise RuntimeError("visual_identity_generation_cancelled")
+            await asyncio.to_thread(
+                state.candidate.stage_replacement,
+                asset.expression_key,
+                result.content,
+                source="generated",
+            )
+
+        browser.set_generating(True)
+        failed = False
+        provider_failed = False
+        try:
+            try:
+                async with asyncio.TaskGroup() as group:
+                    for asset in assets:
+                        group.create_task(generate(asset))
+            except* Exception as group:
+                failed = True
+                provider_failed = any(
+                    not (
+                        isinstance(exc, RuntimeError)
+                        and str(exc) == "visual_identity_generation_cancelled"
+                    )
+                    for exc in group.exceptions
+                )
+        except asyncio.CancelledError:
+            event.set()
+            self._discard_visual_identity_authoring()
+            raise
+        if (
+            failed
+            or event.is_set()
+            or not self._visual_identity_author_snapshot_is_current(snapshot)
+        ):
+            if provider_failed and self._visual_identity_author_snapshot_is_current(
+                snapshot
+            ):
+                logger.warning(
+                    "Visual Identity generation failed (category=provider_failed)."
+                )
+                self._notify("Reaction generation failed. Try again.", "error")
+            self._discard_visual_identity_authoring()
+            if browser.is_mounted:
+                browser.set_generating(False)
+            return False
+        pack = browser.pack
+        if pack is not None:
+            existing = {asset.expression_key for asset in pack.assets}
+            restored = tuple(
+                asset for asset in assets if asset.expression_key not in existing
+            )
+            if restored:
+                browser.pack = dataclasses.replace(pack, assets=pack.assets + restored)
+                browser.apply_filter(
+                    browser.query_one("#personas-visual-identity-filter", Input).value
+                )
+        for asset in assets:
+            browser.set_staged_change(asset.expression_key, "generate")
+        browser.set_generating(False)
+        return True
+
+    async def _generate_visual_identity_pack_all(self) -> bool:
+        """Confirm and stage one bounded 31-call generation sweep."""
+
+        snapshot = self._visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        pack = browser.pack if browser is not None else None
+        if pack is None:
+            return False
+        admission = self._begin_visual_identity_operation(snapshot)
+        if admission is None:
+            return False
+        task, event = admission
+        try:
+            dialog = ConfirmationDialog(
+                title="Generate all reactions",
+                message="Generate All makes 31 provider calls. Continue?",
+                confirm_label="Generate 31",
+                cancel_label="Cancel",
+            )
+            try:
+                confirmed = bool(await self.app.push_screen_wait(dialog))
+            except Exception:
+                confirmed = False
+            if (
+                not confirmed
+                or event.is_set()
+                or not self._visual_identity_author_snapshot_is_current(snapshot)
+            ):
+                return False
+            try:
+                assets = self._canonical_visual_identity_assets()
+            except (KeyError, TypeError, ValueError, RuntimeError):
+                self._notify("The reaction catalog is unavailable.", "warning")
+                return False
+            return await self._generate_visual_identity_assets_admitted(
+                snapshot, browser, assets, event
+            )
+        finally:
+            self._finish_visual_identity_operation(task, browser)
+
+    def _request_visual_identity_generation_cancel(self) -> None:
+        if self._visual_identity_publication_inflight:
+            return
+        event = self._visual_identity_operation_event
+        task = self._visual_identity_operation_task
+        if event is not None and task is not None and not task.done():
+            event.set()
+        else:
+            self._discard_visual_identity_authoring()
+            self._visual_identity_operation_event = None
+
+    async def _save_visual_identity_pack(
+        self, pack: VisualIdentityPackMetadata | None
+    ) -> bool:
+        state = self._visual_identity_authoring
+        if (
+            state is None
+            or pack is None
+            or (pack.pack_id, pack.pack_version_id)
+            != (state.snapshot.pack_id, state.snapshot.pack_version_id)
+            or not self._visual_identity_author_snapshot_is_current(state.snapshot)
+        ):
+            return False
+        admission = self._begin_visual_identity_operation(state.snapshot)
+        if admission is None:
+            return False
+        task, _event = admission
+        browser = state.snapshot.browser_ref()
+        published = False
+        saved = False
+        cancellation: asyncio.CancelledError | None = None
+        unexpected_error: Exception | None = None
+        try:
+            if browser is not None:
+                browser.set_saving(True)
+            self._visual_identity_publication_inflight = True
+            user_root = get_user_data_dir()
+            outcome = await _drain_to_thread(
+                publish_visual_identity_candidate,
+                state.snapshot.db,
+                state.candidate,
+                user_data_dir=user_root,
+                task_name="personas-reaction-pack-publish",
+            )
+            cancellation = outcome.cancellation
+            error = outcome.error
+            if isinstance(error, VisualIdentityPublicationError):
+                exc = error
+                token = exc.cleanup_candidate_relpath
+                if token is not None:
+                    cleanup = await _drain_to_thread(
+                        cleanup_visual_identity_publication_candidate,
+                        state.snapshot.db,
+                        token,
+                        user_data_dir=user_root,
+                        task_name="personas-reaction-pack-cleanup",
+                    )
+                    if cancellation is None:
+                        cancellation = cleanup.cancellation
+                    if cleanup.error is not None:
+                        logger.debug(
+                            "Visual Identity orphan cleanup refused "
+                            "(category=cleanup_failed)."
+                        )
+                if self._visual_identity_author_snapshot_is_current(state.snapshot):
+                    self._notify(
+                        f"Reaction pack was not saved ({exc.category}).", "error"
+                    )
+            elif isinstance(error, (ValueError, sqlite3.Error)):
+                if self._visual_identity_author_snapshot_is_current(state.snapshot):
+                    self._notify(
+                        "Reaction pack was not saved (visual_identity_save_failed).",
+                        "error",
+                    )
+            elif error is not None:
+                unexpected_error = error
+            elif not outcome.completed:
+                pass
+            elif not isinstance(outcome.value, VisualIdentityPublicationResult):
+                if self._visual_identity_author_snapshot_is_current(state.snapshot):
+                    self._notify(
+                        "Reaction pack was not saved (visual_identity_save_failed).",
+                        "error",
+                    )
+            else:
+                result = outcome.value
+                published = True
+                self._visual_identity_authoring = None
+
+                async def reconcile_publication() -> None:
+                    await self._invalidate_visual_identity_publication(result)
+                    if self._visual_identity_author_snapshot_is_current(state.snapshot):
+                        editor = state.snapshot.editor_ref()
+                        if editor is not None:
+                            await self._configure_character_visual_identity(
+                                _CharacterVisualIdentityLoadSnapshot(
+                                    editor_ref=weakref.ref(editor),
+                                    db=state.snapshot.db,
+                                    character_id=state.snapshot.character_id,
+                                    screen_generation=state.snapshot.screen_generation,
+                                    editor_session_token=state.snapshot.editor_session_token,
+                                )
+                            )
+
+                reconciliation = await _drain_async(
+                    reconcile_publication(),
+                    task_name="personas-reaction-pack-reconcile",
+                )
+                if cancellation is None:
+                    cancellation = reconciliation.cancellation
+                if reconciliation.error is not None:
+                    logger.warning(
+                        "Visual Identity publication committed but presentation "
+                        "failed (category=refresh_failed)."
+                    )
+                    self._notify(
+                        "Reaction pack saved, but the editor could not refresh.",
+                        "warning",
+                    )
+                saved = True
+        finally:
+            self._visual_identity_publication_inflight = False
+            if browser is not None and browser.parent is not None:
+                try:
+                    if published:
+                        browser.reset_staged()
+                    elif self._visual_identity_author_snapshot_is_current(
+                        state.snapshot
+                    ):
+                        browser.set_saving(False)
+                except QueryError:
+                    pass
+            self._finish_visual_identity_operation(task, browser)
+        if cancellation is not None:
+            raise cancellation
+        if unexpected_error is not None:
+            raise unexpected_error
+        return saved
+
+    async def _invalidate_visual_identity_publication(
+        self, result: VisualIdentityPublicationResult
+    ) -> None:
+        """Invalidate all mounted Console sessions for the published actor."""
+
+        for screen in tuple(getattr(self.app, "screen_stack", ())):
+            session = getattr(screen, "_session", None)
+            invalidate = getattr(session, "invalidate_visual_identity_actor", None)
+            if callable(invalidate):
+                try:
+                    await invalidate(result.actor_kind, result.actor_id)
+                except Exception:
+                    logger.warning(
+                        "Visual Identity Console invalidation failed "
+                        "(category=cache_invalidation_failed)."
+                    )
+
+    @on(VisualIdentityPackClearRequested)
+    def _handle_visual_identity_clear_requested(
+        self, message: VisualIdentityPackClearRequested
+    ) -> None:
+        message.stop()
+        operation = (
+            self._stage_persona_shared_visual_identity_clear(message.asset)
+            if self.state.active_mode == "personas"
+            else self._stage_visual_identity_clear(message.asset)
+        )
+        self.run_worker(
+            operation,
+            group="personas-visual-identity-authoring",
+            exit_on_error=False,
+        )
+
+    @on(VisualIdentityPackGenerateRequested)
+    def _handle_visual_identity_generate_requested(
+        self, message: VisualIdentityPackGenerateRequested
+    ) -> None:
+        message.stop()
+        if self.state.active_mode == "personas":
+            return
+        self.run_worker(
+            self._generate_visual_identity_assets((message.asset,)),
+            group="personas-visual-identity-authoring",
+            exit_on_error=False,
+        )
+
+    @on(VisualIdentityPackGenerateAllRequested)
+    def _handle_visual_identity_generate_all_requested(
+        self, message: VisualIdentityPackGenerateAllRequested
+    ) -> None:
+        message.stop()
+        if self.state.active_mode == "personas":
+            return
+        self.run_worker(
+            self._generate_visual_identity_pack_all(),
+            group="personas-visual-identity-authoring",
+            exit_on_error=False,
+        )
+
+    @on(VisualIdentityPackCancelRequested)
+    def _handle_visual_identity_cancel_requested(
+        self, message: VisualIdentityPackCancelRequested
+    ) -> None:
+        message.stop()
+        if self.state.active_mode == "personas":
+            self._request_persona_shared_visual_identity_cancel()
+            return
+        self._request_visual_identity_generation_cancel()
+
+    @on(VisualIdentityPackSaveRequested)
+    def _handle_visual_identity_save_requested(
+        self, message: VisualIdentityPackSaveRequested
+    ) -> None:
+        message.stop()
+        if self.state.active_mode == "personas":
+            self.run_worker(
+                self._save_persona_shared_visual_identity_pack(),
+                group="personas-persona-shared-visual-identity-save",
+                exit_on_error=False,
+            )
+            return
+        snapshot = self._visual_identity_author_snapshot()
+        browser = snapshot.browser_ref() if snapshot is not None else None
+        self.run_worker(
+            self._save_visual_identity_pack(browser.pack if browser else None),
+            group="personas-visual-identity-save",
+            exit_on_error=False,
+        )
+
+    @on(VisualIdentityPackReplaceRequested)
+    def _handle_visual_identity_replace_requested(
+        self, message: VisualIdentityPackReplaceRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._visual_identity_replace_dialog(
+                message.asset, persona_mode=self.state.active_mode == "personas"
+            ),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _visual_identity_replace_dialog(
+        self, asset: VisualIdentityAssetMetadata, *, persona_mode: bool = False
+    ) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            path = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title=f"Replace {asset.display_label} reaction",
+                    filters=Filters(
+                        (
+                            "Image Files",
+                            lambda value: (
+                                value.suffix.lower() in PERSONAS_AVATAR_IMAGE_SUFFIXES
+                            ),
+                        ),
+                    ),
+                    context="visual_identity_replacement",
+                )
+            )
+            if not path:
+                return
+            data = await asyncio.to_thread(self._read_avatar_image_bytes, str(path))
+            if persona_mode:
+                await self._stage_persona_shared_visual_identity_replacement(
+                    asset, data
+                )
+            else:
+                await self._stage_visual_identity_replacement(
+                    asset, data, source="upload"
+                )
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Reaction replacement failed (category=image_read_failed, error_type={}).",
+                type(exc).__name__,
+            )
+            self._notify("Reaction replacement failed. Choose another image.", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _render_character_expression_slot(
+        self, character_id: int, state: str
+    ) -> None:
+        """Decode and mount one expression slot's thumbnail off-thread.
+
+        Mirrors ``_render_character_editor_avatar``'s token-capture /
+        off-thread decode / post-await token re-check, scoped to a single
+        (character, state) pair read from ``character_expression_images``
+        (Task 1's DB seam) rather than the staged avatar bytes on the
+        character record. Reading the DB is itself an extra off-thread await
+        beyond the avatar path, so the token is re-checked after that read
+        too, not just after the image decode.
+
+        Args:
+            character_id: The character's row id.
+            state: One of ``EXPRESSION_IMAGE_STATES``.
+        """
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            editor.set_expression_thumbnail(state, None)
+            return
+        token = self._character_editor_generation
+        try:
+            data = await asyncio.to_thread(
+                db.get_character_expression_image, character_id, state
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Could not read the {state} expression image for character "
+                f"{character_id}."
+            )
+            data = None
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while reading
+        if not data:
+            editor.set_expression_thumbnail(state, None)
+            return
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        # Per-session, per-state cache key: same rationale as the avatar's
+        # own cache_key (avoid one session's decode racing another's, or one
+        # state's racing another's, under the same cache slot).
+        cache_key = f"char-editor-expr-{state}-{token}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug(f"{state} expression image decode failed.")
+            ok = False
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while decoding
+        renderable = None
+        if ok:
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as _GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = _GraphicsImage(pil)
+                        # Fixed cell size - same rationale as the avatar's own
+                        # render (see _render_character_editor_avatar): both
+                        # dims must stay explicit ints to avoid a transient
+                        # 0-width/height resize() crash.
+                        w_cells, h_cells = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = w_cells
+                        renderable.styles.height = h_cells
+                except Exception:
+                    renderable = self._build_avatar_pixels(cache, cache_key)
+            else:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        editor.set_expression_thumbnail(state, renderable)
+
+    @on(CharacterImageRemoveRequested)
+    def _handle_character_image_remove(
+        self, message: CharacterImageRemoveRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor._character_data.pop("image", None)
+        self._note_actor_pack_portrait_change()
+        editor._mark_dirty()
+        # A discrete user action (Remove button) - validate immediately, no
+        # debounce, so an avatar-oversize error clears at once on removal.
+        editor._user_touched = True
+        editor._run_validation()
+        # Bump the generation BEFORE dispatching this render (rather than
+        # relying on the render below to be the last word): an earlier
+        # in-flight render from before Remove was clicked shares this
+        # session's token and would otherwise complete afterwards and
+        # re-mount the just-removed image, visually undoing Remove. Bumping
+        # first makes that stale render's token mismatch (dropped), while
+        # this dispatch below captures the NEW token and correctly clears
+        # the thumbnail (image is now None).
+        self._character_editor_generation += 1
+        self.run_worker(
+            self._render_character_editor_avatar(),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
+
+    # ===== Expression authoring slots (Roleplay P3d-1 Task 4) =====
+    #
+    # Independent of the character card's own optimistic-lock version: these
+    # write straight to character_expression_images (Task 1's DB seam), never
+    # to character_cards - no card save, no version bump.
+
+    async def _apply_expression_set(
+        self, character_id: int, images: dict
+    ) -> "ExpressionSetApplyResult":
+        """Apply a resolved expression set: idle staged in the editor (persists on
+        card save), the three reactive states written immediately. Bumps the render
+        token ONCE, then re-renders the affected slots + the avatar thumbnail.
+
+        Does NOT call ``_apply_expression_upload`` per state - that bumps the
+        generation token each time and would drop the prior slot's in-flight
+        render (the P3d-1 render-race). Every write here shares a single fresh
+        token before the (single) re-render pass.
+        """
+        from ...Character_Chat.expression_set_io import (
+            apply_expression_images_to_db,
+            ExpressionSetApplyResult,
+        )
+
+        if not self._local_character_actions_allowed():
+            return ExpressionSetApplyResult(applied=[], skipped=[])
+        applied: list[str] = []
+        skipped: list = []
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        # idle -> stage in the editor (like a manual avatar upload)
+        idle = images.get("idle")
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            editor = None
+        if idle and editor is not None:
+            # Guard the stage so the orchestrator NEVER raises into its caller
+            # (the import worker runs with exit_on_error=True, and P3d-3's .vpack
+            # extractor will reuse this too). Callers are expected to pass
+            # PIL-validated bytes; a bad idle degrades to a skip, not a crash.
+            try:
+                editor.set_avatar_image(idle)
+                self._note_actor_pack_portrait_change()
+                applied.append("idle")
+            except Exception as exc:
+                skipped.append(("idle", f"could not stage avatar: {exc}"))
+        # three -> DB (immediate), off-thread
+        if db is not None:
+            db_applied, db_skipped = await asyncio.to_thread(
+                apply_expression_images_to_db, db, character_id, images
+            )
+            applied.extend(db_applied)
+            skipped.extend(db_skipped)
+        # single generation bump, then ONE re-render of the avatar + all 3 slots
+        self._character_editor_generation += 1
+        await self._render_all_character_editor_thumbnails(character_id)
+        return ExpressionSetApplyResult(applied=applied, skipped=skipped)
+
+    async def _apply_expression_upload(
+        self, character_id: int, state: str, image: bytes, mime: str | None = None
+    ) -> bool:
+        """Write an uploaded expression-state image and re-render its slot.
+
+        Returns:
+            ``True`` when the DB write actually persisted, ``False`` on a
+            missing-database or write failure (already notified here).
+            Task-563 AC4: a caller that aggregates multiple slots (the
+            Generate-all sweep) must count only genuinely persisted slots
+            rather than treating "this call didn't raise" as success -
+            without this return value, a swallowed DB-write failure here
+            was invisible to the caller and the sweep's summary silently
+            overstated its count even though the user already saw this
+            method's own error notify.
+        """
+        if not self._local_character_actions_allowed():
+            return False
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            self._notify("Database is not available.", "error")
+            return False
+        try:
+            await asyncio.to_thread(
+                db.set_character_expression_image, character_id, state, image, mime
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Could not save the {state} expression image for character "
+                f"{character_id}: {exc}"
+            )
+            self._notify(f"Expression upload failed: {exc}", "error")
+            return False
+        self._character_editor_generation += 1
+        self._notify(f"{state.capitalize()} expression image saved.", "information")
+        await self._render_character_expression_slot(character_id, state)
+        return True
+
+    async def _clear_expression_slot(self, character_id: int, state: str) -> None:
+        """Soft-delete an expression-state image and clear its slot's thumbnail."""
+        if not self._local_character_actions_allowed():
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            self._notify("Database is not available.", "error")
+            return
+        try:
+            await asyncio.to_thread(
+                db.delete_character_expression_image, character_id, state
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Could not clear the {state} expression image for character "
+                f"{character_id}: {exc}"
+            )
+            self._notify(f"Could not clear the {state} expression image.", "error")
+            return
+        self._character_editor_generation += 1
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor.set_expression_thumbnail(state, None)
+
+    @on(CharacterExpressionUploadRequested)
+    def _handle_character_expression_upload_requested(
+        self, message: CharacterExpressionUploadRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before uploading an expression image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "upload request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._expression_upload_dialog_worker(character_id, message.state),
+            group="personas-io",
+        )
+
+    def _image_generation_backend_warning(self) -> str | None:
+        """Return a warning string if no usable image-gen backend is
+        configured, else ``None``.
+
+        Image-gen P3 Task 4: factored out of the single-slot generate
+        handler so the avatar and Generate-all handlers share the exact
+        same check + copy (matches the Console's own ``/generate-image``
+        refusal text) instead of three near-duplicate blocks.
+        """
+        cfg = get_image_generation_config()
+        backend = cfg.default_backend
+        if not backend:
+            return (
+                "No image generation backend configured. Set "
+                "[image_generation].default_backend."
+            )
+        catalog = list_image_models_for_catalog()
+        entry = next((item for item in catalog if item.get("name") == backend), None)
+        if entry is None or not entry.get("is_configured"):
+            return (
+                f"Image backend '{backend}' is not enabled/configured. "
+                "Check [image_generation] settings."
+            )
+        return None
+
+    @on(CharacterExpressionGenerateRequested)
+    def _handle_character_expression_generate_requested(
+        self, message: CharacterExpressionGenerateRequested
+    ) -> None:
+        """Dispatch an AI-generation worker for one expression-state slot.
+
+        Image-gen P3 Task 3: mirrors ``_handle_character_expression_upload_
+        requested``'s gate sequence (editor active -> saved character ->
+        not-already-busy) with two extra gates specific to generation: the
+        live description must be non-empty (there's nothing to prompt from
+        otherwise), and the configured backend must actually be usable
+        (same check + copy as the Console's ``/generate-image`` command).
+        """
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating an expression image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        backend_warning = self._image_generation_backend_warning()
+        if backend_warning:
+            self._notify(backend_warning, "warning")
+            return
+        key = (character_id, message.state)
+        if key in self._expression_generate_inflight:
+            self._notify(
+                f"Already generating the {message.state} expression image.",
+                "warning",
+            )
+            return
+        # task-563 AC5: the "all" key is held for the sweep's ENTIRE
+        # duration (added at dispatch, discarded in the sweep worker's own
+        # finally after the loop) - unlike a per-slot key, which is freed
+        # the instant THAT slot's own generation finishes while the sweep
+        # keeps going. Without this check, a click here for a state the
+        # sweep just finished (or hasn't reached yet) would race an
+        # independent, redundant regeneration against the still-running
+        # sweep instead of being refused outright.
+        if (character_id, "all") in self._expression_generate_inflight:
+            self._notify(
+                "Generate all is already running for this character.", "warning"
+            )
+            return
+        self._expression_generate_inflight.add(key)
+        # task-563 AC2: the in-slot busy affordance (spec §1) - set here,
+        # at the same moment the in-flight key is claimed; cleared from
+        # _generate_one_slot's own finally (success AND failure alike).
+        editor.set_expression_generating(message.state, True)
+        self.run_worker(
+            self._generate_expression_image_worker(character_id, message.state),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterAvatarGenerateRequested)
+    def _handle_character_avatar_generate_requested(
+        self, message: CharacterAvatarGenerateRequested
+    ) -> None:
+        """Dispatch an AI-generation worker for the avatar image.
+
+        Image-gen P3 Task 4: mirrors ``_handle_character_expression_generate_
+        requested``'s gate sequence, but WITHOUT the saved-character gate -
+        a generated avatar stages into the editor exactly like a manually
+        uploaded one (``PersonasCharacterEditorWidget.set_avatar_image``),
+        persisting only once the character is Saved, so an unsaved
+        (id-less) session is allowed to generate one. The in-flight key
+        therefore carries ``character_id`` (``None`` when unsaved) rather
+        than requiring it non-``None``.
+        """
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating an avatar image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        backend_warning = self._image_generation_backend_warning()
+        if backend_warning:
+            self._notify(backend_warning, "warning")
+            return
+        character_id = editor.expression_character_id()
+        key = (character_id, "avatar")
+        if key in self._expression_generate_inflight:
+            self._notify("Already generating the avatar image.", "warning")
+            return
+        # task-563 AC5: same narrow-race guard as the expression-slot
+        # handler above - the avatar is itself one of the sweep's four
+        # states, so it must also be refused while a sweep is running.
+        if (character_id, "all") in self._expression_generate_inflight:
+            self._notify(
+                "Generate all is already running for this character.", "warning"
+            )
+            return
+        self._expression_generate_inflight.add(key)
+        editor.set_avatar_generating(True)  # task-563 AC2
+        self.run_worker(
+            self._generate_expression_image_worker(character_id, "avatar"),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterExpressionGenerateAllRequested)
+    def _handle_character_expression_generate_all_requested(
+        self, message: CharacterExpressionGenerateAllRequested
+    ) -> None:
+        """Dispatch a single worker that generates avatar + all 3 expression
+        states sequentially.
+
+        Image-gen P3 Task 4: gates once, up front, exactly like the
+        single-slot handler (a saved character IS required here - unlike
+        the avatar-only handler, the sweep also covers the three DB-backed
+        expression states, which always require an id). The ``"all"``
+        pseudo-state claims its own in-flight key so a second Generate-all
+        click is refused independent of any individual slot's own key.
+        """
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before generating expression images.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if not editor._area("description").text.strip():
+            self._notify("Add a description first.", "warning")
+            return
+        backend_warning = self._image_generation_backend_warning()
+        if backend_warning:
+            self._notify(backend_warning, "warning")
+            return
+        all_key = (character_id, "all")
+        if all_key in self._expression_generate_inflight:
+            self._notify("Already generating all expression images.", "warning")
+            return
+        self._expression_generate_inflight.add(all_key)
+        self.run_worker(
+            self._generate_all_expression_images_worker(character_id),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterExpressionStylePickRequested)
+    def _handle_expression_style_pick_requested(
+        self, message: CharacterExpressionStylePickRequested
+    ) -> None:
+        """Open the style picker to set the AI-generation style template.
+
+        Image-gen P3 Task 4: same io-dialog convention as
+        ``_handle_character_expression_upload_requested``
+        (``_io_dialog_active`` refuse-reentry, since this too pushes a
+        modal via ``push_screen_wait``), but distinct from the whole
+        upload/generate/import/export family - it never touches the DB or
+        an in-flight generation key, only the picked-style state consulted
+        by the next generation.
+        """
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring style pick request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._expression_style_pick_dialog_worker(),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    @on(CharacterExpressionClearRequested)
+    def _handle_character_expression_clear_requested(
+        self, message: CharacterExpressionClearRequested
+    ) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            return
+        self.run_worker(
+            self._clear_expression_slot(character_id, message.state),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
+
+    async def _expression_upload_dialog_worker(
+        self, character_id: int, state: str
+    ) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            picker = EnhancedFileOpen(
+                title=f"Upload {state.capitalize()} Expression Image",
+                filters=Filters(
+                    (
+                        "Image Files",
+                        lambda p: p.suffix.lower() in PERSONAS_AVATAR_IMAGE_SUFFIXES,
+                    ),
+                    ("PNG Files", lambda p: p.suffix.lower() == ".png"),
+                    ("JPEG Files", lambda p: p.suffix.lower() in (".jpg", ".jpeg")),
+                    ("WEBP Files", lambda p: p.suffix.lower() == ".webp"),
+                    ("GIF Files", lambda p: p.suffix.lower() == ".gif"),
+                ),
+                context="character_expression_upload",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the expression image upload file dialog."
+                )
+                return
+            if file_path:
+                if not self._local_character_actions_allowed():
+                    return
+                await self._stage_character_expression_from_path(
+                    character_id, state, str(file_path)
+                )
+        finally:
+            self._io_dialog_active = False
+
+    async def _stage_character_expression_from_path(
+        self, character_id: int, state: str, path: str
+    ) -> None:
+        if not self._local_character_actions_allowed():
+            return
+        session_token = self._character_editor_session_token()
+        if session_token is None:
+            self._notify(
+                "Open a character editor before uploading an expression image.",
+                "warning",
+            )
+            return
+        try:
+            # Reuses the avatar's own read (suffix allowlist + size cap +
+            # non-empty check) - the same constraints apply to expression
+            # images.
+            image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
+        except ValueError as exc:
+            self._notify(str(exc), "error")
+            return
+        except OSError as exc:
+            logger.opt(exception=True).error(
+                f"Error reading expression image from {path}: {exc}"
+            )
+            self._notify(f"Expression upload failed: {exc}", "error")
+            return
+        if self._character_editor_session_token() != session_token:
+            logger.debug(
+                "Expression upload result ignored because the character "
+                f"editor session changed. path={path!r}, state={state!r}, "
+                f"original_session={session_token!r}, "
+                f"current_session={self._character_editor_session_token()!r}"
+            )
+            return
+        if not self._local_character_actions_allowed():
+            return
+        import mimetypes
+
+        mime = mimetypes.guess_type(path)[0]
+        await self._apply_expression_upload(character_id, state, image_data, mime)
+
+    async def _generate_one_slot(
+        self,
+        character_id: int | None,
+        state: str,
+        style_template: GenerationTemplate | None,
+    ) -> bool:
+        """Generate one avatar/expression-state image and stage/write it.
+
+        Image-gen P3 Task 4: the shared core both
+        ``_generate_expression_image_worker`` (single-slot, including the
+        avatar) and ``_generate_all_expression_images_worker`` (the
+        sequential Generate-all sweep) call per state - the original Task 3
+        worker's body, factored out so both share one implementation.
+
+        Reads live (unsaved) form values straight from the editor's
+        widgets - never ``_character_data`` - since the user may be
+        generating from text they haven't saved yet. The blocking adapter
+        call runs off-thread via ``asyncio.to_thread``; the session token
+        is captured immediately before that await and re-checked
+        immediately after, mirroring ``_stage_character_expression_from_
+        path``'s stale-write guard so a Cancel/new-session/save-in-place
+        that happens mid-generation drops the result instead of writing it
+        into the wrong (or no-longer-open) character.
+
+        The ``"avatar"`` state stages the result into the editor (persists
+        on the next Save) exactly like a manual avatar upload - rejecting
+        an oversized result the same way ``_read_avatar_image_bytes``
+        rejects an oversized upload - then kicks the same off-thread
+        thumbnail render an upload does. The three DB-backed expression
+        states write straight through ``_apply_expression_upload`` (the
+        same seam a manual upload uses).
+
+        Never raises: every failure path (prompt composition, request
+        validation, adapter call, oversized avatar, DB write) notifies once
+        and returns ``False`` instead of propagating into the worker's
+        default panic-on-exception behavior - so a Generate-all sweep can
+        keep going through the remaining slots after one fails.
+
+        Args:
+            character_id: The character's row id, or ``None`` for the
+                avatar state on an unsaved (id-less) session.
+            state: ``"avatar"`` or one of ``EXPRESSION_IMAGE_STATES``.
+            style_template: The style template to compose the prompt with,
+                or ``None`` for a plain (unstyled) composition.
+
+        Returns:
+            ``True`` if the image was generated and applied/staged,
+            ``False`` on any failure.
+        """
+        key = (character_id, state)
+        try:
+            if not self._local_character_actions_allowed():
+                return False
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            name = editor._input("name").value
+            description = editor._area("description").text
+            personality = editor._area("personality").text
+            prompt, negative_prompt, params = compose_expression_prompt(
+                name=name,
+                description=description,
+                personality=personality,
+                state=state,
+                style_template=style_template,
+            )
+            cfg = get_image_generation_config()
+            request = build_request(
+                backend=cfg.default_backend,
+                prompt=prompt,
+                negative_prompt=negative_prompt or None,
+                seed=-1,
+                image_format="png",
+                width=params.get("width"),
+                height=params.get("height"),
+                steps=params.get("steps"),
+                cfg_scale=params.get("cfg_scale"),
+            )
+            session_token = self._character_editor_session_token()
+            if session_token is None:
+                logger.debug(
+                    "Image generation skipped because no character editor "
+                    f"session is open. character_id={character_id!r}, "
+                    f"state={state!r}"
+                )
+                return False
+            result = await asyncio.to_thread(run_generation, request)
+            if self._character_editor_session_token() != session_token:
+                logger.debug(
+                    "Image generation result ignored because the character "
+                    f"editor session changed. character_id={character_id!r}, "
+                    f"state={state!r}, original_session={session_token!r}, "
+                    f"current_session={self._character_editor_session_token()!r}"
+                )
+                return False
+            if not self._local_character_actions_allowed():
+                return False
+            if state == "avatar":
+                if len(result.content) > PERSONAS_AVATAR_MAX_BYTES:
+                    self._notify(
+                        "Generated avatar image must be "
+                        f"{PERSONAS_AVATAR_MAX_SIZE_COPY} or smaller.",
+                        "error",
+                    )
+                    return False
+                editor.set_avatar_image(result.content)
+                self._note_actor_pack_portrait_change()
+                self.run_worker(
+                    self._render_character_editor_avatar(),
+                    group="personas-avatar-render",
+                    exit_on_error=False,
+                )
+                self._notify("Avatar image generated — Save to keep it.", "information")
+                return True
+            # Propagate the write's real outcome (task-563 AC4) - a DB-write
+            # failure here already notified via _apply_expression_upload's
+            # own error path and must not be double-counted as a success by
+            # an aggregating caller (the Generate-all sweep's k/N summary).
+            return await self._apply_expression_upload(
+                character_id, state, result.content, result.content_type
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Image generation failed for character {character_id!r} "
+                f"state={state!r}: {exc}"
+            )
+            self._notify(f"Image generation failed for {state}: {exc}", "error")
+            return False
+        finally:
+            self._expression_generate_inflight.discard(key)
+            # task-563 AC2: clear the busy affordance on BOTH the success
+            # and failure paths above (this finally runs either way).
+            self._clear_slot_generating_indicator(character_id, state)
+
+    def _set_slot_generating(
+        self, editor: "PersonasCharacterEditorWidget", state: str, busy: bool
+    ) -> None:
+        """Route to the avatar or per-state expression busy-indicator
+        setter (task-563 AC2) - ``"avatar"`` is one of
+        ``EXPRESSION_PROMPT_STATES`` but has its own Static
+        (``avatar-status``), not a per-state ``-hint``.
+        """
+        if state == "avatar":
+            editor.set_avatar_generating(busy)
+        else:
+            editor.set_expression_generating(state, busy)
+
+    def _clear_slot_generating_indicator(
+        self, character_id: int | None, state: str
+    ) -> None:
+        """Clear the in-slot "Generating…" affordance set at dispatch
+        (task-563 AC2), but only into the still-open editor session for the
+        SAME character.
+
+        Mirrors ``_generate_all_expression_images_worker``'s own per-
+        iteration identity re-check (character id, not the session token -
+        the token's generation counter is bumped by ``_apply_expression_
+        upload`` on every successful write, which would make a token
+        captured before this call already look stale for this call's own
+        success). Without this guard, a character switch mid-generation
+        (the same race ``_generate_all_expression_images_worker`` already
+        defends the DB writes against) could paint this slot's stale busy
+        state onto whatever a DIFFERENT character now has loaded in the
+        same-named slot; the switch's own ``_sync_expression_slots_enabled``/
+        ``_set_avatar_status_from_record`` call already reset the widget for
+        real, and a currently-generating slot on that OTHER character must
+        not be clobbered either.
+        """
+        if not self._character_editor_is_active():
+            return
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        if editor.expression_character_id() != character_id:
+            return
+        self._set_slot_generating(editor, state, False)
+
+    async def _generate_expression_image_worker(
+        self, character_id: int | None, state: str
+    ) -> None:
+        """Single-slot generate worker: a thin wrapper over
+        ``_generate_one_slot`` using the currently-picked style template
+        (Image-gen P3 Task 4's refactor of the original Task 3 worker
+        body - this method's behavior is unchanged, only its
+        implementation moved).
+        """
+        if not self._local_character_actions_allowed():
+            self._expression_generate_inflight.discard((character_id, state))
+            return
+        await self._generate_one_slot(
+            character_id, state, getattr(self, "_expression_generate_style", None)
+        )
+
+    async def _generate_all_expression_images_worker(self, character_id: int) -> None:
+        """Generate avatar + all 3 expression-state images sequentially.
+
+        Image-gen P3 Task 4: reuses ``_generate_one_slot`` per state, so
+        each slot gets the exact same per-slot in-flight guard,
+        session-token guard, and error isolation as a single-slot
+        generate - one state's failure does not abort the sweep. A slot
+        already claimed by an independent single-slot generate click
+        (started just before this sweep) is skipped rather than raced.
+        Reports a single "k/N generated" summary at the end (N =
+        len(EXPRESSION_PROMPT_STATES)) - counting only
+        the slots that actually completed before any session-identity
+        mismatch stopped the sweep (see below).
+
+        Re-checks session identity at the TOP of every iteration (not just
+        once up front) and stops the sweep the moment it no longer matches
+        the character this sweep was launched for - the user may cancel the
+        editor and open a different character in the same widget between
+        slots, and each slot's own generation can take long enough for that
+        to happen mid-sweep. This deliberately does NOT reuse
+        ``_character_editor_session_token()`` for that check: the token's
+        generation counter is bumped by ``_apply_expression_upload`` on
+        every successful write (Task 1's staleness signal for OTHER
+        seams), so a token captured before the loop would already
+        mismatch after this sweep's own first successful slot. Comparing
+        the freshly-resolved editor's loaded character id is immune to
+        that self-inflicted bump.
+
+        Task-563 AC3: before the loop, checks whether the sweep would
+        overwrite anything already present (a staged avatar or any of the
+        3 DB-backed expression states) and, only then, confirms via
+        ``_confirm_generate_all_overwrite`` - the sweep's blast radius (up
+        to 4 slots) exceeds the per-slot regenerate-by-click contract, so a
+        single click here should not silently clobber existing images. A
+        decline aborts with no writes and no "k/N generated" summary
+        (which would misleadingly read as an attempt that under-performed
+        rather than a request the user actively withdrew).
+        """
+        if not self._local_character_actions_allowed():
+            self._expression_generate_inflight.discard((character_id, "all"))
+            return
+        style_template = getattr(self, "_expression_generate_style", None)
+        succeeded = 0
+        cancelled = False
+        try:
+            try:
+                editor = self.query_one(PersonasCharacterEditorWidget)
+            except QueryError:
+                return
+            if await self._generate_all_would_overwrite(character_id, editor):
+                if not await self._confirm_generate_all_overwrite():
+                    cancelled = True
+                    return
+            for state in EXPRESSION_PROMPT_STATES:
+                if not self._character_editor_is_active():
+                    break
+                try:
+                    editor = self.query_one(PersonasCharacterEditorWidget)
+                except QueryError:
+                    break
+                if editor.expression_character_id() != character_id:
+                    break
+                slot_key = (character_id, state)
+                if slot_key in self._expression_generate_inflight:
+                    continue
+                self._expression_generate_inflight.add(slot_key)
+                self._set_slot_generating(editor, state, True)  # task-563 AC2
+                if await self._generate_one_slot(character_id, state, style_template):
+                    succeeded += 1
+        finally:
+            self._expression_generate_inflight.discard((character_id, "all"))
+        if not cancelled:
+            self._notify(
+                f"{succeeded}/{len(EXPRESSION_PROMPT_STATES)} generated.",
+                "information",
+            )
+
+    async def _generate_all_would_overwrite(
+        self, character_id: int, editor: "PersonasCharacterEditorWidget"
+    ) -> bool:
+        """True when a Generate-all sweep would overwrite an existing
+        avatar or expression image (task-563 AC3).
+
+        Checks the editor's staged/persisted avatar first (cheap, no DB
+        round trip), then each of the 3 DB-backed expression states
+        (mirrors ``_render_character_expression_slot``'s own read) -
+        stopping at the first hit.
+        """
+        if not self._local_character_actions_allowed():
+            return True
+        if editor.has_avatar_image():
+            return True
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return False
+        for state in EXPRESSION_IMAGE_STATES:
+            try:
+                data = await asyncio.to_thread(
+                    db.get_character_expression_image, character_id, state
+                )
+            except Exception:
+                # Fail CLOSED: unknown overwrite status must force the
+                # confirmation, never silently skip a consent gate.
+                logger.opt(exception=True).debug(
+                    f"Could not check the existing {state} expression image "
+                    f"for character {character_id}; forcing the Generate-all "
+                    "overwrite confirmation."
+                )
+                return True
+            if data:
+                return True
+        return False
+
+    async def _confirm_generate_all_overwrite(self) -> bool:
+        """True when the user confirmed overwriting existing images
+        (task-563 AC3; requires a worker context, same as ``_confirm_
+        delete``/``_confirm_dictionary_revert``)."""
+        dialog = ConfirmationDialog(
+            title="Generate all",
+            message=(
+                "This will overwrite the existing avatar and/or expression "
+                "images. Continue?"
+            ),
+            confirm_label="Generate all",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not show the Generate-all overwrite confirmation "
+                "dialog; skipping the sweep."
+            )
+            self._notify(
+                "Could not show the overwrite confirmation; Generate-all cancelled.",
+                "warning",
+            )
+            return False
+
+    async def _expression_style_pick_dialog_worker(self) -> None:
+        """Show the style picker; store the choice and refresh the readout.
+
+        Image-gen P3 Task 4: ``None`` (Escape/Cancel) keeps whatever style
+        was previously picked - matches ``ConsoleStylePickerModal``'s own
+        ``dismiss(None)`` convention. The modal's docstring documents that
+        its CALLER is responsible for restoring focus once it dismisses
+        (it only dismisses itself); this refocuses the button that opened
+        it, mirroring how the Console's own style-insert flow refocuses
+        its composer after the same modal closes. Mirrors
+        ``_expression_upload_dialog_worker``'s own nested try/except around
+        ``push_screen_wait``; the dispatching ``run_worker`` call also
+        passes ``exit_on_error=False`` (final review F5) so an uncaught
+        exception here only kills this dialog's worker instead of the app.
+        """
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            try:
+                choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the image-generation style picker."
+                )
+                return
+            if choice is not None:
+                style_id = str(choice.get("id") or "")
+                self._expression_generate_style = get_template(style_id)
+                self._update_expression_style_readout()
+        finally:
+            self._io_dialog_active = False
+            try:
+                self.query_one("#personas-char-editor-style-pick", Button).focus()
+            except QueryError:
+                pass
+
+    def _update_expression_style_readout(self) -> None:
+        """Sync the editor's "Style: {name}" / "Style: Custom" readout to
+        ``self._expression_generate_style``."""
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        template = self._expression_generate_style
+        text = f"Style: {template.name}" if template is not None else "Style: Custom"
+        editor.set_style_readout(text)
+
+    def _reset_expression_generate_style(self) -> None:
+        """Clear the picked style template at a genuine editor-session
+        boundary (fix round 1).
+
+        The picked style is scoped to "this editor session, not persisted"
+        (Task 4's spec) - without this, a style picked while editing
+        character A silently bleeds into character B once opened in the
+        same screen session, since ``_expression_generate_style`` is
+        otherwise screen-lifetime state.
+
+        Called only from the 3 sites where ``_character_editor_generation``
+        bumps to mark a genuinely NEW/ended character-editor session
+        (``_begin_create_character``, ``_handle_edit_requested``,
+        ``_finish_cancel_edit``) - NOT from the other bump sites in this
+        file (avatar Remove, expression-set apply, expression upload/clear,
+        save-in-place), which bump the same counter merely to invalidate a
+        stale in-flight render within the SAME session and must leave a
+        picked style untouched.
+        """
+        self._expression_generate_style = None
+        self._update_expression_style_readout()
+
+    # ===== Expression SET import/export (Roleplay P3d-2 Task 4) =====
+    #
+    # Distinct from the per-slot upload/clear above: these move the whole
+    # idle/thinking/speaking/error set at once, as a .zip built by
+    # expression_set_io (Tasks 1-2) and applied via _apply_expression_set
+    # (Task 3). Same dialog-worker / dialog-free-path-method split as the
+    # rest of the screen's import/export flows.
+
+    @on(CharacterExpressionSetImportRequested)
+    def _handle_expression_set_import_requested(self, message) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before importing an expression set.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to import an expression set.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "set import request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._expression_set_import_dialog_worker(character_id),
+            group="personas-io",
+        )
+
+    async def _expression_set_import_dialog_worker(self, character_id: int) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            picker = EnhancedFileOpen(
+                title="Import Expression Set (.zip)",
+                filters=Filters(
+                    (
+                        "Archives",
+                        lambda p: p.suffix.lower() == ".zip",
+                    ),
+                ),
+                context="character_expression_set_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the expression-set import dialog."
+                )
+                return
+            if file_path:
+                if not self._local_character_actions_allowed():
+                    return
+                await self._import_expression_set_from_path(
+                    character_id, str(file_path)
+                )
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_expression_set_from_path(
+        self, character_id: int, path: str
+    ) -> None:
+        """Resolve an expression-set ``.zip`` at ``path`` and apply it.
+
+        Dialog-free (directly testable): the path is validated at this
+        screen boundary (the pure ``expression_set_io`` module never imports
+        ``path_validation``), then resolution happens off-thread via
+        ``asyncio.to_thread`` since it decodes/validates images, then
+        delegates to ``_apply_expression_set`` (Task 3) for the actual
+        idle-staged/three-immediate application.
+        """
+        if not self._local_character_actions_allowed():
+            return
+        from ...Character_Chat.expression_set_io import resolve_local_expression_set
+
+        try:
+            candidate = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+
+        res = await asyncio.to_thread(resolve_local_expression_set, [candidate])
+        if not self._local_character_actions_allowed():
+            return
+        if not res.images:
+            reason = (
+                "; ".join(n for n, _ in res.skipped[:2])
+                or "; ".join(res.notes[:1])
+                or "no matching images"
+            )
+            self._notify(f"Nothing imported ({reason}).", "warning")
+            return
+        result = await self._apply_expression_set(character_id, res.images)
+        applied = ", ".join(result.applied) or "nothing"
+        note = " — save the character to keep idle" if "idle" in result.applied else ""
+        self._notify(f"Imported: {applied}.{note}", "information")
+
+    @on(CharacterExpressionSetExportRequested)
+    def _handle_expression_set_export_requested(self, message) -> None:
+        message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        if not self._character_editor_is_active():
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify(
+                "Save the character before exporting its expression set.", "warning"
+            )
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "set export request."
+            )
+            return
+        self._io_dialog_active = True
+        # Screen state, not the editor: the editor widget has no name
+        # accessor (mirrors _dictionary_export_worker's own name source).
+        name = str(self.state.selected_entity_name or "character")
+        self.run_worker(
+            self._export_expression_set_worker(character_id, name),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _export_expression_set_worker(self, character_id: int, name: str) -> None:
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            target = await self._export_expression_set(character_id, name)
+            if target:
+                self._notify(f"Expression set exported to {target}.", "information")
+        except Exception as exc:
+            logger.opt(exception=True).error(f"Expression-set export failed: {exc}")
+            self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _export_expression_set(self, character_id: int, name: str) -> str | None:
+        """Build the export .zip and write it to the exports dir (atomic).
+
+        Dialog-free (directly testable). Collects the idle image from the
+        editor's staged/loaded avatar bytes plus the three reactive states
+        from the DB, then mirrors ``_dictionary_export_worker``'s exports-dir
+        + atomic temp-replace pattern (bytes here, not text, since this is a
+        zip archive).
+
+        Returns:
+            The written file's path, or ``None`` when there is nothing to
+            export (already surfaced via ``_notify``).
+        """
+        if not self._local_character_actions_allowed():
+            return None
+        from ...Character_Chat.expression_set_io import build_expression_set_zip
+
+        images: dict[str, bytes] = {}
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            idle = editor.current_avatar_bytes()
+            if idle:
+                images["idle"] = idle
+        except QueryError:
+            pass
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is not None:
+            for state in EXPRESSION_IMAGE_STATES:
+                data = await asyncio.to_thread(
+                    db.get_character_expression_image, character_id, state
+                )
+                if data:
+                    images[state] = data
+        if not images:
+            self._notify(
+                "This character has no expression images to export.", "warning"
+            )
+            return None
+        blob = await asyncio.to_thread(build_expression_set_zip, name, images)
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "character"
+        # Microsecond precision (not _dictionary_export_worker's second
+        # precision): concurrent exports of the same character within one
+        # second would otherwise collide on the target/temp filenames.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        exports_dir = get_user_data_dir() / "exports"
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        target = exports_dir / f"{slug}-expressions-{stamp}.zip"
+        temp = exports_dir / f".{slug}-expressions-{stamp}.zip.tmp"
+        try:
+            temp.write_bytes(blob)
+            temp.replace(target)
+        except OSError:
+            temp.unlink(missing_ok=True)
+            raise
+        return str(target)
 
     # ===== Import / export =====
     #
@@ -1445,11 +13261,17 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterImageUploadRequested
     ) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
         if not self._character_editor_is_active():
-            self._notify("Open a character editor before uploading an avatar.", "warning")
+            self._notify(
+                "Open a character editor before uploading an avatar.", "warning"
+            )
             return
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring avatar upload request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring avatar upload request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._avatar_upload_dialog_worker(), group="personas-io")
@@ -1458,6 +13280,8 @@ class PersonasScreen(BaseAppScreen):
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         try:
+            if not self._local_character_actions_allowed():
+                return
             picker = EnhancedFileOpen(
                 title="Upload Character Avatar",
                 filters=Filters(
@@ -1475,17 +13299,28 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the avatar upload file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the avatar upload file dialog."
+                )
                 return
             if file_path:
+                if not self._local_character_actions_allowed():
+                    return
                 await self._stage_character_avatar_from_path(str(file_path))
         finally:
             self._io_dialog_active = False
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
+        if not self._local_character_actions_allowed():
+            return
+        if self._active_character_import_worker() is not None:
+            self._notify("A character import is already in progress.", "information")
+            return
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring import request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring import request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._import_dialog_worker(), group="personas-io")
@@ -1493,95 +13328,764 @@ class PersonasScreen(BaseAppScreen):
     async def _import_dialog_worker(self) -> None:
         # Same dialog family as the legacy CCP import route
         # (ccp_character_handler.handle_import).
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen
+
+        durable_import_started = False
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            picker = EnhancedFileOpen(
+                title="Import Character Card",
+                filters=_character_import_filters(),
+                context="character_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the import file dialog."
+                )
+                return
+            if file_path:
+                if not self._local_character_actions_allowed():
+                    return
+                if self._active_character_import_worker() is not None:
+                    self._notify(
+                        "A character import is already in progress.", "information"
+                    )
+                    return
+                durable_import_started = (
+                    self._start_character_import(str(file_path)) is not None
+                )
+        finally:
+            if not durable_import_started:
+                self._io_dialog_active = False
+
+    def _active_character_import_worker(self) -> Worker[None] | None:
+        """Return the active app-owned character import, if any."""
+        for worker in self.app_instance.workers:
+            if (
+                worker.node is self.app_instance
+                and worker.group == _PERSONAS_CHARACTER_IMPORT_WORKER_GROUP
+                and not worker.is_finished
+            ):
+                return worker
+        return None
+
+    def _start_character_import(self, path: str) -> Worker[None] | None:
+        """Launch one durable character import owned by the application.
+
+        The worker carries the path in its coroutine; no domain payload or
+        result is mirrored onto ``TldwCli``. Application ownership only keeps
+        the durable operation alive while ``switch_screen`` unmounts the
+        initiating Personas screen.
+        """
+        if not self._local_character_actions_allowed():
+            return None
+        active_worker = self._active_character_import_worker()
+        if active_worker is not None:
+            return active_worker
+        return self.app_instance.run_worker(
+            self._run_durable_character_import(path),
+            group=_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP,
+        )
+
+    async def _run_durable_character_import(self, path: str) -> None:
+        """Complete a character import and release the initiating dialog slot."""
+        try:
+            if not self._local_character_actions_allowed():
+                return
+            await self._import_character_from_path(path)
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_character_from_path(self, path: str) -> None:
+        """Preflight one immutable card source, persist it, then apply TTS."""
+
+        if not self._local_character_actions_allowed():
+            return
+        file_type = Path(path).suffix.lower()
+        if file_type not in {".json", ".png", ".webp", ".md", ".markdown"}:
+            file_type = "other"
+        try:
+            source = validate_path_simple(path, require_exists=True)
+            source_bytes = await asyncio.to_thread(source.read_bytes)
+            inspection = await asyncio.to_thread(
+                ccp_character_handler.inspect_character_card_tts_attachment,
+                source_bytes,
+            )
+        except Exception as error:
+            logger.error(
+                "Character import preflight failed (file_type={}, category={}).",
+                file_type,
+                type(error).__name__,
+            )
+            self._notify(
+                "Character import failed; verify the file and retry.",
+                "error",
+            )
+            return
+        if type(inspection) is not CharacterCardTTSInspection:
+            self._notify(
+                "Import failed: the file did not contain a valid character card.",
+                "error",
+            )
+            return
+
+        portable = inspection.portable_profile
+        profile_service: Any | None = None
+        observation: PortableProfileAvailabilityObservation | None = None
+        if portable is not None:
+            try:
+                profile_service = await self._character_tts_profile_service()
+                observation = await profile_service.observe_portable_profile(portable)
+            except Exception as error:
+                logger.error(
+                    "Character voice preflight failed (category={}).",
+                    type(error).__name__,
+                )
+                self._notify(
+                    "The imported voice profile could not be checked. "
+                    "No character data was changed; refresh Speech settings and retry.",
+                    "error",
+                )
+                return
+            if type(observation) is not PortableProfileAvailabilityObservation:
+                self._notify(
+                    "The imported voice profile could not be checked. "
+                    "No character data was changed.",
+                    "error",
+                )
+                return
+
+        try:
+            outcome = await asyncio.to_thread(
+                ccp_character_handler.import_character_card_with_outcome,
+                source_bytes,
+            )
+        except Exception as error:
+            logger.error(
+                "Character import failed (file_type={}, category={}).",
+                file_type,
+                type(error).__name__,
+            )
+            self._notify(
+                "Character import failed; verify the file and retry.",
+                "error",
+            )
+            return
+        if type(outcome) is not CharacterCardImportOutcome:
+            self._notify(
+                "Import failed: the file did not contain a valid character card.",
+                "error",
+            )
+            return
+
+        voice_result = "none"
+        if portable is not None:
+            if outcome.portable_profile != portable:
+                voice_result = "failed"
+            elif self._character_import_presentation_is_current():
+                assert profile_service is not None and observation is not None
+                try:
+                    voice_result = await self._commit_imported_character_tts(
+                        profile_service,
+                        observation,
+                        outcome,
+                    )
+                except Exception as error:
+                    logger.error(
+                        "Imported character voice commit failed (category={}).",
+                        type(error).__name__,
+                    )
+                    voice_result = "failed"
+            else:
+                voice_result = "cancelled"
+
+        imported_id = str(outcome.character_id)
+        if not self._character_import_presentation_is_current():
+            return
+        # Clear any active search (state + Input, as _apply_mode does) and reset
+        # paging so the imported character shows on page 0 of the refreshed list.
+        self._cancel_search_debounce()
+        self.state.search_query = ""
+        if self.state.sort_key == "relevance":
+            self.state.sort_key = "name_asc"
+        self.state.page_offset = 0
+        try:
+            self.query_one("#personas-library-search", Input).value = ""
+        except Exception:
+            pass
+        await self.character_handler.refresh_character_list()
+        if not self._character_import_presentation_is_current():
+            # The user left Characters mode while the import ran; the list is
+            # refreshed but selection/center pane belong to the new mode.
+            return
+        # Resolve the display name by id (the page cache may not hold this row).
+        loaded = None
+        try:
+            loaded = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, imported_id
+            )
+        except Exception as error:
+            logger.debug(
+                "Could not resolve imported character name by id (category={}).",
+                type(error).__name__,
+            )
+        if not self._character_import_presentation_is_current():
+            return
+        name = str((loaded or {}).get("name") or "Imported character")
+        await self._select_character(imported_id, name)
+        # The selection changed outside _run_guarded; refresh the footer hints
+        # (attach is now available) and the header state.
+        self._sync_title_and_console_actions()
+        # task-445: import swaps in the card view and inspector at the same
+        # moment this notification appears, so the default 5s toast reads as
+        # a flash against a screen that just changed everywhere else. Linger
+        # longer, matching the codebase's convention for confirmations that
+        # need a deliberate beat to register (e.g. import-conflict warnings
+        # elsewhere use timeout=6).
+        await self._notify_character_import_outcome(
+            outcome,
+            imported_id,
+            voice_result=voice_result,
+            attachment_warning=inspection.warning_code,
+        )
+
+    def _character_import_presentation_is_current(self) -> bool:
+        return (
+            self._local_character_actions_allowed()
+            and not self._closed
+            and self._parent is not None
+            and self.is_attached
+            and self.app.screen is self
+            and self.state.active_mode == "characters"
+        )
+
+    async def _resolve_import_collision_choice(
+        self,
+        plan: PortableProfileImportPlan,
+    ) -> str | None:
+        if plan.allowed_choices == ("create",):
+            return "create"
+        result = await self.app.push_screen_wait(
+            CharacterTTSProfileCollisionDialog(plan)
+        )
+        return result if result in {"reuse", "copy"} else None
+
+    async def _confirm_reused_character_tts_apply(self) -> bool:
+        result = await self.app.push_screen_wait(CharacterTTSExistingAssignmentDialog())
+        return result is True
+
+    async def _local_character_ref_for_import(
+        self,
+        character_id: int,
+    ) -> CharacterRef:
+        db = self._character_db()
+        get_authority = getattr(db, "get_local_authority_id", None)
+        if not callable(get_authority):
+            raise RuntimeError("local_authority_unavailable")
+        authority_id = await asyncio.to_thread(get_authority)
+        return CharacterRef(
+            source="local",
+            authority_id=authority_id,
+            character_id=str(character_id),
+        )
+
+    async def _commit_imported_character_tts(
+        self,
+        service: Any,
+        observation: PortableProfileAvailabilityObservation,
+        outcome: CharacterCardImportOutcome,
+    ) -> str:
+        if not outcome.created and not await self._confirm_reused_character_tts_apply():
+            return "cancelled"
+        plan = await service.inspect_portable_profile_import(observation)
+        if type(plan) is not PortableProfileImportPlan:
+            raise RuntimeError("invalid_profile_plan")
+        character_ref = await self._local_character_ref_for_import(outcome.character_id)
+        loaded_assignment = await service.get_assigned_profile(character_ref)
+        if type(loaded_assignment) is not LoadedCharacterTTSAssignment:
+            raise RuntimeError("invalid_assignment_snapshot")
+        current = loaded_assignment.snapshot
+        choice = await self._resolve_import_collision_choice(plan)
+        if choice is None:
+            return "cancelled"
+
+        result = await service.commit_portable_profile_import(
+            plan,
+            choice,
+            character_ref,
+            expected_current=(None if current is None else current.assignment),
+        )
+        if type(result) is not PortableProfileImportResult:
+            raise RuntimeError("invalid_profile_result")
+        if result.assignment is not None:
+            return "applied"
+        if result.created:
+            return "saved_for_repair"
+        return "preserved" if current is not None else "unassigned_unavailable"
+
+    async def _notify_character_import_outcome(
+        self,
+        outcome: CharacterCardImportOutcome,
+        imported_id: str,
+        *,
+        voice_result: str,
+        attachment_warning: str | None,
+    ) -> None:
+        if outcome.created:
+            lore_note = await self._imported_lorebook_note(imported_id)
+            message = f"Character imported.{lore_note}"
+        else:
+            message = (
+                "Character already existed; selected it. "
+                "Re-importing does not update an existing character."
+            )
+        # Reachable only when the observed profile is genuinely "unavailable"
+        # (task-2450 amendment): an "unverified" legacy-provider profile now
+        # auto-applies instead of landing here, so this copy never needs to
+        # hedge -- it can and must say "unavailable" plainly rather than the
+        # vaguer "not currently available", which used to also cover the
+        # unverified case and describe it inaccurately.
+        voice_copy = {
+            "applied": " The imported voice profile applied successfully.",
+            "saved_for_repair": (
+                " The voice profile was saved for repair but was not assigned "
+                "because it is unavailable."
+            ),
+            "preserved": (
+                " The imported voice is unavailable; the existing voice "
+                "assignment was preserved."
+            ),
+            "unassigned_unavailable": (
+                " The imported voice matches an existing profile that is "
+                "unavailable; the character remains unassigned. Repair the "
+                "profile in the voice profile library."
+            ),
+            "cancelled": " The voice profile was not changed.",
+            "failed": (
+                " The character was kept, but its voice profile could not be "
+                "saved or assigned; retry from the character voice controls."
+            ),
+        }.get(voice_result, "")
+        warning_copy = (
+            " The card's voice attachment was skipped."
+            if attachment_warning is not None
+            else ""
+        )
+        self._notify(
+            f"{message}{voice_copy}{warning_copy}",
+            "information" if voice_result != "failed" else "warning",
+            timeout=6.0,
+        )
+
+    async def _imported_lorebook_note(self, character_id: str) -> str:
+        """Return a " Lorebook 'X' attached (N entries)." suffix, or "" when
+        the just-imported character has no embedded world book (task-429)."""
+        if not self._local_character_actions_allowed():
+            return ""
+        try:
+            record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, character_id
+            )
+        except Exception:
+            return ""
+        ext = (record or {}).get("extensions")
+        if isinstance(ext, str):
+            try:
+                ext = json.loads(ext)
+            except (ValueError, TypeError):
+                ext = {}
+        if not isinstance(ext, dict):
+            return ""
+        return format_imported_lorebook_note(ext.get("character_world_books"))
+
+    async def _open_lore_import_dialog(self) -> None:
+        """Continuation for the guarded lore-import action."""
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring import request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._lore_import_dialog_worker(), group="personas-io")
+
+    async def _lore_import_dialog_worker(self) -> None:
+        """Show the import file picker and hand the chosen path off to import."""
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
         try:
             picker = EnhancedFileOpen(
-                title="Import Character Card",
+                title="Import World Book",
+                filters=Filters(
+                    ("World books (JSON)", lambda p: p.suffix.lower() == ".json"),
+                    ("All Files", lambda p: True),
+                ),
+                context="lore_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the world-book import dialog."
+                )
+                return
+            if file_path:
+                await self._import_world_book_from_path(str(file_path))
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Unexpected error in the world-book import worker."
+            )
+            self._notify(f"Import failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_world_book_from_path(self, path: str) -> None:
+        """Validate + normalize a world-book file and import it; rename on clash.
+
+        Args:
+            path: Filesystem path to the ``.json`` file chosen via the picker.
+        """
+        manager = self._lore_manager()
+        if manager is None:
+            self._notify(
+                "Lore is not configured: the database is unavailable.", "error"
+            )
+            return
+        try:
+            source = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            logger.opt(exception=True).warning(
+                f"Rejected world-book import path {path}."
+            )
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            if source.stat().st_size > PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES:
+                self._notify(
+                    f"Import failed: file is larger than "
+                    f"{PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES // (1024 * 1024)} MB.",
+                    "error",
+                )
+                return
+        except OSError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            text = await asyncio.to_thread(source.read_text, "utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.opt(exception=True).warning(
+                f"Could not read world-book file {path}."
+            )
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+            self._notify(f"Import failed: not valid JSON ({exc})", "error")
+            return
+        try:
+            data = normalize_world_book_import(parsed)
+        except ValueError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        base = str(data.get("name") or "Imported world book")
+        name = self._unique_lore_name(base)
+        try:
+            new_id = await asyncio.to_thread(
+                manager.import_world_book, data, name_override=name
+            )
+        except ConflictError:
+            self._notify("A lore book with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"World-book import failed for {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        if self.state.active_mode != "lore":
+            self._notify(f"Imported '{name}' — open Lore to see it.", "information")
+            return
+        await self._render_lore_rows(query=self.state.search_query)
+        await self._select_lore_entry(str(new_id), name)
+        suffix = " Renamed to avoid a name clash." if name != base else ""
+        self._notify(f"Imported '{name}'.{suffix}", "information")
+
+    async def _open_dictionary_import_dialog(self) -> None:
+        """Continuation for the guarded dictionaries-import action."""
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring import request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
+
+    async def _dictionary_import_dialog_worker(self) -> None:
+        """Show the import file picker and hand the chosen path off to import."""
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Import Dictionary",
                 filters=Filters(
                     (
-                        "Character Cards",
-                        lambda p: p.suffix.lower()
-                        in (".json", ".md", ".markdown", ".png"),
+                        "Dictionaries",
+                        lambda p: p.suffix.lower() in (".json", ".md", ".markdown"),
                     ),
                     ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                     (
                         "Markdown Files",
                         lambda p: p.suffix.lower() in (".md", ".markdown"),
                     ),
-                    ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
                     ("All Files", lambda p: True),
                 ),
-                context="character_import",
+                context="dictionary_import",
             )
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the import file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the dictionary import dialog."
+                )
                 return
             if file_path:
-                await self._import_character_from_path(str(file_path))
+                await self._import_dictionary_from_path(str(file_path))
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                "Unexpected error in the dictionary import worker."
+            )
+            self._notify(f"Import failed: {exc}", "error")
         finally:
             self._io_dialog_active = False
 
-    async def _import_character_from_path(self, path: str) -> None:
-        """Import a character card file, then refresh, select, and reveal it."""
-        # On a name conflict the importer returns the EXISTING character's id;
-        # snapshot the pre-import ids so the notification can say so.
-        pre_import_ids = {str(c.get("id")) for c in self._characters}
+    async def _import_dictionary_from_path(self, path: str) -> None:
+        """Import a dictionary file; on a name conflict, auto-rename and retry.
+
+        Args:
+            path: Filesystem path to the ``.json`` or ``.md``/``.markdown``
+                file to import, as chosen via the file picker.
+        """
+        service = self._dictionary_scope_service()
+        if service is None:
+            self._notify("Dictionaries service is not configured.", "error")
+            return
         try:
-            # Sync DB call; see the section comment for the threading choice.
-            imported_id = await asyncio.to_thread(
-                ccp_character_handler.import_character_card, path
+            source = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            logger.opt(exception=True).warning(
+                f"Rejected dictionary import path {path}."
             )
-        except Exception as exc:
-            logger.opt(exception=True).error(f"Error importing character card from {path}: {exc}")
             self._notify(f"Import failed: {exc}", "error")
             return
-        if imported_id is None:
+        try:
+            if source.stat().st_size > PERSONAS_DICTIONARY_IMPORT_MAX_BYTES:
+                self._notify(
+                    f"Import failed: file is larger than "
+                    f"{PERSONAS_DICTIONARY_IMPORT_MAX_BYTES // (1024 * 1024)} MB.",
+                    "error",
+                )
+                return
+        except OSError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        try:
+            text = await asyncio.to_thread(source.read_text, "utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.opt(exception=True).warning(f"Could not read import file {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        suffix = source.suffix.lower()
+        if suffix == ".json":
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+                self._notify(f"Import failed: not valid JSON ({exc})", "error")
+                return
+            raw = (
+                parsed.get("data")
+                if isinstance(parsed, dict) and "data" in parsed
+                else parsed
+            )
+            if not isinstance(raw, dict):
+                self._notify(
+                    "Import failed: JSON must be a dictionary object.", "error"
+                )
+                return
+            data = dict(raw)
+            request = {"data": data}
+
+            def _rename(new_name: str) -> None:
+                data["name"] = new_name  # data.name WINS - mutate it
+
+            base_name = str(data.get("name") or "Imported Dictionary")
+            importer = service.import_json
+        elif suffix in (".md", ".markdown"):
+            request = {"name": source.stem, "content": text}  # name REQUIRED
+
+            def _rename(new_name: str) -> None:
+                request["name"] = new_name
+
+            base_name = source.stem
+            importer = service.import_markdown
+        else:
+            self._notify("Import supports .json and .md files.", "warning")
+            return
+        try:
+            result = await importer(request, mode="local")
+        except ConflictError:
+            renamed = self._unique_dictionary_name(f"{base_name} (imported)")
+            _rename(renamed)
+            try:
+                result = await importer(request, mode="local")
+            except Exception as exc:
+                logger.opt(exception=True).warning("Dictionary import retry failed.")
+                self._notify(f"Import failed: {exc}", "error")
+                return
+            self._notify(f"Name in use - imported as '{renamed}'.", "information")
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Dictionary import failed for {path}.")
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        record = None
+        try:
+            record = await service.get_dictionary(
+                int(result["dictionary_id"]), mode="local"
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Imported dictionary could not be reloaded."
+            )
             self._notify(
-                "Import failed: the file did not contain a valid character card.",
-                "error",
+                "Import succeeded, but the dictionary could not be reloaded.", "warning"
             )
             return
-        imported_id = str(imported_id)
-        # Clear any active search (state + Input, as _apply_mode does) so the
-        # imported character is visible in the refreshed list.
-        self.state.search_query = ""
-        try:
-            self.query_one("#personas-library-search", Input).value = ""
-        except Exception:
-            pass
-        await self.character_handler.refresh_character_list()
-        if not self.is_mounted or self.state.active_mode != "characters":
-            # The user left Characters mode while the import ran; the list is
-            # refreshed but selection/center pane belong to the new mode.
+        if self.state.active_mode != "dictionaries":
+            # The user navigated away while the import ran; don't yank them back.
+            self._notify(
+                f"Imported '{record.get('name') or ''}' — open Dictionaries to see it.",
+                "information",
+            )
             return
-        record = self._character_record(imported_id)
-        name = str((record or {}).get("name") or "Imported character")
-        await self._select_character(imported_id, name)
-        # The selection changed outside _run_guarded; refresh the footer hints
-        # (attach is now available) and the header state.
-        self._register_footer_shortcuts()
-        if imported_id in pre_import_ids:
-            self._notify("Character already existed; selected it.", "information")
-        else:
-            self._notify("Character imported.", "information")
+        await self._render_dictionary_rows(query=self.state.search_query)
+        await self._select_dictionary(
+            str(record.get("id")), str(record.get("name") or "")
+        )
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if (
+            self.state.selected_entity_kind == "character"
+            and not self._local_character_actions_allowed()
+        ):
+            return
+        # F-040: an active mark set retargets Export JSON at the marked rows.
+        if self._marked_rows:
+            if self._io_dialog_active:
+                return
+            self._io_dialog_active = True
+            self.run_worker(
+                self._export_marked_json_worker(tuple(self._marked_rows)),
+                group="personas-io",
+            )
+            return
         self._open_export_dialog("json")
+
+    async def _export_marked_json_worker(
+        self, marks: tuple[tuple[str, str, str], ...]
+    ) -> None:
+        """Export each marked character/persona as its own JSON file (F-040)."""
+        from ...Widgets.enhanced_file_picker import EnhancedSelectDirectory
+
+        try:
+            kind = marks[0][0]
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            picker = EnhancedSelectDirectory(
+                title=f"Export {len(marks)} items as JSON",
+                context="character_export_dir",
+            )
+            try:
+                target_dir = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the export directory dialog."
+                )
+                return
+            if not target_dir:
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            written = 0
+            failed: list[str] = []
+            used_names: set[str] = set()
+            for _, entity_id, name in marks:
+                try:
+                    # Filename sanitization mirrors the single-export route.
+                    safe = (
+                        "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
+                        or "export"
+                    )
+                    candidate = safe
+                    suffix = 2
+                    while candidate in used_names:
+                        candidate = f"{safe}-{suffix}"
+                        suffix += 1
+                    used_names.add(candidate)
+                    target_path = str(Path(str(target_dir)) / f"{candidate}.json")
+                    if kind == "character":
+                        # The TTS-include checkbox is a per-selection export
+                        # decision; bulk export writes plain cards.
+                        await asyncio.to_thread(
+                            self._export_character_json_sync,
+                            int(str(entity_id)),
+                            target_path,
+                            None,
+                        )
+                    else:
+                        record = await self._fetch_profile_record(str(entity_id))
+                        content = json.dumps(
+                            record, indent=2, ensure_ascii=False, default=str
+                        )
+                        await asyncio.to_thread(
+                            self._write_text_file, target_path, content
+                        )
+                    written += 1
+                except Exception:
+                    failed.append(name)
+                    logger.opt(exception=True).warning(
+                        f"Bulk export failed for {kind} {entity_id} ({name})."
+                    )
+            if failed:
+                self._notify(
+                    f"Exported {written} of {len(marks)} items; "
+                    f"failed: {', '.join(failed[:3])}.",
+                    "error",
+                )
+            else:
+                self._notify(
+                    f"Exported {written} items to {target_dir}.", "information"
+                )
+        finally:
+            self._io_dialog_active = False
 
     @on(Button.Pressed, "#personas-export-png")
     async def _handle_export_png_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if not self._local_character_actions_allowed():
+            return
         self._open_export_dialog("png")
 
     def _open_export_dialog(self, fmt: str) -> None:
         """Validate the selection and launch the save-dialog worker."""
         kind = self.state.selected_entity_kind
-        if not self.state.selected_entity_id or kind not in ("character", "persona_profile"):
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
+        if not self.state.selected_entity_id or kind not in (
+            "character",
+            "persona",
+        ):
             # The inspector disables these buttons without a saved selection;
             # this is a defensive re-check.
             self._notify("Select a saved item before exporting.", "warning")
@@ -1590,7 +14094,9 @@ class PersonasScreen(BaseAppScreen):
             self._notify("PNG export is only available for characters.", "warning")
             return
         if self._io_dialog_active:
-            logger.debug("Import/export dialog already active; ignoring export request.")
+            logger.debug(
+                "Import/export dialog already active; ignoring export request."
+            )
             return
         self._io_dialog_active = True
         self.run_worker(self._export_dialog_worker(fmt), group="personas-io")
@@ -1600,6 +14106,11 @@ class PersonasScreen(BaseAppScreen):
         from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
 
         try:
+            if (
+                self.state.selected_entity_kind == "character"
+                and not self._local_character_actions_allowed()
+            ):
+                return
             name = self.state.selected_entity_name or "export"
             # Filename sanitization mirrors the legacy CCP export route.
             safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
@@ -1623,9 +14134,16 @@ class PersonasScreen(BaseAppScreen):
             try:
                 target_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.opt(exception=True).warning("Could not show the export file dialog.")
+                logger.opt(exception=True).warning(
+                    "Could not show the export file dialog."
+                )
                 return
             if target_path:
+                if (
+                    self.state.selected_entity_kind == "character"
+                    and not self._local_character_actions_allowed()
+                ):
+                    return
                 await self._export_selected_character(str(target_path), fmt=fmt)
         finally:
             self._io_dialog_active = False
@@ -1634,23 +14152,44 @@ class PersonasScreen(BaseAppScreen):
         """Export the current selection to ``target_path`` as JSON or PNG."""
         kind = self.state.selected_entity_kind
         entity_id = self.state.selected_entity_id
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         if not entity_id:
             self._notify("Select a saved item before exporting.", "warning")
             return
         try:
             if kind == "character":
                 character_id = int(str(entity_id))
+                inspector = self.query_one(PersonasInspectorPane)
+                portable_profile = None
+                if inspector.include_tts_profile_in_export:
+                    portable_profile = self._portable_tts_profile_for_export()
+                    if portable_profile is None:
+                        self._notify(
+                            "The assigned voice profile is not ready to export. "
+                            "Refresh the character and retry.",
+                            "warning",
+                        )
+                        return
                 if fmt == "png":
                     await asyncio.to_thread(
-                        self._export_character_png_sync, character_id, target_path
+                        self._export_character_png_sync,
+                        character_id,
+                        target_path,
+                        portable_profile,
                     )
                 else:
                     await asyncio.to_thread(
-                        self._export_character_json_sync, character_id, target_path
+                        self._export_character_json_sync,
+                        character_id,
+                        target_path,
+                        portable_profile,
                     )
-            elif kind == "persona_profile":
+            elif kind == "persona":
                 if fmt != "json":
-                    self._notify("PNG export is only available for characters.", "warning")
+                    self._notify(
+                        "PNG export is only available for characters.", "warning"
+                    )
                     return
                 record = await self._fetch_profile_record(str(entity_id))
                 content = json.dumps(record, indent=2, ensure_ascii=False, default=str)
@@ -1658,32 +14197,103 @@ class PersonasScreen(BaseAppScreen):
             else:
                 self._notify("Export is not available for this selection.", "warning")
                 return
-        except Exception as exc:
-            logger.opt(exception=True).error(f"Error exporting to {target_path}: {exc}")
-            self._notify(f"Export failed: {exc}", "error")
+        except Exception as error:
+            logger.error(
+                "Personas export failed (format={}, category={}).",
+                fmt,
+                type(error).__name__,
+            )
+            self._notify("Export failed. The selected item was not written.", "error")
             return
-        self._notify(f"Exported to {target_path}", "information")
+        self._notify("Exported to the selected destination.", "information")
 
-    def _export_character_json_sync(self, character_id: int, target_path: str) -> None:
+    def _portable_tts_profile_for_export(self) -> PortableTTSProfile | None:
+        """Return the exact current local assignment as a sanitized profile."""
+
+        snapshot = self._character_tts_snapshot
+        entity_id = self.state.selected_entity_id
+        if (
+            snapshot is None
+            or snapshot.current is None
+            or self.state.selected_entity_kind != "character"
+            or self.state.runtime_source != "local"
+            or entity_id is None
+            or snapshot.runtime_source != "local"
+            or snapshot.character_id != str(entity_id)
+        ):
+            return None
+        profile = snapshot.current.profile
+        return PortableTTSProfile(
+            profile_id=profile.profile_id,
+            draft=TTSProfileDraft(
+                display_name=profile.display_name,
+                provider_id=profile.provider_id,
+                model_id=profile.model_id,
+                voice_id=profile.voice_id,
+                response_format=profile.response_format,
+                speed=profile.speed,
+                options=profile.options,
+            ),
+        )
+
+    def _export_character_json_sync(
+        self,
+        character_id: int,
+        target_path: str,
+        portable_profile: PortableTTSProfile | None = None,
+    ) -> None:
         """Sync JSON export; raises on failure (runs off the UI thread)."""
+        if not self._local_character_actions_allowed():
+            raise RuntimeError("Local character export is unavailable in server mode.")
         db = ccp_character_handler._default_character_db()
-        content = export_character_card_to_json(db, character_id, include_image=True)
+        if portable_profile is None:
+            content = export_character_card_to_json(
+                db,
+                character_id,
+                include_image=True,
+            )
+        else:
+            content = export_character_card_to_json(
+                db,
+                character_id,
+                include_image=True,
+                portable_tts_profile=portable_profile,
+            )
         if content is None:
             raise RuntimeError("export returned no data")
         self._write_text_file(target_path, content)
 
-    def _export_character_png_sync(self, character_id: int, target_path: str) -> None:
+    def _export_character_png_sync(
+        self,
+        character_id: int,
+        target_path: str,
+        portable_profile: PortableTTSProfile | None = None,
+    ) -> None:
         """Sync PNG export; the library writes the file and validates the path.
 
         ``export_character_card_to_png`` validates ``output_path`` against a
         base directory (defaulting to its own exports folder), so the chosen
         path's parent is passed to keep user-selected destinations valid.
         """
+        if not self._local_character_actions_allowed():
+            raise RuntimeError("Local character export is unavailable in server mode.")
         db = ccp_character_handler._default_character_db()
         target = Path(target_path).expanduser()
-        ok = export_character_card_to_png(
-            db, character_id, str(target), base_directory=str(target.parent)
-        )
+        if portable_profile is None:
+            ok = export_character_card_to_png(
+                db,
+                character_id,
+                str(target),
+                base_directory=str(target.parent),
+            )
+        else:
+            ok = export_character_card_to_png(
+                db,
+                character_id,
+                str(target),
+                base_directory=str(target.parent),
+                portable_tts_profile=portable_profile,
+            )
         if not ok:
             # The library returns False for several causes; surface them all.
             raise RuntimeError(
@@ -1705,7 +14315,11 @@ class PersonasScreen(BaseAppScreen):
         target = Path(target_path).expanduser()
         if not target.parent.exists():
             raise ValueError(f"destination directory does not exist: {target.parent}")
-        validated = validate_path(target, base_directory=target.parent)
+        validated = validate_path(
+            target,
+            base_directory=target.parent,
+            redact_paths=True,
+        )
         validated.write_text(content, encoding="utf-8")
 
     # ===== Delete =====
@@ -1713,18 +14327,192 @@ class PersonasScreen(BaseAppScreen):
     @on(Button.Pressed, "#personas-delete")
     async def _handle_delete_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        if (
+            self.state.selected_entity_kind == "character"
+            and not self._local_character_actions_allowed()
+        ):
+            return
         # The inspector enables Delete whenever a selection exists, even with
         # unsaved edits - deleting discards them by definition. The flow still
         # routes through the unsaved guard so a dirty session shows the
         # discard dialog FIRST, then the delete confirm. Two dialogs in
         # sequence is deliberate: the user explicitly approves both losses.
+        # F-040: an active mark set retargets Delete at the marked rows.
+        if self._marked_rows:
+            await self._run_guarded(self._begin_delete_marked)
+            return
         await self._run_guarded(self._begin_delete_selection)
+
+    async def _begin_delete_marked(self) -> None:
+        """Validate the marked set and launch the bulk delete-confirm worker."""
+        marks = tuple(self._marked_rows)
+        if not marks:
+            await self._begin_delete_selection()
+            return
+        if marks[0][0] == "character" and not self._local_character_actions_allowed():
+            self._notify(_SERVER_READ_ONLY_TOOLTIP, "warning")
+            return
+        if self._delete_dialog_active:
+            logger.debug("Delete dialog already active; ignoring delete request.")
+            return
+        self._delete_dialog_active = True
+        self.run_worker(
+            self._delete_marked_worker(marks),
+            group="personas-io",
+        )
+
+    #: Plural nouns for bulk-action confirm/summary copy (F-040).
+    _BULK_NOUNS = {
+        "character": "characters",
+        "persona": "personas",
+        "dictionary": "dictionaries",
+        "lore": "lore books",
+    }
+
+    async def _delete_marked_worker(
+        self, marks: tuple[tuple[str, str, str], ...]
+    ) -> None:
+        """One confirmation, then each marked item's backend delete (F-040)."""
+        try:
+            kind = marks[0][0]
+            noun = self._BULK_NOUNS.get(kind, "items")
+            if not await self._confirm_delete(f"{len(marks)} {noun}"):
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
+            deleted_ids: set[str] = set()
+            failed: list[str] = []
+            for _, entity_id, name in marks:
+                try:
+                    await self._delete_marked_backend(kind, entity_id)
+                except Exception as exc:
+                    failed.append(name)
+                    logger.opt(exception=True).warning(
+                        f"Bulk delete failed for {kind} {entity_id} ({name}): {exc}"
+                    )
+                else:
+                    deleted_ids.add(str(entity_id))
+            # Selection cleanup when the selection was among the deleted.
+            if str(self.state.selected_entity_id or "") in deleted_ids:
+                self._advance_persona_buddy_session()
+                self.state.clear_selection()
+                self.state.has_unsaved_changes = False
+                try:
+                    await self.query_one(PersonasInspectorPane).clear_selection()
+                except QueryError:
+                    pass
+                self._show_center(None)
+            self.query_one(PersonasLibraryPane).clear_marks()
+            await self._refresh_rows_after_delete(kind)
+            self._sync_title_and_console_actions()
+            if failed:
+                self._notify(
+                    f"Deleted {len(deleted_ids)} of {len(marks)} {noun}; "
+                    f"failed: {', '.join(failed[:3])}.",
+                    "error",
+                )
+            else:
+                self._notify(f"Deleted {len(deleted_ids)} {noun}.", "information")
+        finally:
+            self._delete_dialog_active = False
+
+    async def _delete_marked_backend(self, kind: str, entity_id: str) -> None:
+        """One marked item's backend delete, no UI churn; raises on failure."""
+        if kind == "character":
+            # Per-item fetch: the handler's loaded record only covers the
+            # current selection, and the sparse list rows carry no version.
+            record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+            if not record:
+                raise ValueError(f"character {entity_id} not found")
+            version = int(record.get("version") or 1)
+            ok = await asyncio.to_thread(
+                ccp_character_handler.delete_character, entity_id, version
+            )
+            if not ok:
+                raise ValueError(f"delete conflict for character {entity_id}")
+            return
+        if kind == "persona":
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
+            if service is None:
+                raise ValueError("personas service is not configured")
+            record = await self._fetch_profile_record(entity_id)
+            raw_version = record.get("version")
+            mode = self.persona_handler.current_mode()
+            await service.delete_persona_profile(
+                entity_id,
+                expected_version=(
+                    int(raw_version) if raw_version is not None else None
+                ),
+                mode=mode,
+            )
+            if mode == "local":
+                await self._refresh_persona_buddy_lifecycle(entity_id)
+            return
+        if kind == "dictionary":
+            service = self._dictionary_scope_service()
+            if service is None:
+                raise ValueError("dictionaries service is not configured")
+            record = next(
+                (
+                    r
+                    for r in self._dictionaries_cache
+                    if str(r.get("id")) == str(entity_id)
+                ),
+                None,
+            )
+            raw_version = (record or {}).get("version")
+            await service.delete_dictionary(
+                int(entity_id),
+                mode="local",
+                expected_version=(
+                    int(raw_version) if raw_version is not None else None
+                ),
+            )
+            return
+        # kind == "lore"
+        manager = self._lore_manager()
+        if manager is None:
+            raise ValueError("lore database is not configured")
+        record = next(
+            (r for r in self._lore_books_cache if str(r.get("id")) == str(entity_id)),
+            None,
+        )
+        raw_version = (record or {}).get("version")
+        ok = await asyncio.to_thread(
+            manager.delete_world_book,
+            int(entity_id),
+            expected_version=int(raw_version) if raw_version is not None else None,
+        )
+        if not ok:
+            raise ValueError(f"delete conflict for lore book {entity_id}")
+
+    async def _refresh_rows_after_delete(self, kind: str) -> None:
+        """Reload the library rows for the deleted items' mode (F-040)."""
+        if kind == "character":
+            await self.character_handler.refresh_character_list()
+        elif kind == "persona":
+            await self._refresh_profile_rows_worker()
+        elif kind == "dictionary":
+            await self._render_dictionary_rows(query=self.state.search_query)
+        elif kind == "lore":
+            await self._render_lore_rows(query=self.state.search_query)
 
     async def _begin_delete_selection(self) -> None:
         """Validate the selection and launch the delete-confirm dialog worker."""
         kind = self.state.selected_entity_kind
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         entity_id = str(self.state.selected_entity_id or "")
-        if not entity_id or kind not in ("character", "persona_profile"):
+        if not entity_id or kind not in (
+            "character",
+            "persona",
+            "dictionary",
+            "lore",
+        ):
             # The inspector disables Delete without a selection; defensive.
             self._notify("Select a saved item before deleting.", "warning")
             return
@@ -1737,6 +14525,26 @@ class PersonasScreen(BaseAppScreen):
                 self._notify("Character data is not loaded yet.", "warning")
                 return
             version: int | None = int(record.get("version") or 1)
+        elif kind == "dictionary":
+            record = next(
+                (r for r in self._dictionaries_cache if str(r.get("id")) == entity_id),
+                None,
+            )
+            if record is None:
+                self._notify("Dictionary data is not loaded yet.", "warning")
+                return
+            raw_version = record.get("version")
+            version = int(raw_version) if raw_version is not None else None
+        elif kind == "lore":
+            record = next(
+                (r for r in self._lore_books_cache if str(r.get("id")) == entity_id),
+                None,
+            )
+            if record is None:
+                self._notify("Lore book data is not loaded yet.", "warning")
+                return
+            raw_version = record.get("version")
+            version = int(raw_version) if raw_version is not None else None
         else:
             record = await self._fetch_profile_record(entity_id)
             raw_version = record.get("version")
@@ -1754,7 +14562,11 @@ class PersonasScreen(BaseAppScreen):
         self, kind: str, entity_id: str, name: str, version: int | None
     ) -> None:
         try:
+            if kind == "character" and not self._local_character_actions_allowed():
+                return
             if not await self._confirm_delete(name):
+                return
+            if kind == "character" and not self._local_character_actions_allowed():
                 return
             await self._delete_entity(kind, entity_id, version)
         finally:
@@ -1776,24 +14588,32 @@ class PersonasScreen(BaseAppScreen):
             )
             return False
 
-    async def _delete_entity(self, kind: str, entity_id: str, version: int | None) -> None:
+    async def _delete_entity(
+        self, kind: str, entity_id: str, version: int | None
+    ) -> None:
         """Perform the confirmed delete, then clean up selection-coupled state."""
         conflict_copy = (
             "Delete failed: the {noun} changed since it was loaded. "
             "Reselect and try again."
         )
         if kind == "character":
+            if not self._local_character_actions_allowed():
+                return
             try:
                 # Sync DB call; same threading choice as import/export.
                 ok = await asyncio.to_thread(
                     ccp_character_handler.delete_character, entity_id, int(version or 1)
                 )
             except ConflictError:
-                logger.warning(f"Optimistic-lock conflict deleting character {entity_id}.")
+                logger.warning(
+                    f"Optimistic-lock conflict deleting character {entity_id}."
+                )
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
             except Exception as exc:
-                logger.opt(exception=True).error(f"Error deleting character {entity_id}: {exc}")
+                logger.opt(exception=True).error(
+                    f"Error deleting character {entity_id}: {exc}"
+                )
                 self._notify(f"Delete failed: {exc}", "error")
                 return
             if not ok:
@@ -1801,39 +14621,149 @@ class PersonasScreen(BaseAppScreen):
                 # return (e.g. stubbed/alternate backends) the same way.
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
-        else:
-            service = getattr(self.app_instance, "character_persona_scope_service", None)
-            if service is None or not hasattr(service, "delete_persona_profile"):
-                self._notify("Delete failed: persona profiles are unavailable.", "error")
+        elif kind == "dictionary":
+            # No staleness re-check here (unlike _after_delete's character/
+            # persona worker-hop path): the delete-confirm dialog is modal,
+            # so mode/selection cannot change beneath this synchronous branch.
+            service = self._dictionary_scope_service()
+            if service is None:
+                self._notify("Dictionaries service is not configured.", "error")
                 return
             try:
+                await service.delete_dictionary(
+                    int(entity_id), mode="local", expected_version=version
+                )
+            except ConflictError:
+                self._notify(conflict_copy.format(noun="dictionary"), "error")
+                return
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    f"Error deleting dictionary {entity_id}: {exc}"
+                )
+                self._notify(f"Delete failed: {exc}", "error")
+                return
+            self._advance_persona_buddy_session()
+            self.state.clear_selection()
+            self.state.has_unsaved_changes = False
+            self._selected_dictionary_version = None
+            self.query_one(PersonasDictionaryDetailWidget).clear()
+            self._show_center(None)
+            self.query_one(PersonasDictionaryTryItWidget).set_ready(
+                False, "Select a dictionary to preview substitutions."
+            )
+            await self.query_one(PersonasInspectorPane).clear_selection()
+            await self._render_dictionary_rows(query=self.state.search_query)
+            self._update_title()
+            self._update_purpose_line()
+            return
+        elif kind == "lore":
+            # No staleness re-check here (unlike _after_delete's character/
+            # persona worker-hop path): the delete-confirm dialog is modal,
+            # so mode/selection cannot change beneath this synchronous branch.
+            manager = self._lore_manager()
+            if manager is None:
+                self._notify(
+                    "Lore is not configured: the database is unavailable.", "error"
+                )
+                return
+            try:
+                ok = await asyncio.to_thread(
+                    manager.delete_world_book, int(entity_id), expected_version=version
+                )
+            except ConflictError:
+                self._notify(conflict_copy.format(noun="lore book"), "error")
+                return
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    f"Error deleting lore book {entity_id}: {exc}"
+                )
+                self._notify(f"Delete failed: {exc}", "error")
+                return
+            if not ok:
+                self._notify(conflict_copy.format(noun="lore book"), "error")
+                return
+            self._advance_persona_buddy_session()
+            self.state.clear_selection()
+            self.state.has_unsaved_changes = False
+            self._selected_lore_book_version = None
+            self._selected_lore_book = None
+            self._selected_lore_entries = []
+            self.query_one(PersonasLoreDetailWidget).clear()
+            self._show_center(None)
+            self.query_one(PersonasLoreTryItWidget).set_ready(
+                False, "Select a lore book to preview injections."
+            )
+            await self.query_one(PersonasInspectorPane).clear_selection()
+            await self._render_lore_rows(query=self.state.search_query)
+            self._update_title()
+            self._update_purpose_line()
+            return
+        else:
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
+            if service is None or not hasattr(service, "delete_persona_profile"):
+                self._notify("Delete failed: personas are unavailable.", "error")
+                return
+            try:
+                mode = self.persona_handler.current_mode()
                 await service.delete_persona_profile(
                     entity_id,
                     expected_version=version,
-                    mode=self.persona_handler.current_mode(),
+                    mode=mode,
                 )
             except Exception as exc:
                 logger.opt(exception=True).error(
-                    f"Error deleting persona profile {entity_id}: {exc}")
+                    f"Error deleting persona profile {entity_id}: {exc}"
+                )
                 # The local backend signals optimistic-lock loss with a
                 # `..._version_conflict:` ValueError marker; map it onto the
                 # same recovery copy the character path uses.
                 if "version_conflict" in str(exc):
-                    self._notify(conflict_copy.format(noun="persona profile"), "error")
+                    self._notify(conflict_copy.format(noun="persona"), "error")
                 else:
                     self._notify(f"Delete failed: {exc}", "error")
                 return
+            if mode == "local":
+                await self._refresh_persona_buddy_lifecycle(entity_id)
         await self._after_delete(kind)
 
+    async def _refresh_persona_buddy_lifecycle(self, persona_id: str) -> None:
+        """Re-resolve the explicitly selected local Persona after a durable change."""
+
+        controller = getattr(self.app, "persona_buddy_controller", None)
+        if controller is None:
+            return
+        snapshot = controller.snapshot()
+        if snapshot.selection != PersonaBuddySelection("local", str(persona_id)):
+            return
+        controller.invalidate_profile()
+        self._sync_inspector_buddy_status()
+        reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+        if not callable(reconcile):
+            return
+        try:
+            await reconcile()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Persona Buddy lifecycle refresh failed (category=view_refresh_failed)."
+            )
+
     async def _after_delete(self, kind: str) -> None:
+        if kind == "character" and not self._local_character_actions_allowed():
+            return
         if kind == "character":
             # The handler still holds the deleted card; drop it so
             # _full_character_record cannot serve stale data.
             self.character_handler.current_character_id = None
             self.character_handler.current_character_data = {}
+            self._invalidate_character_tts_controls()
         expected_mode = "characters" if kind == "character" else "personas"
         stale = not self.is_mounted or self.state.active_mode != expected_mode
         if not stale:
+            self._advance_persona_buddy_session()
             self.state.clear_selection()
             self.state.has_unsaved_changes = False
             self._edit_mode = "view"
@@ -1841,16 +14771,22 @@ class PersonasScreen(BaseAppScreen):
             # panel; drop the controller caches and the ephemeral preview too.
             self.conversations.reset()
             await self.preview.reset("")
+            # The selected character is gone; drop its speaker label so a later
+            # Test Reply never renders under the deleted character's name (the
+            # preview stays live/visible in Characters mode — task-437).
+            self.query_one(PersonasPreviewPane).reset_speakers()
             await self.query_one(PersonasInspectorPane).clear_selection()
             self._show_center(None)
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
         # Refresh the cached rows even when the user already left the screen
         # or switched modes (the render paths are mode-guarded downstream).
         if kind == "character":
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
-                logger.opt(exception=True).warning("Could not refresh characters after a delete.")
+                logger.opt(exception=True).warning(
+                    "Could not refresh characters after a delete."
+                )
         else:
             self._refresh_profile_rows_worker()
         if not stale:
@@ -1865,14 +14801,57 @@ class PersonasScreen(BaseAppScreen):
             errors.append("name: required")
         book = data.get("character_book")
         if book:
-            ok, book_errors = validate_character_book(book)
-            if not ok:
+            # validate_character_book (task-100, commit 414183488) is lenient
+            # by design: it only returns ok=False when book_data itself isn't
+            # a dict, and reports every other issue (bad 'entries' type,
+            # malformed entries, etc.) as messages in book_errors while still
+            # returning ok=True. Gating on `book_errors` truthiness - not the
+            # `ok` flag - renders exactly what the (now-lenient) validator
+            # still reports, instead of silently dropping those messages.
+            _ok, book_errors = validate_character_book(book)
+            if book_errors:
                 errors.extend(str(error) for error in book_errors)
         return tuple(errors)
 
     @on(CharacterSaveRequested)
     def _handle_save_requested(self, message: CharacterSaveRequested) -> None:
         message.stop()
+        if not self._local_character_actions_allowed():
+            return
+        session = self._actor_pack_session
+        if session is not None and session.actor_kind == "character":
+            if self._character_save_inflight:
+                return
+            data = dict(message.character_data or {})
+            errors = self._validate_character(data)
+            self.query_one(PersonasCharacterEditorWidget).show_validation(errors)
+            if errors:
+                self.query_one(PersonasInspectorPane).show_validation_editing()
+                return
+            editor = self._editor_or_none()
+            portrait = editor.current_avatar_bytes() if editor is not None else None
+            self._character_save_inflight = True
+            self._actor_pack_save_worker_handle = self._create_actor_pack_worker(
+                data,
+                session,
+                portrait=bytes(portrait) if type(portrait) is bytes else None,
+                portrait_generation=self._actor_pack_portrait_generation,
+            )
+            return
+        if self._visual_identity_has_unsaved_authoring():
+            self._notify(
+                "Save or Cancel reaction changes before saving the character.",
+                "warning",
+            )
+            return
+        if self._character_save_inflight:
+            # A save for this session is already persisting (re-entrant
+            # Save click / Ctrl+S); ignore the duplicate rather than firing
+            # a second redundant persist (mirrors _profile_save_inflight).
+            logger.debug(
+                "Character save already in flight; ignoring duplicate request."
+            )
+            return
         data = dict(message.character_data or {})
         errors = self._validate_character(data)
         # The editor footer is the single in-editor validation surface: the
@@ -1884,64 +14863,319 @@ class PersonasScreen(BaseAppScreen):
             # editing state instead of duplicating the error detail.
             self.query_one(PersonasInspectorPane).show_validation_editing()
             return
+        self._character_save_inflight = True
         # Snapshot UI-thread state here; the background persistence call must
         # not read mutable screen state.
-        self._save_character_worker(data, self.state.selected_entity_id, self._edit_mode)
+        self._character_save_worker_handle = self._save_character_worker(
+            data, self.state.selected_entity_id, self._edit_mode
+        )
 
     @work(exclusive=True, group="personas-save")
-    async def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
+    async def _save_character_worker(
+        self, data: dict, selected_id: str | None, edit_mode: str
+    ) -> None:
         """Persist via the legacy module-level helpers off the UI thread."""
-        try:
-            def persist_character() -> str:
-                if edit_mode == "create" or not selected_id:
-                    created_id = ccp_character_handler.create_character(data)
-                    if not created_id:
-                        raise RuntimeError("Character creation returned no id.")
-                    return str(created_id)
-                if not ccp_character_handler.update_character(selected_id, data):
-                    raise RuntimeError(f"Character update failed for id {selected_id}.")
-                return str(selected_id)
-
-            saved_id = await asyncio.to_thread(persist_character)
-        except Exception as exc:
-            logger.opt(exception=True).error(f"Error saving character: {exc}")
-            self._notify(f"Save failed: {exc}", "error")
+        if not self._local_character_actions_allowed():
+            self._character_save_inflight = False
             return
-        await self._after_character_save(saved_id, str(data.get("name") or ""))
+        editor = self._editor_or_none()
+        authority = (
+            _CharacterSaveAuthority(
+                editor_ref=weakref.ref(editor),
+                selected_id=selected_id,
+                edit_mode=edit_mode,
+                screen_generation=self._character_editor_generation,
+                editor_session_token=editor.visual_identity_session_token,
+            )
+            if editor is not None
+            else None
+        )
 
-    async def _after_character_save(self, saved_id: str, submitted_name: str = "") -> None:
+        def persist_character() -> str:
+            if edit_mode == "create" or not selected_id:
+                created_id = ccp_character_handler.create_character(data)
+                if not created_id:
+                    raise RuntimeError("Character creation returned no id.")
+                return str(created_id)
+            if not ccp_character_handler.update_character(selected_id, data):
+                raise RuntimeError(f"Character update failed for id {selected_id}.")
+            return str(selected_id)
+
+        outcome = await _drain_to_thread(
+            persist_character, task_name="personas-character-save-persist"
+        )
+        try:
+            current = (
+                authority is not None
+                and self._character_save_authority_is_current(authority)
+            )
+            if outcome.error is not None:
+                logger.error("Character save failed (category=persistence_failed).")
+                if current:
+                    self._notify("Character save failed.", "error")
+            elif not outcome.completed:
+                pass
+            elif not isinstance(outcome.value, str) or not outcome.value:
+                logger.error("Character save failed (category=persistence_failed).")
+                if current:
+                    self._notify("Character save failed.", "error")
+            elif current:
+                reconciliation = await _drain_async(
+                    self._after_character_save(
+                        str(outcome.value),
+                        str(data.get("name") or ""),
+                        authority=authority,
+                    ),
+                    task_name="personas-character-save-reconcile",
+                )
+                if outcome.cancellation is None:
+                    outcome = dataclasses.replace(
+                        outcome, cancellation=reconciliation.cancellation
+                    )
+                if reconciliation.error is not None:
+                    logger.warning(
+                        "Character persistence committed but presentation failed "
+                        "(category=refresh_failed)."
+                    )
+                    self._notify(
+                        "Character saved, but the editor could not refresh.",
+                        "warning",
+                    )
+        finally:
+            self._character_save_inflight = False
+        if outcome.cancellation is not None:
+            raise outcome.cancellation
+
+    def _character_save_authority_is_current(
+        self, authority: _CharacterSaveAuthority
+    ) -> bool:
+        """Fence post-persist presentation to the editor that initiated it."""
+
+        editor = authority.editor_ref()
+        if (
+            editor is None
+            or not self.is_mounted
+            or not self._character_editor_is_active()
+            or self._editor_or_none() is not editor
+            or self._edit_mode != authority.edit_mode
+            or self._character_editor_generation != authority.screen_generation
+            or editor.visual_identity_session_token != authority.editor_session_token
+        ):
+            return False
+        character_id = editor.expression_character_id()
+        if authority.edit_mode == "create" or authority.selected_id is None:
+            return character_id is None
+        return character_id is not None and str(character_id) == str(
+            authority.selected_id
+        )
+
+    async def _after_character_save(
+        self,
+        saved_id: str,
+        submitted_name: str = "",
+        *,
+        authority: _CharacterSaveAuthority | None = None,
+    ) -> None:
+        reconciliation_authority = authority
+
+        def is_current() -> bool:
+            return reconciliation_authority is None or (
+                self._character_save_authority_is_current(reconciliation_authority)
+            )
+
+        if not is_current() or not self._local_character_actions_allowed():
+            self._character_save_inflight = False
+            return
         if not self.is_mounted or self.state.active_mode != "characters":
             # The save completed after the user left the screen or switched
             # modes; refresh the cached list but leave the selection,
-            # inspector, and center pane alone.
+            # inspector, and center pane alone. The persist itself finished,
+            # so release the guard here too - a later new session
+            # (_begin_create_character / _handle_edit_requested) would also
+            # re-arm it, but there is no reason to leave it latched.
+            self._character_save_inflight = False
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
-                logger.opt(exception=True).warning("Could not refresh characters after a late save.")
+                logger.opt(exception=True).warning(
+                    "Could not refresh characters after a late save."
+                )
             return
-        self._character_editor_generation += 1
-        self._edit_mode = "view"
-        self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
-        record = self._character_record(saved_id)
-        name = str((record or {}).get("name") or submitted_name or "Saved character")
-        self.state.select_entity(entity_kind="character", entity_id=saved_id, entity_name=name)
+        if not is_current():
+            self._character_save_inflight = False
+            return
+        # Re-read the just-persisted record (authoritative version - carries
+        # the incremented optimistic-lock version) directly off the UI
+        # thread. CharacterHandler.load_character() only schedules another
+        # thread worker, so it cannot safely participate in this fenced
+        # reconciliation.
+        try:
+            saved_record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, saved_id
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not re-read saved character {saved_id!r}; falling back "
+                "to the card view."
+            )
+            saved_record = None
+        if not is_current():
+            self._character_save_inflight = False
+            return
+
+        # Apply state only after detached reads complete, with no await that
+        # could let a newer editor session interleave halfway through.
+        self._character_editor_generation += 1
+        if reconciliation_authority is not None:
+            reconciliation_authority = dataclasses.replace(
+                reconciliation_authority,
+                screen_generation=self._character_editor_generation,
+            )
+        self._set_active_row_unsaved(False)
+        card = self.query_one(PersonasCharacterCardWidget)
+        if saved_record:
+            # Keep the handler's cache in sync so other _full_character_record
+            # readers (Edit-again, world-book/dictionary refreshes) see the
+            # fresh record too.
+            self.character_handler.current_character_id = saved_id
+            self.character_handler.current_character_data = dict(saved_record)
+            card.load_character(saved_record)
+        else:
+            saved_record = None
+            self.character_handler.current_character_id = None
+            self.character_handler.current_character_data = {}
+            card.load_character({})
+        # ``saved_id`` was just persisted, so it is authoritative; resolve the
+        # name by the re-read record or the submitted name rather than
+        # scanning the now-page-only cache.
+        name = str(
+            (saved_record or {}).get("name") or submitted_name or "Saved character"
+        )
+        self.state.select_entity(
+            entity_kind="character", entity_id=saved_id, entity_name=name
+        )
+        # A save can rename the selected character; this path bypasses
+        # _select_character, so update the preview speaker label here (it
+        # relabels any already-rendered lines, task-437).
+        self.query_one(PersonasPreviewPane).set_speakers(character=name)
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="character", authority="Local")
+        inspector.show_selection(name=name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
-        if record is not None:
-            await self.character_handler.load_character(saved_id)
-        self._show_center("#ccp-character-card-view")
-        self._register_footer_shortcuts()
-        self.call_after_refresh(self._focus_library_list)
-        self._notify("Character saved.", severity="information")
+        self._queue_character_tts_refresh()
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        if saved_record is None:
+            # Could not re-read -> fall back to today's flip-to-card so we
+            # never leave the editor holding a stale version.
+            # (task-563 AC5: this path does NOT call
+            # _reset_expression_generate_style(), unlike _begin_create_
+            # character/_handle_edit_requested/_finish_cancel_edit - but the
+            # invariant those calls protect ("a picked style never bleeds
+            # into a DIFFERENT editor session") still holds here: the editor
+            # is now closed to view mode, so no Generate button is reachable
+            # against the stale style, and the next genuine session-open
+            # resets it before any button in that new session is reachable.)
+            self._edit_mode = "view"
+            self._show_center("#ccp-character-card-view")
+            self.call_after_refresh(self._focus_library_list)
+        else:
+            self._edit_mode = "edit"  # create -> edit stays in the editor
+            editor.mark_saved(saved_record)
+            self._show_center("#ccp-character-editor-view")
+            if reconciliation_authority is not None:
+                reconciliation_authority = dataclasses.replace(
+                    reconciliation_authority,
+                    selected_id=saved_id,
+                    edit_mode="edit",
+                    editor_session_token=editor.visual_identity_session_token,
+                )
+            # This method already bumped _character_editor_generation above,
+            # which invalidates (drops) any render still in flight from
+            # before the save - so re-render now with the new token or the
+            # thumbnail can be left blank/stale until the next unrelated
+            # avatar action. A create-session's first save is also the
+            # moment a brand-new character gains its id, so this is where
+            # its (still-empty) expression slots flip from disabled to
+            # enabled (mark_saved already re-synced that above).
+            await self._render_all_character_editor_thumbnails(
+                editor.expression_character_id()
+            )
+            if not is_current():
+                self._character_save_inflight = False
+                return
+        self._character_save_inflight = False
+        self._sync_title_and_console_actions()
+        if saved_record is None:
+            self._notify(
+                "Character saved, but the editor could not refresh.", "warning"
+            )
+        else:
+            self._notify("Character saved.", severity="information")
+
+    @on(PersonaPolicyRulesChanged)
+    async def _handle_policy_rules_changed(
+        self, message: PersonaPolicyRulesChanged
+    ) -> None:
+        """Persist a policy-rules edit through the persona service (Task 11).
+
+        The editor owns validation and posts the full rule list; this
+        handler persists it as an immediate local-record update (rules are
+        narrowing-only and local personas only), re-baselines the editor's
+        optimistic-lock version, and refreshes the inspector summary.
+        """
+        message.stop()
+        rules = [dict(rule) for rule in (message.rules or [])]
+        if self.persona_handler.current_mode() != "local":
+            self._notify("Tool policy rules apply to local personas only.", "warning")
+            return
+        editor = self.query_one(PersonaProfileEditorWidget)
+        persona_id = editor.persona_id
+        if not persona_id:
+            self._notify("Save the persona before editing policy rules.", "warning")
+            return
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None:
+            self._notify("Save failed: personas are unavailable.", "error")
+            return
+        try:
+            record = await service.get_persona_profile(persona_id, mode="local")
+            version = record.get("version") if isinstance(record, dict) else None
+            from ...tldw_api.character_persona_schemas import (
+                LocalPersonaProfileUpdate,
+                PersonaPolicyRule,
+            )
+
+            request = LocalPersonaProfileUpdate(
+                policy_rules=[PersonaPolicyRule(**rule) for rule in rules]
+            )
+            updated = await service.update_persona_profile(
+                persona_id,
+                request,
+                expected_version=version,
+                mode="local",
+            )
+        except Exception as exc:
+            logger.error(
+                "Error saving persona policy rules; mode=local; rule_count={}; "
+                "error_type={}",
+                len(rules),
+                type(exc).__name__,
+            )
+            self._notify(f"Policy rules save failed: {exc}", "error")
+            return
+        if isinstance(updated, dict):
+            editor.rebaseline_version(updated.get("version"))
+        self.query_one(PersonasInspectorPane).show_policy_rules(rules)
+        self._notify("Tool policy rules saved.", "information")
 
     @on(PersonaProfileSaveRequested)
-    async def _handle_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+    async def _handle_profile_save_requested(
+        self, message: PersonaProfileSaveRequested
+    ) -> None:
         """Persist a persona profile through the async scope service.
 
         The editor validates before posting (its inline
@@ -1949,13 +15183,33 @@ class PersonasScreen(BaseAppScreen):
         truth), so the screen only clears the inspector summary here.
         """
         message.stop()
-        if self._profile_save_inflight:
-            logger.debug("Persona save already in flight; ignoring duplicate request.")
+        session = self._actor_pack_session
+        if session is not None and session.actor_kind == "persona":
+            if self._profile_save_inflight or self._profile_save_operation_inflight:
+                return
+            self._profile_save_inflight = True
+            self._profile_save_operation_inflight = True
+            self._actor_pack_save_worker_handle = self._create_actor_pack_worker(
+                dict(message.data or {}), session
+            )
+            return
+        if self._persona_visual_has_unsaved_authoring():
+            self._notify(
+                "Save or Cancel Persona Visual changes before saving the Persona.",
+                "warning",
+            )
+            return
+        if self._profile_save_inflight or self._profile_save_operation_inflight:
+            # Serialize the complete persistence and reconciliation interval;
+            # a later visual operation is admitted only after this releases.
+            logger.debug(
+                "Persona save already in flight or already fulfilled for this "
+                "baseline; ignoring duplicate request."
+            )
             return
         if self._edit_mode not in ("create", "edit"):
-            # Message dispatch is serial, so a double-posted Save arrives after
-            # the first save already finished and returned to view mode; a save
-            # without an open edit session is a stale duplicate.
+            # A save without an open edit session (e.g. arriving after the
+            # user cancelled or left the screen) is stale.
             logger.debug("Persona save without an open edit session; ignoring.")
             return
         data = dict(message.data or {})
@@ -1964,86 +15218,173 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasInspectorPane).show_validation_editing()
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
-            self._notify("Save failed: persona profiles are unavailable.", "error")
+            self._notify("Save failed: personas are unavailable.", "error")
             return
         self._profile_save_inflight = True
+        self._profile_save_operation_inflight = True
+        profile_save_completion = asyncio.get_running_loop().create_future()
+        self._profile_save_completion = profile_save_completion
+        self._advance_persona_buddy_session()
+        # mode/persona_id are read INSIDE the try (rather than before it) so
+        # a raise from either (e.g. current_mode()) is caught below, which
+        # resets the inflight flag; reading them ahead of the try would let
+        # such a raise propagate uncaught, latching the flag True forever
+        # and silently no-opping every future save via the guard above.
+        # Placeholder defaults keep both names bound for the except block's
+        # log line even if the raise happens before either assignment runs.
+        mode: str | None = None
+        persona_id: str = ""
         try:
             mode = self.persona_handler.current_mode()
             persona_id = str(data.get("id") or "")
-            try:
-                if self._edit_mode == "create" or not persona_id:
-                    request = PersonaProfileCreate(
+            if self._edit_mode == "create" or not persona_id:
+                if mode == "local":
+                    request = LocalPersonaProfileCreate(
                         id=data.get("id") or None,
                         name=str(data.get("name") or ""),
                         description=data.get("description"),
                         mode=data.get("mode") or "session_scoped",
                         system_prompt=data.get("system_prompt"),
+                        is_active=bool(data.get("is_active", True)),
+                        personality_traits=str(data.get("personality_traits") or ""),
                     )
-                    result = await service.create_persona_profile(request, mode=mode)
                 else:
-                    request = PersonaProfileUpdate(
+                    request = PersonaProfileCreate(
+                        id=data.get("id") or None,
                         name=str(data.get("name") or ""),
-                        description=data.get("description"),
-                        mode=data.get("mode"),
+                        mode=data.get("mode") or "session_scoped",
                         system_prompt=data.get("system_prompt"),
+                        is_active=bool(data.get("is_active", True)),
                     )
-                    result = await service.update_persona_profile(
-                        persona_id,
-                        request,
-                        expected_version=data.get("version"),
-                        mode=mode,
-                    )
-            except Exception as exc:
-                logger.opt(exception=True).error(f"Error saving persona profile: {exc}")
-                self._notify(f"Save failed: {exc}", "error")
-                return
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(mode="json")
-            if not isinstance(result, dict):
-                # Tolerate backends that return ids/None: keep the submitted data.
-                result = dict(data)
-            saved = dict(result)
-            saved.setdefault("id", persona_id)
-            await self._after_profile_save(saved)
-        finally:
+                result = await service.create_persona_profile(request, mode=mode)
+            else:
+                update_payload: dict[str, Any] = {"name": str(data.get("name") or "")}
+                for field_name in ("mode", "system_prompt", "is_active"):
+                    if field_name in data:
+                        update_payload[field_name] = data[field_name]
+                if mode == "local":
+                    for field_name in ("description", "personality_traits"):
+                        if field_name in data:
+                            update_payload[field_name] = data[field_name]
+                    request = LocalPersonaProfileUpdate(**update_payload)
+                else:
+                    request = PersonaProfileUpdate(**update_payload)
+                result = await service.update_persona_profile(
+                    persona_id,
+                    request,
+                    expected_version=data.get("version"),
+                    mode=mode,
+                )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Error saving persona profile: persona_id={persona_id!r}, "
+                f"mode={mode!r}, expected_version={data.get('version')!r}: {exc}"
+            )
+            self._notify(f"Save failed: {exc}", "error")
+            # Allow an immediate retry - only a real DB round trip (or a
+            # fresh edit) may claim this flag again.
             self._profile_save_inflight = False
+            self._profile_save_operation_inflight = False
+            if not profile_save_completion.done():
+                profile_save_completion.set_result(None)
+            return
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(mode="json")
+        if not isinstance(result, dict):
+            # Tolerate backends that return ids/None: keep the submitted data.
+            result = dict(data)
+        saved = dict(result)
+        saved.setdefault("id", persona_id)
+        try:
+            await self._after_profile_save(saved, source=mode)
+        finally:
+            self._profile_save_operation_inflight = False
+            if not profile_save_completion.done():
+                profile_save_completion.set_result(None)
 
-    async def _after_profile_save(self, saved: dict) -> None:
+    async def _after_profile_save(
+        self, saved: dict, *, source: str | None = None
+    ) -> None:
         # Refresh the cached profile list tolerantly even when the user has
         try:
             profiles = await self.persona_handler.refresh_persona_list(
                 raise_on_unavailable=True
             )
         except Exception as exc:
-            logger.opt(exception=True).warning("Could not refresh persona profiles after a save.")
+            logger.opt(exception=True).warning(
+                "Could not refresh persona profiles after a save."
+            )
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
         else:
             self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
-        self._update_status_row()
-        self._update_status_row()
+        saved_id = str(saved.get("id") or "")
+        if saved_id and source == "local":
+            await self._refresh_persona_buddy_lifecycle(saved_id)
+        self._update_purpose_line()
+        self._update_purpose_line()
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return
-        self._edit_mode = "view"
+        self._edit_mode = "edit"  # create -> edit stays in the editor
+        self._advance_persona_buddy_session()
         self.state.has_unsaved_changes = False
         self._set_active_row_unsaved(False)
-        saved_id = str(saved.get("id") or "")
         name = str(saved.get("name") or "Saved persona")
         self.state.select_entity(
-            entity_kind="persona_profile", entity_id=saved_id, entity_name=name
+            entity_kind="persona", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="persona_profile", authority="Local")
+        revision = saved.get("version")
+        inspector.show_selection(
+            name=name,
+            kind="persona",
+            source=self.persona_handler.current_mode(),
+            entity_id=saved_id,
+            revision=revision if type(revision) is int else None,
+            profile_current=True,
+            active=(
+                saved.get("is_active", True) is True
+                and saved.get("deleted", False) is False
+            ),
+        )
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_buddy_status()
+        # Task 11: keep the read-only policy summary in step with the record.
+        inspector.show_policy_rules(saved.get("policy_rules") or [])
         self._sync_inspector_console_actions()
         await self._render_profile_rows()
-        self.query_one(PersonaProfileCardWidget).show_persona(saved)
-        self._show_center("#ccp-persona-card-view")
-        self._register_footer_shortcuts()
-        self.call_after_refresh(self._focus_library_list)
+        # Save-in-place: the returned ``saved`` dict already carries the
+        # incremented optimistic-lock version, so the editor (which stays
+        # open) re-baselines dirty tracking straight from it - no re-read
+        # needed (unlike the character finisher, which reads a stale handler
+        # cache and must go back to the DB).
+        editor = self.query_one(PersonaProfileEditorWidget)
+        editor.mark_saved(saved)
+        await self._drain_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
+        await self._discard_persona_visual_authoring_async()
+        self._persona_visual_generation += 1
+        shared_snapshot = self._persona_shared_visual_identity_snapshot(editor)
+        if shared_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_shared_visual_identity(shared_snapshot),
+                group="personas-shared-visual-identity-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
+        visual_snapshot = self._persona_visual_snapshot(editor)
+        if visual_snapshot is not None:
+            self.run_worker(
+                self._configure_persona_visual(visual_snapshot),
+                group="personas-persona-visual-load",
+                exit_on_error=False,
+                exclusive=True,
+            )
+        self._show_center("#ccp-persona-editor-view")
+        self._sync_title_and_console_actions()
         self._notify("Persona saved.", "information")
 
     # ===== Cancel =====
@@ -2058,7 +15399,13 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(_finish)
 
     def _finish_cancel_edit(self) -> None:
+        self._discard_visual_identity_authoring()
+        self._discard_persona_shared_visual_identity_authoring()
+        self._persona_shared_visual_identity_authority = None
         self._character_editor_generation += 1
+        # A picked image-gen style is scoped to the editor session that
+        # picked it (fix round 1) - the session just ended.
+        self._reset_expression_generate_style()
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
@@ -2073,7 +15420,9 @@ class PersonasScreen(BaseAppScreen):
         self.call_after_refresh(self._focus_library_list)
 
     @on(PersonaProfileEditCancelled)
-    async def _handle_profile_edit_cancelled(self, message: PersonaProfileEditCancelled) -> None:
+    async def _handle_profile_edit_cancelled(
+        self, message: PersonaProfileEditCancelled
+    ) -> None:
         message.stop()
 
         async def _finish() -> None:
@@ -2082,6 +15431,9 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(_finish)
 
     def _finish_cancel_profile_edit(self) -> None:
+        self._advance_persona_buddy_session()
+        self._discard_persona_visual_authoring()
+        self._persona_visual_generation += 1
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
@@ -2097,8 +15449,46 @@ class PersonasScreen(BaseAppScreen):
 
     # ===== Helpers =====
 
+    def _should_show_characters_empty_guidance(self) -> bool:
+        """True when the Characters center should show onboarding guidance.
+
+        Returns:
+            True in Characters mode with no selection (empty center), else False.
+        """
+        return (
+            self.state.active_mode == "characters" and not self.state.selected_entity_id
+        )
+
+    def _characters_empty_guidance_text(self) -> str:
+        """Return the no-selection guidance for the Characters center pane.
+
+        F-035 adaptive: the New/Import onboarding copy only makes sense when
+        the library is truly empty; with rows present (post-delete, mode
+        round-trip) the next action is picking one.
+
+        Returns:
+            Guidance copy for the current library state.
+        """
+        if self._character_total > 0:
+            return _CHARACTERS_EMPTY_PICKER_GUIDANCE
+        return _CHARACTERS_EMPTY_GUIDANCE
+
     def _show_center(self, visible_id: str | None) -> None:
         """Show one center-area view (or none); tolerate missing nodes."""
+        # Characters mode with nothing selected shows onboarding guidance, not a
+        # blank pane (task-436). Every no-selection path funnels through here, so
+        # resolving it once keeps mode-enter, first mount, delete, cancel-New and
+        # restore-failure consistent; non-character modes and explicit-id calls
+        # (card / editor) are unaffected, which makes AC#2 automatic.
+        if visible_id is None and self._should_show_characters_empty_guidance():
+            try:
+                self.query_one("#personas-characters-empty", Static).update(
+                    self._characters_empty_guidance_text()
+                )
+            except QueryError:
+                pass
+            else:
+                visible_id = "#personas-characters-empty"
         for selector in _CENTER_VIEW_IDS:
             try:
                 widget = self.query_one(selector)
@@ -2107,6 +15497,59 @@ class PersonasScreen(BaseAppScreen):
             # All center views are ds-native widgets without `.hidden`-class
             # styling; plain display toggling is the whole mechanism.
             widget.display = selector == visible_id
+        try:
+            self.query_one(PersonasInspectorPane).set_card_actions_visible(
+                visible_id != _CONVERSATION_VIEW_ID
+            )
+        except QueryError:
+            pass
+        # The character dictionaries panel (Roleplay P1f) is chrome shown
+        # alongside the character card/editor, not one of the exclusive
+        # _CENTER_VIEW_IDS pages - it must still be hidden outside a
+        # character context so it doesn't dock space away from (or overlap)
+        # the dictionary/persona/lore views. This gate must run before the
+        # conversation-actions early-return below (and not depend on it
+        # succeeding) - otherwise a failed actions lookup would skip setting
+        # `.display` here, and the panel (which has no `display: none` of its
+        # own in BUNDLED_CSS) would default visible in every mode.
+        try:
+            dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
+        except Exception:
+            dict_panel = None
+        if dict_panel is not None:
+            dict_panel.display = (
+                visible_id
+                in (
+                    "#ccp-character-card-view",
+                    "#ccp-character-editor-view",
+                )
+                and self.state.runtime_source == "local"
+            )
+        # The wrapper that holds BOTH character-attachment sections
+        # (Roleplay P2f Task 6 added the world-books panel alongside the
+        # P1f dictionaries panel inside #personas-character-attachments)
+        # is the single source of truth for the same characters-only
+        # condition as dict_panel above - gating the wrapper hides both
+        # children in one step. This has to be re-derived here (not left to
+        # a mode-level toggle alone) because _show_center also runs *within*
+        # Characters mode when swapping to the conversation transcript view
+        # (see personas_conversations_controller.open_conversation), which
+        # must hide the wrapper too so it doesn't stay visible with
+        # stale data over the transcript, or empty at initial mount before
+        # any character is selected.
+        try:
+            attachments_wrapper = self.query_one("#personas-character-attachments")
+        except QueryError:
+            attachments_wrapper = None
+        if attachments_wrapper is not None:
+            attachments_wrapper.display = (
+                visible_id
+                in (
+                    "#ccp-character-card-view",
+                    "#ccp-character-editor-view",
+                )
+                and self.state.runtime_source == "local"
+            )
         # The conversation actions row is chrome shown alongside (not instead
         # of) the read-only conversation view.
         try:
@@ -2114,6 +15557,212 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             return
         actions.display = visible_id == _CONVERSATION_VIEW_ID
+        self.query_one("#personas-workbench").set_class(
+            actions.display, "personas-transcript-active"
+        )
+        # Preview display changes after row navigation revealed the work pane;
+        # re-evaluate its rails using the newly committed center view.
+        self._sync_personas_rails()
+
+    def _aggregate_roleplay_draft_snapshot(self) -> RoleplayDraftSnapshot:
+        """Capture every Roleplay draft and save owner in one stable snapshot."""
+
+        from ..Navigation.character_conversation_navigation import (
+            RoleplayDraftSnapshot,
+        )
+
+        inflight: list[str] = []
+        if self._character_save_inflight:
+            inflight.append("character form")
+        # ``_profile_save_inflight`` also remains true after a successful
+        # save to deduplicate that editor baseline. Only the operation flag
+        # denotes work that navigation must await.
+        if self._profile_save_operation_inflight:
+            inflight.append("Persona form")
+        if self._visual_identity_publication_inflight or (
+            self._visual_identity_operation_task is not None
+            and not self._visual_identity_operation_task.done()
+        ):
+            inflight.append("character visuals")
+        if self._persona_shared_visual_identity_publication_inflight or (
+            self._persona_shared_visual_identity_operation_task is not None
+            and not self._persona_shared_visual_identity_operation_task.done()
+        ):
+            inflight.append("Persona visuals")
+        if self._persona_visual_publication_inflight or (
+            self._persona_visual_operation_task is not None
+            and not self._persona_visual_operation_task.done()
+        ):
+            inflight.append("Persona visuals")
+        attachments_dirty = False
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            attachments_dirty = editor.has_unsaved_attachment()
+        except (AttributeError, QueryError):
+            pass
+        return RoleplayDraftSnapshot(
+            form_dirty=bool(self.state.has_unsaved_changes),
+            character_visual_dirty=self._visual_identity_authoring is not None,
+            persona_visual_dirty=bool(
+                self._persona_shared_visual_identity_authoring is not None
+                or (
+                    self._persona_visual_authoring is not None
+                    and self._persona_visual_authoring.dirty
+                )
+            ),
+            attachments_dirty=attachments_dirty,
+            inflight_save_domains=tuple(dict.fromkeys(inflight)),
+        )
+
+    async def _save_aggregate_roleplay_drafts(
+        self, snapshot: RoleplayDraftSnapshot
+    ) -> tuple[str, ...]:
+        """Save each incumbent owner and return exact domains still failing."""
+
+        failures: list[str] = []
+        form_domain = (
+            "Persona form" if self.state.active_mode == "personas" else "character form"
+        )
+        character_visual = self._visual_identity_authoring
+        if snapshot.character_visual_dirty and character_visual is not None:
+            try:
+                await self._save_visual_identity_pack(
+                    character_visual.authoritative_pack
+                )
+            except Exception:  # noqa: BLE001 - name every failed domain
+                failures.append("character visuals")
+        if snapshot.persona_visual_dirty:
+            if self._persona_shared_visual_identity_authoring is not None:
+                try:
+                    await self._save_persona_shared_visual_identity_pack()
+                except Exception:  # noqa: BLE001
+                    failures.append("Persona visuals")
+            persona_visual = self._persona_visual_authoring
+            if persona_visual is not None and persona_visual.dirty:
+                try:
+                    await self._save_persona_visual_pack()
+                except Exception:  # noqa: BLE001
+                    if "Persona visuals" not in failures:
+                        failures.append("Persona visuals")
+        if snapshot.form_dirty:
+            try:
+                prior_owners = (
+                    self._character_save_worker_handle,
+                    self._actor_pack_save_worker_handle,
+                    self._profile_save_completion,
+                )
+                self.action_personas_save()
+                # The editor's button posts its save request on the next loop
+                # turn. Join only the exact owner it creates: Resume is a
+                # worker in the same manager and must never wait on itself.
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                    current_owners = (
+                        self._character_save_worker_handle,
+                        self._actor_pack_save_worker_handle,
+                        self._profile_save_completion,
+                    )
+                    if current_owners != prior_owners or not self.state.has_unsaved_changes:
+                        break
+                await self._await_roleplay_save_owners()
+            except Exception:  # noqa: BLE001
+                failures.append(form_domain)
+            if self.state.has_unsaved_changes and form_domain not in failures:
+                failures.append(form_domain)
+        residual = self._aggregate_roleplay_dirty_domains(
+            self._aggregate_roleplay_draft_snapshot()
+        )
+        failures.extend(domain for domain in residual if domain not in failures)
+        return tuple(failures)
+
+    async def _await_roleplay_save_owners(self) -> None:
+        """Join only incumbent save owners, never the navigation worker."""
+
+        waits: list[Awaitable[Any]] = []
+        for worker in (
+            self._character_save_worker_handle,
+            self._actor_pack_save_worker_handle,
+        ):
+            if worker is not None:
+                waits.append(worker.wait())
+        completion = self._profile_save_completion
+        if completion is not None and not completion.done():
+            waits.append(asyncio.shield(completion))
+        current_task = asyncio.current_task()
+        for task in (
+            self._visual_identity_operation_task,
+            self._persona_shared_visual_identity_operation_task,
+            self._persona_visual_operation_task,
+        ):
+            if task is not None and task is not current_task and not task.done():
+                waits.append(task)
+        if waits:
+            await asyncio.gather(*waits, return_exceptions=True)
+
+    def _aggregate_roleplay_dirty_domains(
+        self, snapshot: RoleplayDraftSnapshot
+    ) -> tuple[str, ...]:
+        """Name the mounted form owner while preserving stable visual labels."""
+
+        domains = list(snapshot.dirty_domains)
+        if self.state.active_mode == "personas" and "character form" in domains:
+            domains[domains.index("character form")] = "Persona form"
+        return tuple(domains)
+
+    async def confirm_navigation(self) -> bool:
+        """App-invoked aggregate Save/Discard/Stay veto for leaving Roleplay."""
+
+        from ..Navigation.character_conversation_navigation import (
+            RoleplayDraftNavigationDialog,
+            RoleplayDraftRecoveryDialog,
+        )
+
+        snapshot = self._aggregate_roleplay_draft_snapshot()
+        if snapshot.inflight_save_domains:
+            await self._await_roleplay_save_owners()
+            snapshot = self._aggregate_roleplay_draft_snapshot()
+        if snapshot.is_clean:
+            return True
+        domains = tuple(
+            dict.fromkeys(
+                self._aggregate_roleplay_dirty_domains(snapshot)
+                + snapshot.inflight_save_domains
+            )
+        )
+        try:
+            choice = await self.app.push_screen_wait(
+                RoleplayDraftNavigationDialog(domains)
+            )
+        except Exception:  # noqa: BLE001 - broken presentation fails closed
+            logger.opt(exception=True).warning(
+                "Could not present aggregate Roleplay navigation guard"
+            )
+            return False
+        if choice == "save":
+            while True:
+                failures = await self._save_aggregate_roleplay_drafts(snapshot)
+                if not failures and self._aggregate_roleplay_draft_snapshot().is_clean:
+                    return True
+                retry = await self.app.push_screen_wait(
+                    RoleplayDraftRecoveryDialog(failures)
+                )
+                if retry != "retry":
+                    return False
+                snapshot = self._aggregate_roleplay_draft_snapshot()
+        if choice == "discard":
+            await self._drain_visual_identity_authoring()
+            await self._drain_persona_shared_visual_identity_authoring()
+            await self._discard_persona_visual_authoring_async()
+            await self._drain_actor_pack_creation()
+            for editor in (
+                *self.query(PersonasCharacterEditorWidget),
+                *self.query(PersonaProfileEditorWidget),
+            ):
+                editor.discard_unsaved_form()
+            self.state.has_unsaved_changes = False
+            self._set_active_row_unsaved(False)
+            return self._aggregate_roleplay_draft_snapshot().is_clean
+        return False
 
     async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
         """Run ``continuation``, confirming first when an edit would be discarded.
@@ -2124,18 +15773,26 @@ class PersonasScreen(BaseAppScreen):
         protected by ``_guard_active`` so a queued second trigger cannot
         double-fire the confirm dialog or its continuation.
         """
-        if not self.state.has_unsaved_changes:
+        if not (
+            self.state.has_unsaved_changes
+            or self._visual_identity_has_unsaved_authoring()
+            or self._persona_shared_visual_identity_has_unsaved_authoring()
+            or self._persona_visual_has_unsaved_authoring()
+        ):
+            await self._drain_actor_pack_creation()
             await continuation()
             # Guarded continuations are exactly the transitions that change
             # edit mode / selection, so the footer hints refresh here.
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
             return
         if self._guard_active:
             return
         self._guard_active = True
         self.run_worker(self._confirm_then_run(continuation), group="personas-guard")
 
-    async def _confirm_then_run(self, continuation: Callable[[], Awaitable[None]]) -> None:
+    async def _confirm_then_run(
+        self, continuation: Callable[[], Awaitable[None]]
+    ) -> None:
         try:
             if not await self._confirm_discard_unsaved():
                 return
@@ -2143,8 +15800,12 @@ class PersonasScreen(BaseAppScreen):
             # The discarded session's row badge must not survive the discard
             # (the continuation may move the selection without a row rebuild).
             self._set_active_row_unsaved(False)
+            await self._drain_visual_identity_authoring()
+            await self._drain_persona_shared_visual_identity_authoring()
+            await self._drain_persona_visual_authoring()
+            await self._drain_actor_pack_creation()
             await continuation()
-            self._register_footer_shortcuts()
+            self._sync_title_and_console_actions()
         finally:
             self._guard_active = False
 
@@ -2155,7 +15816,12 @@ class PersonasScreen(BaseAppScreen):
         message handlers route through ``self.run_worker`` before calling this
         when ``has_unsaved_changes`` is set.
         """
-        if not self.state.has_unsaved_changes:
+        if not (
+            self.state.has_unsaved_changes
+            or self._visual_identity_has_unsaved_authoring()
+            or self._persona_shared_visual_identity_has_unsaved_authoring()
+            or self._persona_visual_has_unsaved_authoring()
+        ):
             return True
         dialog = UnsavedChangesDialog(
             tab_title=self.state.selected_entity_name or "New character",
@@ -2163,13 +15829,33 @@ class PersonasScreen(BaseAppScreen):
         try:
             return bool(await self.app.push_screen_wait(dialog))
         except Exception:
-            logger.opt(exception=True).warning("Could not show unsaved-changes dialog; keeping edits.")
+            logger.opt(exception=True).warning(
+                "Could not show unsaved-changes dialog; keeping edits."
+            )
             return False
 
-    def _notify(self, message: str, severity: str = "warning") -> None:
+    def _notify(
+        self,
+        message: str,
+        severity: str = "warning",
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Post an app notification.
+
+        Args:
+            message: Text to show.
+            severity: Textual severity level.
+            timeout: Seconds to linger before dismissing; ``None`` uses the
+                app's default (Textual's ``NOTIFICATION_TIMEOUT``, 5s). Most
+                callers leave this at the default; a few confirmations that
+                land alongside a big simultaneous UI change (e.g. import
+                swapping in the card view) pass a longer value so they don't
+                read as a flash (task-445).
+        """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity=severity)
+            notify(message, severity=severity, timeout=timeout)
 
     # ===== Key bindings =====
 
@@ -2185,7 +15871,7 @@ class PersonasScreen(BaseAppScreen):
             pass
 
     async def action_personas_attach(self) -> None:
-        """Ctrl+Enter: same path as the inspector Attach button.
+        """Ctrl+Enter: same path as the inspector Send-to-Console-draft button.
 
         No-ops silently when the attach buttons would be disabled (no saved
         selection, or unsaved edits) so the shortcut cannot bypass the guard.
@@ -2225,6 +15911,8 @@ class PersonasScreen(BaseAppScreen):
         Transcript open -> back to the card, focus the conversations list.
         Search focused -> move focus to the library list.
         """
+        if self.conversations.cancel_resume():
+            return
         if self._edit_mode in ("create", "edit"):
             for view_id, message in (
                 ("#ccp-character-editor-view", CharacterEditorCancelled),
@@ -2244,9 +15932,7 @@ class PersonasScreen(BaseAppScreen):
             transcript = None
         if transcript is not None and transcript.display:
             # Same path as the "Back to card" button.
-            self._show_center("#ccp-character-card-view")
-            self._register_footer_shortcuts()
-            self._focus_conversations_list()
+            self._return_to_conversations()
             return
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
@@ -2332,9 +16018,9 @@ class PersonasScreen(BaseAppScreen):
             direction=-1,
         )
 
-    def _focus_conversations_list(self) -> None:
+    def _focus_conversations_list(self, *, force: bool = False) -> None:
         """Focus the inspector's conversations list (transcript Back path)."""
-        if self._focus_steal_blocked():
+        if not force and self._focus_steal_blocked():
             return
         try:
             self.query_one("#personas-conversations-list", ListView).focus()
@@ -2350,7 +16036,7 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             pass
 
-    # ===== Footer shortcut context =====
+    # ===== Header/console-action sync and footer shortcut context =====
 
     def _shortcut_context(self) -> ShortcutContext:
         """Truthful footer hints built from the live workbench state.
@@ -2367,25 +16053,58 @@ class PersonasScreen(BaseAppScreen):
         return ShortcutContext(
             source="personas",
             actions=(
-                ShortcutAction("ctrl+n", "new"),
+                ShortcutAction(
+                    "ctrl+n",
+                    "new",
+                    available=(
+                        self.state.active_mode != "characters"
+                        or self._local_character_actions_allowed()
+                    ),
+                ),
                 ShortcutAction("ctrl+f", "search"),
                 ShortcutAction("ctrl+s", "save", available=editing),
                 ShortcutAction("esc", "back", available=editing or transcript_open),
+                # task-2232: the hint names the one secondary CTA verbatim.
                 ShortcutAction(
-                    "ctrl+enter", "attach", available=self._console_action_allowed()
+                    "ctrl+enter",
+                    "Send to Console draft",
+                    available=self._console_action_allowed(),
                 ),
+                # F-038: disclose the always-on accelerators that used to be
+                # invisible (show=False bindings with no footer/chip mention).
+                ShortcutAction("f6", "pane"),
+                ShortcutAction("ctrl+1-4", "mode"),
                 ShortcutAction("[ ]", "mode"),
+                # F-040: the sort cycle key applies where the Sort button shows.
+                ShortcutAction(
+                    "s",
+                    "sort",
+                    available=self.state.active_mode in ("characters", "personas"),
+                ),
+                # The library pane's space binding only acts on dictionary
+                # rows, so it is advertised only in that mode (never claim a
+                # key that does nothing in context).
+                ShortcutAction(
+                    "space",
+                    "toggle",
+                    available=self.state.active_mode == "dictionaries",
+                ),
             ),
         )
 
-    def _register_footer_shortcuts(self) -> None:
-        # The footer re-registers on exactly the transitions that change the
-        # editing/selection state, which are also the transitions the live
-        # header reflects; refresh the title here so the two stay in lockstep.
+    def _sync_title_and_console_actions(self) -> None:
+        """Refresh the header title, inspector console actions, and footer hints.
+
+        Called on exactly the transitions that change the editing/selection
+        state, which are also the transitions the live header reflects. The
+        contextual shortcut hints render through the per-screen
+        ``AppFooterStatus`` (upstream task-264 channel, restored on rebase).
+        """
         self._update_title()
         self._sync_inspector_console_actions()
+        self._sync_local_character_actions()
         try:
-            footer = self.app.query_one("AppFooterStatus")
+            footer = self.query_one("AppFooterStatus")
         except QueryError:
             return
         set_ctx = getattr(footer, "set_shortcut_context", None)
@@ -2394,7 +16113,7 @@ class PersonasScreen(BaseAppScreen):
 
     def _clear_footer_shortcuts(self) -> None:
         try:
-            footer = self.app.query_one("AppFooterStatus")
+            footer = self.query_one("AppFooterStatus")
         except QueryError:
             return
         clear_ctx = getattr(footer, "clear_shortcut_context", None)

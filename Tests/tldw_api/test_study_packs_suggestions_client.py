@@ -38,7 +38,9 @@ def _pack_payload() -> dict:
         "workspace_id": "ws-1",
         "title": "Cell Biology Pack",
         "deck_id": 7,
-        "source_bundle_json": {"items": [{"source_type": "note", "source_id": "note-1"}]},
+        "source_bundle_json": {
+            "items": [{"source_type": "note", "source_id": "note-1"}]
+        },
         "generation_options_json": None,
         "status": "active",
         "superseded_by_pack_id": None,
@@ -56,7 +58,11 @@ async def test_study_pack_routes_wire_and_return_typed_models(monkeypatch):
     mocked = AsyncMock(
         side_effect=[
             _job_payload("queued"),
-            {"job": _job_payload("completed")["job"], "study_pack": _pack_payload(), "error": None},
+            {
+                "job": _job_payload("completed")["job"],
+                "study_pack": _pack_payload(),
+                "error": None,
+            },
             _pack_payload(),
             _job_payload("queued"),
         ]
@@ -80,7 +86,10 @@ async def test_study_pack_routes_wire_and_return_typed_models(monkeypatch):
     pack = await client.get_study_pack(9)
     regenerated = await client.regenerate_study_pack(9)
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/flashcards/study-packs/jobs")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/flashcards/study-packs/jobs",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "title": "Cell Biology Pack",
         "workspace_id": "ws-1",
@@ -94,9 +103,18 @@ async def test_study_pack_routes_wire_and_return_typed_models(monkeypatch):
             }
         ],
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/flashcards/study-packs/jobs/41")
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/flashcards/study-packs/9")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/flashcards/study-packs/9/regenerate")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/study-packs/jobs/41",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/flashcards/study-packs/9",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/flashcards/study-packs/9/regenerate",
+    )
     assert isinstance(accepted, StudyPackJobAcceptedResponse)
     assert isinstance(status, StudyPackJobStatusResponse)
     assert isinstance(pack, StudyPackSummaryResponse)
@@ -168,10 +186,19 @@ async def test_study_suggestion_routes_wire_and_return_typed_models(monkeypatch)
         "GET",
         "/api/v1/study-suggestions/anchors/quiz_attempt/17/status",
     )
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/study-suggestions/snapshots/23")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/study-suggestions/snapshots/23/refresh")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/study-suggestions/snapshots/23",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/study-suggestions/snapshots/23/refresh",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"reason": "user-request"}
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/study-suggestions/snapshots/23/actions")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/study-suggestions/snapshots/23/actions",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {
         "target_service": "flashcards",
         "target_type": "deck",
