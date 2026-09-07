@@ -204,6 +204,13 @@ def test_mermaid_rebuild_is_reproducible_from_verified_inputs(tmp_path):
     first = vendor.build(Path(input_dir), tmp_path / "first")
     second = vendor.build(Path(input_dir), tmp_path / "second")
     assert first == second
+    # An independent output directory must contain the candidate's actual
+    # worker/renderer closure, not just manifests that refer back to the checkout.
+    manifest = json.loads(
+        (tmp_path / "first" / "mermaid-runtime-manifest.json").read_bytes()
+    )
+    for role in ("worker", "renderer"):
+        assert (tmp_path / "first" / manifest["runtime_layout"][role]).is_file()
     for name in first:
         assert (tmp_path / "first" / name).read_bytes() == (STATIC / name).read_bytes()
 

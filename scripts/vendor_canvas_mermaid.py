@@ -208,10 +208,28 @@ def build(input_dir: Path, output_dir: Path) -> dict:
     )
     manifest = json.loads((STATIC / "runtime-manifest.json").read_bytes())
     manifest["runtime_profile"] = "canvas-v2-mermaid-1"
+    for role, old in (
+        ("worker", "canvas_runtime_worker.js"),
+        ("renderer", "canvas_renderer.js"),
+    ):
+        name = old.replace(".js", "_v2.js")
+        data = (STATIC / name).read_bytes()
+        del manifest["outputs"][old]
+        manifest["outputs"][name] = {"bytes": len(data), "sha256": digest(data)}
+        manifest["runtime_layout"][role] = name
+    manifest["library"] = {"bytes": len(library), "sha256": digest(library)}
     manifest["reproducible_command"] = (
         "python scripts/vendor_canvas_mermaid.py --input-dir INPUTS"
     )
     contract = manifest["profile_contract"]
+    contract["facade"] = {
+        "id": "canvas-virtual-dom-v2-mermaid-1",
+        "sha256": manifest["outputs"]["canvas_runtime_worker_v2.js"]["sha256"],
+    }
+    contract["plan"] = {
+        "id": "canvas-render-plan-v2-mermaid-1",
+        "sha256": manifest["outputs"]["canvas_renderer_v2.js"]["sha256"],
+    }
     contract["quotas"].update(
         {
             "id": "canvas-v2-mermaid-quotas-1",
@@ -262,8 +280,8 @@ def build(input_dir: Path, output_dir: Path) -> dict:
             )
         ),
     }
-    # Existing engine/facade/plan are exact real V1 assets until later
-    # slices implement V2. This candidate is deliberately never executable.
+    # V2 owns its closure; the published V1 worker/renderer remain unchanged.
+    # This candidate remains deliberately non-executable until qualification.
     manifest["mermaid_candidate"] = {
         "inputs_sha256": digest(inputs_bytes),
         "source_bytes": len(encoded),
@@ -312,6 +330,10 @@ def build(input_dir: Path, output_dir: Path) -> dict:
     catalog["build_id"] = digest(canonical(build_projection))
     catalog["policy_id"] = digest(canonical(policy_projection))
     outputs = {
+        "canvas_runtime_worker_v2.js": (
+            STATIC / "canvas_runtime_worker_v2.js"
+        ).read_bytes(),
+        "canvas_renderer_v2.js": (STATIC / "canvas_renderer_v2.js").read_bytes(),
         "mermaid-subset.json": library,
         "MERMAID_THIRD_PARTY_LICENSES.txt": notices,
         "mermaid-runtime-manifest.json": manifest_bytes,

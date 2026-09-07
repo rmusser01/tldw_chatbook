@@ -87,6 +87,15 @@ demonstrated storage problem.
    Temporary ownership, atomic promotion, branch history, deletion and local-only
    storage remain governed by ADR-121. Synchronization stays with TASK-31003.
 
+Task 4 implementation clarification: V2 owns separate
+`canvas_runtime_worker_v2.js` and `canvas_renderer_v2.js` files and hashes;
+the published V1 closure is not rewritten. The trusted parent supplies captured
+inert library/manifest strings in a bounded private init/prepare envelope before
+execution acknowledgement. Both consumers verify those bytes before QuickJS
+startup. This preserves the existing CSP and avoids a native library module.
+Product parent delivery is implemented in Task 6; the candidate stays disabled
+until Task 8 qualification. Separate frozen files require per-profile maintenance.
+
 ## Alternatives considered
 
 | Alternative | Reason not selected |

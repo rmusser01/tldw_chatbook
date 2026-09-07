@@ -303,6 +303,87 @@ class CanvasRenderPlan:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CanvasDiagram:
+    """One inert, decoded declaration bound to a unique virtual pre node."""
+
+    ordinal: int
+    target_node_id: str
+    kind: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if type(self.ordinal) is not int or not 0 <= self.ordinal < 4:
+            raise CanvasLimitError("invalid diagram ordinal")
+        validate_opaque_identifier(self.target_node_id, field_name="diagram target")
+        if self.kind != "mermaid":
+            raise CanvasLimitError("unsupported diagram kind")
+        validate_utf8_text(self.source, limit=8192, field_name="diagram source")
+        if not self.source.strip():
+            raise CanvasLimitError("empty diagram declaration")
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasRenderPlanV2:
+    """Closed candidate plan; declaration data never becomes an authored script."""
+
+    runtime_profile: str
+    source_identity: CanvasSourceIdentity
+    root: RenderNode
+    profile_manifest_sha256: str
+    assets: tuple[RenderAsset, ...] = ()
+    css_rules: tuple[str, ...] = ()
+    scripts: tuple[str, ...] = ()
+    compatibility_issues: tuple[CanvasCompatibilityIssue, ...] = ()
+    diagrams: tuple[CanvasDiagram, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.runtime_profile != "canvas-v2-mermaid-1":
+            raise CanvasLimitError("unsupported Canvas runtime profile")
+        if not isinstance(self.profile_manifest_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.profile_manifest_sha256
+        ):
+            raise CanvasLimitError("invalid profile manifest identity")
+        # Preserve V1's exact validation and public model contract.
+        CanvasRenderPlan(
+            "canvas-v1",
+            self.source_identity,
+            self.root,
+            self.assets,
+            self.css_rules,
+            self.scripts,
+            self.compatibility_issues,
+        )
+        _require_tuple_of(self.diagrams, CanvasDiagram, "diagram records")
+        validate_count(len(self.diagrams), limit=4, field_name="diagrams")
+        validate_utf8_text_parts(
+            (item.source for item in self.diagrams), limit=16384, field_name="diagrams"
+        )
+        declarations = [
+            node
+            for node in _all_nodes(self.root)
+            if "data-canvas-diagram" in dict(node.attributes)
+        ]
+        if len(declarations) != len(self.diagrams):
+            raise CanvasLimitError("diagram declarations do not match records")
+        for ordinal, (node, record) in enumerate(zip(declarations, self.diagrams)):
+            if (
+                record.ordinal != ordinal
+                or record.target_node_id != node.node_id
+                or node.tag != "pre"
+                or node.text is not None
+                or dict(node.attributes)["data-canvas-diagram"] != record.kind
+                or any(
+                    child.tag != "#text" or child.children for child in node.children
+                )
+                or "".join(child.text or "" for child in node.children) != record.source
+            ):
+                raise CanvasLimitError("diagram target or source mismatch")
+
+
+CanvasCompiledPlan: TypeAlias = CanvasRenderPlan | CanvasRenderPlanV2
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class CanvasBridgeRequest:
     """One untrusted browser-to-shell bridge request with a closed V1 schema."""
