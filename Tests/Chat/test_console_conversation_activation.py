@@ -121,6 +121,47 @@ class _Harness:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("owned", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_commit_waiter_can_start_before_its_exact_owner(owned, cancel):
+    harness = _Harness()
+    coordinator = harness.coordinator()
+    completion = (lambda result: True) if owned else None
+    cancellation = asyncio.Event()
+    waiter = asyncio.create_task(
+        coordinator.wait_until_commit_started(TARGET, complete_presentation=completion)
+    )
+    activation = None
+    try:
+        await asyncio.sleep(0)
+        assert not waiter.done()
+        activation = asyncio.create_task(
+            coordinator.activate(TARGET, cancellation, complete_presentation=completion)
+        )
+        await asyncio.sleep(0)
+        assert not waiter.done()
+        if cancel:
+            cancellation.set()
+        harness.commit_gate.set()
+        if cancel:
+            with pytest.raises(RuntimeError, match="settled before commit"):
+                await asyncio.wait_for(waiter, 2)
+            assert harness.open_calls == 0
+        else:
+            await asyncio.wait_for(waiter, 2)
+            assert harness.open_calls == 1
+    finally:
+        harness.commit_gate.set()
+        harness.finish_gate.set()
+        if activation is not None:
+            await asyncio.wait_for(activation, 2)
+        if not waiter.done():
+            waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+    assert coordinator._active_presentation is None
+
+
+@pytest.mark.asyncio
 async def test_equal_target_different_presentation_does_not_join_owned_completion():
     harness = _Harness()
     coordinator = harness.coordinator()
@@ -134,7 +175,9 @@ async def test_equal_target_different_presentation_does_not_join_owned_completio
     owned = asyncio.create_task(
         coordinator.activate(TARGET, complete_presentation=complete)
     )
-    await asyncio.wait_for(coordinator.wait_until_commit_started(TARGET), 2)
+    await asyncio.wait_for(
+        coordinator.wait_until_commit_started(TARGET, complete_presentation=complete), 2
+    )
     ordinary = asyncio.create_task(coordinator.activate(TARGET))
     try:
         await asyncio.sleep(0)

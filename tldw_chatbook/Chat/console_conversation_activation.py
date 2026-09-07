@@ -119,6 +119,7 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         self._exact_target_visible = exact_target_visible
         self._mutation_lock = mutation_lock or asyncio.Lock()
         self._admission_lock = asyncio.Lock()
+        self._admission_changed = asyncio.Event()
         self._active_request: (
             LocalCharacterConversationTarget
             | CharacterConversationActivationRequest
@@ -177,6 +178,8 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                     self._active_attempt = attempt
                     self._active_commit_event = commit_event
                     self._active_presentation = complete_presentation
+                    self._admission_changed.set()
+                    self._admission_changed = asyncio.Event()
                     attempt.add_done_callback(self._release)
                     join = True
                 else:
@@ -210,18 +213,45 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         self,
         target: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
     ) -> None:
-        """Wait until the current attempt crosses its commit linearization point."""
+        """Wait for this owner's admission and commit, never another equal target.
 
-        event = self._active_commit_event if self._active_request == target else None
-        if event is None:
-            await asyncio.sleep(0)
-            event = (
-                self._active_commit_event if self._active_request == target else None
+        Args:
+            target: Same immutable target/request passed to activation.
+            complete_presentation: Exact activation completion owner, or None.
+
+        Raises:
+            RuntimeError: This admitted attempt settled without committing.
+
+        Callers cancel their waiter when activation ends or their visit closes.
+        Cancellation affects neither a queued activation nor the current owner.
+        """
+        while True:
+            changed = self._admission_changed
+            if (
+                self._active_request == target
+                and self._active_presentation is complete_presentation
+                and self._active_attempt is not None
+            ):
+                attempt = self._active_attempt
+                event = self._active_commit_event
+                break
+            await changed.wait()
+        assert event is not None
+        committed = asyncio.create_task(event.wait())
+        try:
+            await asyncio.wait(
+                {committed, attempt}, return_when=asyncio.FIRST_COMPLETED
             )
-        if event is None:
-            raise RuntimeError("target has no activation attempt")
-        await event.wait()
+            if not event.is_set():
+                raise RuntimeError("activation settled before commit")
+        finally:
+            if not committed.done():
+                committed.cancel()
+            await asyncio.gather(committed, return_exceptions=True)
 
     def _release(
         self, attempt: asyncio.Task[ConsoleConversationActivationResult]

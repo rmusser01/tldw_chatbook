@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-09-07 17:12'
+updated_date: '2026-09-07 17:49'
 labels:
   - console
   - switcher
@@ -87,4 +87,6 @@ User-authorized comment6 destination-only rollback implemented against91ed53b4e 
 Resource design identifies explicit inspection fixture ownership plus constructor-owned collections and evaluation databases; repair these terminal fixture lifetimes first, measure post-teardown descriptors, and avoid changing production pooled connection semantics without causal evidence. Narrow chardet compatibility constraint permitted by user-authorized repair addendum.
 
 Resource correction against10c18c7c6: inspection fixture captures its original ChaChaNotes, collections, evals, workspace, subscriptions and profile-lock owners, disposes only at terminal fixture lifetime after harness/workers stop, and preserves production pooling. Held-reference/worker/same-file observer regression RED then GREEN; both parsed manifests now constrain chardet>=3.0.2,<6. Isolated chardet5.2 overlay imports Requests2.32.5 with warnings as errors; shared venv unchanged. Initial46-pass observer still found+147 regular descriptors; exact cold/warm metadata census identified workspace/subscriptions/lock residual, then final103-pass affected switcher/geometry/inspection/packaging gate had no warnings and regular FD plateau7through every teardown, only first-use+1FIFO/+2sockets. lsof exit0/stderr empty agrees with F_GETPATH. Static no added Ruff diagnostics. Exact logs /tmp/task31245-resource-*.log and complete resource receipt in packet task-5-delivery-report.md; testing-evidence lesson records diagnostic trap. No production/native/scale/rebase/remote changes; task stays In Progress for review and remaining required verification.
+
+Activation scoped review I1/M1 correction against cfcb79bd8: commit acknowledgement now matches the same completion-owner identity as activation admission and waits through queued admission; installed callbacks pair per-request completion/waiter even when waiter starts first. Real held ordinary-A/queued-switcher-B regression proves Escape remains effective before B commit and only B linearization freezes controls; ordinary None and precommit settlement preserved. Artifact finalization records corpus-integrity failure before JSON while retaining an earlier exception. ADR120 and AC5/15 already govern; no new ADR or authority. Valid owner RED4failed, focusedGREEN6passed, final affected three-file gate51passed38.63s/no warnings with post-teardown regular7 plateau and lsof0/empty stderr. Seven changed Python paths have no added Ruff diagnostics; five focused files lint/format clean. Existing lesson records reviewer unguarded-import incident without ambient inspection/undo. Full command/provenance receipt: packet/task-5-activation-review-fix-report.md. In Progress/unchecked; native/full UI latency, external evidence, inherited preimport501/500 and size qualifications remain open. No full sweep, timing matrix, native, rebase or remote changes.
 <!-- SECTION:NOTES:END -->

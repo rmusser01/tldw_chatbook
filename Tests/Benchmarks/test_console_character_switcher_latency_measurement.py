@@ -88,3 +88,22 @@ def test_keyword_evidence_reports_stale_generation_without_maintaining_it(tmp_pa
         assert stale["dirty_conversations"] == 0
     finally:
         database.close()
+
+
+@pytest.mark.parametrize("prior_failure", [None, RuntimeError("operation failed")])
+def test_terminal_receipt_cannot_pass_changed_corpus(prior_failure):
+    import json
+
+    from Tests.Benchmarks.console_character_switcher_latency import _finalize_evidence
+
+    evidence = {"status": "passed", "failures": [], "corpus_sha256_before": "before"}
+    failure = _finalize_evidence(evidence, prior_failure, "different")
+    receipt = json.loads(json.dumps(evidence))
+    assert receipt["status"] == "failed"
+    assert receipt["source_unchanged"] is False
+    assert "Controller corpus changed" in receipt["failures"]
+    assert receipt["error"] == f"{type(failure).__name__}: {failure}"
+    if prior_failure is not None:
+        assert failure is prior_failure
+    else:
+        assert isinstance(failure, AssertionError)

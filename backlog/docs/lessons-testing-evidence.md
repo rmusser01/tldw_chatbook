@@ -11842,6 +11842,15 @@ of all subsequent pytest execution while the worker was limited to static edits.
 When a procedural warning demonstrably fails, narrow the execution workflow
 instead of repeating the warning and treating intent as isolation evidence.
 
+Follow-up incident (TASK-31245 activation review, 2026-09-07): a coordinator-only
+stdin diagnostic imported `Chat.__init__` → server/runtime-policy bootstrap →
+config before establishing a disposable profile. Logs showed ambient config
+loading and chat_dicts ensure; no prior metadata established whether directory
+creation or permission hardening occurred. No real-profile inspection/undo was
+attempted. The regression belongs in repository pytest's pre-import disposable
+bootstrap (with compatible qualification dependencies), not a raw import probe;
+an apparently pure coordinator module does not bypass its package initializer.
+
 ## Parameter IDs can accidentally activate keyword-based test gates
 
 Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium

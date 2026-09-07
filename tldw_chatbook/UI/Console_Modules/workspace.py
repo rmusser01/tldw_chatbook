@@ -4722,11 +4722,14 @@ class ConsoleWorkspaceController:
         self,
         request: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
     ) -> None:
         """Wait for the canonical coordinator's non-cancellable boundary."""
 
         await self._character_conversation_activation.wait_until_commit_started(
-            request
+            request, complete_presentation=complete_presentation
         )
 
     async def _revalidate_character_conversation_target(

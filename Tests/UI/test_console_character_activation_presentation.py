@@ -16,6 +16,8 @@ from Tests.UI.test_console_workbench_contract import (
 )
 from Tests.UI.test_library_inspection_admission import library  # noqa: F401
 from tldw_chatbook.Chat.console_conversation_activation import (
+    CharacterConversationActivationRequest,
+    ConsoleActivationPhase,
     ConsoleActivationResultKind,
 )
 from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
@@ -325,3 +327,96 @@ async def test_ordinary_caller_cannot_claim_underlay_and_source_consumes_once(
         assert host.screen is chat
         assert consumes == [True, False]
         assert not completion(request, result, console=chat)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [True, False])
+async def test_queued_switcher_acknowledges_only_its_own_commit(
+    activation_library, monkeypatch, cancel
+):
+    owner, _, db = activation_library
+    _seed(owner, db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = host.screen
+        await _until(lambda: chat.query("#console-native-composer"))
+        # Complete genuine first-use hydration before capturing both equal
+        # requests: it persists settings and legitimately advances DB revision.
+        await chat._workspace.open_console_workspace_conversation("exact")
+        modal = await _open_switcher(chat, host)
+        workspace = chat._workspace
+        request = CharacterConversationActivationRequest(
+            modal._entries[0].target,
+            db.get_local_authority_id(),
+            modal._character_data_revision,
+        )
+        a_open, b_validate, b_open = (asyncio.Event() for _ in range(3))
+        release_a, release_validate, release_b = (asyncio.Event() for _ in range(3))
+        actual_open = workspace._open_character_conversation_activation
+        actual_validate = workspace._revalidate_character_conversation_target
+        opens = []
+
+        async def validate(candidate):
+            result = await actual_validate(candidate)
+            if candidate is not request:
+                b_validate.set()
+                await asyncio.wait_for(release_validate.wait(), 5)
+            return result
+
+        async def open_target(candidate):
+            opens.append(candidate)
+            if candidate is request:
+                result = await actual_open(candidate)
+                a_open.set()
+                await asyncio.wait_for(release_a.wait(), 5)
+                return result
+            b_open.set()
+            await asyncio.wait_for(release_b.wait(), 5)
+            return await actual_open(candidate)
+
+        monkeypatch.setattr(
+            workspace, "_revalidate_character_conversation_target", validate
+        )
+        monkeypatch.setattr(
+            workspace, "_open_character_conversation_activation", open_target
+        )
+        ordinary = asyncio.create_task(
+            workspace.activate_character_conversation(request)
+        )
+        try:
+            await asyncio.wait_for(a_open.wait(), 5)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert modal._activation_request == request
+            assert modal._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE
+            assert len(opens) == 1
+            if cancel:
+                await pilot.press("escape")
+                assert modal._activation_cancellation.is_set()
+            release_a.set()
+            await asyncio.wait_for(b_validate.wait(), 5)
+            assert modal._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE
+            release_validate.set()
+            if not cancel:
+                await asyncio.wait_for(b_open.wait(), 5)
+                await _until(
+                    lambda: modal._activation_phase is ConsoleActivationPhase.COMMITTING
+                )
+                await pilot.press("escape")
+                assert not modal._activation_cancellation.is_set()
+        finally:
+            release_a.set()
+            release_validate.set()
+            release_b.set()
+            await asyncio.wait_for(ordinary, 5)
+            if modal._activation_task is not None:
+                await asyncio.wait_for(modal._activation_task, 5)
+        assert ordinary.result().kind is ConsoleActivationResultKind.FAILED
+        if cancel:
+            assert len(opens) == 1
+            assert host.screen is modal
+            assert not modal._activation_completion_consumed
+        else:
+            assert len(opens) == 2
+            assert host.screen is chat
+            assert workspace._character_conversation_target_visible(request)

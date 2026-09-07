@@ -5059,6 +5059,14 @@ class ChatScreen(BaseAppScreen):
             )
 
         initial_results, _, _, _, receipt_state = active_projection_snapshot()
+        presentation_owners: dict[int, asyncio.Future[Any]] = {}
+
+        def presentation_owner(
+            request: "CharacterConversationActivationRequest",
+        ) -> asyncio.Future[Any]:
+            return presentation_owners.setdefault(
+                id(request), asyncio.get_running_loop().create_future()
+            )
 
         async def activate_character(
             request: "CharacterConversationActivationRequest",
@@ -5072,18 +5080,37 @@ class ChatScreen(BaseAppScreen):
                     )
                 )
 
-            return await self._workspace.activate_character_conversation(
-                request, cancellation, complete_presentation=complete
-            )
+            owner = presentation_owner(request)
+            owner.set_result(complete)
+            try:
+                return await self._workspace.activate_character_conversation(
+                    request, cancellation, complete_presentation=complete
+                )
+            finally:
+                if presentation_owners.get(id(request)) is owner:
+                    presentation_owners.pop(id(request))
+
+        async def wait_for_character_commit(
+            request: "CharacterConversationActivationRequest",
+        ) -> None:
+            owner = presentation_owner(request)
+            try:
+                complete = await asyncio.shield(owner)
+                await self._wait_until_character_switcher_commit_started(
+                    request, complete_presentation=complete
+                )
+            finally:
+                if not owner.done():
+                    owner.cancel()
+                    if presentation_owners.get(id(request)) is owner:
+                        presentation_owners.pop(id(request))
 
         modal = ConsoleSessionSwitcherModal(
             active_results=initial_results,
             history_loader=self._workspace.load_console_session_switcher_history,
             character_loader=self._load_console_character_switcher_page,
             character_activate=activate_character,
-            character_commit_waiter=(
-                self._wait_until_character_switcher_commit_started
-            ),
+            character_commit_waiter=wait_for_character_commit,
             character_open_library=self._open_console_character_library,
             initial_mode=initial_mode,
             initial_character_query=initial_character_query,
@@ -5127,12 +5154,15 @@ class ChatScreen(BaseAppScreen):
         return await self._character_context.keyword_page(**kwargs)
 
     async def _wait_until_character_switcher_commit_started(
-        self, request: "CharacterConversationActivationRequest"
+        self,
+        request: "CharacterConversationActivationRequest",
+        *,
+        complete_presentation: "Callable[[ConsoleConversationActivationResult], bool] | None" = None,
     ) -> None:
         """Expose Task 3's commit acknowledgement to the mounted switcher."""
 
         await self._workspace.wait_until_character_conversation_commit_started(
-            request
+            request, complete_presentation=complete_presentation
         )
 
     async def _open_console_character_library(

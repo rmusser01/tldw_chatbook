@@ -208,6 +208,22 @@ def _keyword_evidence(database: Any) -> dict[str, Any]:
         }
 
 
+def _finalize_evidence(
+    evidence: dict[str, Any], failure: BaseException | None, corpus_digest: str
+) -> BaseException | None:
+    """Classify final source integrity before the durable receipt is written."""
+    evidence["corpus_sha256_after"] = corpus_digest
+    evidence["source_unchanged"] = evidence["corpus_sha256_before"] == corpus_digest
+    if not evidence["source_unchanged"]:
+        evidence["failures"].append("Controller corpus changed")
+        if failure is None:
+            failure = AssertionError("Controller corpus changed")
+    evidence["status"] = "failed" if failure is not None else "passed"
+    if failure is not None:
+        evidence["error"] = f"{type(failure).__name__}: {failure}"
+    return failure
+
+
 async def run(
     *,
     corpus: Path,
@@ -621,10 +637,7 @@ async def run(
                 await watcher
             except asyncio.CancelledError:
                 pass
-        evidence["corpus_sha256_after"] = _digest(corpus)
-        evidence["source_unchanged"] = (
-            evidence["corpus_sha256_before"] == evidence["corpus_sha256_after"]
-        )
+        failure = _finalize_evidence(evidence, failure, _digest(corpus))
         evidence["descriptors_after_run_test_unmount"] = _descriptors()
         evidence["registered_handles_after_run_test_unmount"] = (
             database.registered_connection_count() if database is not None else None
@@ -633,7 +646,6 @@ async def run(
         (output_dir / "ui-latency-evidence.json").write_text(
             json.dumps(evidence, indent=2) + "\n"
         )
-    assert evidence["source_unchanged"], "Controller corpus changed"
     if failure is not None:
         raise failure
     return evidence
