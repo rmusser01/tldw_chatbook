@@ -381,11 +381,21 @@ class LocalMediaReadingService:
         """Search media, optionally as one exact Library browse summary page.
 
         Args:
+            query: Free-text search term; ``None`` or empty lists the scope
+                unfiltered.
+            limit: Page size (rows returned).
+            offset: Zero-based row offset of the page.
+            library_summary: When ``True``, return the Library browse's exact
+                seven-key summary rows for one page instead of full records.
             match_reasons: Whether to run task-28008's keyword-only reason
                 probe for this page (Qodo on #2475: one extra SELECT per
                 queried summary page, so the Library browse's own fetch asks
                 for it and no other caller pays -- the "Review these"
                 enumeration loop pages the same scope and discards them).
+            **filters: Column filters forwarded to ``search_media_db``
+                (``fields``, ``media_types``, ``fts_match_query``, ...);
+                ``fields`` must equal the Library browse triple for
+                ``match_reasons`` to apply.
 
         Returns:
             The search envelope; ``match_reasons`` is present only when this
