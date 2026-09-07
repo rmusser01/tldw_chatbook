@@ -792,6 +792,7 @@ async def test_zero_active_matches_widens_to_history_and_f3_retains_query():
         )
         status = app.screen.query_one("#console-switcher-status", Static)
         assert "History matches" in str(status.renderable)
+        assert "[History]" in app.screen.query_one("#console-switcher-modal").border_title
         assert app.screen.query_one("#console-switcher-history-mode", Button).has_class(
             "console-switcher-mode-current"
         )
