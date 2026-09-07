@@ -67,19 +67,38 @@ function layoutFlow(model, budget) {
     }
     crossMax = Math.max(crossMax, cross); major += thick + offset + 24;
   }
-  const children = [], outer = crossMax + 24;
+  // Labels occupy a strip outside every node column. Route trunks lie beyond
+  // that strip, and their entry/exit legs use the reserved rank intervals.
+  const children = [], outer = crossMax + 24, labelRects = [], routes = [];
+  let labelCross = 0;
+  for (let i = 0; i < model.edges.length; i += 1) {
+    budget.work(); if (!model.edges[i].label) continue;
+    const label = edgeLabels[i], start = lanes.get(i);
+    labelCross = Math.max(labelCross, lr ? label.height : label.width);
+    labelRects.push({x:lr ? start : outer, y:lr ? outer : start, width:label.width, height:label.height});
+  }
   for (let i = 0; i < model.edges.length; i += 1) {
     budget.work(); const edge = model.edges[i], a = boxes.get(edge.from), b = boxes.get(edge.to), label = edgeLabels[i];
     const start = lr ? [a.x+a.width, a.y+a.height/2] : [a.x+a.width/2, a.y+a.height];
     const end = lr ? [b.x, b.y+b.height/2] : [b.x+b.width/2, b.y];
-    const labelStart = lanes.get(i), lane = labelStart + (edge.label ? (lr ? label.width : label.height) : 0);
+    const labelStart = lanes.get(i), lane = labelStart + (edge.label ? (lr ? label.width : label.height) : 0) + 8;
     let points = lr ? [start, [lane,start[1]], [lane,end[1]], end] : [start,[start[0],lane],[end[0],lane],end];
-    if (ranks.get(edge.to) > ranks.get(edge.from)+1) {
-      const side = outer + i*16, last = (lr ? b.x : b.y)-20;
+    if (edge.label || ranks.get(edge.to) > ranks.get(edge.from)+1) {
+      const side = outer + labelCross + 24 + i*16, last = (lr ? b.x : b.y)-12;
       points = lr ? [start,[lane,start[1]],[lane,side],[last,side],[last,end[1]],end] : [start,[start[0],lane],[side,lane],[side,last],[end[0],last],end];
     }
+    routes.push(points);
     children.push(...sceneArrow(points, false, budget));
-    if (edge.label) children.push(...sceneText(label, lr ? labelStart : start[0]+8, lr ? start[1]+8 : labelStart-4, budget));
+    if (edge.label) children.push(...sceneText(label, lr ? labelStart : outer, lr ? outer : labelStart, budget));
+  }
+  // Fail closed if a future routing change violates the reserved-label invariant.
+  for (const points of routes) for (let i = 1; i < points.length; i += 1) {
+    const [x1,y1] = points[i-1], [x2,y2] = points[i];
+    for (const rect of labelRects) {
+      budget.work();
+      if ((x1 === x2 && rect.x < x1 && x1 < rect.x+rect.width && Math.max(y1,y2) > rect.y && Math.min(y1,y2) < rect.y+rect.height) ||
+          (y1 === y2 && rect.y < y1 && y1 < rect.y+rect.height && Math.max(x1,x2) > rect.x && Math.min(x1,x2) < rect.x+rect.width)) budget.fail("geometry-limit");
+    }
   }
   for (const [id, box] of boxes) {
     budget.work(); children.push(sceneBox(box, nodes.get(id).shape, budget));
