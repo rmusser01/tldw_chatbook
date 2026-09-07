@@ -116,7 +116,7 @@ def _load_mermaid_vendor():
     return module
 
 
-def test_real_mermaid_candidate_retains_assets_but_is_not_admitted(candidate_snapshot):
+def test_deferred_mermaid_admission_retains_exact_candidate_assets(candidate_snapshot):
     from tldw_chatbook.Canvas.profiles import (
         load_profile_snapshot,
         resolve_profile,
@@ -129,6 +129,11 @@ def test_real_mermaid_candidate_retains_assets_but_is_not_admitted(candidate_sna
         base, operation="load", parent_profile=candidate, has_diagrams=True
     ).executable
     assert base.default_diagram_profile is None
+    assert next(
+        row for row in base.profiles if row.profile_id == candidate
+    ).manifest_sha256 == (
+        "17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466"
+    )
     owned = runtime_assets_for(candidate_snapshot, candidate)
     library = json.loads(owned.library_files["mermaid-subset.json"])
     assert library["source_bytes"] == len(library["source"].encode())
@@ -213,6 +218,59 @@ def test_mermaid_rebuild_is_reproducible_from_verified_inputs(tmp_path):
         assert (tmp_path / "first" / manifest["runtime_layout"][role]).is_file()
     for name in first:
         assert (tmp_path / "first" / name).read_bytes() == (STATIC / name).read_bytes()
+
+
+@pytest.mark.parametrize("policy", ["admitted", "revoked"])
+@pytest.mark.parametrize("mutation", [None, "manifest", "library", "notices"])
+def test_mermaid_rebuild_retains_policy_only_for_exact_identity(
+    tmp_path, monkeypatch, policy, mutation
+):
+    input_dir = os.environ.get("TLDW_CANVAS_MERMAID_INPUT_DIR")
+    if not input_dir:
+        pytest.skip("explicit offline Mermaid inputs required for rebuild")
+    vendor = _load_mermaid_vendor()
+    owned_static = tmp_path / "static"
+    shutil.copytree(STATIC, owned_static)
+    monkeypatch.setattr(vendor, "STATIC", owned_static)
+    vendor.build(Path(input_dir), owned_static)
+    manifest = json.loads((owned_static / "mermaid-runtime-manifest.json").read_bytes())
+    assert "qualification" not in manifest["mermaid_candidate"]
+    catalog_path = owned_static / "profile-catalog.json"
+    catalog = json.loads(catalog_path.read_bytes())
+    row = next(
+        row for row in catalog["profiles"] if row["profile_id"] == "canvas-v2-mermaid-1"
+    )
+    row.update(
+        executable=policy == "admitted",
+        reason=None if policy == "admitted" else "revoked",
+    )
+    catalog["default_diagram_profile"] = (
+        row["profile_id"] if policy == "admitted" else None
+    )
+    if mutation == "manifest":
+        row["manifest_sha256"] = "0" * 64
+    elif mutation in {"library", "notices"}:
+        name = (
+            "mermaid-subset.json"
+            if mutation == "library"
+            else "MERMAID_THIRD_PARTY_LICENSES.txt"
+        )
+        row["library"]["files"][name]["sha256"] = "0" * 64
+    catalog_path.write_bytes(vendor.pretty(catalog))
+    first = vendor.build(Path(input_dir), tmp_path / "first")
+    second = vendor.build(Path(input_dir), tmp_path / "second")
+    assert first == second
+    result = json.loads((tmp_path / "first/profile-catalog.json").read_bytes())
+    result_row = next(
+        row for row in result["profiles"] if row["profile_id"] == "canvas-v2-mermaid-1"
+    )
+    assert result_row["executable"] is (policy == "admitted" and mutation is None)
+    assert result_row["reason"] == (
+        row["reason"] if mutation is None else "profile-unavailable"
+    )
+    assert result["default_diagram_profile"] == (
+        catalog["default_diagram_profile"] if mutation is None else None
+    )
 
 
 def _tar_bytes(members: list[tuple[str, bytes, str]]) -> bytes:

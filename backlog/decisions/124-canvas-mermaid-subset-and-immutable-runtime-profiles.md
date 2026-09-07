@@ -134,6 +134,32 @@ cannot qualify within the limits, return to design review; do not silently weake
 the boundary. Written-spec approval was received on 2026-09-06; the qualification
 gates remain mandatory before product admission.
 
+## Qualification clarification: trusted selection publication
+
+Before first release, Task31941 removes the misleading `qualification` field
+from the generated manifest's Mermaid provenance. Manifest/source/input hashes
+describe immutable identity; the catalog alone describes execution policy. This
+metadata-only correction changes the final manifest hash without changing any
+executable, library, or V1 byte. Rebuilding retains checked-in admission or
+revocation only when the regenerated manifest and complete library inventory
+(including notices) exactly match that entry. A changed identity regenerates
+disabled with no diagram default. There is no CLI/environment admission switch,
+and a rebuild cannot silently un-revoke an unchanged profile. This clarification
+precedes the first immutable admission; released identities still cannot change.
+
+Task31941's separately owned parent/all-child restart gate exposed a normal
+new-Canvas publication interval: the trusted child had selected its newly saved
+Canvas while the parent's last snapshot still identified the old source-only
+Canvas. Its event response correctly carried the new identity and was refused.
+The existing parent snapshot reconciliation is now optionally constrained to the
+captured child, conversation session, and existing shell. Those bindings must
+remain current before and after the snapshot await; reconciliation cannot create
+or rebind a shell for a replacement owner. Mismatched events are always discarded.
+Only a proven advanced live selection uses the gateway's existing 409 response;
+unchanged, malformed, disconnected, or cross-session responses remain refused.
+This preserves the authority boundary without forwarding sibling events, granting
+browser-selected authority, adding routes, or treating arbitrary 503s as retries.
+
 ## Links
 
 - [Design task](../tasks/task-31933%20-%20Design-Canvas-V2-Mermaid-subset-and-pinned-runtime-profiles.md)

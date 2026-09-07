@@ -532,11 +532,15 @@ exclude = [
     "static/mermaid-subset.json",
     "static/mermaid-runtime-manifest.json",
     "static/MERMAID_THIRD_PARTY_LICENSES.txt",
+    "static/mermaid-authoring.txt",
     "mermaid/inputs.json",
     "mermaid/budget.js",
     "mermaid/text.js",
     "mermaid/semantic.js",
     "mermaid/entry.js",
+    "mermaid/scene.js",
+    "mermaid/flow_layout.js",
+    "mermaid/sequence_layout.js",
 ]
 "tldw_chatbook.Web_Server" = [
     "static/served_shell.html",

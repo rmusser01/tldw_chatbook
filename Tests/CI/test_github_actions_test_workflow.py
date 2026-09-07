@@ -3,12 +3,13 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_LEASE_TEST_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
 )
+
+
 def _workflow_text() -> str:
     return (PROJECT_ROOT / ".github" / "workflows" / "test.yml").read_text()
 
@@ -123,6 +124,19 @@ def test_ci_installs_distribution_build_dependencies() -> None:
 
     assert "build" in requirements.splitlines()
     assert "setuptools>=77" in requirements.splitlines()
+
+
+def test_core_browser_collection_installs_required_chromium_before_pytest() -> None:
+    """The broad non-UI shard includes mandatory Canvas browser tests."""
+    block = _core_tests_job_block()
+    commands = _pytest_invocations(block)
+    assert any(
+        "Tests" in command and "--ignore=Tests/UI" in command for command in commands
+    )
+    install = "python -m playwright install --with-deps chromium"
+    assert install in block
+    assert block.index(install) < block.index("pytest Tests")
+    assert "continue-on-error" not in block
 
 
 def test_pytest_ui_marker_is_registered_for_ci_marker_selection() -> None:

@@ -13,6 +13,7 @@ from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
 from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+from tldw_chatbook.Canvas.profiles import load_profile_snapshot
 from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 from tldw_chatbook.Chat.console_canvas_controller import (
     compile_canvas_document as prepare_controller_document,
@@ -165,7 +166,9 @@ async def test_tool_compilation_releases_shared_lock_and_fences_cancel(
 async def test_served_preview_yields_during_compilation(monkeypatch):
     from tldw_chatbook.Web_Server.serve import _ServedCanvasAuthorityProxy
 
-    proxy = _ServedCanvasAuthorityProxy(SimpleNamespace())
+    proxy = _ServedCanvasAuthorityProxy(
+        SimpleNamespace(_canvas_profile_snapshot=load_profile_snapshot())
+    )
 
     async def read(_scope):
         return {}, {"source": SOURCE, "runtime_profile": "canvas-v1"}
@@ -381,7 +384,9 @@ async def test_tool_update_rechecks_parent_after_unlocked_compile(
 async def test_served_preview_rechecks_child_branch_after_compilation(monkeypatch):
     from tldw_chatbook.Web_Server.serve import _ServedCanvasAuthorityProxy
 
-    proxy = _ServedCanvasAuthorityProxy(SimpleNamespace())
+    proxy = _ServedCanvasAuthorityProxy(
+        SimpleNamespace(_canvas_profile_snapshot=load_profile_snapshot())
+    )
     branch = ["message"]
 
     async def read(_scope):
@@ -456,6 +461,7 @@ async def test_chat_screen_html_import_yields_and_checks_view_before_apply(
     )
     reference = SimpleNamespace(
         message_id="message",
+        language="html",
         create_new=False,
         block_index=0,
         identity="message:canvas-html:0",
@@ -510,7 +516,9 @@ async def test_near_limit_operations_preserve_source_and_allow_loop_progress(
         canvas_id=info.canvas_id,
         revision_id=info.revision_id,
     )
-    proxy = _ServedCanvasAuthorityProxy(SimpleNamespace())
+    proxy = _ServedCanvasAuthorityProxy(
+        SimpleNamespace(_canvas_profile_snapshot=load_profile_snapshot())
+    )
 
     async def read(_scope):
         return {}, {"source": source, "runtime_profile": "canvas-v1"}

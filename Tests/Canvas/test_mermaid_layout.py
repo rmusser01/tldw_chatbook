@@ -12,6 +12,27 @@ from Tests.Canvas.mermaid_probe import run_mermaid_case
 CASES = json.loads((Path(__file__).parent / "fixtures/mermaid/layout.json").read_text())
 
 
+def test_release_resource_probe_accounts_for_library_and_near_limit_scene():
+    source = "flowchart TD\n" + "\n".join(f"N{i}-->N{i + 1}" for i in range(15))
+    result = run_mermaid_case(
+        {"operation": "layout", "source": source, "measure": True}
+    )
+    assert result["ok"], result
+    assert result["resources"]["guest_heap_bytes"] > 0
+    assert result["resources"]["guest_heap_bytes"] < 32 * 1024 * 1024
+    assert result["resources"]["library_bytes"] < 262144
+    assert result["scene"]["metrics"]["nodes"] == 16
+    assert result["scene"]["metrics"]["work"] <= 10000
+    output = Path("output/playwright/mermaid-release")
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "near-limit-resources.json").write_text(
+        json.dumps(
+            {"resources": result["resources"], "metrics": result["scene"]["metrics"]},
+            indent=2,
+        )
+    )
+
+
 @pytest.mark.parametrize("direction,label", [("LR", "Second"), ("TD", "Second!!")])
 def test_branch_routes_do_not_intersect_edge_label_rectangles(direction, label):
     shape = "{Long label}" if direction == "LR" else "[Long label]"

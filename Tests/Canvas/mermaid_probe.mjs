@@ -24,7 +24,8 @@ const runtime = module.newRuntime();
 runtime.setMemoryLimit(32 * 1024 * 1024);
 runtime.setMaxStackSize(512 * 1024);
 runtime.removeModuleLoader();
-const deadline = performance.now() + 250;
+const started = performance.now();
+const deadline = started + 250;
 runtime.setInterruptHandler(() => performance.now() > deadline);
 const vm = runtime.newContext();
 const handles = [];
@@ -108,6 +109,13 @@ try {
   }
   const output = {ok: failure === null, model: request.sources ? models : models[0] ?? null, error: failure};
   if (["layout", "render"].includes(request.operation)) output.scene = request.sources ? scenes : scenes[0] ?? null;
+  if (request.measure === true) {
+    const elapsed = performance.now() - started;
+    const usage = runtime.computeMemoryUsage();
+    try {
+      output.resources = {library_bytes: library.source_bytes, guest_heap_bytes: runtime.getSystemContext().dump(usage).memory_used_size, library_and_layout_ms: elapsed};
+    } finally { usage.dispose(); }
+  }
   process.stdout.write(JSON.stringify(output));
 } finally {
   for (const handle of handles.reverse()) handle.dispose();

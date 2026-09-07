@@ -710,13 +710,33 @@ def _attack_source(script: str) -> str:
 
 
 def _new_page(
-    browser: Any, asset_server: _OwnedServer, egress_server: _OwnedServer
+    browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+    *,
+    observe_patches: bool = False,
 ) -> tuple[Any, Any, BrowserRecorder]:
     context = browser.new_context(accept_downloads=True)
     context.add_init_script(
         "window.__canvasNativeWindowSentinel = 'native-frame-clean';"
         "Object.prototype.__canvasNativePrototypeSentinel = 'native-frame-clean';"
     )
+    if observe_patches:
+        # Observe the trusted worker envelope without changing shipped runtime bytes.
+        context.add_init_script("""
+          window.__releasePatchCounts = [];
+          const OwnedWorker = window.Worker;
+          window.Worker = class extends OwnedWorker {
+            constructor(...args) {
+              super(...args);
+              this.addEventListener('message', event => {
+                if (Array.isArray(event.data?.patches)) {
+                  window.__releasePatchCounts.push(event.data.patches.length);
+                }
+              });
+            }
+          };
+        """)
     recorder = BrowserRecorder(asset_server, egress_server)
     page = context.new_page()
     page.expose_function("__canvasApproveExecution", recorder.approve_execution)
@@ -1295,11 +1315,15 @@ document.getElementById("mix-live").addEventListener("click", () => {
 
 
 @pytest.mark.loopback_network
+@pytest.mark.parametrize("runtime_profile", ["canvas-v1", "canvas-v2-mermaid-1"])
 def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
     chromium_browser: Any,
     asset_server: _OwnedServer,
     egress_server: _OwnedServer,
+    candidate_snapshot,
+    runtime_profile,
 ) -> None:
+    asset_server.v2 = runtime_profile == "canvas-v2-mermaid-1"
     cases = json.loads(
         (FIXTURES / "adversarial_scripts.json").read_text(encoding="utf-8")
     )
@@ -1317,7 +1341,8 @@ def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
                     egress_server.origin.replace("http://", "ws://", 1),
                 )
             )
-            status = _load(page, _wire_plan(_attack_source(script)), recorder)
+            source = _attack_source(script)
+            status = _load(page, _wire_plan(source, runtime_profile=runtime_profile, snapshot=candidate_snapshot), recorder, source=source)
             frame = page.frame(name="canvas-renderer")
             assert frame is not None
             if case["expected"] == "failed-after-click":

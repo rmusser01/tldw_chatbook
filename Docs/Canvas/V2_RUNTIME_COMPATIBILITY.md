@@ -70,15 +70,17 @@ policy reload. `runtime_snapshot_id()` is the canonical, source-free cross-proce
 identity for parent/child consistency and cache binding; it is not a browser
 credential.
 
-The production catalog admits only `canvas-v1`, with zero library bytes and
-`default_diagram_profile: null`. `canvas-v2-mermaid-1` is a verified development
-candidate with `executable: false`; it shares the exact pinned QuickJS engine
-with V1 and owns separate V2 facade, plan, grammar and layout identities.
-V2 remains unavailable until all qualification gates are complete. Development
-candidate bytes can evolve before qualification; no normal revision admission may
-reference this candidate and its immutable release manifest is not yet frozen.
+The production catalog admits only `canvas-v1`. Candidate
+`canvas-v2-mermaid-1` remains disabled with `default_diagram_profile: null`:
+the final release gate is blocked by owned-child native SQLite crashes, recorded
+in [V2 verification](V2_VERIFICATION.md). V2 candidate manifest
+SHA-256 is `17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466`.
+It shares the exact pinned QuickJS engine with V1 and owns separate V2 facade,
+plan, grammar and layout identities. V1 still has zero library bytes and remains
+the creation default when diagrams are absent. Released semantic bytes cannot
+change under this profile ID; changed semantics require a new qualified identity.
 
-## Mermaid candidate build and private interface
+## Mermaid build and private interface
 
 `scripts/vendor_canvas_mermaid.py` uses Python 3.12.11 and the standard library.
 `Canvas/mermaid/inputs.json` declares every download, exact byte/hash inventory,
@@ -99,6 +101,14 @@ retains all 1,093 official Unicode 16.0.0 grapheme conformance rows. Width is a
 profile-owned conservative logical cell rule (16 CSS px per cell), not a platform measurement.
 Original label code points are retained; Unicode normalization and `Intl` are not
 used. Escaped Mermaid entity spellings in plain labels remain literal text.
+
+The manifest's Mermaid provenance records source/input hashes, not qualification
+status. Catalog execution/default/refusal policy is separate from immutable
+manifest identity. Regeneration preserves an existing admitted or revoked policy
+only for the exact unchanged manifest and complete library/notices inventory;
+changed bytes produce a disabled candidate and no diagram default. No build
+argument or environment variable grants admission. Final recorded qualification
+scope and measurements are in [V2 verification](V2_VERIFICATION.md).
 
 `mermaid-subset.json` has exactly `schema_version`, `profile_id`, `source`,
 `source_bytes`, `source_sha256`, `inputs_sha256`, and `inventory` (the seven authored
@@ -125,7 +135,7 @@ The V2 quota manifest adds exactly `document_declarations`, `label_bytes`,
 `nodes`, `edges`, `participants`, `messages`, `notes`, `label_bytes`, `svg_elements`,
 `output_bytes`, `work_units`, and `area`. V1's quota schema stays unchanged.
 All accepted ceilings are recorded and the layout ceilings are enforced by the
-candidate layout. In the test-only `candidate_snapshot` fixture, execution policy is
+profile layout. In the test-only `candidate_snapshot` fixture, execution policy is
 replaced while all real verified manifest and asset hashes remain attached.
 
 ## Candidate deterministic scenes (Task 3)
@@ -172,8 +182,8 @@ Scene-only Chromium qualification in `test_mermaid_scene_readability.py` uses th
 existing V1 renderer and isolated loopback harness. It checks actual default-font
 extents, inherited typography, narrow scrolling, source identity and zero generated
 egress; it is not evidence of V2 startup integration or cross-platform pixel
-identity. The candidate remains non-executable with no diagram creation default
-until the complete Task 8 qualification gate.
+identity. These historical scene-only checks are not sufficient for admission;
+the complete Task 8 product qualification is recorded separately.
 
 ## Candidate compilation and startup (Task 4)
 
@@ -215,7 +225,8 @@ and bounded jobs run under that same deadline and transaction. Only successful
 startup publishes a transaction; diagram or authored failures publish no diagram
 mutations. Handles are disposed before authored code and never become globals.
 Later source/attribute mutation does not rerender. These browser tests qualify
-this consumer integration only; production candidate admission remains disabled.
+this consumer integration only; release admission additionally requires the
+complete product qualification recorded in V2 verification.
 
 Worker admission also independently checks every generic plan collection and
 node record before creating the VM: namespace-specific tag/attribute vocabulary,
@@ -239,7 +250,7 @@ its own fields cannot choose the profile. Normal native imports pass the interna
 value and do not parse again during mutation. Owner, parent, selection, cancellation
 and temporary-incarnation checks still run after compilation.
 
-V1 children upgrade when diagram declarations require the candidate. A V2 child
+V1 children upgrade when diagram declarations require the admitted default. A V2 child
 retains its exact profile after diagram removal, while an explicit historical V1
 branch retains V1 semantics. Native stored reads compile the exact stored profile.
 Unknown, revoked and uninstalled sibling profiles remain source-only; title-only
@@ -253,5 +264,7 @@ archive format 3.0, for one or multiple selected conversations. Round trips pres
 source, profiles, branches, renames and deleted origins without installing runtime
 bytes or changing the snapshot. Legacy plain-text/JSON conversation exports are
 not Canvas graph archives. Schema 68, archive format 3.0 and sync exclusion are
-unchanged. Tests explicitly admit the retained candidate closure; the packaged
-candidate remains disabled pending later delivery and qualification work.
+unchanged. Qualification additionally exercises fixed test-only candidate and
+revoked policies in separately owned replacement processes; these wrappers are
+not production enabling mechanisms. Source-only recovery followed by explicit
+new-Canvas creation preserves old exact source/profile/history without substitution.

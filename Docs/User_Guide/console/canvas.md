@@ -3,14 +3,15 @@
 Canvas is the Console companion for a substantial visual or interactive result:
 a chart, calculator, form, diagram, small simulation, or polished single-page
 document. Ordinary prose and short code snippets are usually clearer in chat.
-Canvas V1 accepts one complete, self-contained HTML document per revision.
+Canvas accepts one complete, self-contained HTML document per revision.
 
 Mermaid code fences offer the same **Open in Canvas** and **Open as new**
 actions. The diagram text is escaped into a text-only declaration in a complete
 HTML document. HTML fence identities remain stable when Mermaid fences appear
 before them. Each diagram must contain nonempty valid Unicode within 8 KiB.
-Mermaid execution requires an admitted compatible runtime profile; the candidate
-profile remains disabled pending release qualification.
+Mermaid execution is not yet enabled: candidate `canvas-v2-mermaid-1` remains
+unavailable while its final release gate is blocked. There is no environment or
+archive override. Ordinary Canvas documents continue to use V1.
 
 The initial Mermaid subset covers acyclic TD/TB/LR flowcharts and simple sequence
 diagrams with explicit participants, messages and notes. It excludes subgraphs,
@@ -74,6 +75,13 @@ scripts-disabled or unavailable-profile opening shows inert source. Profile
 revocation never substitutes another renderer. Packaged runtime updates require
 restarting the native host or served parent and all children; browser refresh
 does not update the process-owned runtime snapshot.
+
+If a saved profile is revoked or missing, preserve its source or export its
+Chatbook archive. Ask explicitly for a **new Canvas** adapted to an allowed
+profile (for example V1 HTML without Mermaid); this creates a separate Canvas
+and leaves the old source, profile and revision history intact. Updating the old
+Canvas is not an implicit profile migration. A newly allowed preview closes the
+old source-only dialog and restores normal preview interaction.
 
 ## Temporary chats and portable history
 
@@ -154,5 +162,7 @@ preference later reads true.
 For remote browser admission, TLS, and incident response, see the
 [Web Server operations guide](../../../tldw_chatbook/Web_Server/README.md).
 
-V2 bundled libraries, V3 multi-file virtual filesystems, and Canvas server
-synchronization are deferred. V1 does not emulate them.
+V2 adds only the documented offline Mermaid subset, not arbitrary browser
+libraries. V3 multi-file virtual filesystems and Canvas server synchronization
+remain deferred. See [V2 compatibility](../../Canvas/V2_RUNTIME_COMPATIBILITY.md)
+for exact diagram limits and [qualification scope](../../Canvas/V2_VERIFICATION.md).

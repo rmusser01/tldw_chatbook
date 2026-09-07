@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:15'
-updated_date: '2026-09-07 08:10'
+updated_date: '2026-09-07 09:51'
 labels:
   - canvas
   - v2
@@ -28,9 +28,9 @@ Enable the first immutable diagram profile only after end-to-end security and us
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Mandatory real Chromium zero-egress and containment gates include diagram attacks, combined budgets, useful mixed documents and positive controls.
+- [x] #1 Mandatory real Chromium zero-egress and containment gates include diagram attacks, combined budgets, useful mixed documents and positive controls.
 - [ ] #2 Native and same-origin served workflows, two-browser isolation, archive recovery, restart revocation, packaging and reproducibility have fresh recorded evidence.
-- [ ] #3 Only a fully qualified immutable profile is admitted; failures leave V2 unavailable without changing V1 limits, and user and operator documentation report actual scope and coverage.
+- [x] #3 Only a fully qualified immutable profile is admitted; failures leave V2 unavailable without changing V1 limits, and user and operator documentation report actual scope and coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,3 +45,9 @@ Reason: Qualification and admission of the exact approved immutable profile unde
 4. Only after required gates pass, observe production-admission RED then freeze/admit exact candidate and rerun final targeted checks; otherwise keep candidate disabled and report failing design gate.
 5. Update docs and backlog evidence, commit and obtain independent task review; whole-branch review follows.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Release gate BLOCKED; task remains In Progress. Corrected candidate selection passed 1350 tests with 2 optional browser skips (578.29s), but final admitted selection failed 4 tests (1346 passed, 2 skips, 539.80s). Restored V2 executable=false and default_diagram_profile=null; no admission claim. Snapshot-refusal fixture now uses a deliberately distinct fixed test-only revoked policy. Bounded diagnostics captured owned Python child SIGBUS in SQLite WAL recovery/frame lookup and Console trace-maintenance SQL; cause is not proven environmental or Canvas-specific, and earlier untraced failures are not retroactively attributed. No shared DB/security/native dependency fix was attempted. Final disabled/profile/offline reproduction selection: 77 passed, 1 existing dependency warning, no skips, 5.85s. Packaging/source closure, CI Chromium installation, immutable identity/policy reproduction, actual same-origin durable-source restart with parent/all children stopped, explicit V1 recovery, real unsent repair, bounded resources and useful browser fixtures are recorded in Docs/Canvas/V2_VERIFICATION.md. ADR124 clarifies catalog-only policy and bounded trusted selection reconciliation; manifest metadata-only identity is 17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466, with executable/library/V1 bytes unchanged. AC2 remains open until final release workflow failures are resolved. Independent review and separately authorized SQLite concurrency investigation are required.
+<!-- SECTION:NOTES:END -->

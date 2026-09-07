@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -32,8 +33,23 @@ def _document(version: str) -> str:
         '<h1 id="chatbook-app-canvas">CHATBOOK_APP_CANVAS</h1>'
         f'<p id="chatbook-app-revision">{version}</p>'
         + (
-            '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+            (
+                '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]'
+                + (
+                    " --> A"
+                    if version == "v2"
+                    and os.environ.get("TLDW_CANVAS_TEST_PREVIEW_FAILURE") == "1"
+                    else ""
+                )
+                + "</pre>"
+            )
             if os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1"
+            or os.environ.get("TLDW_CANVAS_RELEASE_POLICY") == "candidate"
+            else ""
+        )
+        + (
+            '<button id="release-submit">Send result</button><script>document.getElementById("release-submit").addEventListener("click",()=>canvas.submit({result:"owned pending receipt"}));</script>'
+            if os.environ.get("TLDW_CANVAS_RELEASE_POLICY")
             else ""
         )
         + "</body></html>"
@@ -289,7 +305,73 @@ class _ScriptedCanvasGateway:
 
 
 def main() -> None:
-    if os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1":
+    diagnostic_root = os.environ.get("TLDW_CANVAS_TEST_DB_DIAGNOSTICS")
+    if diagnostic_root:
+        import faulthandler
+        import threading
+        import time
+
+        diagnostic_path = Path(diagnostic_root)
+        diagnostic_path.mkdir(parents=True, exist_ok=True)
+        fault_file = (diagnostic_path / f"child-{os.getpid()}-fault.txt").open("w")
+        faulthandler.enable(file=fault_file, all_threads=True)
+        connect = sqlite3.connect
+        rows = []
+        diagnostic_lock = threading.Lock()
+        owned_root = Path(os.environ["XDG_DATA_HOME"]).resolve()
+
+        def observed_connect(database, *args, **kwargs):
+            value = os.fspath(database)
+            if value.startswith("file:"):
+                value = value[5:].split("?", 1)[0]
+            relative = (
+                ":memory:"
+                if value == ":memory:"
+                else str(Path(value).resolve().relative_to(owned_root))
+            )
+            connection = connect(database, *args, **kwargs)
+
+            def trace(statement):
+                # No SQL text, arguments, or generated source crosses this seam.
+                operation = statement.lstrip().split(None, 1)[0].upper()
+                if operation not in {
+                    "SELECT",
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE",
+                    "PRAGMA",
+                    "BEGIN",
+                    "COMMIT",
+                    "ROLLBACK",
+                    "CREATE",
+                    "ALTER",
+                    "DROP",
+                }:
+                    operation = "OTHER"
+                with diagnostic_lock:
+                    rows.append(
+                        {
+                            "time": time.monotonic(),
+                            "thread": threading.get_ident(),
+                            "database": relative,
+                            "operation": operation,
+                        }
+                    )
+                    (diagnostic_path / f"child-{os.getpid()}-db.json").write_text(
+                        json.dumps(rows[-80:]), encoding="utf-8"
+                    )
+
+            connection.set_trace_callback(trace)
+            return connection
+
+        sqlite3.connect = observed_connect
+    if os.environ.get("TLDW_CANVAS_RELEASE_POLICY"):
+        from Tests.Canvas.browser.canvas_release_policy import release_snapshot
+        from tldw_chatbook.Canvas import profiles
+
+        snapshot = release_snapshot(os.environ["TLDW_CANVAS_RELEASE_POLICY"])
+        profiles.load_profile_snapshot = lambda: snapshot
+    elif os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1":
         from dataclasses import replace
 
         from tldw_chatbook.Canvas import profiles
@@ -409,6 +491,16 @@ def main() -> None:
         app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
 
         def acknowledge_composer_focus():
+            if os.environ.get("TLDW_CANVAS_TEST_PREVIEW_FAILURE") == "1":
+                draft = app.screen.query_one("#console-native-composer").draft_text()
+                _publish_owner_receipt(
+                    data_root / "canvas-live-repair-receipt",
+                    {
+                        "draft_sha256": hashlib.sha256(draft.encode()).hexdigest(),
+                        "draft_bytes": len(draft.encode()),
+                        "provider_calls": gateway.calls,
+                    },
+                )
             _publish_owner_receipt(
                 data_root / "canvas-live-delivery-owner",
                 {

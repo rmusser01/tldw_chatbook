@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Canvas.control_protocol import CONTROL_PROTOCOL_VERSION
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 CONTROL_ENV = {
@@ -22,7 +23,7 @@ CONTROL_ENV = {
     "CHATBOOK_CANVAS_CONTROL_PORT": "32123",
     "CHATBOOK_CANVAS_CONTROL_CHILD_ID": "child-a",
     "CHATBOOK_CANVAS_CONTROL_SECRET": "s" * 32,
-    "CHATBOOK_CANVAS_CONTROL_VERSION": "1",
+    "CHATBOOK_CANVAS_CONTROL_VERSION": str(CONTROL_PROTOCOL_VERSION),
 }
 REPO_ROOT = Path(__file__).resolve().parents[2]
 USER_OPEN_DIALOG_MODULES = frozenset(

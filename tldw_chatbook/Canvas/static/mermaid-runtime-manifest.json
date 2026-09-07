@@ -29,7 +29,6 @@
   },
   "mermaid_candidate": {
     "inputs_sha256": "9c5f36f3d5f1da0af23835c88dd1c1f135cc489835838e4a86878914a7fe7e94",
-    "qualification": "not-qualified",
     "source_bytes": 165599,
     "source_sha256": "a279b10d33f5bf9ee7e4200e8c9582fa81879f3b9075c0f75111793c88b53078"
   },
