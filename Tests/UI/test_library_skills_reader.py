@@ -414,8 +414,10 @@ async def test_skills_reader_live_matrix_preserves_modes_work_floor_and_grips(
             await pilot.pause()
 
         assert shell.work.region.width >= 48
-        assert shell.library_grip.region.width == 5
-        assert shell.items_grip.region.width == 5
+        # task-31951: one cell each, was 5 -- Skills joined Media on the
+        # one-cell grip, so the ten dead columns are back in the panes.
+        assert shell.library_grip.region.width == 1
+        assert shell.items_grip.region.width == 1
         assert shell.library_grip.display and shell.items_grip.display
         assert screen.query_one("#library-skill-overview-region").display is True
 

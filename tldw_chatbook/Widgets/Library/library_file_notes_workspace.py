@@ -1227,6 +1227,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._reader_work_widget = self._build_reader_work_pane()
         self._reader_shell: LibraryAdaptiveReaderShell | None = None
         self._reader_shell_external = False
+        # Placeholder until the first resolve; its default `grip_width` is
+        # `PANE_GRIP_WIDTH`, which is what LIBRARY_FILE_NOTES_READER_PROFILE
+        # reserves. If File Notes ever opts into a narrower grip (as Media did
+        # in task-31633 and its three siblings in task-31951), this literal
+        # has to move with it -- the shell sizes its grips from the layout it
+        # is constructed with (task-31952 AC#3).
         self._reader_layout = AdaptiveReaderEffectiveLayout(
             library_open=False,
             items_open=True,

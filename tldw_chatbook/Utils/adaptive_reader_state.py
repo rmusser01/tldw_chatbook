@@ -70,10 +70,12 @@ class AdaptiveReaderLayoutProfile:
             opts in today.
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
-            never disagree. Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes
-            1: its two five-column grips left ten dead columns around the
-            Items pane (task-31633 AC#2). A grip narrower than four cells
-            paints the one-cell guillemet instead of the ``<---`` run.
+            never disagree (the resolved layout carries this width to the
+            shell). Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes 1: its
+            two five-column grips left ten dead columns around the Items pane
+            (task-31633 AC#2), and task-31951 opted Conversations, Skills and
+            Collections in for the same reason. A grip narrower than four
+            cells paints the one-cell guillemet instead of the ``<---`` run.
     """
 
     list_min_width: int = 32
@@ -99,7 +101,13 @@ class AdaptiveReaderLayoutPreferences:
 
 @dataclass(frozen=True)
 class AdaptiveReaderEffectiveLayout:
-    """One rendered layout derived from preferences and available width."""
+    """One rendered layout derived from preferences and available width.
+
+    ``grip_width`` carries the resolving profile's per-grip width through to
+    the shell, which sizes both grips from it (task-31952 AC#3): the columns
+    the resolver held back and the columns a grip paints are then literally
+    the same number, and a destination cannot reserve five and paint one.
+    """
 
     library_open: bool
     items_open: bool
@@ -107,6 +115,7 @@ class AdaptiveReaderEffectiveLayout:
     items_width: int
     reader_width: int
     priority_pane: PaneName | None
+    grip_width: int = PANE_GRIP_WIDTH
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -213,6 +222,7 @@ def resolve_adaptive_reader_layout(
             items_width=0,
             reader_width=0,
             priority_pane=None,
+            grip_width=profile.grip_width,
         )
 
     requested_library_width = (
@@ -280,6 +290,7 @@ def resolve_adaptive_reader_layout(
                 items_width=items_width,
                 reader_width=max(width - grip_width - library_width - items_width, 0),
                 priority_pane=priority,
+                grip_width=profile.grip_width,
             )
         priority = None
 
@@ -355,4 +366,5 @@ def resolve_adaptive_reader_layout(
         items_width=items_width,
         reader_width=max(width - grip_width - library_width - items_width, 0),
         priority_pane=priority,
+        grip_width=profile.grip_width,
     )

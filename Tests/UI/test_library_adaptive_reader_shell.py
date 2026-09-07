@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -66,7 +67,10 @@ class _ProbeApp(ConsolidatedCSSApp):
         grip_width: int = PANE_GRIP_WIDTH,
     ) -> None:
         super().__init__()
-        self.layout = layout or _layout()
+        # task-31952 AC#3: the grip width reaches the shell ONLY on the
+        # layout the resolver produced, so a probe cannot paint a width the
+        # resolver never reserved.
+        self.layout = replace(layout or _layout(), grip_width=grip_width)
         self.focusable_content = focusable_content
         self.hidden_items_subtree = hidden_items_subtree
         self.work_disabled = work_disabled
@@ -99,7 +103,6 @@ class _ProbeApp(ConsolidatedCSSApp):
             id_prefix="probe",
             library_label="Library",
             items_label="Items",
-            grip_width=self.grip_width,
             id="probe-shell",
         )
         yield shell
@@ -129,8 +132,9 @@ def _painted_rows_containing(app: _ProbeApp, widget: Widget, token: str) -> list
 @pytest.mark.parametrize(
     ("grip_width", "arrow"),
     # task-31633 AC#2: the grip width is the destination profile's, and the
-    # arrow is as wide as the grip. Five columns is the shared default every
-    # destination but Media still uses; one column is Media's.
+    # arrow is as wide as the grip. Five columns is the shared default Notes,
+    # File Notes and Prompts still use; one column is Media's, and since
+    # task-31951 also Conversations', Skills' and Collections'.
     [(PANE_GRIP_WIDTH, "<---"), (MEDIA_READER_LAYOUT_PROFILE.grip_width, "‹")],
 )
 async def test_shell_mounts_three_concrete_widgets_and_two_profile_width_grips(
@@ -159,6 +163,8 @@ async def test_shell_mounts_three_concrete_widgets_and_two_profile_width_grips(
             grip_width,
             grip_width,
         ]
+        # task-31952 AC#3: painted width IS the resolver's reservation.
+        assert shell.effective_layout.grip_width == grip_width
         assert _painted_rows_containing(app, shell.items_grip, arrow), arrow
 
 
