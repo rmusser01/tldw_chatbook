@@ -212,6 +212,44 @@ def _make_tar_bz2(member_name: str, content: bytes) -> bytes:
     return buf.getvalue()
 
 
+def _make_hostile_tar_bz2(real_content: bytes) -> bytes:
+    """A tarball where every unsafe way to end up with a member basename of
+    `model.onnx` is present alongside the one safe copy (review I3): an
+    absolute path, a symlink, a hardlink -- each sized to match
+    `real_content` so the C2 exact-size filter alone isn't what rejects
+    them -- plus a decoy with the wrong basename entirely."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:bz2") as tf:
+        decoy = tarfile.TarInfo(name="../evil.onnx")  # wrong basename + traversal
+        decoy.size = 4
+        tf.addfile(decoy, io.BytesIO(b"evil"))
+
+        absolute = tarfile.TarInfo(name="/abs/model.onnx")  # right basename, absolute path
+        absolute.size = len(real_content)
+        tf.addfile(absolute, io.BytesIO(b"A" * len(real_content)))
+
+        symlink = tarfile.TarInfo(name="dirB/model.onnx")  # right basename, symlink
+        symlink.type = tarfile.SYMTYPE
+        symlink.linkname = "/etc/passwd"
+        symlink.size = 0
+        tf.addfile(symlink)
+
+        hardlink = tarfile.TarInfo(name="dirC/model.onnx")  # right basename, hardlink
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.linkname = "readme.txt"
+        hardlink.size = 0
+        tf.addfile(hardlink)
+
+        readme = tarfile.TarInfo(name="readme.txt")  # unrelated decoy file
+        readme.size = 5
+        tf.addfile(readme, io.BytesIO(b"hello"))
+
+        real = tarfile.TarInfo(name="real/model.onnx")  # the one safe member
+        real.size = len(real_content)
+        tf.addfile(real, io.BytesIO(real_content))
+    return buf.getvalue()
+
+
 def _engine_with_manifest_pointing_at(
     stub_server, monkeypatch, *,
     embedder_key="titanet_small",
@@ -256,6 +294,20 @@ class _PoisonClient:
         raise AssertionError("network touched in air-gapped/no-op path")
 
 
+class _RecordingClient:
+    """Wraps a real `httpx.Client` but records every requested URL first --
+    proves a forbidden URL was never connected to (review I6), rather than
+    merely relying on it failing DNS through the repo's network guard."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.requested: list[str] = []
+
+    def stream(self, method, url, **kw):
+        self.requested.append(str(url))
+        return self._inner.stream(method, url, **kw)
+
+
 @pytest.mark.loopback_network
 def test_ensure_models_downloads_verifies_and_renames_atomically(tmp_path, stub_server, monkeypatch):
     eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch)
@@ -281,19 +333,101 @@ def test_ensure_models_refuses_a_bad_hash_and_refetches_once(tmp_path, stub_serv
 
 
 @pytest.mark.loopback_network
-def test_ensure_models_refuses_redirects_off_the_allowlist(tmp_path, stub_server, monkeypatch):
+def test_ensure_models_refuses_redirects_off_the_allowlist_but_keeps_a_sibling_that_already_landed(
+    tmp_path, stub_server, monkeypatch,
+):
     eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch)
     stub_server.routes["/emb.onnx"] = {"status": 302, "location": "http://evil.invalid/payload"}
     models_dir = tmp_path / "models"
 
+    import httpx
+
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
+
+    real_client = httpx.Client(follow_redirects=False, trust_env=True, timeout=5.0)
+    recorder = _RecordingClient(real_client)
+    try:
+        with pytest.raises(ModelsUnavailable, match="download failed"):
+            eng.ensure_models("titanet_small", models_dir_override=models_dir, client=recorder)
+    finally:
+        real_client.close()
+
+    # I6: refused BY THE CODE's own allowlist check, not by evil.invalid
+    # failing DNS -- the forbidden URL was never even requested.
+    assert not any("evil.invalid" in u for u in recorder.requested)
+    # I5: the segmentation asset lands first in the plan and is fully
+    # verified before the embedder's redirect gets refused; a whole-call
+    # rollback would delete it, contradicting spec §3's "concurrent fetches
+    # are harmless" and §8's "retried next Start" (which needs it kept).
+    assert (models_dir / eng.SEGMENTATION.file_name).exists()
+    assert not (models_dir / eng.EMBEDDERS["titanet_small"].file_name).exists()
+
+
+@pytest.mark.loopback_network
+def test_ensure_models_refuses_a_redirect_that_changes_scheme(tmp_path, stub_server, monkeypatch):
+    # Controller ruling (C1): every hop must stay https, with the loopback
+    # stub as the sole http exception -- a redirect may never change scheme
+    # even onto an otherwise-allowed host. The stub only speaks http, so the
+    # reachable direction to pin here is http -> https; the same equality
+    # check in `_stream_to_file` (`next_url.scheme != cur_url.scheme`) is
+    # what would also refuse the literal https -> http downgrade in
+    # production, where the initial hop is always https.
+    eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch)
+    stub_server.routes["/emb.onnx"] = {"status": 302, "location": "https://github.com/anything"}
+    models_dir = tmp_path / "models"
+
+    import httpx
+
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
+
+    real_client = httpx.Client(follow_redirects=False, trust_env=True, timeout=5.0)
+    recorder = _RecordingClient(real_client)
+    try:
+        with pytest.raises(ModelsUnavailable, match="download failed"):
+            eng.ensure_models("titanet_small", models_dir_override=models_dir, client=recorder)
+    finally:
+        real_client.close()
+
+    # The scheme check must refuse this BEFORE ever connecting to the
+    # redirect target -- not merely because a real github.com connection
+    # would be blocked by this repo's own network guard (the same
+    # false-attribution trap review I6 flagged for a different test).
+    assert not any("github.com" in u for u in recorder.requested)
+    assert not (models_dir / eng.EMBEDDERS["titanet_small"].file_name).exists()
+
+
+@pytest.mark.loopback_network
+def test_ensure_models_follows_an_allowed_redirect_hop(tmp_path, stub_server, monkeypatch):
+    # I4: the production happy path (a GitHub release 302ing to
+    # objects.githubusercontent.com) had no coverage at all -- a mutant that
+    # refuses every 3xx passed 12/12. Route the embedder through one 302.
+    eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch)
+    host, port = stub_server.server_address
+    stub_server.routes["/redir"] = {"status": 302, "location": f"http://{host}:{port}/emb.onnx"}
+    emb_asset = dataclasses.replace(eng.EMBEDDERS["titanet_small"], url=f"http://{host}:{port}/redir")
+    monkeypatch.setattr(eng, "EMBEDDERS", {**eng.EMBEDDERS, "titanet_small": emb_asset})
+
+    seg, emb = eng.ensure_models("titanet_small", models_dir_override=tmp_path)
+    assert seg.exists() and emb.exists()
+    assert stub_server.counts["/redir"] == 1 and stub_server.counts["/emb.onnx"] == 1
+
+
+@pytest.mark.loopback_network
+def test_ensure_models_refuses_more_than_five_redirect_hops(tmp_path, stub_server, monkeypatch):
+    eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch)
+    host, port = stub_server.server_address
+    # Six hops -- one past `_MAX_REDIRECTS` -- must be refused.
+    for i in range(6):
+        stub_server.routes[f"/chain{i}"] = {"status": 302, "location": f"http://{host}:{port}/chain{i + 1}"}
+    emb_asset = dataclasses.replace(eng.EMBEDDERS["titanet_small"], url=f"http://{host}:{port}/chain0")
+    monkeypatch.setattr(eng, "EMBEDDERS", {**eng.EMBEDDERS, "titanet_small": emb_asset})
+
     from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
 
     with pytest.raises(ModelsUnavailable, match="download failed"):
-        eng.ensure_models("titanet_small", models_dir_override=models_dir)
-    # Nothing written -- not even the segmentation asset, which lands first
-    # in the plan and would otherwise have succeeded before the embedder's
-    # redirect got refused.
-    assert not models_dir.exists() or not any(models_dir.iterdir())
+        eng.ensure_models("titanet_small", models_dir_override=tmp_path / "models")
+    for i in range(6):
+        assert stub_server.counts[f"/chain{i}"] == 1
 
 
 def test_ensure_models_respects_air_gapped_dir_without_network(tmp_path, monkeypatch):
@@ -349,3 +483,112 @@ def test_ensure_models_is_a_noop_when_files_are_present_and_valid(tmp_path, monk
     seg, emb = eng.ensure_models("titanet_small", client=_PoisonClient())
     assert seg == models_dir / eng.SEGMENTATION.file_name
     assert emb == models_dir / eng.EMBEDDERS["titanet_small"].file_name
+
+
+def test_ensure_models_rejects_a_non_positive_budget_up_front(tmp_path, monkeypatch):
+    # Minor 1: this must not touch the network at all when there is
+    # nothing to fetch OR when budget_s is already exhausted.
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
+
+    with pytest.raises(ModelsUnavailable, match="budget exceeded"):
+        eng.ensure_models("titanet_small", models_dir_override=tmp_path, budget_s=0.0, client=_PoisonClient())
+
+
+@pytest.mark.loopback_network
+def test_ensure_models_refuses_a_response_bigger_than_the_manifest_size_plus_slack(tmp_path, stub_server, monkeypatch):
+    # C2: `_stream_to_file`'s own byte-counted cap, independent of the tar
+    # member's own size check below -- a misbehaving/hostile server filling
+    # the disk with a plain (non-tarball) asset must be cut off well before
+    # any hash check could run.
+    eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch, emb_body=b"E" * 1_900_000)
+    stub_server.routes["/emb.onnx"] = {"body": b"E" * (1_900_000 + 2 * 1024 * 1024)}
+    models_dir = tmp_path / "models"
+
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
+
+    with pytest.raises(ModelsUnavailable, match="download failed"):
+        eng.ensure_models("titanet_small", models_dir_override=models_dir)
+    assert not (models_dir / eng.EMBEDDERS["titanet_small"].file_name).exists()
+    assert not any(models_dir.glob("*.tmp*"))
+
+
+class _ZeroReader(io.RawIOBase):
+    """A `size`-byte stream of zero bytes generated on read, never
+    materialised as one giant buffer -- lets the fixture below produce a
+    genuinely `size`-byte (and so internally-consistent, bz2-tiny) tar
+    member without allocating `size` bytes of Python memory to build it."""
+
+    def __init__(self, size: int) -> None:
+        self.remaining = size
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b) -> int:
+        n = min(len(b), self.remaining)
+        b[:n] = bytes(n)
+        self.remaining -= n
+        return n
+
+
+def test_extract_tar_member_rejects_a_member_that_lies_about_its_size(tmp_path):
+    # C2: a header declaring a huge size must be refused from the header
+    # alone -- before `extractfile`/`copyfileobj` ever reads a byte. The
+    # reviewer's probe measured this exact shape ballooning a compressed
+    # tarball into ~840 MB of RSS with the old (post-read) check; the real
+    # (if uninteresting) zero-filled data blocks here keep the archive
+    # internally consistent while staying tiny once bz2-compressed.
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable, _extract_tar_member
+
+    declared_size = 20 * 1024 * 1024  # a multiple of the real ~6 MB manifest size is enough to prove the point
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:bz2") as tf:
+        huge = tarfile.TarInfo(name="model.onnx")
+        huge.size = declared_size
+        tf.addfile(huge, _ZeroReader(declared_size))
+    tar_path = tmp_path / "huge.tar.bz2"
+    tar_path.write_bytes(buf.getvalue())
+    dest = tmp_path / "out.onnx"
+
+    with pytest.raises(ModelsUnavailable, match="download failed"):
+        _extract_tar_member(tar_path, "model.onnx", dest, expected_size=5_992_913)
+    assert not dest.exists()
+
+
+def test_extract_tar_member_rejects_every_unsafe_candidate_and_picks_the_real_one(tmp_path):
+    # I3: mutation coverage for the safe-member filter -- deleting the
+    # basename/path/link rejection lines used to leave `12 passed`. Every
+    # hostile candidate here shares the "model.onnx" basename (and, for the
+    # absolute-path one, the exact expected size too) with the one real,
+    # safe member, so only the path/link checks can be what picks correctly.
+    from tldw_chatbook.Audio.diarizer_engine_onnx import _extract_tar_member
+
+    real_content = b"R" * 1_000
+    tar_path = tmp_path / "fixture.tar.bz2"
+    tar_path.write_bytes(_make_hostile_tar_bz2(real_content))
+    dest = tmp_path / "out.onnx"
+
+    _extract_tar_member(tar_path, "model.onnx", dest, expected_size=len(real_content))
+    assert dest.read_bytes() == real_content
+
+
+def test_ensure_models_constructs_its_client_with_trust_env_and_manual_redirects(monkeypatch):
+    # Minor 8: spec §9 lists "proxy passthrough" as a downloader test; that
+    # depends entirely on `trust_env=True` reaching the real `httpx.Client`.
+    import httpx
+
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+
+    captured = {}
+    real_client_cls = httpx.Client
+
+    def _spy(*a, **kw):
+        captured.update(kw)
+        return real_client_cls(*a, **kw)
+
+    monkeypatch.setattr(httpx, "Client", _spy)
+    client = eng._new_http_client()
+    client.close()
+
+    assert captured == {"follow_redirects": False, "trust_env": True, "timeout": 30.0}

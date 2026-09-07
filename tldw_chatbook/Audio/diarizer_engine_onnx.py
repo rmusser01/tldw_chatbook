@@ -21,7 +21,6 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
-import tarfile
 import time
 import wave
 from dataclasses import dataclass
@@ -175,8 +174,19 @@ ALLOWED_HOSTS = ("github.com",)
 ALLOWED_REDIRECT_SUFFIX = ".githubusercontent.com"
 DOWNLOAD_BUDGET_S = 600.0
 
+#: The only hosts allowed to use plain `http` -- the test stub's own loopback
+#: server. Every other hop must be `https` (review C1): a plaintext hop lets
+#: an on-path attacker choose the bytes `_extract_tar_member` consumes, which
+#: is not itself hash-pinned (the manifest sha256 is of the extracted file).
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+
 _MAX_REDIRECTS = 5
 _MB = 1 << 20
+#: Slack over a landed file's declared manifest size before a download is
+#: refused outright (review C2) -- catches a hostile/misbehaving server
+#: filling the disk (or memory, for the tarball) well before any hash check
+#: could run.
+_DOWNLOAD_SLACK_BYTES = 1 << 20
 
 
 def _url_for(asset: ModelAsset) -> str:
@@ -189,15 +199,40 @@ def _temp_path_for(final: Path) -> Path:
     return final.with_name(f"{final.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
 
 
-def _extract_tar_member(tar_path: Path, wanted_basename: str, dest: Path) -> None:
+def _scheme_allowed(url) -> bool:
+    """`https` everywhere, except the test stub's own loopback host."""
+    if url.scheme == "https":
+        return True
+    return url.scheme == "http" and (url.host or "") in _LOOPBACK_HOSTS
+
+
+def _new_http_client():
+    """Seam so a test can assert the exact client kwargs (`trust_env` for
+    proxy passthrough, `follow_redirects=False` so every hop is checked
+    here) without patching httpx itself."""
+    import httpx
+
+    return httpx.Client(follow_redirects=False, trust_env=True, timeout=30.0)
+
+
+def _extract_tar_member(tar_path: Path, wanted_basename: str, dest: Path, expected_size: int) -> None:
     """Extract `wanted_basename` (`model.onnx` or `model.int8.onnx`) from the
-    segmentation release tarball, rejecting any member that is a link or
-    whose name escapes the archive (spec §3's safe-member filter)."""
+    segmentation release tarball, rejecting any candidate that is not an
+    exact `expected_size` (the manifest's size for the file it produces --
+    review C2: a header lying about size is refused before any byte is
+    read, never after), a link, or whose name escapes the archive (spec
+    §3's safe-member filter). Copies with `shutil.copyfileobj`, never a
+    single `.read()` of the whole member (review C2)."""
+    import shutil
+    import tarfile
+
     with tarfile.open(tar_path, mode="r:bz2") as tf:
         member = None
         for candidate in tf.getmembers():
             name = candidate.name
             if os.path.basename(name) != wanted_basename:
+                continue
+            if candidate.size != expected_size:
                 continue
             if name.startswith("/") or ".." in Path(name).parts:
                 continue
@@ -211,18 +246,23 @@ def _extract_tar_member(tar_path: Path, wanted_basename: str, dest: Path) -> Non
         if extracted is None:
             raise ModelsUnavailable("download failed")
         with open(dest, "wb") as out:
-            out.write(extracted.read())
+            shutil.copyfileobj(extracted, out, 1 << 20)
 
 
-def _stream_to_file(http_client, url: str, dest: Path, deadline: float, on_bytes: Callable[[int], None]) -> None:
+def _stream_to_file(
+    http_client, url: str, dest: Path, deadline: float, on_bytes: Callable[[int], None], max_bytes: int,
+) -> None:
     """GET `url`, following at most `_MAX_REDIRECTS` 3xx hops whose target
-    host is allow-listed, streaming the final 2xx body to `dest`. Raises
+    host is allow-listed and whose scheme never changes (review C1),
+    streaming the final 2xx body to `dest` -- refusing past `max_bytes`
+    (review C2) before it is ever written. Raises
     `ModelsUnavailable("download failed")` or `("budget exceeded")`; never
     mentions the URL/host in the exception."""
     import httpx
 
     current = url
-    if httpx.URL(current).host not in ALLOWED_HOSTS:
+    start = httpx.URL(current)
+    if start.host not in ALLOWED_HOSTS or not _scheme_allowed(start):
         raise ModelsUnavailable("download failed")
 
     for _ in range(_MAX_REDIRECTS + 1):
@@ -234,7 +274,10 @@ def _stream_to_file(http_client, url: str, dest: Path, deadline: float, on_bytes
                     location = resp.headers.get("location")
                     if not location:
                         raise ModelsUnavailable("download failed")
-                    next_url = httpx.URL(current).join(location)
+                    cur_url = httpx.URL(current)
+                    next_url = cur_url.join(location)
+                    if next_url.scheme != cur_url.scheme or not _scheme_allowed(next_url):
+                        raise ModelsUnavailable("download failed")
                     host = next_url.host or ""
                     if host not in ALLOWED_HOSTS and not host.endswith(ALLOWED_REDIRECT_SUFFIX):
                         raise ModelsUnavailable("download failed")
@@ -242,6 +285,7 @@ def _stream_to_file(http_client, url: str, dest: Path, deadline: float, on_bytes
                     continue
                 if not (200 <= resp.status_code < 300):
                     raise ModelsUnavailable("download failed")
+                written = 0
                 with open(dest, "wb") as fh:
                     # No `chunk_size`: httpx yields pieces as they arrive off
                     # the wire instead of buffering up to a fixed size first,
@@ -251,11 +295,14 @@ def _stream_to_file(http_client, url: str, dest: Path, deadline: float, on_bytes
                     for piece in resp.iter_bytes():
                         if time.monotonic() >= deadline:
                             raise ModelsUnavailable("budget exceeded")
+                        written += len(piece)
+                        if written > max_bytes:
+                            raise ModelsUnavailable("download failed")
                         fh.write(piece)
                         on_bytes(len(piece))
                 return
-        except httpx.HTTPError as exc:
-            raise ModelsUnavailable("download failed") from exc
+        except httpx.HTTPError:
+            raise ModelsUnavailable("download failed") from None
     raise ModelsUnavailable("download failed")
 
 
@@ -267,6 +314,7 @@ def _fetch_asset(http_client, asset: ModelAsset, path: Path, deadline: float, on
     # future candidate), so the tarball member wanted is always the same.
     is_tarball = asset.kind == "segmentation"
     wanted_member = "model.onnx"
+    max_bytes = asset.size + _DOWNLOAD_SLACK_BYTES
 
     for attempt in range(2):
         final_tmp = _temp_path_for(path)
@@ -274,12 +322,12 @@ def _fetch_asset(http_client, asset: ModelAsset, path: Path, deadline: float, on
             if is_tarball:
                 tar_tmp = _temp_path_for(path.with_suffix(".tar.bz2"))
                 try:
-                    _stream_to_file(http_client, _url_for(asset), tar_tmp, deadline, on_bytes)
-                    _extract_tar_member(tar_tmp, wanted_member, final_tmp)
+                    _stream_to_file(http_client, _url_for(asset), tar_tmp, deadline, on_bytes, max_bytes)
+                    _extract_tar_member(tar_tmp, wanted_member, final_tmp, asset.size)
                 finally:
                     tar_tmp.unlink(missing_ok=True)
             else:
-                _stream_to_file(http_client, _url_for(asset), final_tmp, deadline, on_bytes)
+                _stream_to_file(http_client, _url_for(asset), final_tmp, deadline, on_bytes, max_bytes)
 
             if final_tmp.stat().st_size == asset.size and _sha256_of(final_tmp) == asset.sha256:
                 os.replace(final_tmp, path)
@@ -302,6 +350,12 @@ def ensure_models(
     """Place the segmentation + `embedder` ONNX models under
     `models_dir(models_dir_override)`, downloading whatever is missing
     (spec §3).
+
+    A failing asset only removes its own temp file -- a sibling asset that
+    already landed and verified in this same call is left in place (review
+    I5: spec §3's "concurrent fetches ... are harmless" and §8's "retried
+    next Start" both require that a valid, hash-verified file is never
+    rolled back just because a later asset in the same call failed).
 
     Air-gapped installs (`models_dir_override` pointing at a pre-placed
     directory): a file that already exists there is fully hash-verified and
@@ -342,6 +396,10 @@ def ensure_models(
             if path.stat().st_size == asset.size and _sha256_of(path) == asset.sha256:
                 continue
             raise ModelsUnavailable("air-gapped file invalid")
+        # Mirrors `models_ready`'s presence+size contract (inline, since
+        # this loop also needs the per-asset `(asset, path)` pair for
+        # `to_fetch`) -- do not "fix" this into a hash check; ruling 8 is
+        # explicit that a fresh call must not re-hash an already-placed file.
         if path.is_file() and path.stat().st_size == asset.size:
             continue
         to_fetch.append((asset, path))
@@ -349,16 +407,16 @@ def ensure_models(
     if not to_fetch:
         return seg_path, emb_path
 
-    deadline = time.monotonic() + budget_s
-    if deadline <= time.monotonic():
+    if budget_s <= 0:
         raise ModelsUnavailable("budget exceeded")
+    deadline = time.monotonic() + budget_s
 
     total_mb = sum(asset.size for asset, _ in to_fetch) // _MB
     state = {"done": 0, "reported_mb": 0}
 
     def _on_bytes(n: int) -> None:
         state["done"] += n
-        mb = state["done"] // _MB
+        mb = min(state["done"] // _MB, total_mb)
         if progress is not None and mb > state["reported_mb"]:
             state["reported_mb"] = mb
             progress(f"downloading {mb} / {total_mb} MB")
@@ -366,22 +424,11 @@ def ensure_models(
     seg_path.parent.mkdir(parents=True, exist_ok=True)
     owns_client = client is None
     http_client = client
-    placed: list[Path] = []
     try:
         for asset, path in to_fetch:
             if owns_client and http_client is None:
-                import httpx
-
-                http_client = httpx.Client(follow_redirects=False, trust_env=True, timeout=30.0)
+                http_client = _new_http_client()
             _fetch_asset(http_client, asset, path, deadline, _on_bytes)
-            placed.append(path)
-    except Exception:
-        # "nothing written" on refusal (spec §3/§8) covers the WHOLE call,
-        # not just the asset that failed -- an earlier asset in this same
-        # `to_fetch` batch may have already landed successfully.
-        for done_path in placed:
-            done_path.unlink(missing_ok=True)
-        raise
     finally:
         if owns_client and http_client is not None:
             http_client.close()
