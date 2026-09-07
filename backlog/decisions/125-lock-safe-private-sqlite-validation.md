@@ -1,6 +1,6 @@
 # ADR-125: Isolate private SQLite file checks from live lock ownership
 
-Status: Proposed detailed contract; helper-process approach approved
+Status: Revised proposed contract after review; helper-process approach approved
 Date: 2026-09-07
 Related Task: TASK-31942
 Extends: ADR-029
@@ -42,10 +42,33 @@ database or moves live transactions out of the repository. This preserves
 ADR-051's metadata-focused startup while avoiding parent-side live proof closes.
 The written design explicitly includes this supporting operation for review.
 
+Repository restore receives an explicit revalidated parent/sidecar identity
+handoff before closing the live proof. Tombstone settlement retains a verified
+parent-directory handle, not original database/sidecar FDs. Both existing
+repository consumers must migrate with the wrapper; absent fields must not
+silently bypass cleanup.
+
+Lost live TTS proof is terminal: retain the SQLite handle, SHARED store lease and
+owning worker, report restart required, and do not force-close or mint replacement
+proof. Close retry fails promptly; process exit releases retained authority.
+New TTS admission is latched off after such a failure while healthy siblings
+remain usable. This availability tradeoff awaits approval; it is not a claim of
+successful or bounded-time in-process SQLite cleanup. Early failures before a
+live connection exists use ordinary resource cleanup.
+
+Bound eight live helpers as four retained TTS owner permits plus four transient
+slots. Quarantined owners retain their permits. Reserve each transient operation's
+whole helper envelope before launch; nested calls use that reservation. TTS
+initialization reserves its retained and transient capacity atomically. Existing
+absolute operation deadlines govern admission and IPC together; SQLite lock-wait
+timeouts remain separate. Canceled async waiters do not abandon shielded workers.
+
 Local raw artifact descriptors remain permissible only for genuinely closed,
 exclusively owned migration/publication/recovery artifacts. Their actual owner
 must close all SQLite views before raw descriptors and retain authority on close
 failure. A shared lease or `immutable=1` does not establish that precondition.
+Existing publication/recovery finalizers require correction and close-failure
+tests; this ordering is a requirement, not an assertion about current code.
 
 All ADR-029 no-follow/type/owner/link/identity/mode checks and read-only exceptions
 remain binding. Windows ACL verification remains unclaimed. No schema, journal,
@@ -72,6 +95,10 @@ affected operation rather than falling back to unsafe local checks.
 Real lock-preservation regressions cover WAL/rollback modes, sibling handles,
 backup release, partial failures and TTS shared-reader cleanup. Privacy, package,
 import-isolation and helper lifetime gates accompany targeted integration tests.
+Restore authority handoff, tombstone settlement, capacity saturation, shared
+deadlines and explicit terminal-retention/process-exit behavior are required
+regressions. Normal leak-free cycles and terminal quarantine are reported
+separately.
 Canvas Mermaid stays disabled until its independent release gate passes.
 
 ## Links
