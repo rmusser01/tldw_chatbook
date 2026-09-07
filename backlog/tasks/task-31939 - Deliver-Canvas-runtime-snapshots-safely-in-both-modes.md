@@ -1,11 +1,11 @@
 ---
 id: TASK-31939
 title: Deliver Canvas runtime snapshots safely in both modes
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:14'
-updated_date: '2026-09-07 06:44'
+updated_date: '2026-09-07 07:02'
 labels:
   - canvas
   - v2
