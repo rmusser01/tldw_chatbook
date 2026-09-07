@@ -34585,3 +34585,95 @@ async def test_background_recompose_keeps_focus_on_a_mounted_widget_media():
         )
         assert focused.is_attached, focused
         assert focused.id == "library-media-row-0", focused.id
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_focus_fallback_stays_inside_screen_content():
+    """task-31946 (PR L review item 1): the fallback is never the nav bar.
+
+    When the captured widget is genuinely gone the seam still has to land
+    focus somewhere. ``focus_chain[0]`` is the ``MainNavigationBar``'s
+    first tab on EVERY screen -- a blind Enter there leaves the screen,
+    and that key was inert before this seam existed -- so the fallback is
+    scoped to ``#screen-content``.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+
+        # The captured widget vanishes -- a row a write removed, or (the
+        # real case) a screen whose body mounts in a later callback --
+        # and the recompose leaves nothing focused (``set_focus(None)``
+        # models the drop; Textual's own removal handler happens to fall
+        # back to the row's scroll parent, which a recompose of the whole
+        # subtree does not).
+        await row.remove()
+        screen.set_focus(None)
+        await pilot.pause()
+        assert screen.focused is None
+
+        screen.restore_focus_after_recompose("#library-conversation-row-0")
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, "the fallback left focus at None"
+        assert focused.is_attached, focused
+        content = screen.query_one("#screen-content")
+        assert content in focused.ancestors, (
+            f"focus fell back to {focused.id!r}, outside #screen-content -- "
+            "the nav bar is where Enter navigates away"
+        )
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
+    """task-31946 (PR L review item 2): the stand-down cannot strand focus.
+
+    The seam stands down while a one-shot focus channel is armed, because
+    a foreign ``set_focus`` in that window disarms it. Conversations is
+    absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed
+    channel lands NOTHING there -- standing down for it left a background
+    recompose inside the settle window with no restore at all, and the
+    keyboard dead for good.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail_row = screen.query_one("#library-row-browse-conversations")
+        rail_row.press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        screen.set_focus(rail_row)
+        await pilot.pause()
+        assert screen.focused is rail_row
+        assert not screen.query(".library-conversation-row"), "list must be empty"
+
+        # Inside the armed settle window: the channel owns the window on a
+        # route it can serve, and this one it cannot.
+        screen._arm_library_list_entry_focus()
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_focus_channel_owns_this_window() is False
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a background recompose inside the armed window left the empty "
+            "Conversations list with no focused widget"
+        )
+        assert focused.is_attached, focused

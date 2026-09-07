@@ -9204,24 +9204,54 @@ class LibraryScreen(BaseAppScreen):
         two statements of the same callback, and the generic tail is a
         no-op the moment ``_restore_library_media_focus`` has focused
         something real (it only acts when focus is still ``None``). The
-        tail is the honest backstop for the cases Media's own rules leave
-        unfocused -- an empty list, ``rail-only`` emergency stage -- and
-        the only restore on the other three routes.
+        tail is the only restore on the other three routes.
 
-        Both of the screen's one-shot focus CHANNELS stand the whole seam
-        down, not just the Media half: they land their focus in a LATER
-        callback, and a foreign ``set_focus`` inside their window
-        invalidates the pending media-return receipt
-        (``_library_media_live_focus_is_allowed``) -- the generic tail
-        would do exactly that while the channel is still armed.
+        A one-shot focus CHANNEL stands the whole seam down, not just the
+        Media half: it lands its focus in a LATER callback, and ANY
+        foreign ``set_focus`` inside its window disarms it outright
+        (``on_descendant_focus`` revokes the pending receipt for anything
+        that is not the armed list's own row class) -- the generic tail
+        would do exactly that.
+
+        But it only stands down when the channel will actually LAND
+        something (PR L review item 2). ``_focus_library_list_entry``
+        returns without focusing anything in two cases, and in both the
+        seam is the only thing left between the user and a dead keyboard:
+
+        * the ``rail-only`` emergency stage, and
+        * a route with no row class at all -- Conversations is absent
+          from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed channel
+          is a no-op there by design.
+
+        (The third case, a row class whose list is EMPTY, is closed at
+        the channel itself: notes now falls back to its filter input the
+        way prompts and skills already did.)
         """
-        if self._library_pending_list_entry_focus or (
-            self._library_media_find_focus_pending
-        ):
+        if self._library_focus_channel_owns_this_window():
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._restore_library_media_focus(previous)
         super().restore_focus_after_recompose(previous)
+
+    def _library_focus_channel_owns_this_window(self) -> bool:
+        """Whether an armed one-shot channel will land focus itself.
+
+        The two ``return``s below mirror the two at the TOP of
+        ``_focus_library_list_entry`` -- deliberately those two and no
+        more, so this predicate stays a statement about which route/stage
+        the channel serves and never a second copy of its row-picking
+        logic.
+        """
+        if self._library_media_find_focus_pending:
+            return True
+        if not self._library_pending_list_entry_focus:
+            return False
+        if self._library_emergency_stage == "rail-only":
+            return False
+        return (
+            _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
+            is not None
+        )
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -11168,6 +11198,13 @@ class LibraryScreen(BaseAppScreen):
             fallback_selector = {
                 "library-prompt-row": "#library-prompts-filter",
                 "library-skill-row": f"#{LIBRARY_SKILLS_FILTER_ID}",
+                # task-31946 (PR L review item 2): an empty NOTES list left
+                # this a no-op, so a background recompose inside the armed
+                # settle window -- which stands the screen-level focus seam
+                # down, precisely because this channel owns the window --
+                # ended with nothing focused at all. Same filter-input
+                # answer the two rows above already give.
+                "library-notes-row": "#library-notes-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:

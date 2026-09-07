@@ -99,7 +99,31 @@ class AdaptiveReaderLayoutPreferences:
 
 @dataclass(frozen=True)
 class AdaptiveReaderEffectiveLayout:
-    """One rendered layout derived from preferences and available width."""
+    """One rendered layout derived from preferences and available width.
+
+    Attributes:
+        library_open: Whether the library (rail) pane is rendered. Starts
+            from the user's preference and is forced ``False`` when the
+            width cannot seat it and still leave ``work_min_width``.
+        items_open: Whether the items (list) pane is rendered, under the
+            same preference-then-width rule as ``library_open``.
+        library_width: Columns given to the library pane, ``0`` when it is
+            closed.
+        items_width: Columns given to the items pane, ``0`` when it is
+            closed.
+        reader_width: Columns left for the work (Reader) pane -- the
+            remainder, never negative.
+        priority_pane: Which pane a width-starved layout kept open
+            (``"library"``/``"items"``), or ``None`` when nothing had to
+            be dropped.
+
+    The three widths are what each pane actually gets to paint: the pane
+    GRIPS are already deducted. The resolver holds back ``2 *
+    profile.grip_width`` (``AdaptiveReaderProfile.grip_width`` -- the same
+    value a grip paints, so the two can never disagree) before dividing
+    what is left, so ``library_width + items_width + reader_width`` plus
+    that reserve is the full terminal width.
+    """
 
     library_open: bool
     items_open: bool

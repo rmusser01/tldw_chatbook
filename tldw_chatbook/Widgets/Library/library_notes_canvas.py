@@ -981,7 +981,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
                         classes += " library-notes-tree-needs-attention"
-                    button = Button(
+                    button = library_row_button(
                         label,
                         id=f"library-notes-tree-folder-{index}",
                         classes=classes,
