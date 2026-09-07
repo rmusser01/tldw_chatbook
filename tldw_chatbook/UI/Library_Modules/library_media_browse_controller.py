@@ -57,9 +57,16 @@ _TIMEOUT_REASON = "timed out"
 # error is a ``sqlite3.Error``); anything unmapped takes the fallback, which
 # keeps PR G's privacy rule -- an arbitrary exception's TEXT never reaches a
 # screen, only OS/SQLite messages do, path-redacted.
+_DATABASE_UNREADABLE_REASON = "the database could not be read"
 _CLASS_REASONS: tuple[tuple[type[BaseException], str], ...] = (
     (ConnectionError, "the connection failed"),
-    (sqlite3.Error, "the database could not be read"),
+    # ``Client_Media_DB_v2`` wraps every sqlite3 failure in its OWN
+    # ``DatabaseError`` before it ever reaches this mapper (e.g.
+    # ``raise DatabaseError("Media search failed.") from None``), so this
+    # entry only covers a caller that talks to sqlite directly.
+    # ``DatabaseError`` is mapped separately, below, via a function-local
+    # import.
+    (sqlite3.Error, _DATABASE_UNREADABLE_REASON),
 )
 _UNMAPPED_REASON = "an unexpected error"
 # Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
@@ -120,6 +127,16 @@ def _mapped_failure_reason(exc: BaseException) -> str:
     for kind, reason in _CLASS_REASONS:
         if isinstance(exc, kind):
             return reason
+    # Function-local: this UI controller must not import a DB module at
+    # module scope (mirrors the deferred import in
+    # ``Media/local_media_reading_service.py``). ``ConflictError`` is a
+    # ``DatabaseError`` subclass but means something else -- an
+    # optimistic-lock conflict, not "could not be read" -- so it is
+    # excluded here rather than added to ``_CLASS_REASONS``.
+    from ...DB.Client_Media_DB_v2 import ConflictError, DatabaseError
+
+    if isinstance(exc, DatabaseError) and not isinstance(exc, ConflictError):
+        return _DATABASE_UNREADABLE_REASON
     return _UNMAPPED_REASON
 
 

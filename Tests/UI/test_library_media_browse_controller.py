@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import ConflictError, DatabaseError
 from tldw_chatbook.Library.library_media_state import MediaBrowseScope
 from tldw_chatbook.UI.Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
@@ -961,6 +962,13 @@ async def test_retry_retries_both_fences_when_both_have_failed() -> None:
         # A database error outside the OS/SQLite message branch still names
         # the database rather than its class.
         (sqlite3.DatabaseError("file is not a database"), "the database could not be read"),
+        # Reviewer gap: Client_Media_DB_v2 wraps every sqlite3 failure in
+        # its OWN DatabaseError before it ever reaches this mapper -- that
+        # app-level class must read the same as a direct sqlite3.Error.
+        (DatabaseError("Media search failed."), "the database could not be read"),
+        # ...but an optimistic-lock ConflictError (a DatabaseError subclass)
+        # is not "could not be read" -- it stays on the fallback.
+        (ConflictError("Conflict detected: Record modified concurrently."), "an unexpected error"),
         # AC#2: anything unmapped keeps a reason a reader can act on.
         (RuntimeError("boom"), "an unexpected error"),
         (ValueError(), "an unexpected error"),
@@ -989,3 +997,14 @@ def test_retry_failure_reason_never_leaks_an_unmapped_exception_text() -> None:
     assert reason == "an unexpected error"
     assert "Private" not in reason
     assert "media.db" not in reason
+
+
+def test_retry_failure_reason_never_leaks_a_database_error_message() -> None:
+    """Reviewer gap: ``DatabaseError``'s own message (e.g. "Media search
+    failed.") must never reach the screen -- only the mapped literal, same
+    privacy rule as every other mapped class.
+    """
+    reason = _retry_failure_reason(DatabaseError("Media search failed."))
+
+    assert reason == "the database could not be read"
+    assert "Media search failed" not in reason
