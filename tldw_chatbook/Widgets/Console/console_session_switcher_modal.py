@@ -1850,6 +1850,16 @@ class ConsoleSessionSwitcherModal(
         history_is_current = (
             self._mode is SwitcherMode.HISTORY or self._widened_to_history
         )
+        mode_label = (
+            "Character chats"
+            if self._mode is SwitcherMode.CHARACTER_CHATS
+            else "History"
+            if history_is_current
+            else "Active"
+        )
+        self.query_one("#console-switcher-modal", Vertical).border_title = Text(
+            f"Switch or resume [{mode_label}]"
+        )
         active.set_class(
             self._mode is SwitcherMode.ACTIVE and not history_is_current,
             "console-switcher-mode-current",
