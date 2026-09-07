@@ -927,13 +927,16 @@ class MeetingSessionOwner:
                     # the worker subprocess.
                     self._release_session_diarizer()
                     raise RuntimeError(failure)
-                # A meeting that ACTUALLY started lapses the previous one's
-                # unanswered offer (spec §3.4) and releases the worker kept
-                # for it -- not a Start that was refused or failed, which used
-                # to destroy the offer on its way out (re-review N3).
-                self._clear_offer()
                 self._start_watchdog()
-                return session
+            # A meeting that ACTUALLY started lapses the previous one's
+            # unanswered offer (spec §3.4) and releases the worker kept
+            # for it -- not a Start that was refused or failed, which used
+            # to destroy the offer on its way out (re-review N3). It runs
+            # under `_stop_lock` only: the close() inside can take seconds
+            # and must not hold `_lock` against enroll_from_mic's checks
+            # (re-review 2).
+            self._clear_offer()
+            return session
 
     def pause(self) -> None:
         """Pause the running meeting, if there is one."""
