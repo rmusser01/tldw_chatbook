@@ -1281,11 +1281,11 @@ def _secondary_text(
     if analysed:
         text = f"{text} · analysed"
     if keyword:
-        # ``chop_cells`` cuts on GRAPHEME boundaries measured in cells, so a
-        # ZWJ emoji cluster is never split mid-sequence and a wide character
-        # costs the two cells it actually paints (task-31955). Rich is
-        # already a hard dependency and ``console_prompt_queue`` uses the
-        # same module, so this adds nothing to install.
+        # ``chop_cells`` cuts by CELLS, so a wide character costs the two
+        # cells it actually paints and a ZWJ emoji cluster is never split
+        # mid-sequence (task-31955). Rich is already a hard dependency and
+        # ``console_prompt_queue`` uses the same module, so this adds
+        # nothing to install.
         # ponytail: rich's splitter is not full UAX #29 -- a regional-
         # indicator (flag) PAIR can halve at an odd cut offset. The CELL
         # budget is what holds; pinned as a known ceiling by

@@ -82,6 +82,12 @@ class ReviewSetService:
         screen builds exactly one service over the collections DB (
         ``LibraryScreen._review_set_service``); a second writer against the
         same file would need a stamp read from the DB instead.
+
+        A racing ``+= 1`` losing a count is harmless: every bump happens
+        after its own commit, so a reader that stamped an older value still
+        mismatches and re-reads. What a reader must NOT do is stamp a
+        revision read AFTER its own load -- that claims a write it never
+        saw (fix round 1).
         """
         return self._revision
 

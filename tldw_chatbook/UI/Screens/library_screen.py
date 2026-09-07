@@ -15699,24 +15699,33 @@ class LibraryScreen(BaseAppScreen):
         # through its one transaction helper, so a done mark, a set
         # create/activate/deactivate and a dismiss all invalidate it
         # without a per-gesture invalidation call a new writer could forget.
-        cached = getattr(self, "_review_done_map_cache", None)
-        if cached is not None and cached[0] == service.revision:
-            done_by_id = cached[1]
-        else:
-            try:
+        # Read BEFORE the load, and stamp with THAT (fix round 1): a write
+        # committing during the load (``dismiss``/``undismiss`` run through
+        # ``asyncio.to_thread`` while this thread decorates) would otherwise
+        # be stamped as already included, leaving a stale map under a
+        # current revision that no later sync repairs. A stale-LOW stamp
+        # only costs one extra read.
+        try:
+            revision = service.revision
+            cached = getattr(self, "_review_done_map_cache", None)
+            if cached is not None and cached[0] == revision:
+                done_by_id = cached[1]
+            else:
                 review_set = service.get_active_review_set()
-            except Exception:
-                # Deliberately NOT cached: one transient read error would
-                # otherwise cost the markers until the next write.
-                return tuple(items)
-            done_by_id = (
-                None
-                if review_set is None
-                else {
-                    item.backing_media_id: item.done for item in review_set.items
-                }
-            )
-            self._review_done_map_cache = (service.revision, done_by_id)
+                done_by_id = (
+                    None
+                    if review_set is None
+                    else {
+                        item.backing_media_id: item.done
+                        for item in review_set.items
+                    }
+                )
+                self._review_done_map_cache = (revision, done_by_id)
+        except Exception:
+            # Every ASK of the service is inside the guard, stamp included:
+            # the failure is deliberately NOT cached, so one transient read
+            # error costs one build's markers, not the session's.
+            return tuple(items)
         if done_by_id is None:
             return tuple(items)
         return tuple(

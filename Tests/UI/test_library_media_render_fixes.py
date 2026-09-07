@@ -3732,6 +3732,43 @@ async def test_leaving_and_re_entering_review_invalidates_the_decoration_cache()
 
 
 @pytest.mark.asyncio
+async def test_a_write_landing_during_the_load_is_not_stamped_as_included():
+    """Fix round 1: the stamp is the revision read BEFORE the load.
+
+    `dismiss`/`undismiss` commit on a thread (`asyncio.to_thread`) while
+    this thread decorates, so a write can land between the read of the set
+    and the stamp. Stamping the revision read AFTER the load would claim
+    that write was included, freezing a map that no later sync repairs --
+    the rows would keep painting marks the set no longer has. Stamping the
+    earlier value only costs one extra read.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+
+        healthy = service.get_active_review_set
+
+        def racing():
+            # The snapshot this call will cache...
+            review_set = healthy()
+            # ...and a write that commits (and bumps) before it is stamped.
+            service.mark_item_done(set_id, backing_media_id=1, done=True)
+            return review_set
+
+        # Invalidate first, so the racing build is the one that loads.
+        service.set_cursor(set_id, 0)
+        service.get_active_review_set = racing
+        stale = screen._decorate_library_media_reviewed(items)
+        assert _reviewed(stale) == [False, False, None, None], stale
+
+        service.get_active_review_set = healthy
+        fresh = screen._decorate_library_media_reviewed(items)
+        assert _reviewed(fresh) == [True, False, None, None], fresh
+
+
+@pytest.mark.asyncio
 async def test_a_storage_error_is_never_cached_as_no_active_set():
     """task-30042 doctrine survives the cache: it fails OPEN, and forgets.
 
