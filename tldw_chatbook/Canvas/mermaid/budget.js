@@ -18,7 +18,8 @@ function utf8Bytes(text) {
   return count;
 }
 const semanticLimits = Object.freeze({input: [8192, 16384], labels: [4096, 8192],
-  nodes: [16, 24], edges: [24, 32], participants: [6, 8], messages: [16, 24], notes: [8, 12]});
+  nodes: [16, 24], edges: [24, 32], participants: [6, 8], messages: [16, 24], notes: [8, 12],
+  work: [10000, 20000], elements: [250, 400], output: [49152, 65536], area: [4194304, 8388608]});
 class DiagramBudget {
   constructor() { this.ordinal = 0; this.document = new Map(); this.diagram = new Map(); }
   fail(code, line = null, column = null) { throw new DiagramError(code, this.ordinal || 1, line, column); }
@@ -28,6 +29,8 @@ class DiagramBudget {
     this.diagram = new Map();
     if (typeof source !== "string") this.fail("invalid-text");
     this.charge("input", utf8Bytes(source));
+    this.source = source;
+    this.extentX = 0; this.extentY = 0;
   }
   charge(kind, amount = 1) {
     const limits = semanticLimits[kind];
@@ -43,4 +46,5 @@ class DiagramBudget {
     this.charge("labels", size);
     return text;
   }
+  work(amount = 1) { this.charge("work", amount); }
 }

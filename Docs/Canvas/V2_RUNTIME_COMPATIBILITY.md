@@ -96,12 +96,12 @@ downloads only the declared HTTPS inputs with redirects refused. `--output-dir`
 supports independent builds. Unicode tables merge adjacent explicit ranges and
 implement extended grapheme rules GB3–GB999, including GB9c and GB11. The fixture
 retains all 1,093 official Unicode 16.0.0 grapheme conformance rows. Width is a
-profile-owned logical cell rule (8 CSS px per cell), not a platform measurement.
+profile-owned conservative logical cell rule (16 CSS px per cell), not a platform measurement.
 Original label code points are retained; Unicode normalization and `Intl` are not
 used. Escaped Mermaid entity spellings in plain labels remain literal text.
 
 `mermaid-subset.json` has exactly `schema_version`, `profile_id`, `source`,
-`source_bytes`, `source_sha256`, `inputs_sha256`, and `inventory` (the four authored
+`source_bytes`, `source_sha256`, `inputs_sha256`, and `inventory` (the seven authored
 module digests). The catalog's library inventory binds this JSON and the separate
 `MERMAID_THIRD_PARTY_LICENSES.txt`. `ProfileRecord.library_bytes` counts all those
 packaged bytes. The actual evaluated-script charge is **`source_bytes`**, verified
@@ -109,20 +109,65 @@ against the UTF-8 `source`, and shares the 256 KiB document script ceiling with
 authored scripts. JSON escaping and notice bytes are not evaluated JavaScript.
 
 Evaluating the verified source returns private handles `parseMermaid`,
-`DiagramBudget`, `DiagramError`, `segmentGraphemes`, and `graphemeWidth`; none is
+`DiagramBudget`, `DiagramError`, `segmentGraphemes`, `graphemeWidth`,
+`layoutDiagram`, and `renderDiagrams`; none is
 installed on the guest global. A worker retains one `new DiagramBudget()` for a
 document. `parseMermaid(source, budget)` calls `beginDiagram(source)` and returns
 the closed flow/sequence model. `beginDiagram` increments the ordinal, charges
 the raw UTF-8 input before comment processing, and resets only per-diagram counts.
 `charge(kind, amount=1)` charges both scopes for `input`, `labels`, `nodes`,
 `edges`, `participants`, `messages`, or `notes`; `label(text)` also checks the
-individual 512-byte ceiling. Failed startup discards the entire VM/budget. Task 3
-extends this owner with layout accounting rather than creating a second budget.
+individual 512-byte ceiling. Failed startup discards the entire VM/budget.
+Layout extends that same owner with `work`, `elements`, `output`, and `area`.
 
 The V2 quota manifest adds exactly `document_declarations`, `label_bytes`,
 `diagram_width`, `diagram_height`, and diagram/document pairs for `input_bytes`,
 `nodes`, `edges`, `participants`, `messages`, `notes`, `label_bytes`, `svg_elements`,
 `output_bytes`, `work_units`, and `area`. V1's quota schema stays unchanged.
-All accepted ceilings are recorded now, including layout ceilings enforced by
-later slices. In the test-only `candidate_snapshot` fixture, execution policy is
+All accepted ceilings are recorded and the layout ceilings are enforced by the
+candidate layout. In the test-only `candidate_snapshot` fixture, execution policy is
 replaced while all real verified manifest and asset hashes remain attached.
+
+## Candidate deterministic scenes (Task 3)
+
+`layoutDiagram(model, budget)` returns `{width, height, root, metrics}`. Scene
+nodes contain only `tag`, attribute pairs, plain `text`, and `children`; they
+contain no IDs, executable source, links, or SVG reference attributes. An
+ordinary HTML description and exact source accompany an intrinsic-size SVG
+inside an overflow wrapper. `renderDiagrams([{source}, ...])` creates one budget,
+parses and lays out each declaration in order, and returns scenes only when all
+declarations succeed. Worker allocation and declaration integration remain Task 4.
+
+Flow diagrams use Kahn ranks with source-order ties, two forward/backward
+barycentric ordering sweeps, and orthogonal rank lanes. Long edge labels reserve
+lane space; rank-skipping edges route outside the node columns. Sequence headers
+keep declared order and messages/notes share their original event order. Side
+notes reserve horizontal margins, two-participant notes span their columns, and
+every note reserves a separate vertical interval. Arrows use ordinary paths,
+including geometric arrowheads and dashed sequence messages; no marker is used.
+
+Wrapping preserves the pinned extended grapheme clusters and original code
+points. The candidate changes the logical cell to 16 CSS px for conservative
+extents under the approved 16px monospace font, normal weight/style, and 24px
+line spacing. Logical widths determine geometry, with no native measurements,
+`Intl`, or fetched fonts. Missing glyphs can use local fallback; source retains
+their original spelling. Explicit authored overrides can change typography or
+dimensions and do not recompute layout; that appearance is outside the default
+fidelity contract.
+
+SVG elements and shallow serialized records charge the shared budget during
+construction, with the final scene envelope included in exact UTF-8 output
+accounting. `metrics` records the per-diagram input, labels, semantic counts,
+work units, SVG elements, output bytes, and logical area. Coordinates, positive
+dimensions, arrowhead extents, and final viewBox bounds are checked before any
+worker patches exist. Budget failures never truncate labels or return partial
+scene arrays. Additional refusal codes are `work-limit`, `elements-limit`,
+`output-limit`, `area-limit`, and `geometry-limit`.
+
+The exact QuickJS scene/model corpus is `Tests/Canvas/fixtures/mermaid/layout.json`.
+Scene-only Chromium qualification in `test_mermaid_scene_readability.py` uses the
+existing V1 renderer and isolated loopback harness. It checks actual default-font
+extents, inherited typography, narrow scrolling, source identity and zero generated
+egress; it is not evidence of V2 startup integration or cross-platform pixel
+identity. The candidate remains non-executable with no diagram creation default
+until the complete Task 8 qualification gate.

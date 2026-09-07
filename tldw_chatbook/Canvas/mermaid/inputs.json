@@ -1252,7 +1252,7 @@
   "unicode": {
     "version": "16.0.0",
     "segmentation": "UAX29-revision45-extended-grapheme-clusters",
-    "width": "canvas-cell-width-1: each cluster=max(EAW W/F or Emoji_Presentation 2, other visible 1); Extend/ZWJ/control 0; pictographic ZWJ, VS16 and regional-indicator clusters 2; CSS unit 8px",
+    "width": "canvas-cell-width-2: each cluster=max(EAW W/F or Emoji_Presentation 2, other visible 1); Extend/ZWJ/control 0; pictographic ZWJ, VS16 and regional-indicator clusters 2; conservative CSS unit 16px",
     "generation": "Parse explicit semicolon-delimited code point ranges; merge adjacent equal properties; default GCB Other, InCB None, EAW neutral. No host Unicode or Intl.",
     "license": "Unicode-3.0"
   }

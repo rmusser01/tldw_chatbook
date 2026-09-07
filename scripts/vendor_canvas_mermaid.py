@@ -26,7 +26,15 @@ from vendor_canvas_runtime import (
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "tldw_chatbook/Canvas/mermaid"
 STATIC = ROOT / "tldw_chatbook/Canvas/static"
-AUTHORED = ("budget.js", "text.js", "semantic.js", "entry.js")
+AUTHORED = (
+    "budget.js",
+    "text.js",
+    "semantic.js",
+    "flow_layout.js",
+    "sequence_layout.js",
+    "scene.js",
+    "entry.js",
+)
 
 
 def digest(data: bytes) -> str:
@@ -242,10 +250,19 @@ def build(input_dir: Path, output_dir: Path) -> dict:
     contract["unicode"] = {
         "version": "16.0.0",
         "segmentation": inputs["unicode"]["segmentation"],
-        "width": "canvas-cell-width-1",
+        "width": "canvas-cell-width-2",
         "sha256": digest(tables + authored["text.js"]),
     }
-    # Existing engine/facade/plan/layout are exact real V1 assets until later
+    contract["layout"] = {
+        "id": "canvas-mermaid-layout-1",
+        "sha256": digest(
+            b"".join(
+                authored[name]
+                for name in ("flow_layout.js", "sequence_layout.js", "scene.js")
+            )
+        ),
+    }
+    # Existing engine/facade/plan are exact real V1 assets until later
     # slices implement V2. This candidate is deliberately never executable.
     manifest["mermaid_candidate"] = {
         "inputs_sha256": digest(inputs_bytes),

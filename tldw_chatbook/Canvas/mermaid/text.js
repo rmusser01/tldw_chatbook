@@ -67,5 +67,19 @@ function graphemeWidth(cluster) {
     cells = Math.max(cells, hasProperty(cp, "Wide") || hasProperty(cp, "Emoji_Presentation") ? 2 : 1);
   }
   if ((cells > 0 && cps.includes(0xfe0f)) || (cps.includes(0x200d) && cps.some(cp => hasProperty(cp, "Extended_Pictographic")))) cells = 2;
-  return cells * 8;
+  return cells * 16;
+}
+function wrapLabel(text, budget, limit = 192) {
+  const lines = []; let line = "", width = 0, widest = 0;
+  for (const cluster of segmentGraphemes(text)) {
+    budget.work();
+    const size = graphemeWidth(cluster);
+    if (cluster === "\n" || cluster === "\r\n" || (line && width + size > limit)) {
+      lines.push(line); widest = Math.max(widest, width); line = ""; width = 0;
+      if (cluster === "\n" || cluster === "\r\n") continue;
+    }
+    line += cluster; width += size;
+  }
+  lines.push(line); widest = Math.max(widest, width);
+  return {lines, width: widest, height: lines.length * 24};
 }
