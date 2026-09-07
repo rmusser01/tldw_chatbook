@@ -24111,7 +24111,20 @@ class LibraryScreen(BaseAppScreen):
                 failed = list(media_ids)
 
             if succeeded:
-                succeeded_ids = set(succeeded)
+                # task-31943: ``succeeded`` holds canvas row ids
+                # (``local:media:<backing>``), but the snapshot's own media
+                # records key on the BACKING id -- so compared raw the two
+                # never matched, and this prune silently kept every deleted
+                # row in the sample while the count below dropped. Undo's
+                # "already present, don't re-add (or re-count)" guard then
+                # read a row that had never left, leaving the rail's
+                # "Media N" stuck at the post-delete number after a restore.
+                # Both spellings are matched: a record carrying the canvas
+                # id is equally valid and equally this item.
+                succeeded_ids = set(succeeded) | {
+                    str(self._required_library_media_backing_id(media_id))
+                    for media_id in succeeded
+                }
                 self._local_source_records["media"] = tuple(
                     record
                     for record in self._local_source_records.get("media", ())
