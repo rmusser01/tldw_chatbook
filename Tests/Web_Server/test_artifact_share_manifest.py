@@ -9,6 +9,7 @@ import pytest
 
 from tldw_chatbook.Web_Server.artifact_share_manifest import (
     ArtifactShareAuth,
+    ArtifactShareError,
     ArtifactShareStagingError,
     build_share_auth,
     load_manifest,
@@ -56,6 +57,9 @@ def test_stage_share_copies_and_hashes_and_writes_manifest_0600(tmp_path):
     manifest_path = share_dir / "manifest.json"
     assert manifest_path.is_file()
     assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
+    # staging tree is owner-only: freshly created root and share dir 0700
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(share_dir.stat().st_mode) == 0o700
     assert len(manifest.artifacts) == 2
     for item in manifest.artifacts:
         staged = share_dir / item.staged_name
@@ -72,12 +76,40 @@ def test_stage_share_copies_and_hashes_and_writes_manifest_0600(tmp_path):
         assert sorted(bundle.namelist()) == sorted(
             item.staged_name for item in manifest.artifacts
         )
+    # bundle is staged 0600 throughout (never briefly 0644 pre-chmod)
+    assert stat.S_IMODE((share_dir / "bundle.zip").stat().st_mode) == 0o600
+    # no mkstemp leftovers remain in the staging directory
+    assert not [p for p in share_dir.iterdir() if p.name.startswith(".bundle-")]
     # round-trip through the on-disk JSON
     loaded = load_manifest(manifest_path)
     assert loaded.share_name == "My Library"
     assert loaded.auth is not None and loaded.auth.username == "alice"
     assert {i.key for i in loaded.artifacts} == {i.key for i in manifest.artifacts}
     assert json.loads(manifest_path.read_text())["schema"] == 1
+
+
+def test_load_manifest_enforces_schema_version(tmp_path):
+    manifest = stage_share(
+        [_record(tmp_path, "S", file_name="s.zip", cid=9)],
+        share_name="x",
+        auth=None,
+        share_root=tmp_path / "r",
+    )
+    manifest_path = tmp_path / "r" / manifest.share_id / "manifest.json"
+
+    # an explicit future/mismatched schema value is refused (fail closed)
+    data = json.loads(manifest_path.read_text())
+    data["schema"] = 999
+    manifest_path.write_text(json.dumps(data))
+    with pytest.raises(ArtifactShareError, match="schema"):
+        load_manifest(manifest_path)
+
+    # a missing "schema" key loads as the accepted default (version 1)
+    data = json.loads(manifest_path.read_text())
+    del data["schema"]
+    manifest_path.write_text(json.dumps(data))
+    loaded = load_manifest(manifest_path)
+    assert loaded.schema_version == 1
 
 
 def test_stage_share_rejects_record_without_bundle(tmp_path):

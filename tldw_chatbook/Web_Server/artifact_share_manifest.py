@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from ..Utils.paths import get_user_data_dir
 
 ARTIFACT_SHARE_SCHEMA = 1
 _STAGED_FILE_MODE = 0o600
+_STAGED_DIR_MODE = 0o700
 
 
 class ArtifactShareError(RuntimeError):
@@ -123,9 +125,14 @@ def stage_share(
     failure (fail closed).
     """
     root = Path(share_root) if share_root is not None else share_root_dir()
+    root_existed = root.is_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    if not root_existed:  # harden only what we create; tolerate pre-existing
+        os.chmod(root, _STAGED_DIR_MODE)
     share_id = uuid.uuid4().hex
     share_dir = root / share_id
-    share_dir.mkdir(parents=True, exist_ok=False)
+    share_dir.mkdir(exist_ok=False)
+    os.chmod(share_dir, _STAGED_DIR_MODE)  # mkdir honors umask; enforce explicitly
     try:
         staged: list[SharedArtifact] = []
         used_names: set[str] = set()
@@ -159,10 +166,16 @@ def stage_share(
                 )
             )
         bundle_path = share_dir / "bundle.zip"
-        with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_STORED) as bundle:
+        # Build the bundle through a 0600 mkstemp file in the same directory
+        # and atomically move it into place: zipfile writing the final name
+        # directly would leave it 0644 (umask-default) until a later chmod,
+        # briefly exposing member names to other local users.
+        bundle_fd, bundle_tmp = tempfile.mkstemp(prefix=".bundle-", dir=share_dir)
+        os.close(bundle_fd)
+        with zipfile.ZipFile(bundle_tmp, "w", zipfile.ZIP_STORED) as bundle:
             for item in staged:
                 bundle.write(share_dir / item.staged_name, arcname=item.staged_name)
-        os.chmod(bundle_path, _STAGED_FILE_MODE)
+        os.replace(bundle_tmp, bundle_path)  # mkstemp mode 0600 is preserved
         manifest = ArtifactShareManifest(
             share_id=share_id,
             share_name=str(share_name or "Shared artifacts"),
@@ -186,6 +199,13 @@ def load_manifest(manifest_path: Path) -> ArtifactShareManifest:
     """Load and validate a share manifest; any problem raises (fail closed)."""
     data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     manifest = ArtifactShareManifest.model_validate(data)
+    if manifest.schema_version != ARTIFACT_SHARE_SCHEMA:
+        # A missing "schema" key defaults to ARTIFACT_SHARE_SCHEMA and still
+        # loads; any other value (including decorative future numbers) is
+        # refused rather than guessed at.
+        raise ArtifactShareError(
+            f"Unsupported share manifest schema: {manifest.schema_version}"
+        )
     if not manifest.artifacts:
         raise ArtifactShareError("Share manifest contains no artifacts.")
     return manifest

@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -90,45 +91,55 @@ class ArtifactShareController:
             )
             self._share_dir = share_root_dir() / manifest.share_id
             manifest_path = self._share_dir / "manifest.json"
-            process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "tldw_chatbook.Web_Server.artifact_share_server",
-                    str(manifest_path),
-                    "--host",
-                    bind,
-                    "--port",
-                    str(port),
-                ],
-                start_new_session=True,
-                cwd=str(Path(__file__).resolve().parents[2]),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            self._process = process
-            status_path = self._share_dir / "status.json"
-            deadline = time.monotonic() + _CHILD_READY_TIMEOUT_SECONDS
-            url: str | None = None
-            while time.monotonic() < deadline:
-                if status_path.is_file():
-                    try:
-                        url = str(json.loads(status_path.read_text(encoding="utf-8"))["url"])
-                        break
-                    except (ValueError, KeyError, OSError):
-                        pass
-                if process.poll() is not None:
-                    output = ""
-                    if process.stdout is not None:
+            # The child's stdout/stderr go to an anonymous temp file, never a
+            # pipe: nothing in steady state drains a pipe, and a chatty child
+            # (loguru/aiohttp tracebacks) would fill it and wedge the server.
+            # A file can absorb unlimited output; we read it back only on the
+            # early-death path for diagnostics. The parent's fd closes when
+            # the readiness phase ends; the child keeps its own descriptor
+            # until it exits, so writes never block on either side.
+            with tempfile.TemporaryFile() as child_log:
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "tldw_chatbook.Web_Server.artifact_share_server",
+                        str(manifest_path),
+                        "--host",
+                        bind,
+                        "--port",
+                        str(port),
+                    ],
+                    start_new_session=True,
+                    cwd=str(Path(__file__).resolve().parents[2]),
+                    stdout=child_log,
+                    stderr=subprocess.STDOUT,
+                )
+                self._process = process
+                status_path = self._share_dir / "status.json"
+                deadline = time.monotonic() + _CHILD_READY_TIMEOUT_SECONDS
+                url: str | None = None
+                while time.monotonic() < deadline:
+                    if status_path.is_file():
                         try:
-                            output = process.stdout.read().decode(errors="replace")
+                            url = str(
+                                json.loads(status_path.read_text(encoding="utf-8"))["url"]
+                            )
+                            break
+                        except (ValueError, KeyError, OSError):
+                            pass
+                    if process.poll() is not None:
+                        output = ""
+                        try:
+                            child_log.seek(0)
+                            output = child_log.read().decode(errors="replace")
                         except OSError:
                             pass
-                    self._cleanup_staging()
-                    raise ArtifactShareError(
-                        f"Artifact share server failed to start: {output[-500:]}"
-                    )
-                time.sleep(0.1)
+                        self._cleanup_staging()
+                        raise ArtifactShareError(
+                            f"Artifact share server failed to start: {output[-500:]}"
+                        )
+                    time.sleep(0.1)
             if url is None:
                 self.stop_share()
                 raise ArtifactShareError(
@@ -149,11 +160,6 @@ class ArtifactShareController:
             process, self._process = self._process, None
             if process is not None:
                 self._terminate_child(process)
-                if process.stdout is not None:
-                    try:
-                        process.stdout.close()
-                    except OSError:
-                        pass
             self._cleanup_staging()
             if self._status is not None:
                 self._status = None

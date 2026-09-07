@@ -184,4 +184,14 @@ Deviations from the design text above, discovered during implementation:
   first; until then the banner can show a share whose server is already
   gone. Recorded here rather than silently diverging; a crash watcher
   remains future work.
+- **Port-in-use handling (simplification of "Error handling", above):** v1
+  does not emit a machine-readable stdout line or offer auto-pick on that
+  error; the controller surfaces the child's captured error tail verbatim,
+  and port 0 (ephemeral auto-pick) is the default dialog path, so an
+  in-use explicit port is the only way to hit the failure at all.
+- **Staging-preparation progress (simplification of the dialog design,
+  above):** the "Staging N artifacts…" preparation progress state is not
+  implemented in v1 — the dialog dismisses immediately on confirm and the
+  completion (or named-artifact failure) arrives via the completion
+  notification; there is no intermediate progress surface.
 

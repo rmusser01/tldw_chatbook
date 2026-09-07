@@ -203,7 +203,10 @@ class ArtifactShareServer:
 
     def _resolve_staged(self, key: str) -> tuple[Path, str]:
         for item in self.manifest.artifacts:
-            if not hmac.compare_digest(item.key, key):
+            # Compare encoded bytes: str inputs raise TypeError inside
+            # compare_digest when non-ASCII (e.g. /artifact/%E2%82%AC), which
+            # would surface as a 500 that bypasses the headers middleware.
+            if not hmac.compare_digest(item.key.encode("utf-8"), key.encode("utf-8")):
                 continue
             staged = item.staged_name
             if Path(staged).name != staged:  # separators/traversal never resolve

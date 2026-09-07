@@ -144,6 +144,18 @@ def test_unknown_key_is_404(tmp_path):
         assert client.get(f"{url}/artifact/does-not-exist").status_code == 404
 
 
+def test_non_ascii_unknown_key_is_404_with_security_headers(tmp_path):
+    # %E2%82%AC is a euro sign: compare_digest on non-ASCII str raises
+    # TypeError, which previously surfaced as a 500 that bypassed the
+    # security-headers middleware. It must 404 like any unknown key and
+    # still carry the middleware's header posture.
+    manifest_path, _manifest = _stage(tmp_path, auth=False)
+    with _served(manifest_path) as url, _client() as client:
+        response = client.get(f"{url}/artifact/%E2%82%AC")
+        assert response.status_code == 404
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
 def test_traversal_staged_name_is_never_served(tmp_path, monkeypatch):
     manifest_path, manifest = _stage(tmp_path, auth=False)
     # Tamper with the manifest the way a corrupted file would look: a
