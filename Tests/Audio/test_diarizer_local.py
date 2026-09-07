@@ -891,7 +891,7 @@ def _drive_worker(script, live):
     ]
     handed: list[bytes] = []
 
-    def fake_embed(pcm: bytes):
+    def fake_embed(pcm: bytes, sr: int = 16000):
         handed.append(pcm)
         return vectors[min(len(handed), len(vectors)) - 1]
 
@@ -918,7 +918,7 @@ def test_self_flag_requires_threshold_and_min_seconds():
     lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0})]
     for seq in range(3):
         lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
-    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0])
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.99, 0.01, 0.0])
     assert [o["self"] for o in out] == [False, True, True]   # 1 s < 2 s, then 2 s, 3 s
 
     # Review round 1, Important 5: the threshold arm above was never
@@ -928,7 +928,7 @@ def test_self_flag_requires_threshold_and_min_seconds():
     far_lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0}),
                  ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
                  ctl({"cmd": "assign", "sr": 16000, "seq": 1, "n": len(pcm)}), pcm]
-    far_out = _serve_lines(far_lines, embed=lambda pcm: [0.0, 1.0, 0.0])
+    far_out = _serve_lines(far_lines, embed=lambda pcm, sr: [0.0, 1.0, 0.0])
     assert far_out[-1]["self"] is False   # 2 s >= min_seconds, but outside the threshold
 
 
@@ -946,7 +946,7 @@ def test_a_wrong_dimension_voiceprint_turns_matching_off_not_assignment(capsys):
     lines = [ctl({"cmd": "enroll", "vector": [1.0, 0.0], "threshold": 0.2, "min_seconds": 0.0})]
     for seq in range(3):
         lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
-    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0, 0.0])  # 4-d vs a 2-d print
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.99, 0.01, 0.0, 0.0])  # 4-d vs a 2-d print
 
     assert [o["id"] for o in out] == ["S1", "S1", "S1"]   # ids keep flowing
     assert [o["self"] for o in out] == [False, False, False]
@@ -972,7 +972,7 @@ def test_diarize_self_matches_nearest_batch_centroid_and_export_centroid_prefers
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
         ctl({"cmd": "export_centroid", "id": "S1"}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0], batch=fake_batch)
 
     assert out[0]["self"] == "S1"                                   # nearest within threshold
     assert out[1]["centroid"] == pytest.approx([1.0, 0.0, 0.0])      # the BATCH centroid ...
@@ -998,7 +998,7 @@ def test_a_wrong_dimension_voiceprint_never_matches_on_the_stop_pass(capsys):
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0, 0.0], batch=fake_batch)
     assert [o["self"] for o in out] == [None, None]
     assert [o["segments"] for o in out] == [segs, segs]          # diarization itself unaffected
     errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
@@ -1016,7 +1016,7 @@ def test_diarize_self_is_null_when_no_batch_centroid_is_within_threshold():
         ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 0.0}),
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0], batch=fake_batch)
     assert out[0]["self"] is None
 
 
@@ -1028,7 +1028,7 @@ def test_a_malformed_enroll_does_not_kill_the_worker():
     def ctl(d): return (json.dumps(d) + "\n").encode()
     lines = [ctl({"cmd": "enroll", "vector": "not-a-list", "threshold": 0.2}),
              ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": 4}), b"aaaa"]
-    out = _serve_lines(lines, embed=lambda pcm: [1.0, 0.0, 0.0])
+    out = _serve_lines(lines, embed=lambda pcm, sr: [1.0, 0.0, 0.0])
     assert out[-1]["id"] == "S1"   # the loop survived the bad enroll and kept serving
 
 
@@ -1038,7 +1038,7 @@ def test_enroll_from_pcm_returns_unit_centroid_and_export_centroid_roundtrip():
     out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm,
                         ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
                         ctl({"cmd": "export_centroid", "id": "S1"})],
-                       embed=lambda pcm: [3.0, 4.0, 0.0])
+                       embed=lambda pcm, sr: [3.0, 4.0, 0.0])
     assert out[0]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[0]["seconds"] == pytest.approx(3.0)
     assert out[2]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[2]["seconds"] == pytest.approx(3.0)
 
@@ -1059,13 +1059,13 @@ def test_worker_echoes_op_id_on_both_centroid_ops_including_the_error_fallback()
             ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm), "op_id": 7}), pcm,
             ctl({"cmd": "export_centroid", "id": "S1", "op_id": 8}),
         ],
-        embed=lambda pcm: [1.0, 0.0, 0.0],
+        embed=lambda pcm, sr: [1.0, 0.0, 0.0],
     )
     assert out[0]["op_id"] == 7
     assert out[1]["op_id"] == 8
 
     # Framed-error fallback: a malformed export_centroid still echoes op_id.
-    def _raising_embed(pcm):
+    def _raising_embed(pcm, sr):
         raise RuntimeError("boom")
 
     err_out = _serve_lines(
@@ -1082,7 +1082,7 @@ def test_enroll_from_pcm_reports_null_centroid_for_a_zero_magnitude_embedding():
     pcm = b"\x00\x00" * 16000
     def ctl(d): return (json.dumps(d) + "\n").encode()
     out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm],
-                       embed=lambda pcm: [0.0, 0.0, 0.0])
+                       embed=lambda pcm, sr: [0.0, 0.0, 0.0])
     assert out[0] == {"centroid": None, "op_id": None}  # op_id echoed even when absent from the control line
 
 
@@ -1139,7 +1139,7 @@ def test_malformed_pcm_framing_is_refused_without_reading_the_payload(capsys):
     def ctl(d): return (json.dumps(d) + "\n").encode()
     embedded: list[bytes] = []
 
-    def embed(pcm):
+    def embed(pcm, sr):
         embedded.append(pcm)
         return [1.0, 0.0, 0.0]
 
@@ -1182,7 +1182,7 @@ def test_stop_pass_self_needs_min_seconds_as_well_as_the_threshold():
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 1.0}),
         ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
     ]
-    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    out = _serve_lines(lines, embed=lambda pcm, sr: [0.0, 0.0, 0.0], batch=fake_batch)
 
     assert out[0]["self"] is None      # 1 s of audio, well inside the threshold
     assert out[1]["self"] == "S1"      # 5 s -- matched
