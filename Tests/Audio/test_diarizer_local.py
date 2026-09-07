@@ -10,8 +10,10 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Iterator, List
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Audio import diarizer_local
 from tldw_chatbook.Audio.diarizer_local import (
@@ -21,6 +23,26 @@ from tldw_chatbook.Audio.diarizer_local import (
     SpeechBrainDiarizer,
     diarize_budget_s,
 )
+
+
+@pytest.fixture
+def captured_lines() -> Iterator[List[str]]:
+    """Collect every loguru message emitted during the test.
+
+    `caplog` does not see loguru's own sink -- mirrors the fixture of the
+    same name in `test_meeting_diarization_session.py`.
+    """
+    lines: List[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="TRACE",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        yield lines
+    finally:
+        loguru_logger.remove(sink_id)
 
 _PCM = b"\x00\x00" * 1600
 _SEGMENTS_REPLY = json.dumps({"segments": [{"start_s": 0.0, "end_s": 1.5, "speaker": "S1"}]}) + "\n"
@@ -503,6 +525,137 @@ def test_pin_is_a_noop_when_coarse_only():
     d._mark_coarse("backend crashed")
     d.pin("S1")  # must not raise, must not write
     assert not any(b'"cmd": "pin"' in c for c in proc.stdin.chunks)
+
+
+# --- 31826 task 3: backend enrolls after READY, fixes the first self match --
+
+def test_enroll_is_sent_after_ready_and_after_restart():
+    """Controller ruling 1: enrolled from the stderr watcher BEFORE `ready`
+    is set, so it is always the worker's first command and the restart path
+    (a fresh watcher) re-enrolls for free."""
+    made: list[FakeProc] = []
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0], match_threshold=0.2)
+    assert d.wait_ready(2.0) is True
+    assert any(b'"cmd": "enroll"' in c for c in made[0].stdin.chunks)
+
+    assert d.assign(_PCM, 16000, 0) == "S1"
+    made[0]._alive = False                              # worker dies
+    assert d.assign(_PCM, 16000, 1) is None              # detected -> restart
+    assert len(made) == 2
+    assert d.wait_ready(2.0) is True
+    assert any(b'"cmd": "enroll"' in c for c in made[1].stdin.chunks)
+
+
+def test_first_self_flag_is_fixed_and_later_ones_counted():
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": true}\n', '{"id": "S2", "seq": 1, "self": true}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc, voiceprint=[1.0, 0.0]))
+    d.assign(_PCM, 16000, 0)
+    d.assign(_PCM, 16000, 1)
+    assert d.self_cluster_id == "S1" and d.self_candidates_seen == 2
+
+
+def test_self_candidates_seen_and_cluster_id_default_to_none_and_zero():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])))
+    d.assign(_PCM, 16000, 0)
+    assert d.self_cluster_id is None and d.self_candidates_seen == 0
+
+
+def test_voiceprint_property_returns_a_copy_or_none():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([]), voiceprint=[1.0, 0.0]))
+    vp = d.voiceprint
+    assert vp == [1.0, 0.0]
+    vp.append(9.0)
+    assert d.voiceprint == [1.0, 0.0]  # mutating the returned list must not leak back
+
+    d2 = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([])))
+    assert d2.voiceprint is None
+
+
+def test_vector_never_reaches_logs(captured_lines):
+    proc = FakeProc([])
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc, voiceprint=[0.123456, 0.654321])
+    assert d.wait_ready(2.0) is True
+    proc._alive = False
+    d.assign(_PCM, 16000, 0)
+    assert "0.123456" not in "\n".join(captured_lines)
+    assert "0.654321" not in "\n".join(captured_lines)
+
+
+# --- 31826 task 3: stop_self from the diarize reply -------------------------
+
+def test_stop_self_is_set_from_a_diarize_reply():
+    reply = json.dumps({"segments": [], "self": "S1"}) + "\n"
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([reply])))
+    d.diarize(Path("mixed.wav"), 0.0, 3.0)
+    assert d.stop_self == "S1"
+
+
+def test_stop_self_defaults_to_none_and_stays_none_when_reply_lacks_it():
+    reply = json.dumps({"segments": []}) + "\n"
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([reply])))
+    assert d.stop_self is None
+    d.diarize(Path("mixed.wav"), 0.0, 3.0)
+    assert d.stop_self is None
+
+
+# --- 31826 task 3: export_centroid / enroll_from_pcm -------------------------
+
+def test_export_centroid_returns_the_tuple_on_a_good_reply():
+    proc = FakeProc(['{"centroid": [0.6, 0.8], "seconds": 12.5}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.export_centroid("S1") == ([0.6, 0.8], 12.5)
+    sent = b"".join(proc.stdin.chunks)
+    assert b'"cmd": "export_centroid"' in sent and b'"S1"' in sent
+
+
+def test_export_centroid_returns_none_on_a_null_centroid():
+    proc = FakeProc(['{"centroid": null}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.export_centroid("S1") is None
+
+
+def test_export_centroid_returns_none_on_timeout(monkeypatch):
+    monkeypatch.setattr(diarizer_local, "CENTROID_BUDGET_S", 0.05)
+
+    class _NeverAnswers:
+        def readline(self) -> bytes:
+            time.sleep(0.2)
+            return b""
+
+    proc = FakeProc([])
+    proc.stdout = _NeverAnswers()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.export_centroid("S1") is None
+
+
+def test_export_centroid_is_none_when_degraded_or_coarse_only():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([])))
+    d._mark_coarse("backend crashed")
+    assert d.export_centroid("S1") is None
+
+
+def test_enroll_from_pcm_sends_n_prefixed_control_then_pcm_and_parses_reply():
+    proc = FakeProc(['{"centroid": [1.0, 0.0], "seconds": 3.0}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    pcm = b"\x00\x00" * 1600
+
+    assert d.enroll_from_pcm(pcm, 16000) == ([1.0, 0.0], 3.0)
+
+    control = json.loads(proc.stdin.chunks[-2])
+    assert control == {"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}
+    assert proc.stdin.chunks[-1] == pcm
+
+
+def test_enroll_from_pcm_returns_none_on_null_centroid():
+    proc = FakeProc(['{"centroid": null}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.enroll_from_pcm(b"\x00\x00" * 1600, 16000) is None
 
 
 # --- Qodo Q2: the WORKER's own command loop, torch-free --------------------
