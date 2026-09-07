@@ -192,12 +192,15 @@ class LibraryConversationsCanvas(
                     # task-4023 AC#1 (RC-07): "○" disabled marker; base
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch.
-                    library_disabled_action_label("Export selected", export_disabled),
+                    library_disabled_action_label(
+                        "Export selected", export_disabled, align=True
+                    ),
                     id="library-conversations-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 export_selected._library_disabled_marker_base = "Export selected"
+                export_selected._library_disabled_marker_align = True
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
