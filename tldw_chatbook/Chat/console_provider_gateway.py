@@ -273,6 +273,10 @@ class _TraceAcceptedPreparation:
     owner: object = field(repr=False)
     boundary: object | None = field(default=None, repr=False)
     claimed: bool = False
+    reservation_attempted: bool = False
+    construction_failure: TraceCallPersistenceError | None = field(
+        default=None, repr=False
+    )
 
 
 class _ProviderAdapterAdmission:
@@ -2347,6 +2351,8 @@ class ConsoleProviderGateway:
     ) -> _AdapterResult:
         """Consume one gateway-issued admission immediately before adapter entry."""
 
+        from .console_send_diagnostics import record_send_stage
+
         if type(admission) is not _ProviderAdapterAdmission:
             raise TraceCallPersistenceError()
         _entry_gate = kwargs.pop("_console_adapter_entry_gate", None)
@@ -2357,6 +2363,7 @@ class ConsoleProviderGateway:
                 admission,
                 self._adapter_admission_issuer,
             )
+            record_send_stage("provider_entry")
             return adapter(*args, **kwargs)
         # Consumption is owned by the gateway, not dynamically dispatched to
         # the presented object's method.  Otherwise a subclass can override
@@ -2368,6 +2375,7 @@ class ConsoleProviderGateway:
             ):
                 raise TraceCallPersistenceError()
             admission._consumed = True
+        record_send_stage("provider_entry")
         return adapter(*args, **kwargs)
 
     def _bind_trace_preparation(
@@ -2390,8 +2398,28 @@ class ConsoleProviderGateway:
             raise TraceCallPersistenceError()
         return scope
 
-    def _verify_trace_preparation_recovery(self, owner: object, boundary: object) -> None:
-        """Prove the exact owner's unbound reservation before local re-entry."""
+    def _verify_trace_preparation_recovery(
+        self,
+        owner: object,
+        boundary: object,
+        signals: object = None,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_ON,
+    ) -> None:
+        """Prove an owned reservation or consume first-call Capture Off proof."""
+        if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+            scope = self._trace_preparation_scope(signals)
+            if (
+                scope is not None
+                and scope.owner is owner
+                and scope.construction_failure is not None
+                and scope.construction_failure is boundary
+            ):
+                # The first factory invocation failed before returning a boundary.
+                # Its reservation outcome may be unknown, but this live gateway
+                # has not entered the adapter. Consume that exact proof once;
+                # it does not authorize Capture On or a cold/foreign replay.
+                scope.construction_failure = None
+                return
         if boundary is None or getattr(boundary, "_accepted_preparation", None) is not owner:
             raise TraceCallPersistenceError(boundary=boundary)
         verify = getattr(getattr(boundary, "_factory", None), "_verify_owned_recovery", None)
@@ -2430,12 +2458,24 @@ class ConsoleProviderGateway:
     ) -> object:
         """Create and reserve one distinct Capture-On call boundary."""
 
-        if not self.supports_durable_capture:
-            raise TraceCallPersistenceError(reservation_status="not_established")
-        assert self._trace_call_boundary_factory is not None
+        from .console_send_diagnostics import record_send_stage
+
+        record_send_stage("trace_reservation")
+        scope = self._trace_preparation_scope(signals)
+        first_call = (
+            scope is not None
+            and not scope.reservation_attempted
+            and scope.boundary is None
+            and route in {ConsoleRequestRoute.FRESH, ConsoleRequestRoute.AGENT_FIRST}
+        )
+        if scope is not None:
+            scope.reservation_attempted = True
+            scope.construction_failure = None
         boundary: object | None = None
         try:
-            scope = self._trace_preparation_scope(signals)
+            if not self.supports_durable_capture:
+                raise TraceCallPersistenceError(reservation_status="not_established")
+            assert self._trace_call_boundary_factory is not None
             if scope is not None and scope.boundary is not None and not scope.claimed:
                 boundary = scope.boundary
                 recover = getattr(getattr(boundary, "_factory", None), "_recover_owned_boundary", None)
@@ -2452,11 +2492,18 @@ class ConsoleProviderGateway:
                 raise TraceCallPersistenceError()
             reserve()
         except TraceCallPersistenceError as exc:
+            record_send_stage("trace_reservation", "failed", error=exc)
             if exc.boundary is None and boundary is not None:
                 raise TraceCallPersistenceError(boundary=boundary) from None
+            if first_call and boundary is None and exc.boundary is None:
+                scope.construction_failure = exc
             raise
-        except Exception:
-            raise TraceCallPersistenceError(reservation_status="unknown") from None
+        except Exception as exc:  # noqa: BLE001 - preserve content-free trace failure contract
+            record_send_stage("trace_reservation", "failed", error=exc)
+            failure = TraceCallPersistenceError(reservation_status="unknown")
+            if first_call and boundary is None:
+                scope.construction_failure = failure
+            raise failure from None
         metrics = self._trace_compatibility_metrics
         record = getattr(metrics, "record", None)
         if callable(record):
@@ -2467,6 +2514,7 @@ class ConsoleProviderGateway:
                     "trace compatibility metric skipped after {}",
                     type(exc).__name__,
                 )
+        record_send_stage("trace_reservation", "succeeded")
         return boundary
 
     async def aclose(self) -> None:
@@ -5303,6 +5351,9 @@ class ConsoleProviderGateway:
     ) -> None:
         """Commit the normalized dispatch token as the adapter-adjacent step."""
 
+        from .console_send_diagnostics import record_send_stage
+
+        record_send_stage("trace_dispatch_commit")
         if trace_call_boundary is None:
             return
         if bundle is None:
@@ -5317,10 +5368,12 @@ class ConsoleProviderGateway:
                 raise TraceCallPersistenceError()
             mark_dispatch_started(bundle, provenance)
         except TraceCallPersistenceError as exc:
+            record_send_stage("trace_dispatch_commit", "failed", error=exc)
             if exc.boundary is None:
                 raise TraceCallPersistenceError(boundary=trace_call_boundary) from None
             raise
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - preserve content-free trace failure contract
+            record_send_stage("trace_dispatch_commit", "failed", error=exc)
             raise TraceCallPersistenceError() from None
 
     def _trace_dispatch_admission(
