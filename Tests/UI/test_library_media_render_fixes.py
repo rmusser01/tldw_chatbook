@@ -3239,17 +3239,25 @@ async def test_rendered_markdown_h1_starts_in_the_body_column():
 
 
 # ---------------------------------------------------------------------------
-# task-31635 (critique #5 item 6): with the list's load failed, the two
-# list-level actions ("Export…" over the whole filtered list, "Trash" over
-# the same store) stayed live and colour-normal beside the failure callout,
-# while "Select" beside them already rendered its "○" marker and said why.
+# task-31635 (critique #5 item 6): with the FIRST list load failed and
+# nothing behind it, "Export…" -- which exports the whole filtered list --
+# stayed live and colour-normal beside the failure callout, while "Select"
+# next to it already rendered its "○" marker and said why.
+#
+# Fix round 1 narrows it to the same predicate the empty Reader uses
+# (`_library_media_list_unselectable`): a failure with NO retained rows. A
+# later-page failure keeps its rows -- that retention is the callout's whole
+# point -- and those rows export fine. "Trash" is never gated: it is a route
+# into a view with its own fetch, callout and Retry, and disabling it would
+# remove the only way to reach deleted items exactly when the store is
+# unhappy.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
-async def test_failed_list_load_gates_export_and_trash_with_reasons(size):
-    """A failed load disables Export… and Trash, each naming the failure."""
+async def test_failed_first_page_gates_export_with_its_reason(size):
+    """A first load that failed with nothing behind it disables Export…."""
     host = _host()
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_with_a_failed_first_page(
@@ -3257,18 +3265,41 @@ async def test_failed_list_load_gates_export_and_trash_with_reasons(size):
         )
 
         export = screen.query_one("#library-media-export", Button)
+        assert export.disabled
+        assert str(export.label) == "○ Export…"
+        assert str(export.tooltip) == "Couldn't load media · database is locked."
+        assert "○" in _painted(host, export.region), _painted(host, export.region)
+
+        # Trash stays the live route into the deleted items.
         trash = screen.query_one("#library-media-trash-open", Button)
-        reason = "Couldn't load media · database is locked."
-        for button, label in ((export, "○ Export…"), (trash, "○ Trash")):
-            assert button.disabled, button.id
-            assert str(button.label) == label, (button.id, str(button.label))
-            assert str(button.tooltip) == reason, (button.id, button.tooltip)
-            assert "○" in _painted(host, button.region), _painted(host, button.region)
+        assert not trash.disabled
+        assert str(trash.label) == "Trash"
+        assert "Trash" in _painted(host, trash.region)
+
+
+@pytest.mark.asyncio
+async def test_page_failure_that_retains_rows_leaves_export_live():
+    """Fix round 1's negative control: retained rows export fine."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        # The callout IS up (the broad predicate this used to gate on)...
+        assert screen.query("#library-media-load-failure-copy")
+        assert screen._library_media_browse_controller.failure is not None
+        assert len(screen.query(".library-media-row")) == 2
+        # ...and Export… is still live over the rows that survived it.
+        export = screen.query_one("#library-media-export", Button)
+        assert not export.disabled
+        assert str(export.label) == "Export…"
 
 
 @pytest.mark.asyncio
 async def test_a_healthy_list_leaves_export_and_trash_live():
-    """The negative control: no failure, no gate (task-31635 item 6)."""
+    """The other negative control: no failure, no gate (task-31635 item 6)."""
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)

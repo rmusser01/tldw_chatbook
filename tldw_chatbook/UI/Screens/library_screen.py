@@ -3914,22 +3914,35 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "trash"
             ):
-                # task-31635 item 3: the Trash view's own two keys, gated
-                # through the same ``check_action`` the bindings use, so a
-                # stale page or an armed confirmation drops both chips
-                # instead of teaching a key that no-ops (task-28005's rule).
-                trash_shortcuts: list[tuple[str, str]] = [
-                    ("/", "focus search"),
-                    ("F6", "next pane"),
-                ]
-                for key, gated_action, label in (
-                    ("r", "library_media_trash_restore", "restore"),
-                    ("x", "library_media_trash_delete", "delete"),
-                ):
-                    if self.check_action(gated_action, ()):
-                        trash_shortcuts.append((key, label))
-                trash_shortcuts.append(("esc", "back to list"))
-                return tuple(trash_shortcuts)
+                # task-31635 item 3: the detail-back set this view already
+                # returned, plus its own two keys spliced in before the
+                # Escape chip -- gated through the same ``check_action`` the
+                # bindings use, so a stale page or an armed confirmation
+                # drops both instead of teaching a key that no-ops
+                # (task-28005's rule). Spliced, never re-literalled: the
+                # constant stays the one definition of the other three.
+                trash_keys = tuple(
+                    (key, label)
+                    for key, gated_action, label in (
+                        ("r", "library_media_trash_restore", "restore"),
+                        ("x", "library_media_trash_delete", "delete"),
+                    )
+                    if self.check_action(gated_action, ())
+                )
+                escape_chip = tuple(
+                    pair
+                    for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                    if pair[0] == "esc"
+                )
+                return (
+                    tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    )
+                    + trash_keys
+                    + escape_chip
+                )
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -15805,6 +15818,11 @@ class LibraryScreen(BaseAppScreen):
             # ONE recovery callout, Retry inside it. ``None`` whenever the
             # last load of each fence succeeded.
             "load_failure": controller.failure,
+            # task-31635 fix round 1: the NARROWER predicate the list-wide
+            # actions gate on -- a failure with no rows behind it. The
+            # callout above is broader on purpose (a page failure retains
+            # its rows); those rows still export fine.
+            "list_unselectable": self._library_media_list_unselectable(),
             "compact": False,
             "show_preview": False,
             # Task 8 (meeting diarization spec): whether the selected item is

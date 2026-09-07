@@ -571,7 +571,11 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     # IS the value the store holds.
                     raw_trash_date = self.confirmation_target.trash_date or ""
                     trash_date = (
-                        media_trash_age_copy(raw_trash_date)
+                        # The state's OWN clock, so the row and this line
+                        # cannot land either side of an hour boundary.
+                        media_trash_age_copy(
+                            raw_trash_date, now=self.canvas.reference_now
+                        )
                         or raw_trash_date
                         or "Unknown deletion time"
                     )

@@ -880,6 +880,11 @@ class LibraryMediaTrashState:
         notice: Restore feedback line (e.g. "Restored 'Title'."), "" when
             nothing to report. Feedback only -- never a receipt: ADR-055's
             receipts accompany destruction, and restore is recovery.
+        reference_now: The instant every row's "trashed <age>" was measured
+            against (task-31635 fix round 1). Kept so a surface derived
+            from the SAME state -- the permanent-delete confirmation -- can
+            date its captured item against the same clock instead of
+            re-reading `now` and disagreeing by an hour at a boundary.
     """
 
     rows: tuple[LibraryMediaTrashRow, ...]
@@ -890,6 +895,7 @@ class LibraryMediaTrashState:
     loading: bool = False
     error: str = ""
     notice: str = ""
+    reference_now: datetime | None = None
 
 
 def media_trash_age_copy(trash_date: str | None, *, now: datetime | None = None) -> str:
@@ -1006,6 +1012,7 @@ def build_library_media_trash_state(
         loading=resolved_loading,
         error=str(error or ""),
         notice=str(notice or ""),
+        reference_now=reference_now,
     )
 
 

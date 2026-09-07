@@ -237,9 +237,15 @@ current list: the app refreshes the page it fenced for its own write, so it
 never asks you to press "Retry" for a change you just made here.
 
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
-and Trash ▸ "Delete forever", each followed by "‹ Media", live in tmux
+and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
 2" range, no stale banner and no "Retry").*
+
+*Verified against fix/media-wave5-j — 2026-09-06 (task-31635: live in tmux at
+235x52 and 100x30 — the row read "article · trashed 6h" and the confirmation
+it opened read the same, "r" restored it ("Restored '…'." with the count
+going 4 → 3 items), and the footer carried "r restore | x delete" on the
+list and dropped both while the confirmation was armed).*
 
 ### Media list
 
