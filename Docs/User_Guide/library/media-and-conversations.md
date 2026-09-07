@@ -137,7 +137,10 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
   depends on colour alone — and their tooltips say what to do ("Select one
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
-  labels back in place.
+  labels back in place — the word itself does not move: an enabled
+  select-mode action reserves the marker's own two cells, so "Export
+  selected" starts in the same column whether or not the "○" is showing.
+  That holds on Media, Conversations, Notes and Prompts alike.
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:
@@ -390,6 +393,14 @@ still spans the pane.
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+*Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
+in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
+content painted "Rendered view is for Markdown and transcripts" above its
+text; an empty `article` painted "No stored content." with no note above
+it. In Conversations select mode, checking the first row moved the count
+0 → 1 and left the Export selected label's first painted glyph on column
+83 — "○" before, "Exp" (clipped) after.)*
 
 *Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
 14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.

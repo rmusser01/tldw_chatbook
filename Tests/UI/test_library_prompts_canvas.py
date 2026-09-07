@@ -76,6 +76,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     prepare_prompt_artifact_save,
 )
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ACTION_LABEL_PAD,
     LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
@@ -152,6 +153,7 @@ from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _active_library_screen,
     _fake_import_dialog_result,
+    _painted_text,
     _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
@@ -1237,14 +1239,17 @@ async def test_prompts_canvas_select_mode_renders_summary_and_selection_toolbars
                 "#library-prompts-delete-selected",
             )
         )
+        # task-31959: the actions that flip with the selection count spell
+        # their enabled label with the "○ " marker's own width reserved, so
+        # the word holds its column when the first selection enables them.
         assert [str(button.label) for button in management] == [
             "Select page",
-            "Clear all",
+            f"{LIBRARY_ACTION_LABEL_PAD}Clear all",
             "Done",
         ]
         assert [str(button.label) for button in selected_actions] == [
-            "Export selected",
-            "Delete selected",
+            f"{LIBRARY_ACTION_LABEL_PAD}Export selected",
+            f"{LIBRARY_ACTION_LABEL_PAD}Delete selected",
         ]
         assert management[0].parent is management[1].parent
         assert management[2].parent is not management[0].parent
@@ -13681,3 +13686,72 @@ def test_library_prompt_dialog_rechecks_projection_before_staging(projection_err
         "Open Console once, then retry Use in Console.",
         severity="warning",
     )
+
+
+# ---------------------------------------------------------------------------
+# task-31959: the select-mode action labels must not move when the first
+# selection enables them. The "○ " disabled marker is part of the label, so
+# crossing 0 -> 1 selected shifted every one of them two cells, right under
+# the row the user had just checked (PR J padded Media's bulk row only).
+# ---------------------------------------------------------------------------
+
+
+def _painted_word_column(host, button, word: str) -> int:
+    """Absolute column where ``word`` is painted inside ``button``."""
+    painted = _painted_text(host, button.region)
+    assert word in painted, (button.id, word, painted)
+    return button.region.x + painted.index(word)
+
+
+@pytest.mark.asyncio
+async def test_prompts_selection_action_labels_hold_their_column_when_enabled():
+    """Every select-mode action word paints in the same column throughout."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": 17,
+                "name": "Alpha",
+                "last_modified": "2026-08-04T00:00:00+00:00",
+                "version": 6,
+                "artifact_type": "prompt",
+            }
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-selection-done")
+
+        actions = (
+            ("#library-prompts-export-selected", "Export"),
+            ("#library-prompts-delete-selected", "Delete"),
+            ("#library-prompts-clear-selection", "Clear"),
+        )
+        before = {}
+        for selector, word in actions:
+            button = screen.query_one(selector, Button)
+            assert button.disabled, selector
+            before[selector] = _painted_word_column(host, button, word)
+
+        screen.query_one("#library-prompt-row-17", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-prompts-export-selected", Button
+            ).disabled,
+            message="The row press never enabled the selection actions.",
+        )
+        await pilot.pause()
+
+        after = {}
+        for selector, word in actions:
+            button = screen.query_one(selector, Button)
+            assert not button.disabled, selector
+            after[selector] = _painted_word_column(host, button, word)
+        assert after == before, (before, after)

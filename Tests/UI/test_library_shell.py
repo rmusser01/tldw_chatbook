@@ -10806,6 +10806,21 @@ def _painted_text(host, region) -> str:
     )
 
 
+def _painted_label_column(host, button) -> int:
+    """Absolute column of the first glyph ``button`` paints (task-31959).
+
+    The Library's select-mode action rows clip their labels at the pane's
+    40-column floor, so the whole word is often not painted; what a user
+    sees move is where the label STARTS. The "○ " disabled marker is part
+    of the label, so an unpadded enabled spelling starts two cells left of
+    the disabled one it replaces.
+    """
+    painted = _painted_text(host, button.region)
+    stripped = painted.lstrip()
+    assert stripped, (button.id, painted)
+    return button.region.x + (len(painted) - len(stripped))
+
+
 def _row_is_painted_focused(host, row) -> bool:
     """Whether ``row`` really carries the media row focus cue on screen.
 
