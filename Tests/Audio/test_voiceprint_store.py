@@ -2,7 +2,7 @@
 cross-meeting speaker enrollment SDD program). See
 Docs/superpowers/specs/2026-09-06-meeting-voiceprint-design.md section 3.1.
 """
-import json, os, stat
+import dataclasses, json, os, stat
 import pytest
 from tldw_chatbook.Audio import voiceprint as vp
 
@@ -243,6 +243,107 @@ def test_exists_is_a_stat_and_never_touches_the_key(tmp_path):
     store.delete()
     assert store.exists() is False
     assert keys.reads == 0
+
+
+# --- Qodo review (PR #2479) ------------------------------------------------
+
+def _envelope(tmp_path, name, record: dict, passphrase="correct horse"):
+    """A passphrase envelope holding `record` verbatim -- including shapes no
+    `export()` would ever write, which is exactly the point: the passphrase
+    proves who wrote the file, never what is inside it."""
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    out = tmp_path / name
+    out.write_text(json.dumps({
+        "format_version": 1, "mode": "passphrase",
+        "payload": ConfigEncryption().encrypt_value(json.dumps(record), passphrase),
+    }))
+    return out
+
+def _good_record(**over):
+    rec = {"model_id": "ecapa@rev1", "centroid": [1.0, 0.0], "sample_count": 3.0,
+           "meetings_contributed": 1, "created_at": "2026-09-06T00:00:00",
+           "updated_at": "2026-09-06T00:00:00", "threshold_used": 0.2,
+           "last_best_similarity": None, "format_version": 1}
+    rec.update(over)
+    return rec
+
+@pytest.mark.parametrize("bad", [
+    {"centroid": []},                       # nothing to compare against
+    {"centroid": "not-a-vector"},
+    {"centroid": [1.0, float("nan")]},      # every later distance is NaN
+    {"centroid": [1.0, float("inf")]},
+    {"sample_count": -1.0},                 # negative weight in the merge math
+    {"meetings_contributed": -3},
+    {"threshold_used": float("nan")},       # matches everything, or nothing
+    {"format_version": 2},                  # a shape this build cannot read
+    {"model_id": ""},
+])
+def test_import_refuses_a_malformed_record_before_saving_anything(tmp_path, bad):
+    """Qodo 5: a decrypted record went straight to `save()`. A file with
+    syntactically valid but malformed fields replaced the user's voiceprint
+    and only failed later, in the worker, on every comparison."""
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    store.save(_rec((1.0, 0.0)))
+    raw = (tmp_path / "voiceprint.json").read_bytes()
+
+    for replace in (False, True):
+        with pytest.raises(vp.InvalidVoiceprint):
+            store.import_(_envelope(tmp_path, "bad.json", _good_record(**bad)),
+                          "correct horse", replace=replace)
+    assert (tmp_path / "voiceprint.json").read_bytes() == raw     # untouched
+
+def test_import_refuses_a_record_that_is_missing_a_field(tmp_path):
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    incomplete = _good_record(); incomplete.pop("threshold_used")
+    with pytest.raises(vp.InvalidVoiceprint):
+        store.import_(_envelope(tmp_path, "bad.json", incomplete), "correct horse", replace=True)
+    assert not (tmp_path / "voiceprint.json").exists()
+
+def test_import_still_accepts_a_valid_record(tmp_path):
+    """The negative half above must not be passing for the wrong reason."""
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    store.save(_rec((0.0, 1.0), model="ecapa@rev9"))
+    out = store.import_(_envelope(tmp_path, "good.json", _good_record()), "correct horse", replace=True)
+    assert out.model_id == "ecapa@rev1" and out.centroid == [1.0, 0.0]
+    assert store.load().voiceprint.centroid == [1.0, 0.0]
+
+def test_merge_sample_refuses_a_non_finite_centroid(tmp_path):
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    store.save(_rec((1.0, 0.0)))
+    with pytest.raises(ValueError):
+        store.merge_sample((float("nan"), 0.0), weight=1.0, model_id="ecapa@rev1")
+    assert store.load().voiceprint.centroid == [1.0, 0.0]
+
+def test_a_learning_merge_never_overwrites_a_concurrent_enrollment(tmp_path):
+    """Qodo 9: `merge_sample` load-average-saves with no lock, so an accepted
+    learning offer that overlapped an explicit enrollment saved a record
+    computed from the pre-enrollment vector -- the new enrollment, gone."""
+    import threading
+
+    started, released = threading.Event(), threading.Event()
+
+    def clock():
+        started.set()            # merge is now between its load and its save
+        released.wait(0.3)       # serialized, this simply times out
+        return "2026-09-06T00:00:01"
+
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys(), clock=clock)
+    store.save(_rec((1.0, 0.0), n=1.0))          # meetings_contributed == 1
+
+    merge = threading.Thread(target=store.merge_sample, args=((0.0, 1.0), 1.0, "ecapa@rev1"))
+    merge.start()
+    assert started.wait(2.0)
+    enrolled = dataclasses.replace(_rec((0.0, 1.0)), meetings_contributed=41)
+    save = threading.Thread(target=store.save, args=(enrolled,))
+    save.start()
+    for thread in (merge, save):
+        thread.join(5.0)
+        assert not thread.is_alive()
+
+    # Either serial order is fine; a merge computed from the STALE record
+    # (meetings_contributed == 2) is the lost update this locks out.
+    assert store.load().voiceprint.meetings_contributed in (41, 42)
 
 
 def test_mode_reports_the_key_provider_in_use(tmp_path):

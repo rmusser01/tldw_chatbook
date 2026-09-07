@@ -69,6 +69,9 @@ VOICE_TRANSFER_FAILURE_COPY = (
     ("passphrase", "Wrong passphrase"),
     ("destination", "That file is your stored voiceprint — choose another destination"),
     ("model", "Different model — choose Replace"),
+    # Before "locked": `InvalidVoiceprint` IS a `StoreUnavailable`, and the
+    # first match wins (Qodo review 5).
+    ("invalid", "Import file is not a valid voiceprint"),
     ("locked", "Store locked — try again after unlocking the keyring"),
 )
 #: The owner's static progress words, as Voice-row copy (final review I3).
@@ -979,12 +982,14 @@ class MeetingsScreen(BaseAppScreen):
         """
         try:
             from ...Audio.voiceprint import (
-                ExportRefused, ModelMismatch, StoreUnavailable, WrongPassphrase, default_store,
+                ExportRefused, InvalidVoiceprint, ModelMismatch, StoreUnavailable,
+                WrongPassphrase, default_store,
             )
 
             return default_store(), {
                 "passphrase": WrongPassphrase, "destination": ExportRefused,
-                "model": ModelMismatch, "locked": StoreUnavailable,
+                "model": ModelMismatch, "invalid": InvalidVoiceprint,
+                "locked": StoreUnavailable,
             }
         except Exception as exc:  # noqa: BLE001 - the screen still works
             logger.warning("meetings: voiceprint store unavailable ({})", type(exc).__name__)

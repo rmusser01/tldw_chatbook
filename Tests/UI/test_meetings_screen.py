@@ -1405,7 +1405,7 @@ async def test_import_merge_and_replace_call_the_store_with_the_choice(tmp_path)
 @pytest.mark.asyncio
 async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path):
     from tldw_chatbook.Audio.voiceprint import (
-        ExportRefused, ModelMismatch, StoreUnavailable, WrongPassphrase,
+        ExportRefused, InvalidVoiceprint, ModelMismatch, StoreUnavailable, WrongPassphrase,
     )
 
     host, owner = await _boot(tmp_path)
@@ -1425,6 +1425,11 @@ async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path)
             # (ValueError)." -- the one failure a user can actually fix.
             (WrongPassphrase("the passphrase did not open this file"),
              "Wrong passphrase"),
+            # Qodo 5: a decryptable file whose record is malformed. It is a
+            # StoreUnavailable, so it must be matched BEFORE "Store locked"
+            # -- an unreadable file is not a keyring the user can unlock.
+            (InvalidVoiceprint("the import file is not a valid voiceprint"),
+             "Import file is not a valid voiceprint"),
         ):
             store.raises = exc
             screen.query_one("#meetings-voice-import", Button).press()

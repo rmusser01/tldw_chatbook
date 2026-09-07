@@ -63,6 +63,19 @@ class StoreUnavailable(Exception):
     replace safely (a locked key never justifies overwriting)."""
 
 
+class InvalidVoiceprint(StoreUnavailable):
+    """Raised by `VoiceprintStore.import_` for a file that decrypts but does
+    not hold a usable voiceprint (Qodo review 5): a missing or wrong-typed
+    field, an unknown `format_version`, an empty or non-finite centroid, a
+    negative count. A `StoreUnavailable` so nothing that already handles the
+    store's refusals has to change, but its own class so the screen can say
+    "Import file is not a valid voiceprint" instead of "Store locked".
+
+    The message is always static -- the payload came from a file the user was
+    handed, and echoing it would put a stranger's data on screen and in logs.
+    """
+
+
 class _EnvelopeError(Exception):
     """Internal: envelope file missing, corrupt, or not a JSON object."""
 
@@ -105,6 +118,50 @@ class KeyProvider(Protocol):
         unblock itself, which is what None means (task 6 review M8).
         """
         ...
+
+
+def _is_finite(value: object) -> bool:
+    """Whether `value` is a real, finite number (a bool is not a number here)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _validated(payload: object) -> Voiceprint:
+    """Return the imported record, or refuse it (Qodo review 5).
+
+    The passphrase proves who wrote an import file, never what is in it: a
+    hand-edited or truncated record used to be saved as-is and only failed
+    later, in the diarizer worker, on every comparison of the meeting.
+
+    Args:
+        payload: The decrypted JSON body of an import file.
+
+    Returns:
+        The record, safe to store and to hand the worker.
+
+    Raises:
+        InvalidVoiceprint: Any field missing, wrongly typed, out of range, or
+            non-finite, or a `format_version` this build does not read. The
+            message is static -- never the payload.
+    """
+    try:
+        record = Voiceprint(**payload)  # type: ignore[arg-type] - guarded below
+    except TypeError as exc:  # not a dict, missing field, or an unknown one
+        raise InvalidVoiceprint("the import file is not a valid voiceprint") from exc
+    if (
+        record.format_version != _FORMAT_VERSION
+        or not isinstance(record.model_id, str) or not record.model_id
+        or not isinstance(record.centroid, list) or not record.centroid
+        or not all(_is_finite(x) for x in record.centroid)
+        or not _is_finite(record.sample_count) or record.sample_count < 0
+        or not isinstance(record.meetings_contributed, int)
+        or isinstance(record.meetings_contributed, bool)
+        or record.meetings_contributed < 0
+        or not _is_finite(record.threshold_used)
+        or not isinstance(record.created_at, str) or not isinstance(record.updated_at, str)
+        or not (record.last_best_similarity is None or _is_finite(record.last_best_similarity))
+    ):
+        raise InvalidVoiceprint("the import file is not a valid voiceprint")
+    return record
 
 
 def unit_normalise(v: Sequence[float]) -> list[float]:
@@ -243,6 +300,15 @@ class VoiceprintStore:
         self._key_provider = key_provider
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self._per_meeting_cap = per_meeting_cap
+        # Every WRITER holds this (Qodo review 9). `merge_sample` is a
+        # load-average-save, and an accepted learning offer overlapping an
+        # explicit enrollment saved a record computed from the vector the
+        # enrollment had just replaced -- the new enrollment, silently gone.
+        # Reentrant because `merge_sample`/`import_` write through `save`.
+        # In-process only: two app PROCESSES are a different (unreachable --
+        # enrollment needs exclusive mic capture) problem, and a cross-platform
+        # file lock is not worth carrying for it.
+        self._write_lock = threading.RLock()
 
     @property
     def mode(self) -> str:
@@ -288,55 +354,64 @@ class VoiceprintStore:
         return LoadResult(voiceprint=record, reason=None, mode=mode)
 
     def save(self, record: Voiceprint) -> None:
-        key = self._key_provider.get_or_create()
-        payload_json = json.dumps(asdict(record))
-        envelope = {
-            "format_version": _FORMAT_VERSION,
-            "mode": self._key_provider.mode,
-            "payload": ConfigEncryption().encrypt_value(payload_json, key),
-        }
-        _atomic_write(self._path, json.dumps(envelope))
+        with self._write_lock:
+            key = self._key_provider.get_or_create()
+            payload_json = json.dumps(asdict(record))
+            envelope = {
+                "format_version": _FORMAT_VERSION,
+                "mode": self._key_provider.mode,
+                "payload": ConfigEncryption().encrypt_value(payload_json, key),
+            }
+            _atomic_write(self._path, json.dumps(envelope))
 
     def merge_sample(self, centroid: Sequence[float], weight: float, model_id: str) -> Voiceprint:
-        result = self.load(expected_model_id=model_id)
-        if result.voiceprint is None:
-            raise ValueError(f"cannot merge sample: {result.reason or 'no_voiceprint'}")
-        current = result.voiceprint
+        with self._write_lock:      # load-average-save: one writer at a time
+            result = self.load(expected_model_id=model_id)
+            if result.voiceprint is None:
+                raise ValueError(f"cannot merge sample: {result.reason or 'no_voiceprint'}")
+            current = result.voiceprint
 
-        w = min(weight, self._per_meeting_cap)
-        sample = unit_normalise(centroid)
-        if len(sample) != len(current.centroid):
-            # `zip` below truncates silently, and the short vector it produced
-            # was saved, reloaded and handed to the diarizer worker -- where
-            # every comparison against a full-length embedding raised and took
-            # live speaker labels down with it (final review I2). Same model
-            # id, different dimension IS a model mismatch: the screen already
-            # renders that as "Different model -- choose Replace".
-            raise ModelMismatch(
-                f"stored voiceprint has {len(current.centroid)} dimensions, "
-                f"the sample has {len(sample)}"
+            if not all(_is_finite(x) for x in centroid):
+                # A NaN reaches the stored vector and every later cosine
+                # distance is NaN -- matching then neither fails nor succeeds,
+                # it just stops (Qodo review 5).
+                raise ValueError("cannot merge sample: the centroid is not finite")
+            w = min(weight, self._per_meeting_cap)
+            sample = unit_normalise(centroid)
+            if len(sample) != len(current.centroid):
+                # `zip` below truncates silently, and the short vector it
+                # produced was saved, reloaded and handed to the diarizer
+                # worker -- where every comparison against a full-length
+                # embedding raised and took live speaker labels down with it
+                # (final review I2). Same model id, different dimension IS a
+                # model mismatch: the screen already renders that as
+                # "Different model -- choose Replace".
+                raise ModelMismatch(
+                    f"stored voiceprint has {len(current.centroid)} dimensions, "
+                    f"the sample has {len(sample)}"
+                )
+            n = current.sample_count
+            total = n + w
+            merged = unit_normalise(
+                [(c * n + s * w) / total for c, s in zip(current.centroid, sample)]
+            ) if total else list(current.centroid)
+
+            updated = replace(
+                current,
+                centroid=merged,
+                sample_count=total,
+                meetings_contributed=current.meetings_contributed + 1,
+                updated_at=self._clock(),
             )
-        n = current.sample_count
-        total = n + w
-        merged = unit_normalise(
-            [(c * n + s * w) / total for c, s in zip(current.centroid, sample)]
-        ) if total else list(current.centroid)
-
-        updated = replace(
-            current,
-            centroid=merged,
-            sample_count=total,
-            meetings_contributed=current.meetings_contributed + 1,
-            updated_at=self._clock(),
-        )
-        self.save(updated)
-        return updated
+            self.save(updated)
+            return updated
 
     def delete(self) -> bool:
-        if self._path.exists():
-            self._path.unlink()
-            return True
-        return False
+        with self._write_lock:
+            if self._path.exists():
+                self._path.unlink()
+                return True
+            return False
 
     def export(self, dest: Path, passphrase: str) -> None:
         if not passphrase:
@@ -373,43 +448,52 @@ class VoiceprintStore:
         except Exception as exc:  # noqa: BLE001 - a bare ValueError reached the
             # screen as "Import failed (ValueError)." (final review Minor 4).
             raise WrongPassphrase("the passphrase did not open this file") from exc
-        imported = Voiceprint(**json.loads(payload_json))
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError as exc:
+            raise InvalidVoiceprint("the import file is not a valid voiceprint") from exc
+        # BEFORE the store is touched at all, on BOTH the merge and the
+        # replace path (Qodo review 5): the record used to go straight to
+        # `save()`, so a malformed-but-decryptable file replaced a good
+        # voiceprint and only failed later, in the worker, all meeting long.
+        imported = _validated(payload)
 
-        # The existing record's readability gates whether -- and how -- we
-        # may proceed. "No record" is a genuinely empty store: always safe
-        # to adopt the import. A locked key or a corrupt file means we
-        # CANNOT SEE what's currently stored, which is not the same thing
-        # as nothing being stored -- silently overwriting it there would
-        # discard a different person's voiceprint with no gate at all. A
-        # locked key can unblock itself (unlock the keyring) so it is never
-        # a valid reason to replace; a corrupt file cannot recover on its
-        # own, so an explicit `replace=True` may discard it.
-        result = self.load()
-        if result.reason == "keyring_locked":
-            raise StoreUnavailable("cannot import: the existing voiceprint key is locked")
-        if result.reason == "cannot_decrypt":
+        with self._write_lock:
+            # The existing record's readability gates whether -- and how -- we
+            # may proceed. "No record" is a genuinely empty store: always safe
+            # to adopt the import. A locked key or a corrupt file means we
+            # CANNOT SEE what's currently stored, which is not the same thing
+            # as nothing being stored -- silently overwriting it there would
+            # discard a different person's voiceprint with no gate at all. A
+            # locked key can unblock itself (unlock the keyring) so it is never
+            # a valid reason to replace; a corrupt file cannot recover on its
+            # own, so an explicit `replace=True` may discard it.
+            result = self.load()
+            if result.reason == "keyring_locked":
+                raise StoreUnavailable("cannot import: the existing voiceprint key is locked")
+            if result.reason == "cannot_decrypt":
+                if not replace:
+                    raise StoreUnavailable(
+                        "cannot import: the existing voiceprint is unreadable "
+                        "(pass replace=True to overwrite it)"
+                    )
+                self.save(imported)
+                return imported
+
+            current = result.voiceprint
+            if current is None:
+                self.save(imported)
+                return imported
+            if current.model_id == imported.model_id:
+                weight = min(imported.sample_count, self._per_meeting_cap)
+                return self.merge_sample(imported.centroid, weight=weight, model_id=imported.model_id)
+
             if not replace:
-                raise StoreUnavailable(
-                    "cannot import: the existing voiceprint is unreadable "
-                    "(pass replace=True to overwrite it)"
+                raise ModelMismatch(
+                    f"stored model {current.model_id!r} does not match imported model {imported.model_id!r}"
                 )
             self.save(imported)
             return imported
-
-        current = result.voiceprint
-        if current is None:
-            self.save(imported)
-            return imported
-        if current.model_id == imported.model_id:
-            weight = min(imported.sample_count, self._per_meeting_cap)
-            return self.merge_sample(imported.centroid, weight=weight, model_id=imported.model_id)
-
-        if not replace:
-            raise ModelMismatch(
-                f"stored model {current.model_id!r} does not match imported model {imported.model_id!r}"
-            )
-        self.save(imported)
-        return imported
 
 
 def _has_real_keyring_backend() -> bool:
