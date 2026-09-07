@@ -3,13 +3,13 @@
 Status: Proposed — conversational decisions approved; written specification awaiting review
 Date: 2026-09-07
 
-Revision: 3 — incorporates the third user-requested design review.
+Revision: 4 — incorporates the fourth user-requested design review.
 
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
 Design: [Complete local backup and restore](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
 
-Extends: ADR-004, ADR-029, ADR-036, ADR-059, ADR-060
+Extends: ADR-004, ADR-029, ADR-030, ADR-036, ADR-059, ADR-060
 
 Supersedes: None. Existing selective Chatbook export and storage-settings Save
 contracts remain unchanged.
@@ -53,6 +53,12 @@ new filesystem or execution authority when imported.
    archive and independently verified local targets; damaged config never causes a
    silent fallback to default database paths. Unverifiable replacement targets block
    replacement while inspection and new-destination recovery remain available.
+   Revalidate selected owners, effective mappings, shared aliases, dependencies, and
+   required assets after maintenance admission closes and writers drain. Scope or
+   budget changes require release, renewed preview, and ordered reacquisition; normal
+   growth within approved owners is captured within rechecked limits. Reconcile the
+   final manifest with the fenced capture inventory before writers resume. Discovery-
+   time counts cannot establish completeness.
 
 3. Coordinate protocol-aware persistence participants through enforced maintenance
    admission over stable logical namespaces outside replaced data. Verified file/path
@@ -126,6 +132,14 @@ new filesystem or execution authority when imported.
    unsupported old-owner mappings block publication until reviewed. Owners retire
    obsolete managed objects only after verified rollback, and final inventory checks
    reject accidentally active newer objects/sidecars outside the desired generation.
+   Optional exclusions preserve only independent content. Invalidate affected query
+   caches and disable dependent projections before restored sources become queryable;
+   omitted indexes are retired into rollback or quarantined through their owners.
+   Under ADR-030, restored and retained indexes need verified source identity/state,
+   schema/embedding compatibility, and active-source reconciliation before retrieval.
+   Missing provenance leaves retrieval unavailable with explicit prerequisites; no
+   rebuild starts automatically. Apply the same contract to isolated restore and
+   later rollback, with shared-index scope expansion/refusal and no activation bypass.
    Capture readable affected Chatbook-owned keyring values and scope mappings; old
    references alone do not guarantee later credential recovery. If an existing scope
    no longer matches, restore into a new scope through the owning adapter rather
@@ -147,7 +161,12 @@ new filesystem or execution authority when imported.
     asset owner with stable catalog/reference identity and transcript resolution.
     Recovered assets enter baseline subsequent backups even when temporary-media
     capture is off. Explicit deletion/cleanup rechecks references and recovery holds;
-    missing bytes render a missing-media state instead of resolving a different file.
+    unexpected missing bytes render a missing-media state instead of resolving a
+    different file. Explicit asset deletion journals a versioned owner tombstone and
+    payload retirement, retaining references marked intentionally deleted. Validated
+    tombstones round-trip without requiring deleted bytes or making a backup partial;
+    missing files or failed digests never imply intentional deletion. Restored deleted
+    references show Deleted recovered media and cannot revive unrelated retained bytes.
     Temporary-store TTL/startup sweeps cannot remove committed recovered assets.
     Store models inertly; restoration does not launch/download them.
 
@@ -182,6 +201,13 @@ activation persistence after ordinary relaunch and operation-fence clearing, cha
 or unavailable keyring values, publication races against an existing good backup,
 and empty-directory/metadata round trips. These are contract corrections; they do
 not enlarge the feature into server credential repair or general filesystem backup.
+
+Fourth-review evidence covers scope changes and in-scope growth between preview and
+maintenance, stale/incompatible projections across restore and rollback, and explicit
+media-deletion tombstones versus unexpected payload loss. Require final captured
+coverage, unavailable stale retrieval until reconciliation, no automatic rebuild,
+and complete tombstone round trips with interruption recovery. These remain required
+implementation checks, not runtime evidence claimed by this documentation change.
 
 ## Alternatives considered
 
@@ -225,6 +251,7 @@ inspection and safe extraction remain available.
 
 - [ADR-004](004-settings-storage-defaults-restart-boundary.md): ordinary path Save is restart-required and does not relocate live stores.
 - [ADR-029](029-local-private-data-boundary.md): private files, checked paths, and metadata-only diagnostics.
+- [ADR-030](030-derived-index-lifecycle-and-atomic-media-migrations.md): authoritative media lifecycle, derived-index reconciliation, and query-cache invalidation.
 - [ADR-036](036-application-service-composition-lifecycle.md): one application composition root and memory-only Sync dataset keys.
 - [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md): File Notes filesystem authority and independent recovery ownership.
 - [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-060](060-notes-sync-round-trip-and-interoperability-constraints.md): device-local Notes sync and explicit paused recovery boundary.

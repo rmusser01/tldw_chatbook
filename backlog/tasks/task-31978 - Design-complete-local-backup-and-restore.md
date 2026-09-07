@@ -71,6 +71,16 @@ uses new-file-only atomic no-replace semantics; and a directory manifest preserv
 empty structure with an explicit supported-metadata policy. Spec/ADR decisions,
 review-resolution rows, and targeted release evidence were updated together.
 
+Revision 4 incorporates all three accepted fourth-review corrections. Source inventory
+is revalidated after maintenance admission closes, with renewed previews for scope or
+budget changes and completeness tied to final captured coverage. Dependent indexes
+and query caches cannot remain active against restored sources; ADR-030 compatibility
+and reconciliation rules apply to omitted, retained, and restored projections, with
+no automatic rebuild. Intentional recovered-media deletion persists a validated owner
+tombstone and marked references, so subsequent complete backups preserve deletion
+without confusing it with unexpected missing bytes. The spec, ADR, review mapping,
+and targeted release criteria cover all three, including crash and restart scenarios.
+
 Self-review checked coverage, activation boundaries, profile/credential isolation,
 rollback versus portable redaction, cancellation, compatibility, resource limits,
 interruption outcomes, and the accepted-review mapping. Local Markdown links and
