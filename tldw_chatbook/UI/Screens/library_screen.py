@@ -35523,7 +35523,9 @@ class LibraryScreen(BaseAppScreen):
             # task-31567's focus restore down with it and strand focus on a
             # pane grip -- the exact defect that restore exists to prevent.
             # The exception still propagates; only the ordering guarantee
-            # changes.
+            # changes. (If ``pending()`` itself raises inside the ``finally``,
+            # its exception replaces the follow-up's -- accepted: the restore
+            # is the invariant, and both surface in the log either way.)
             try:
                 callback()
             finally:

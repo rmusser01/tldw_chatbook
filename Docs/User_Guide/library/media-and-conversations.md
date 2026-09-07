@@ -80,8 +80,11 @@ list-and-preview layout.
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
 see what is worth generating without opening anything (`document · 5m ·
-analysed`). It appears the moment an analysis is saved — from the Reader's
-Generate, or from a bulk Analyze run — without re-paging the list. Its title row starts with a single one-cell **state slot**. With
+analysed`). The row re-reads its state from the database the moment an
+analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
+without re-paging the list; until task-31942 lands (the save does not yet
+commit durably), the mark can lag the Reader on a real profile. Its title row
+starts with a single one-cell **state slot**. With
 no review set active it carries only the current-row pointer **▸** in the wide
 layout (blank otherwise); once a set is active (see "Review these" below),
 every item in the set carries **·** until you review it and **✓** afterwards,
@@ -245,7 +248,7 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
 2" range, no stale banner and no "Retry").*
 
-*Verified against fix/media-wave5-j — 2026-09-06 (task-31635: live in tmux at
+*Verified against fix/media-wave5-j — 2026-09-07 (task-31635: live in tmux at
 235x52 and 100x30 — the row read "article · trashed 6h" and the confirmation
 it opened read the same, "r" restored it ("Restored '…'." with the count
 going 4 → 3 items), and the footer carried "r restore | x delete" on the
@@ -261,7 +264,7 @@ list and dropped both while the confirmation was armed).*
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
 | "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is reduced to its type name (for example `ValueError`), so a private path never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
-| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…"; both render disabled with the reason on the tooltip while the list's own load has failed. |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". It is never disabled by a failed Media load — it is the route to your deleted items exactly when the list is unhappy — whereas "Export…" renders as "○ Export…" with the reason on its tooltip when the list has nothing to select. |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
 | "Sets" (title row) | Opens the saved-set picker (see "Review sets" below). It stays put on an empty or filtered-to-zero list — it is navigation, not a result, and it is the way back to a saved set when the list itself has nothing to offer. Hidden only in Select mode, like the other list-level actions. |
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
@@ -520,7 +523,7 @@ setting**; it supplies one bundle of **staged context** for the next send.
 ### Open a media item and search inside it
 1. Click a row; it loads into Reader without replacing Items.
 2. Press **Find**, type into "Search content…", and press Enter. The status shows
-   "Match 1 of N matches", the matches are highlighted in the content, and the
+   "Match 1 of N", the matches are highlighted in the content, and the
    count plus "◀ Prev" / "Next ▶" appear directly beneath the box — the bar
    itself does not move, and neither does the header above it.
 3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized and
