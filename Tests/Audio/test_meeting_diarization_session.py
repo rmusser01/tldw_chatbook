@@ -479,6 +479,140 @@ def test_stop_captures_the_backend_coarse_reason_for_the_footer(tmp_path, meetin
     assert read_meeting_json(tmp_path)["speaker_labels_reason"] == "backend crashed"
 
 
+# ---- 31826 task 4: self-voiceprint match, override, Stop-pass fallback ----
+
+class SelfMatchDiarizer(FakeDiarizer):
+    """A backend that can flag one live cluster as the user (spec §3.3).
+
+    `self_cluster_id` / `stop_self` / `self_candidates_seen` are exactly the
+    read-only attributes `SpeechBrainDiarizer` exposes; the session reads them
+    with `getattr`, so a backend without them (every other fake in this file)
+    keeps working unchanged.
+    """
+
+    self_cluster_id: str | None = None
+    stop_self: str | None = None
+    self_candidates_seen = 0
+
+    def __init__(self, ids=(), pins=None):
+        super().__init__(ids)
+        self.pins = pins if pins is not None else []
+
+    def pin(self, cluster_id):
+        self.pins.append(cluster_id)
+
+
+def _matched_session(factory, tmp_path, *, name="Me", ids=("S1", "S2")):
+    """A started room-mode session whose first window matched the user."""
+    fake = SelfMatchDiarizer(list(ids))
+    session = factory(diarizer=fake, mode="room", user_display_name=name)
+    session.start()
+    fake.self_cluster_id = "S1"
+    session._on_final_for_test("hi", label=None)
+    return session, fake
+
+
+def test_first_self_cluster_is_named_and_persisted(tmp_path, meeting_session_with_fake_capture):
+    session, _ = _matched_session(meeting_session_with_fake_capture, tmp_path)
+    assert session.meta.speaker_names["S1"] == "Me"
+    assert session.meta.matched_self == "S1"
+    assert read_meeting_json(tmp_path)["matched_self"] == "S1"
+
+
+def test_a_later_self_flag_never_moves_the_match(tmp_path, meeting_session_with_fake_capture):
+    """Stable first match (spec §3.4): the backend fixes the id, and the
+    session applies it exactly once -- a second candidate is never named."""
+    session, fake = _matched_session(meeting_session_with_fake_capture, tmp_path)
+    fake.self_cluster_id = "S2"                      # the real backend never does this
+    session._on_final_for_test("more", label=None)
+    assert session.meta.matched_self == "S1"
+    assert "S2" not in session.meta.speaker_names
+
+
+def test_self_match_never_overwrites_a_name_the_user_typed(tmp_path, meeting_session_with_fake_capture):
+    """A cluster the user already named is recorded as matched-but-overridden
+    rather than silently relabelled with the display name."""
+    fake = SelfMatchDiarizer(["S1"])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    session.start()
+    session.rename_speaker("S1", "Bob")
+    fake.self_cluster_id = "S1"
+    session._on_final_for_test("hi", label=None)
+    assert session.meta.speaker_names["S1"] == "Bob"
+    assert session.meta.matched_self == "S1" and session.meta.matched_self_overridden is True
+
+
+def test_rename_overrides_match_but_display_name_does_not(tmp_path, meeting_session_with_fake_capture):
+    session, _ = _matched_session(meeting_session_with_fake_capture, tmp_path)
+    session.rename_speaker("S1", "Bob")
+    assert session.meta.speaker_names["S1"] == "Bob"
+    assert session.meta.matched_self_overridden is True
+    assert read_meeting_json(tmp_path)["matched_self_overridden"] is True
+
+    other, _ = _matched_session(meeting_session_with_fake_capture, tmp_path)
+    other.rename_speaker("S1", "Me")                 # the display name is not an override
+    assert other.meta.speaker_names["S1"] == "Me"
+    assert other.meta.matched_self_overridden is False
+
+
+def test_rename_speaker_normalizes_pins_and_persists(tmp_path, meeting_session_with_fake_capture):
+    """The one rename path the screen (task 5) calls: normalise, pin, persist."""
+    fake = SelfMatchDiarizer(["S1"])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room")
+    session.start()
+    assert session.rename_speaker("S1", "  Bob  ") == "Bob"
+    assert fake.pins == ["S1"]
+    assert read_meeting_json(tmp_path)["speaker_names"] == {"S1": "Bob"}
+    session.rename_speaker("S1", "")                 # blank removes the name
+    assert "S1" not in session.meta.speaker_names
+    assert read_meeting_json(tmp_path)["speaker_names"] == {}
+
+
+class StopSelfDiarizer(SelfMatchDiarizer):
+    """The Stop pass's `diarize` reply carries the batch `self` id."""
+
+    def diarize(self, wav_path, start_s, end_s):
+        self.stop_self = "S3"
+        self.self_candidates_seen = 2
+        return [SpeakerSegment(0.0, 1e6, "S3")]
+
+
+def test_stop_pass_self_is_applied_only_without_live_match(tmp_path, meeting_session_with_fake_capture):
+    (tmp_path / "mixed.wav").write_bytes(b"")        # room mode reconciles this track
+    fake = StopSelfDiarizer([])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    session.start()
+    session._on_final_for_test("hi", label=None)     # no live self flag
+    session.stop()
+    assert session.meta.matched_self == "S3"
+    assert session.meta.speaker_names["S3"] == "Me"
+    assert session.meta.self_candidates_seen == 2
+    assert read_meeting_json(tmp_path)["matched_self"] == "S3"
+
+
+def test_stop_pass_self_never_displaces_a_live_match(tmp_path, meeting_session_with_fake_capture):
+    (tmp_path / "mixed.wav").write_bytes(b"")
+    fake = StopSelfDiarizer(["S1"])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    session.start()
+    fake.self_cluster_id = "S1"
+    session._on_final_for_test("hi", label=None)     # live match lands first
+    session.stop()
+    assert session.meta.matched_self == "S1"
+    assert "S3" not in session.meta.speaker_names
+
+
+def test_stop_leaves_the_diarizer_open_when_the_owner_claims_it(meeting_session_with_fake_capture):
+    """Diarizer lifetime (task 4 ruling 6): the owner needs a live worker
+    AFTER Stop to export the matched cluster's centroid for the learning
+    offer, so it can take ownership of the close."""
+    fake = FakeDiarizer([])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call", close_diarizer_on_stop=False)
+    session.start()
+    session.stop()
+    assert fake.closed is False
+
+
 def test_stop_reports_no_reason_when_the_backend_was_fine(meeting_session_with_fake_capture):
     session = meeting_session_with_fake_capture(diarizer=FakeDiarizer([]), mode="call")
     session.start()
