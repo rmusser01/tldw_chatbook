@@ -229,6 +229,8 @@ the virtual text getter sees the same descendants as the rendered DOM.
 ## Exact revision ownership (Task 5)
 
 The Console controller and its durable service share a captured profile snapshot.
+If both dependencies are supplied explicitly, they must reference the same snapshot
+object; construction rejects distinct snapshots, even when their values compare equal.
 Creation and replacement preparation use the profile resolver in the compiler's
 single bounded parse. An internal preparation value carries that selected profile,
 source identity, parent profile and snapshot through the existing owner gate.
