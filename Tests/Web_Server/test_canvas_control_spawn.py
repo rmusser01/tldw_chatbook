@@ -107,6 +107,7 @@ def test_chatbook_app_service_injects_control_data_via_environment_only() -> Non
 
         assert service.command == "python -m tldw_chatbook.app"
         assert service.environment["COLUMNS"] == "100"
+        assert service.environment["CHATBOOK_SERVED_CHILD"] == "1"
         assert service.environment["CHATBOOK_CANVAS_CONTROL_CHILD_ID"] == (
             "app-service-a"
         )
