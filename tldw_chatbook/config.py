@@ -1399,6 +1399,28 @@ def is_valid_provider_api_key(value: object) -> bool:
     return resolve_provider_api_key(value) is not None
 
 
+def resolve_tldw_api_auth_token(value: object) -> Optional[str]:
+    """Return `value` stripped, or None if blank/placeholder/synthesized.
+
+    Reuses `resolve_provider_api_key`'s existing blank/placeholder screening
+    rather than duplicating the rule; adds only the one extra rejected
+    literal this credential's boot-rewrite is known to produce.
+
+    Args:
+        value: Raw `[tldw_api] auth_token` config value of any type.
+
+    Returns:
+        `value` stripped, or None if it is blank, a known provider-key
+        placeholder, or `TLDW_API_PLACEHOLDER_AUTH_TOKEN` -- the value the
+        app's own config load synthesizes into `[tldw_api]` when a
+        profile's file omits `auth_token` (task-31417).
+    """
+    resolved = resolve_provider_api_key(value)
+    if resolved is None or resolved == TLDW_API_PLACEHOLDER_AUTH_TOKEN:
+        return None
+    return resolved
+
+
 def normalize_provider_config_key(provider: object) -> str:
     """Return the canonical lookup form used for provider config tables.
 
@@ -4505,7 +4527,7 @@ assistant_markdown = true
 [chat.images]
 enabled = true
 show_attach_button = true  # Show/hide the attach file button in chat
-# show_character_avatar = true  # show the active character's avatar in the Console left rail
+# show_character_avatar = true  # show the active character image; Character navigation remains available
 # react_character_expressions = true  # swap the Console character avatar among idle/thinking/speaking/error as it generates a reply (requires per-state images on the character); set false to keep a static avatar
 default_render_mode = "auto"  # auto, pixels, regular
 max_size_mb = 10.0
@@ -5190,6 +5212,35 @@ keep_raw_tracks = true
 post_transcribe = true
 # Ask that offline pass for speaker diarization (needs torch + speechbrain).
 post_diarize = true
+# Assign speaker ids while recording instead of only in the offline pass
+# (feeds the live Speakers legend). Needs the same packages as post_diarize,
+# installed via the "diarization" extra: pip install -e ".[diarization]"
+live_diarization = false
+# Which live diarizer to build when live_diarization is on. Only "local"
+# (in-process, no server round trip) is implemented today.
+diarizer_backend = "local"
+# Upper bound the local live diarizer uses when clustering voices into
+# speaker ids.
+max_speakers = 8
+# Hybrid rooms (a call where more than one person shares the mic): also
+# diarize the mic ("you") and overlap ("both") channels in call mode instead
+# of always pre-naming them as you. Off by default -- turning it on means a
+# mic segment may render as a diarized speaker instead of your own name.
+diarize_mic_channel = false
+# Tag your own speech with your display name using an enrolled voiceprint
+# ("Enroll my voice" on the Meetings screen). No effect until you enroll one,
+# and never used in a plain call, where the mic channel is already you.
+voice_match = true
+# Cosine-distance ceiling for calling a cluster you. Lower = stricter. A
+# starting value: raise it if you are never matched, lower it if someone else
+# is matched as you.
+voice_match_threshold = 0.2
+# Seconds of your speech a cluster must accumulate before it can be matched
+# at all, so one short window can never claim to be you.
+voice_match_min_seconds = 4
+# After a meeting that matched you cleanly, offer to learn from it and
+# improve the stored voiceprint (at most one offer per meeting).
+voice_learn_offer = true
 
 [transcription]
 # Default transcription provider

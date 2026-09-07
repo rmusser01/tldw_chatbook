@@ -36,6 +36,8 @@ from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
+    DuplicateDefinitionRequested,
+    DuplicateTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
     ReminderFieldEditRequested,
@@ -49,6 +51,7 @@ from ....Scheduling.events import (
 from ....Scheduling.models import ReminderTask, ScheduledTask
 from ....Scheduling.services.server_client import (
     ServerClientError,
+    ServerClientNotFoundError,
     ServerClientValidationError,
 )
 from ....Scheduling.services.sync_engine import (
@@ -89,6 +92,7 @@ from .task_detail import (
     TaskInspector,
     _format_next_run,
     _format_relative,
+    _format_timezone,
     _managed_elsewhere_notice,
     _queue_owner_suffix,
     _transfer_row_suffix,
@@ -140,6 +144,15 @@ SCHEDULER_LIVENESS_REFRESH_SECONDS = 5.0
 #: loop exists so the tail of a large definition list is never silently
 #: hidden, not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
+
+#: 31713 AC#3: honest Run-now copy for a server too old to support the
+#: control-plane run endpoint at all -- same wording family as
+#: `SyncEngine._pull_results`'s "This server does not provide the results
+#: inbox (server too old)." for the analogous missing-route case.
+_RUN_NOW_UNSUPPORTED_COPY = (
+    "This server does not support running automations on demand "
+    "(server too old)."
+)
 
 #: Debounce before acting on a notification-triggered results pull
 #: (schedules-handoff PR-6 task 4) -- a burst of `automation_run_*` events
@@ -291,11 +304,14 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
     """Queue-row subtitle: schedule summary + relative next-run (spec S4).
 
     A reminder row reuses `_format_next_run` verbatim (the exact text the
-    pre-redesign Next-Run column showed). A definition row has no
-    existing per-row relative-time formatter to reuse (`_format_next_run`
-    is typed for `ReminderTask | ScheduledTask`), so this derives the
-    same "absolute (relative)" shape from `UnifiedRow`'s own
-    already-normalized `next_run_at` + `bucket`.
+    pre-redesign Next-Run column showed; `compact=True` deliberately
+    drops that path's own timezone token, task-23111). A definition row
+    has no existing per-row relative-time formatter to reuse
+    (`_format_next_run` is typed for `ReminderTask | ScheduledTask`), so
+    this derives the same "absolute (relative)" shape from `UnifiedRow`'s
+    own already-normalized `next_run_at` + `bucket` -- task-31711 AC#1:
+    unlike the reminder path, this one never had a timezone token, so a
+    UTC value read as a bare, unlabeled `YYYY-MM-DD HH:MM`.
     """
     if row.kind == "reminder":
         next_text = _format_next_run(row.source_row, now=now, compact=True)
@@ -305,8 +321,47 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
         next_text = "-"
     else:
         absolute = row.next_run_at.strftime("%Y-%m-%d %H:%M")
-        next_text = f"{absolute} ({_format_relative(row.next_run_at, now)})"
+        tz_label = _format_timezone(row.next_run_at)
+        next_text = f"{absolute} {tz_label} ({_format_relative(row.next_run_at, now)})"
     return f"{row.schedule_summary} · {next_text}"
+
+
+def _duplicate_definition_payload(definition: dict[str, Any]) -> dict[str, Any]:
+    """Build a `save_definition`-shaped CREATE payload from an existing
+    definition row (task-31823).
+
+    The same field set `AutomationDefinitionForm._build_payload` emits
+    for a fresh create (`family`/`name`/`input`/`schedule`/`config`/
+    `notification_policy`) -- sourced from the stored row instead of
+    form widgets, since a raw definition dict already carries these
+    fields verbatim (it is what a PRIOR `save_definition` call wrote).
+    Only the AUTHORED fields travel; `save_definition`'s own create path
+    (``definition_id=None``) gives everything else (a fresh id,
+    `health="execution_unavailable"`, `version=1`) the same defaults
+    every other new definition gets -- `create_automation_definition`'s
+    own contract. `lifecycle` is NOT one of those defaults this payload
+    controls: the create path always lands "configured" (active)
+    regardless of the source's own lifecycle (`_definition_db_fields_
+    from_preview` has no `lifecycle` key at all) -- the caller
+    (`_on_duplicate_definition_requested`) applies the source's real
+    state afterward with a follow-up `set_definition_lifecycle` call
+    when the source was not active (task-31823 review finding 1).
+    """
+    name = str(definition.get("name") or "Untitled automation")
+    input_fields = definition.get("input")
+    schedule = definition.get("schedule")
+    config = definition.get("config")
+    notification_policy = definition.get("notification_policy")
+    return {
+        "family": str(definition.get("family") or "recurring_question"),
+        "name": f"{name} (copy)",
+        "input": dict(input_fields) if isinstance(input_fields, dict) else {},
+        "schedule": dict(schedule) if isinstance(schedule, dict) else {},
+        "config": dict(config) if isinstance(config, dict) else {},
+        "notification_policy": dict(notification_policy)
+        if isinstance(notification_policy, dict)
+        else {"on_success": False, "on_failure": False},
+    }
 
 
 class _QueueFilterInput(Input):
@@ -581,7 +636,16 @@ class SchedulesWorkbench(BaseAppScreen):
         yield DestinationHeader(
             WorkbenchHeaderState(
                 title="Schedules",
-                subtitle="When jobs, watchlists, and workflows run.",
+                # task-31710 AC#2: named what the Queue actually lists
+                # (scheduled tasks + recurring questions) -- watchlists and
+                # workflows never appear here (watchlist/briefing
+                # projections are explicitly out of scope, RowKind is
+                # `Literal["reminder", "definition"]`), so the old wording
+                # described a different screen. "scheduled task", not
+                # "reminder": task-23106's locked noun for this primitive
+                # in this module (`Tests/UI/test_schedules_terminology.py`
+                # is the standing AST guard for it).
+                subtitle="When scheduled tasks fire and recurring questions run.",
                 status="loading",
                 status_label="Checking sync status…",
             ),
@@ -814,7 +878,8 @@ class SchedulesWorkbench(BaseAppScreen):
         if self._results_pull_debounce_timer is not None:
             self._results_pull_debounce_timer.stop()
             self._results_pull_debounce_timer = None
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     def _start_server_notification_observer(self) -> None:
         """Start the SSE notification observer (schedules-handoff PR-6
@@ -1434,6 +1499,15 @@ class SchedulesWorkbench(BaseAppScreen):
         compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
 
         table = self.query_one("#scheduling-task-table", DataTable)
+        # 31713 AC#2: `DataTable.clear()` unconditionally resets
+        # `scroll_x` to 0 (`textual.widgets._data_table.DataTable.clear`)
+        # -- every render pass (including the 60s ticker's, which changes
+        # no COLUMN layout, only cell text) was yanking a user reading a
+        # truncated subtitle back to column 0. Row count/columns are
+        # unchanged by this pass, so restoring the captured value verbatim
+        # is safe; `move_cursor` below still auto-adjusts it if the
+        # restored row's cursor cell would otherwise be off screen.
+        saved_scroll_x = table.scroll_x
         table.clear()
         for row in self._visible_rows:
             # Every cell is `Text`, never `str` (D8: `DataTable` runs a
@@ -1450,6 +1524,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 Text(_row_subtitle(row, render_now)),
                 key=row.row_id,
             )
+        table.scroll_x = saved_scroll_x
         self._update_pane_notice()
 
         if self._visible_rows:
@@ -2220,6 +2295,66 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-delete-task",
         )  # type: ignore[arg-type]
 
+    @on(DuplicateTaskRequested)
+    def _on_duplicate_task_requested(self, event: DuplicateTaskRequested) -> None:
+        """Duplicate the requested reminder as a new local row and
+        refresh the queue (task-31823: spec §5's deferred kebab's
+        `Duplicate` action).
+
+        Only the AUTHORED fields travel (title/body/schedule/link/
+        timeout) through the existing `create_reminder` create path --
+        everything else (a fresh id, no transfer state, no run/incident
+        history, sync_version 0) is the same pydantic default a brand
+        new `ReminderTask` already gets, matching every other create.
+        Always lands on the LOCAL owner regardless of the source row's
+        own owner (same ruling as the definition-pane twin below): a
+        duplicate is a plain new draft, not an implicit transfer.
+        """
+        event.stop()
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot duplicate this task.",
+                severity="warning",
+            )
+            return
+        task = event.task
+        payload = {
+            "title": f"{task.title} (copy)",
+            "body": task.body,
+            "schedule_kind": task.schedule_kind,
+            "run_at": task.run_at,
+            "cron": task.cron,
+            "timezone": task.timezone,
+            "enabled": task.enabled,
+            "link_type": task.link_type,
+            "link_id": task.link_id,
+            "link_url": task.link_url,
+            "timeout_seconds": task.timeout_seconds,
+        }
+
+        async def _duplicate_and_refresh() -> None:
+            try:
+                await service.create_reminder(payload, owner_id="local")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to duplicate reminder {}", task.id)
+                self.app_instance.notify(
+                    f"Failed to duplicate '{task.title}'.",
+                    severity="error",
+                )
+            else:
+                self.app_instance.notify(
+                    f"Duplicated '{task.title}' as a new local task.",
+                    severity="information",
+                )
+            self._request_tasks_refresh(refresh_definitions=False)
+
+        self.run_worker(
+            _duplicate_and_refresh,
+            exclusive=True,
+            group="schedules-duplicate-task",
+        )  # type: ignore[arg-type]
+
     @staticmethod
     def _transfer_confirm_dialog(
         name: str, direction: str, warnings: list[str]
@@ -2240,7 +2375,7 @@ class SchedulesWorkbench(BaseAppScreen):
             lines.append("")
             lines.append(
                 "It keeps running on this device until the server accepts "
-                "the transfer -- nothing goes dark while this is only "
+                "the transfer — nothing goes dark while this is only "
                 "queued."
             )
         return ConfirmationDialog(
@@ -2256,11 +2391,11 @@ class SchedulesWorkbench(BaseAppScreen):
         the reminder and definition transfer flows."""
         if direction == "to_server":
             return (
-                f"'{name}' is queued to move to the server -- it still "
+                f"'{name}' is queued to move to the server — it still "
                 "runs on this device until the server accepts it."
             )
         return (
-            f"'{name}' is queued to move to this device -- a dormant copy "
+            f"'{name}' is queued to move to this device — a dormant copy "
             "is ready and will arm once the server releases it."
         )
 
@@ -2491,6 +2626,144 @@ class SchedulesWorkbench(BaseAppScreen):
             WorkbenchHostScreen(_factory, title=f"Run history — {name}")
         )
 
+    @on(DuplicateDefinitionRequested)
+    def _on_duplicate_definition_requested(
+        self, event: DuplicateDefinitionRequested
+    ) -> None:
+        """Duplicate the requested automation definition as a new local
+        row and refresh the queue (task-31823: spec §5's deferred
+        kebab's `Duplicate` action).
+
+        `agent_task` rows are refused the same way `_edit_selected_
+        automation` refuses them -- the pane's own `_refresh_duplicate_
+        button` already disables the button for this case; this is the
+        defensive belt (same "check again server-side" shape every other
+        button-gated action here already has). Always lands on the
+        LOCAL owner regardless of the source row's own owner: duplicating
+        a server-owned definition never auto-queues a push -- the copy
+        starts as a plain local draft the user can transfer like any
+        other, same as a fresh create (ruling).
+
+        Lifecycle (review finding 1): a PAUSED (or archived/disabled)
+        source must not silently duplicate as active -- the due-run
+        selector gates strictly on `lifecycle = 'configured'`, so an
+        unpaused copy is immediately eligible to spend on its own
+        schedule with no further user action. Only an active source
+        duplicates active; every other state collapses to paused (see
+        `source_lifecycle` below and `_duplicate_definition_payload`'s
+        own docstring for why the create path itself can't carry this)
+        via a follow-up `set_definition_lifecycle` call.
+
+        That follow-up is deliberately OUTSIDE the create's own
+        try/except (final review F1): its failure -- a non-`saved`
+        outcome, or a raise -- is not a duplicate failure (a real local
+        row already exists), so it gets its own honest warning path
+        instead of either the create's "Failed to duplicate" error
+        (which would report the opposite of what happened) or a silent
+        fall-through to the plain success toast (which would contradict
+        a warning already shown).
+        """
+        event.stop()
+        definition = event.definition
+        if definition.get("family") != "recurring_question":
+            self.app_instance.notify(
+                "Only recurring-question automations can be duplicated "
+                "(agent-task authoring is not yet available).",
+                severity="warning",
+            )
+            return
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot duplicate this "
+                "automation.",
+                severity="warning",
+            )
+            return
+        name = str(definition.get("name") or "Untitled automation")
+        payload = _duplicate_definition_payload(definition)
+        # task-31823 review finding 1: `save_definition`'s create path
+        # never carries `lifecycle` through at all (`_definition_db_
+        # fields_from_preview` has no such key) -- a fresh row always
+        # lands "configured" (active) there, matching a brand-new
+        # `n`-key create. Ruling: only an ACTIVE source duplicates
+        # active; every other lifecycle (paused/archived/disabled/an
+        # unrecognized future value) collapses to paused -- the one safe
+        # non-spending state to start a copy in, applied via one
+        # follow-up `set_definition_lifecycle` call below rather than
+        # verbatim-preserving "archived"/"disabled" on a brand new row
+        # (which would just be a useless, invisible-to-Resume copy).
+        source_lifecycle = str(definition.get("lifecycle") or "configured")
+
+        async def _duplicate_and_refresh() -> None:
+            try:
+                outcome = await service.save_definition(payload, owner_id="local")
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to duplicate automation definition {}", name
+                )
+                self.app_instance.notify(
+                    f"Failed to duplicate '{name}'.", severity="error"
+                )
+                self._request_tasks_refresh()
+                return
+            if outcome.status != "saved":
+                message = "; ".join(
+                    str(err.get("message") or "")
+                    for err in outcome.errors
+                    if err.get("message")
+                ) or "This automation could not be duplicated."
+                self.app_instance.notify(
+                    f"Could not duplicate '{name}': {message}", severity="error"
+                )
+                self._request_tasks_refresh()
+                return
+            # Create succeeded -- everything below is the SEPARATE
+            # pause follow-up for a non-active source, never folded into
+            # the create's own try/except (final review F1): its
+            # failure (a non-`saved` outcome OR a raise) is not a
+            # duplicate failure -- a real local row now exists -- so it
+            # must never be reported through the "Failed to duplicate"
+            # path above, which would claim the opposite of what
+            # actually happened. A pause failure notifies its own honest
+            # warning and returns WITHOUT falling through to the plain
+            # success toast below (which would otherwise contradict it:
+            # one toast saying the copy needs attention, the very next
+            # saying it simply worked).
+            if source_lifecycle != "configured" and outcome.definition_id is not None:
+                try:
+                    pause_outcome = await service.set_definition_lifecycle(
+                        outcome.definition_id, "pause"
+                    )
+                    paused = pause_outcome.status == "saved"
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Duplicate of automation definition {} created "
+                        "but its pause follow-up raised",
+                        name,
+                    )
+                    paused = False
+                if not paused:
+                    self.app_instance.notify(
+                        f"Duplicated '{name}', but the copy could not "
+                        "be paused — it is active. Pause it from its "
+                        "detail pane if you don't want it to run.",
+                        severity="warning",
+                    )
+                    self._request_tasks_refresh()
+                    return
+            self.app_instance.notify(
+                f"Duplicated '{name}' as a new local automation.",
+                severity="information",
+            )
+            self._request_tasks_refresh()
+
+        self.run_worker(
+            _duplicate_and_refresh,
+            exclusive=True,
+            group="schedules-duplicate-definition",
+        )  # type: ignore[arg-type]
+
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
         """Hand off the active schedule run or digest output to the Console."""
@@ -2644,13 +2917,16 @@ class SchedulesWorkbench(BaseAppScreen):
         self._definitions_stale = True
         status = getattr(outcome, "status", None)
         verb = "updated" if was_edit else "created"
+        # task-31710 AC#1: "Recurring question", not "Automation" -- the
+        # noun the chooser button and this primitive's own form title
+        # ("New/Edit Recurring Question") already use.
         if status == "saved":
             self.app_instance.notify(
-                f"Automation {verb}.", severity="information"
+                f"Recurring question {verb}.", severity="information"
             )
         elif status == "queued":
             self.app_instance.notify(
-                f"Automation {verb} locally — it will sync to the server.",
+                f"Recurring question {verb} locally — it will sync to the server.",
                 severity="information",
             )
         # Full refresh (definitions included): `_definitions_stale` is set
@@ -3576,7 +3852,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if is_server_scoped_owner(getattr(task, "owner_id", None)):
             self.app_instance.notify(
                 f"'{task.title}' is server-scheduled: the server runs it and "
-                "delivers the notification -- it cannot be run from here.",
+                "delivers the notification — it cannot be run from here.",
                 severity="warning",
             )
             return
@@ -3588,7 +3864,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 result = await service.run_reminder_now(task.id, loop=loop)
                 if result is None:
                     self.app_instance.notify(
-                        f"'{task.title}' did not run -- it is missing, the "
+                        f"'{task.title}' did not run — it is missing, the "
                         "handler for it is unavailable, or its handler "
                         "failed (the task's status shows which).",
                         severity="warning",
@@ -3898,11 +4174,35 @@ class SchedulesWorkbench(BaseAppScreen):
         definition_id = str(definition.get("id"))
         name = str(definition.get("name") or definition_id)
 
+        # 31713 AC#3: mirror the results-pull honesty fix
+        # (`SyncEngine._pull_results`) instead of a parallel gate -- reuse
+        # the SAME `_automation_capabilities_available()` probe. A real
+        # `SchedulingService` always constructs `self.sync_engine`
+        # unconditionally, but the test suite's `MockSchedulingServiceMixin`
+        # (and every stub built on it) defaults `sync_engine = None` --
+        # `None` skips the gate rather than crashing, the same
+        # fail-open philosophy `_automation_capabilities_available` itself
+        # documents for "a transient probe failure must not silently stop"
+        # a caller that otherwise works fine.
+        sync_engine = getattr(service, "sync_engine", None)
+
         async def _run() -> None:
+            if sync_engine is not None and not (
+                await sync_engine._automation_capabilities_available()
+            ):
+                self.app_instance.notify(
+                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
+                )
+                return
             try:
                 result = await server_client.run_automation_definition_now(
                     definition_id
                 )
+            except ServerClientNotFoundError:
+                self.app_instance.notify(
+                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
+                )
+                return
             except ServerClientValidationError as exc:
                 # Lifecycle refusals (paused/archived) and policy denials
                 # arrive here with the server's own reason text.
@@ -4129,59 +4429,60 @@ class SchedulesWorkbench(BaseAppScreen):
     def _definition_results_query(
         self, service: "SchedulingService", definition: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], int]:
-        """`(results, total)` for `definition` alone, across BOTH its id
-        spaces -- the definition-filtered pushed Results view's listing
-        (redesign PR-4 task 2). Capped at `RESULTS_INBOX_LIMIT`, same as
-        the global inbox (the brief: "preserve the cap-line honesty").
+        """`(results, total)` for `definition` alone -- the definition-
+        filtered pushed Results view's listing (redesign PR-4 task 2).
+        Capped at `RESULTS_INBOX_LIMIT`, same as the global inbox (the
+        brief: "preserve the cap-line honesty").
 
         `ScheduledTasksDB.list_automation_results`/`count_automation_
-        results` only equality-filter ONE `definition_id` at a time (own
-        docstring's caveat), so a definition with results in both spaces
-        needs two queries, merged here and re-sorted by REAL instant
-        (`_result_sort_key`) rather than trusting either query's own
-        newest-first order to interleave correctly across the merge.
+        results` resolve `definition_id` across BOTH a definition's id
+        spaces INTERNALLY now (task-31415's `_definition_id_aliases`
+        seam) -- a single query under either id already returns results
+        recorded under both, so this no longer loops over
+        `_definition_id_space` and merges two queries by hand (that used
+        to be required, and double-counts `total` if repeated now that
+        the seam does the union itself).
         """
         local_id, server_id = self._definition_id_space(definition)
-        merged: dict[str, dict[str, Any]] = {}
-        total = 0
-        for definition_id in (local_id, server_id):
-            if not definition_id:
-                continue
-            total += service.db.count_automation_results(
-                owner_id=None, definition_id=definition_id
-            )
-            for row in service.db.list_automation_results(
-                owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
-            ):
-                merged[row["id"]] = row
-        results = sorted(merged.values(), key=_result_sort_key, reverse=True)
+        definition_id = local_id or server_id
+        if not definition_id:
+            return [], 0
+        total = service.db.count_automation_results(
+            owner_id=None, definition_id=definition_id
+        )
+        results = service.db.list_automation_results(
+            owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
+        )
+        results = sorted(results, key=_result_sort_key, reverse=True)
         return results[:RESULTS_INBOX_LIMIT], total
 
     def _definition_unread_result_ids(
         self, service: "SchedulingService", definition: dict[str, Any]
     ) -> list[str]:
         """Definition-scoped counterpart of `_unread_result_ids` -- every
-        unread result id for THIS definition alone (both id spaces),
-        uncapped by `RESULTS_INBOX_LIMIT` for the same Qodo-HIGH reason
-        that method's own docstring documents."""
+        unread result id for THIS definition alone, uncapped by
+        `RESULTS_INBOX_LIMIT` for the same Qodo-HIGH reason that method's
+        own docstring documents.
+
+        Single query, same reasoning as `_definition_results_query`
+        (task-31415): the DB layer already resolves both id spaces.
+        """
         local_id, server_id = self._definition_id_space(definition)
-        ids: list[str] = []
-        for definition_id in (local_id, server_id):
-            if not definition_id:
-                continue
-            unread_total = service.db.count_unread_results(
-                owner_id=None, definition_id=definition_id
-            )
-            if not unread_total:
-                continue
-            results = service.db.list_automation_results(
-                owner_id=None,
-                definition_id=definition_id,
-                review_state="unread",
-                limit=unread_total,
-            )
-            ids.extend(result["id"] for result in results)
-        return ids
+        definition_id = local_id or server_id
+        if not definition_id:
+            return []
+        unread_total = service.db.count_unread_results(
+            owner_id=None, definition_id=definition_id
+        )
+        if not unread_total:
+            return []
+        results = service.db.list_automation_results(
+            owner_id=None,
+            definition_id=definition_id,
+            review_state="unread",
+            limit=unread_total,
+        )
+        return [result["id"] for result in results]
 
     async def _dispatch_mark_all_results_read(
         self, service: "SchedulingService", unread_ids: list[str]
@@ -4316,7 +4617,24 @@ class SchedulesWorkbench(BaseAppScreen):
                     "empty", "Local only — no server connection"
                 )
             elif getattr(service, "server_reachable", True) is None:
-                self._sync_header_status("loading", "Checking sync status…")
+                # task-31798: `server_reachable` stays `None` ONLY after the
+                # mount-time probe hit `ServerClientPolicyError` -- the local
+                # runtime policy refused the capabilities round trip before it
+                # ever reached the wire (a fresh LOCAL profile whose
+                # placeholder `[tldw_api]` URL makes `active_server_id` truthy).
+                # That path always sets `server_permission_denied`, so it is
+                # the exact signal for "the probe COMPLETED and could not
+                # establish a usable server connection" as opposed to "a probe
+                # is still genuinely in flight". Left un-distinguished, the
+                # header sat on the transient "Checking sync status…" copy
+                # forever while the footer correctly read local-only; resolve
+                # it to the same local-only status the footer shows.
+                if getattr(service, "server_permission_denied", False):
+                    self._sync_header_status(
+                        "empty", "Local only — no server connection"
+                    )
+                else:
+                    self._sync_header_status("loading", "Checking sync status…")
             else:
                 self._sync_header_status(
                     "empty", "Server configured but not reachable"
@@ -4440,7 +4758,16 @@ class SchedulesWorkbench(BaseAppScreen):
         header.sync_state(
             WorkbenchHeaderState(
                 title="Schedules",
-                subtitle="When jobs, watchlists, and workflows run.",
+                # task-31710 AC#2: named what the Queue actually lists
+                # (scheduled tasks + recurring questions) -- watchlists and
+                # workflows never appear here (watchlist/briefing
+                # projections are explicitly out of scope, RowKind is
+                # `Literal["reminder", "definition"]`), so the old wording
+                # described a different screen. "scheduled task", not
+                # "reminder": task-23106's locked noun for this primitive
+                # in this module (`Tests/UI/test_schedules_terminology.py`
+                # is the standing AST guard for it).
+                subtitle="When scheduled tasks fire and recurring questions run.",
                 status=status,
                 status_label=label,
             )

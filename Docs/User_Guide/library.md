@@ -95,6 +95,25 @@ knows more than the source owners do:
 - **Needs attention** shows at most one current, recoverable problem from this
   Library screen and reuses its existing **Review** or **Retry** action. It is
   session state, not a promise that the warning survives restart.
+- **When the sources themselves fail to load**, the landing shows one bordered
+  callout in their place, reading what failed and why, with its own **Retry**
+  beside the reason — the counts line stays empty rather than reporting zeros,
+  and **Continue** is withheld, because it leads somewhere else rather than
+  fixing this. Two cases read differently: sources that missed the 5-second
+  deadline ("Library sources did not answer · waited 5 s") are amber, and
+  returning to Library re-runs that read once by itself; a hard failure
+  ("Library source services unavailable; retry Library later. · \<reason\>")
+  is red and waits for you to press **Retry**. The reason is the failure's own
+  words only for an operating-system or database error; anything else is
+  named by the kind of failure it is ("the connection failed", "the database
+  could not be read", or "an unexpected error" when it is none of those), so
+  a private path — and the exception's own text — never reaches the screen.
+  Pressing **Retry** against an unchanged failure still repaints — the
+  message gains "· attempt 2", "· attempt 3", and so on, so a press is never
+  silent even when the outcome repeats. A brand-new profile sees the same
+  callout on its Get-started view when that first source read times out or
+  fails — it paints above the Get-started content rather than hiding it, so
+  a new profile is never left with silent empty counts and no way to retry.
 - **From your Library** uses cached summaries in the fixed order **Database
   Notes → Media → Conversations**. Missing or unresolved sources are omitted;
   the order does not imply that items were ranked against each other.
@@ -255,7 +274,8 @@ to the current page and filter.
 
 **Restore** removes the item from Trash and marks the retained normal Media page
 stale; it does not insert or reorder the restored item without a fresh Media
-read. **Delete permanently** requires inline confirmation and cannot be undone.
+read. **Delete forever** (key `x`; `r` restores) requires inline confirmation
+and cannot be undone.
 Back returns to the exact normal Media page, selected item, list scroll, and
 control that opened Trash. Returning from the Media viewer likewise restores
 the exact list scroll and finishes focus on the item row. These returns settle
@@ -451,6 +471,34 @@ here in Library.
 - **The palette found "Notes" but opened Library.** The standalone
   Notes, Prompts, Skills, Ingest, Research, and Media screens were
   retired; their names now route to the matching Library row.
+- **A browse row says the Library sources are unavailable.** The message
+  now carries a **Retry** beside it: press it to re-run the same source
+  read without leaving the row. A repeated failure repaints with its
+  attempt number; a success replaces the message with the real list.
+  Failures a retry cannot clear (a policy denial, a runtime with no
+  source services) keep the plain sentence and no button.
+
+—
+*Verified against fix/media-riders-m — 2026-09-07 (task-31943: a bulk delete
+followed by Undo puts the rail's "Media N" back to the restored total without
+leaving the screen; task-31948: the browse-row source-failure message carries
+its own Retry, in the same callout grammar the landing hub uses. Both verified
+live at 235x52 on a scratch profile — the count round trip against a seeded
+media DB, the callout against a profile whose media DB path is a directory.)*
+
+—
+*Verified against fix/media-wave5-g — 2026-09-05 (task-31632: the Library
+landing paints one recovery callout with its own Retry when the source
+snapshot fails, withholds Continue while it shows, and re-runs a timed-out
+read on return. Verified live for the hard failure at 235x52 and 100x30 with
+a scratch profile whose media DB path is a directory; the deadline case is
+covered by the app tests, which is the only way to force it reliably.
+Qodo PR #2451 round: the same callout now also paints on a brand-new
+profile's Get-started view, above the starter content rather than in place
+of it; the shared reason mapper redacts filesystem/database paths out of
+`OSError`/`sqlite3` text before it can reach this or the Media callout; and
+the Media pager's Retry re-requests only the page or type-facet fence that
+actually failed instead of always reloading the page.)*
 
 —
 *Verified against dev @ f0379c035 — 2026-08-07 (TASK-2850: Notes ▸ Folder files

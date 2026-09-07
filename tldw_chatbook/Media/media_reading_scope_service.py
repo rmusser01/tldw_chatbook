@@ -503,6 +503,13 @@ class MediaReadingScopeService:
 
     @staticmethod
     def _normalize_local_library_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Project one local row onto the exact seven-key browse contract.
+
+        ``has_analysis`` arrives from SQLite's ``EXISTS`` as 1/0 and is
+        narrowed to a real bool the row validator accepts. ``reviewed`` is
+        not a media-DB fact -- it stays ``None`` here and the Library screen
+        decorates it from the active review set (task-28008).
+        """
         backing_media_id = record.get("id")
         return {
             "id": f"local:media:{backing_media_id}",
@@ -510,6 +517,8 @@ class MediaReadingScopeService:
             "title": record.get("title"),
             "media_type": record.get("type"),
             "updated_at": record.get("last_modified"),
+            "has_analysis": bool(record.get("has_analysis")),
+            "reviewed": None,
         }
 
     @staticmethod
@@ -719,6 +728,7 @@ class MediaReadingScopeService:
         offset: int = 0,
         id_allowlist: Optional[Sequence[Any]] = None,
         library_summary: bool = False,
+        match_reasons: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
         """Search media, optionally restricted to a caller-provided id allowlist.
@@ -729,6 +739,12 @@ class MediaReadingScopeService:
                 backend's existing ``media_ids_filter`` filter kwarg; only
                 added to ``filters`` when provided, so unscoped callers keep
                 the exact legacy call shape.
+            match_reasons: Whether this caller wants task-28008's
+                keyword-only reason side channel. Forwarded only with
+                ``library_summary`` (the channel's only shape) and only when
+                asked, so the "Review these" enumeration loop -- which pages
+                the same scope and discards them -- stops paying one extra
+                SELECT per page (Qodo on #2475).
         """
         normalized_mode = self._normalize_mode(mode)
         if library_summary:
@@ -757,6 +773,8 @@ class MediaReadingScopeService:
         if library_summary:
             filters = dict(filters)
             filters["library_summary"] = True
+            if match_reasons:
+                filters["match_reasons"] = True
             if query and "fields" not in filters:
                 # TASK-31274: the Library Media filter searches keywords too --
                 # set here rather than at either call site so the list and
@@ -789,6 +807,16 @@ class MediaReadingScopeService:
                     else item
                     for item in raw_items
                 ]
+            raw_reasons = payload.get("match_reasons")
+            if isinstance(raw_reasons, Mapping):
+                # task-28008: why a keyword-only row is on this page, re-keyed
+                # onto the same canonical stable ids the rows carry. A
+                # per-QUERY fact, so it travels BESIDE the rows -- the summary
+                # contract is per-row identity and stays exactly seven keys.
+                result["match_reasons"] = {
+                    f"local:media:{backing_id}": str(keyword)
+                    for backing_id, keyword in raw_reasons.items()
+                }
             return result
         raw_items = (
             list(payload.get("items", []))

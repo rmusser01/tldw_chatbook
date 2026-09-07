@@ -2,16 +2,32 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Sequence
 
+from loguru import logger
 from rich.color import Color
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ItemGrid, Vertical, VerticalGroup
 from textual.css.query import NoMatches, QueryError
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook.Audio.meeting_session import (
+    is_widget_safe_cluster_id,
+    normalize_speaker_name,
+)
+from tldw_chatbook.Library.meeting_speaker_rename import (
+    RENAME_REFUSED_EMPTY_TRANSCRIPT,
+    RENAME_REFUSED_NOT_MEETING_CONTENT,
+    SpeakerRenameResult,
+    _meeting_speaker_legend_rows,
+    rename_meeting_speaker,
+)
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.Library.library_media_viewer_state import (
     analysis_find_unavailable_reason,
@@ -26,6 +42,38 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
 )
+
+
+#: task-31635 (critique #5 item 12): when the Media list load failed and
+#: left NO rows behind (see ``_library_media_list_unselectable``), there is
+#: nothing to select, so the invitation to select something was the one line
+#: on screen contradicting the recovery callout beside it. A failure that
+#: retained rows, or one that only hit the type facets, keeps the ordinary
+#: copy -- those rows are still painted and still pressable.
+READER_EMPTY_COPY = "Select a media item to read it here."
+READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
+
+#: task-31635 (critique #5 item 13): a non-Markdown text item simply dropped
+#: the Rendered|Raw strip, so nothing said whether a rendered view existed.
+#: Scoped to the text types a reader could plausibly expect one for -- a
+#: transcript that failed the Markdown sniff is already named by the copy.
+RENDERED_VIEW_NOTE = "Rendered view is for Markdown and transcripts"
+RENDERED_VIEW_NOTE_TYPES = frozenset({"article", "document"})
+
+
+def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
+    """Return the empty Reader's placeholder copy.
+
+    Args:
+        loading: Whether a detail request is pending.
+        list_failed: Whether the Media browse controller carries a failure.
+
+    Returns:
+        The one line the empty Reader paints.
+    """
+    if loading:
+        return "Loading media…"
+    return READER_EMPTY_FAILED_COPY if list_failed else READER_EMPTY_COPY
 
 
 class LibraryMediaViewer(PostRecomposeCallback, Vertical):
@@ -103,6 +151,10 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         image_preview_source: Any = None,
         review_banner: str = "",
         back_visible: bool = True,
+        list_failed: bool = False,
+        trash_list_open: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
@@ -130,6 +182,22 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 list so Back changed no pixels while revoking every Reader
                 binding gated on the view flag (task-31272); the screen
                 decides from the shell's effective layout.
+            list_failed: Whether the Media browse controller carries a
+                failure state (task-31635). Only the EMPTY Reader reads
+                it, to say that nothing can be selected rather than
+                inviting a selection that cannot be made.
+            trash_list_open: Whether the Items pane beside this Reader is
+                showing the Trash list (task-31635, critique #5 item 11).
+                The Reader keeps the LIVE item it was on, so it says which
+                list that item belongs to -- the cheaper honest option than
+                clearing a reading position the user is coming back to.
+            media_db: The real ``MediaDatabase`` and, with
+                ``speaker_rename_media_id``, the selected item's backing id
+                (TASK-31745). Breaks this canvas's otherwise pure-state
+                design on purpose -- exactly as ``LibraryMediaCanvas``
+                does -- so the speaker legend can actually persist a rename
+                instead of showing an inert control.
+            speaker_rename_media_id: See ``media_db``.
         """
         super().__init__(**kwargs)
         self.viewer = viewer
@@ -158,6 +226,10 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.image_preview_source = image_preview_source
         self.review_banner = review_banner
         self.back_visible = back_visible
+        self.list_failed = list_failed
+        self.trash_list_open = trash_list_open
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -198,9 +270,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
         if not self.viewer.media_id:
             yield Static(
-                "Loading media…"
-                if self.loading
-                else "Select a media item to read it here.",
+                empty_reader_copy(
+                    loading=self.loading, list_failed=self.list_failed
+                ),
                 id="library-media-reader-empty",
                 classes="destination-purpose",
                 markup=False,
@@ -220,13 +292,24 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         )
         banner.display = self.loading
         yield banner
-        if self.external_detail:
-            # task-31277 (critique #4 P2): only a SERVER item needs an
-            # identity line. "Local Media item" restated what the Media
-            # list beside it already said, at the cost of the top row of
-            # the reading surface on every local open.
+        # task-31277 (critique #4 P2): only a SERVER item needs an identity
+        # line. "Local Media item" restated what the Media list beside it
+        # already said, at the cost of the top row of the reading surface on
+        # every local open.
+        # task-31635 (critique #5 item 11): ...and so does a local item
+        # sitting beside the TRASH list, where the list no longer says it.
+        # Same slot, same grammar, never both -- a server item is not in
+        # the local Media list at all, which is the stronger statement.
+        identity_line = (
+            "Server item · not in local Media list"
+            if self.external_detail
+            else "Showing a Media item · not in Trash"
+            if self.trash_list_open
+            else ""
+        )
+        if identity_line:
             yield Static(
-                "Server item · not in local Media list",
+                identity_line,
                 id="library-media-reader-identity",
                 markup=False,
             )
@@ -321,9 +404,35 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
             yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
             if not self.external_detail or self.viewer.original_source:
-                yield Button("More", id="library-media-reader-more", compact=True)
-        if self.more_open:
-            with Vertical(id="library-media-reader-more-actions"):
+                # task-31633 AC#3: the glyph is the disclosure state. The
+                # actions render as ONE toolbar row under this one, so
+                # nothing else on screen says whether More is open.
+                yield Button(
+                    "More \u25b4" if self.more_open else "More",
+                    id="library-media-reader-more",
+                    compact=True,
+                )
+        # The same condition the More button above is composed under: a stale
+        # ``more_open`` carried onto a server-only detail would otherwise paint
+        # an empty actions row under a button that is no longer there.
+        if self.more_open and (not self.external_detail or self.viewer.original_source):
+            # task-31633 AC#3 (critique #5, capture 10): this was a bare
+            # Vertical, and an unstyled Vertical defaults to 1fr -- it took
+            # 19 rows for three one-row buttons and pushed the tab row and
+            # the whole reading body off the fold. A second ds-toolbar row
+            # costs exactly one row at the wide size. ItemGrid rather than
+            # Horizontal because the four labels need ~60 cells and the
+            # Reader is only ~46 wide at 100x30, where a Horizontal clips
+            # the fourth action off the pane outright; the grid reflows it
+            # onto a second row instead. Column width is the longest label
+            # (13) plus two cells of gutter -- the toolbar rule zeroes these
+            # buttons' own padding, so the label is the whole button.
+            with ItemGrid(
+                id="library-media-reader-more-actions",
+                classes="ds-toolbar",
+                min_column_width=15,
+                max_column_width=16,
+            ):
                 if not self.external_detail:
                     yield Button("Edit metadata", id="library-media-edit", compact=True)
                 if self.viewer.original_source:
@@ -410,6 +519,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 match_index=self.content_match_index,
                 id="library-media-viewer-content",
             )
+            yield from self._compose_speaker_legend()
             return
         if self.reader_mode == "analysis":
             with Vertical(id="library-media-reader-mode-analysis"):
@@ -437,11 +547,13 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
-        """Render the Rendered|Raw content-view toggle for markdown-typed media.
+        """Render the Rendered|Raw toggle, or the note that replaces it.
 
-        Only rendered when ``self.viewer.is_markdown`` is true -- a
-        non-markdown item never offers a toggle and always shows the plain
-        Raw view (no behavior change from before LIB-13). Mirrors the
+        The toggle itself is offered only when ``self.viewer.is_markdown``
+        is true -- a non-markdown item always shows the plain Raw view (no
+        behavior change from before LIB-13). Since task-31635 a non-markdown
+        ``article``/``document`` gets a one-line note in the same slot
+        instead of nothing at all. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
@@ -450,10 +562,21 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         so the current mode reads correctly even without extra CSS.
 
         Returns:
-            ComposeResult for the toggle strip, or nothing for non-markdown
-            media.
+            ComposeResult for the toggle strip, or -- for a non-markdown
+            ``article``/``document`` -- the one-line note that names why
+            there is no toggle (task-31635).
         """
         if not self.viewer.is_markdown:
+            # task-31635 (critique #5 item 13): the slot names itself rather
+            # than vanishing. Text only -- there is no rendered view to
+            # offer, so a control here would be an affordance for nothing.
+            if self.viewer.media_type.strip().lower() in RENDERED_VIEW_NOTE_TYPES:
+                yield Static(
+                    RENDERED_VIEW_NOTE,
+                    id="library-media-content-mode-note",
+                    classes="destination-purpose",
+                    markup=False,
+                )
             return
         with Horizontal(id="library-media-content-mode-strip"):
             rendered_selected = self.content_mode == "rendered"
@@ -473,6 +596,179 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
             raw_button.set_class(raw_selected, "-selected")
             yield raw_button
+
+    # ---- TASK-31745: rename a finished meeting's speakers, from the reader --
+    #: What each refusal means in the user's terms, keyed by the reason
+    #: ``rename_meeting_speaker`` returns. Static copy -- never a path, a
+    #: name, or transcript text.
+    _RENAME_REFUSAL_COPY = {
+        RENAME_REFUSED_NOT_MEETING_CONTENT: (
+            "This transcript came from ingest; rename the live transcript in Meetings."
+        ),
+        RENAME_REFUSED_EMPTY_TRANSCRIPT: (
+            "This meeting's local transcript is missing or empty; nothing to rename."
+        ),
+    }
+    _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
+
+    class SpeakerRenamed(Message):
+        """A meeting speaker was renamed on ``media_id``; its detail is stale.
+
+        The reader repaints itself immediately (below), but the SCREEN's
+        viewer state is memoized per detail ARRIVAL and still built from the
+        pre-rename content -- the next viewer sync would repaint that over
+        the new name. The screen re-reads the item on this message.
+        """
+
+        def __init__(self, media_id: int) -> None:
+            super().__init__()
+            self.media_id = media_id
+
+    def _compose_speaker_legend(self) -> ComposeResult:
+        """Render one rename row per speaker of a finished meeting recording.
+
+        Absent, not disabled, for anything else: a non-meeting item has no
+        speakers to rename (the screen resolves that into
+        ``viewer.can_rename_speakers``).
+
+        ``VerticalGroup``, never a bare ``Vertical``: Textual's ``Vertical``
+        defaults to ``height: 1fr``, so as a direct sibling of the ``1fr``
+        content body this legend would claim HALF the reading pane (the
+        task-31222/31276 trap). ``VerticalGroup`` is ``height: auto`` in
+        upstream's own CSS, so the section costs exactly its rows and needs
+        no rule here.
+
+        Label above input, each full-width -- the shape ``_compose_edit_form``
+        uses; the labels reuse its ``.library-media-edit-label`` styling. A
+        ``Horizontal`` row mixing an auto-width ``Static`` with a ``1fr``
+        ``Input`` is this canvas's known non-rendering failure mode, and
+        re-keying that would spend two more ancestor-scoped bare-type rules
+        against ADR-097's ratchet.
+
+        Returns:
+            ComposeResult for the legend, or nothing when there is none.
+        """
+        if not self.viewer.can_rename_speakers or not self.viewer.speaker_legend_rows:
+            return
+        with VerticalGroup(id="library-media-speaker-legend"):
+            yield Static(
+                "Rename speakers",
+                id="library-media-speaker-legend-title",
+                classes="library-media-edit-label",
+                markup=False,
+            )
+            for cluster_id, label in self.viewer.speaker_legend_rows:
+                # A hand-edited transcript.jsonl can carry an id that is not
+                # a legal Textual widget id ("S 1"); interpolating it would
+                # raise out of compose() and take the screen down.
+                if not is_widget_safe_cluster_id(cluster_id):
+                    continue
+                yield Static(
+                    label,
+                    id=f"library-media-speaker-label-{cluster_id}",
+                    markup=False,
+                    classes="library-media-edit-label library-media-speaker-label",
+                )
+                yield Input(
+                    placeholder="Rename…",
+                    id=f"{self._SPEAKER_INPUT_PREFIX}{cluster_id}",
+                    classes="library-media-speaker-input",
+                )
+
+    @on(Input.Submitted, ".library-media-speaker-input")
+    def _handle_speaker_rename_submitted(self, event: Input.Submitted) -> None:
+        """Persist the submitted row's rename off the UI thread.
+
+        Mirrors ``LibraryMediaCanvas``' legend: the rename itself is
+        unconditional (a submit racing teardown should still persist) and
+        only the repaint afterwards is ``is_mounted``-guarded.
+        """
+        event.stop()
+        widget_id = event.input.id or ""
+        if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
+            return
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        name = normalize_speaker_name(event.value)
+        event.input.value = ""
+        media_id = self.speaker_rename_media_id
+        if self.media_db is None or media_id is None:
+            return
+        # The rename reads the transcript file, runs several DB writes, FTS
+        # maintenance and a post-ingest dispatch -- all of which would freeze
+        # the reader on a large transcript or a busy database.
+        # ``exclusive`` keeps two fast submits from piling up in this group.
+        # (Textual cannot interrupt a THREAD worker mid-flight, so a genuine
+        # overlap still ends at the row's optimistic lock -- which fails safe,
+        # writing nothing and reporting the conflict.)
+        # The id is captured here, not read in the worker: a selection change
+        # mid-rename must not retarget the write. The legend the user typed
+        # into belongs to this id, so the rename lands on it either way.
+        self.run_worker(
+            lambda: self._rename_speaker_off_thread(media_id, cluster_id, name),
+            group="library-media-speaker-rename",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _rename_speaker_off_thread(
+        self, media_id: int, cluster_id: str, name: str
+    ) -> None:
+        """Rename on a worker thread, then repaint on the UI one.
+
+        The post-rename re-reads (content + legend labels) happen HERE, on
+        the worker, so the UI-thread callback only assigns and recomposes.
+        """
+        content = ""
+        rows: tuple[tuple[str, str], ...] = ()
+        try:
+            outcome = rename_meeting_speaker(
+                self.media_db, media_id, cluster_id, name
+            )
+            if outcome.ok:
+                row = self.media_db.get_media_by_id(media_id)
+                content = (row["content"] if row else "") or ""
+                rows = tuple(_meeting_speaker_legend_rows(self.media_db, media_id))
+        except Exception as exc:  # noqa: BLE001 - a rename must not crash the reader
+            # A filesystem failure's ``str()`` embeds the meeting folder path.
+            logger.warning(
+                "Library media reader speaker rename failed: {}",
+                redact_user_paths(str(exc)),
+            )
+            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+        self.app.call_from_thread(
+            self._apply_speaker_rename_outcome, media_id, outcome, content, rows
+        )
+
+    def _apply_speaker_rename_outcome(
+        self,
+        media_id: int,
+        outcome: SpeakerRenameResult,
+        content: str,
+        rows: tuple[tuple[str, str], ...],
+    ) -> None:
+        """Explain a refused/failed rename, or repaint after a successful one."""
+        if not outcome.ok:
+            # ``reason`` is documented static, user-safe copy, so an
+            # unmapped one (a failure, not a refusal) is shown as it stands.
+            detail = self._RENAME_REFUSAL_COPY.get(outcome.reason, outcome.reason)
+            self.app.notify(
+                f"Couldn't rename this speaker. {detail}", severity="warning"
+            )
+            return
+        if not self.is_mounted:
+            return
+        # Recompose, not an in-place patch: the content body holds an
+        # immutable document (a content change builds a new body by design),
+        # and the same pass repaints the legend's labels from ``rows``.
+        # A selection that moved on during the write self-corrects: the screen
+        # rebuilds this viewer from the NEW item's detail, and the message
+        # below names the id that was actually renamed.
+        self.viewer = dataclasses.replace(
+            self.viewer, content=content, speaker_legend_rows=rows
+        )
+        self.refresh(recompose=True)
+        self.post_message(self.SpeakerRenamed(media_id))
 
     def sync_loading_state(self, *, loading: bool, message: str) -> None:
         """Patch the mounted loading placeholder without rebuilding the body.
@@ -500,10 +796,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             except (NoMatches, QueryError):
                 # Not composed yet -- compose() reads the attributes above.
                 return
-            copy = (
-                "Loading media…"
-                if loading
-                else "Select a media item to read it here."
+            copy = empty_reader_copy(
+                loading=loading, list_failed=self.list_failed
             )
             if str(empty.content) != copy:
                 empty.update(copy)
@@ -517,6 +811,25 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             banner.update(message)
         if banner.display != loading:
             banner.display = loading
+
+    def sync_list_failed(self, list_failed: bool) -> None:
+        """Repaint the EMPTY Reader's placeholder when the list's health changes.
+
+        task-31635: the Media browse controller owns this fact, and only the
+        empty Reader reads it. Patched through the same in-place seam the
+        loading placeholder uses -- a recompose here would re-parse the
+        document of a LOADED Reader because the list beside it failed.
+
+        Args:
+            list_failed: Whether the browse controller carries a failure.
+
+        Returns:
+            None.
+        """
+        if self.list_failed == list_failed:
+            return
+        self.list_failed = list_failed
+        self.sync_loading_state(loading=self.loading, message=self.loading_message)
 
     def sync_query_state(
         self, *, query: str, matches: tuple[int, ...], match_index: int

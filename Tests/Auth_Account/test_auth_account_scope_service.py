@@ -6,7 +6,11 @@ from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import (
 from tldw_chatbook.Auth_Account_Interop.server_auth_account_service import (
     ServerAuthAccountService,
 )
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 from tldw_chatbook.runtime_policy import PolicyDeniedError
+from tldw_chatbook.runtime_policy.bootstrap import RuntimePolicyContext
+from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
 from tldw_chatbook.runtime_policy.server_credentials import (
     SERVER_CREDENTIAL_ACCESS_TOKEN,
     SERVER_CREDENTIAL_API_KEY,
@@ -14,6 +18,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     SERVER_CREDENTIAL_REFRESH_TOKEN,
     InMemoryServerCredentialStore,
 )
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
 class FakeAuthAccountService:
@@ -694,3 +699,138 @@ def test_auth_account_scope_service_omits_durable_credential_gap_when_provider_i
             "affected_action_ids": [],
         },
     ]
+
+
+class _NullRuntimeStateStore:
+    def save(self, state: RuntimeSourceState) -> None:
+        pass
+
+
+def _real_provider(
+    tmp_path,
+    *,
+    suffix: str,
+    server_id: str,
+    credential_store: InMemoryServerCredentialStore,
+    credential_profile_id: str | None,
+) -> RuntimeServerContextProvider:
+    """Build a real `RuntimeServerContextProvider` (task-31416/31821 scoping
+    machinery), not the routing-only `FakeServerContextProvider` double
+    above -- profile isolation lives in `_credential_profile_scope_id`,
+    which the fake doesn't model.
+    """
+    target_store = ConfiguredServerTargetStore(tmp_path / f"targets-{suffix}.json")
+    target_store.save_targets(
+        [
+            ConfiguredServerTarget(
+                server_id=server_id,
+                label="Primary",
+                base_url=server_id,
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ]
+    )
+    runtime_context = RuntimePolicyContext(
+        state=RuntimeSourceState(
+            active_source="server",
+            active_server_id=server_id,
+            server_configured=True,
+        ),
+        store=_NullRuntimeStateStore(),
+    )
+    return RuntimeServerContextProvider(
+        runtime_context=runtime_context,
+        target_store=target_store,
+        credential_store=credential_store,
+        app_config={},
+        credential_profile_id=credential_profile_id,
+    )
+
+
+def test_store_login_tokens_isolates_effective_bearer_token_across_profiles(tmp_path):
+    """task-31821: a non-default profile's login bearer write must land in
+    its own scope, not the shared/legacy slot the DEFAULT profile's
+    resolver checks first (bearer_token is the first-resolved purpose for
+    auth_mode="bearer"). Fails without the fix: the scoped profile's write
+    used to go through the plain `credential_store.set_secret` API, which
+    lands in the same slot as the default profile -- so the default
+    profile's later login would appear to silently use the scoped
+    profile's credential.
+    """
+    server_id = "https://server.example.com/api"
+    shared_store = InMemoryServerCredentialStore()
+
+    default_provider = _real_provider(
+        tmp_path,
+        suffix="default",
+        server_id=server_id,
+        credential_store=shared_store,
+        credential_profile_id=None,
+    )
+    scoped_provider = _real_provider(
+        tmp_path,
+        suffix="scoped",
+        server_id=server_id,
+        credential_store=shared_store,
+        credential_profile_id="scratch-profile",
+    )
+    default_scope = AuthAccountScopeService(server_context_provider=default_provider)
+    scoped_scope = AuthAccountScopeService(server_context_provider=scoped_provider)
+
+    default_scope.store_login_tokens(
+        access_token="default-token", refresh_token="default-refresh"
+    )
+    scoped_scope.store_login_tokens(
+        access_token="scoped-token", refresh_token="scoped-refresh"
+    )
+
+    # Pin both directions: neither profile's resolver picks up the other's
+    # login bearer.
+    assert default_provider.get_active_context().auth_token == "default-token"
+    assert scoped_provider.get_active_context().auth_token == "scoped-token"
+
+
+def test_store_login_tokens_default_profile_bearer_write_matches_legacy_slot(tmp_path):
+    """task-31821 AC#3: for the default (un-retargeted) profile, the scoped
+    bearer write lands byte-for-byte where the pre-task-31416 plain
+    `credential_store.set_secret` write would have -- an existing
+    single-profile install sees no change and no re-auth prompt.
+    """
+    server_id = "https://server.example.com/api"
+    credential_store = InMemoryServerCredentialStore()
+    provider = _real_provider(
+        tmp_path,
+        suffix="default-only",
+        server_id=server_id,
+        credential_store=credential_store,
+        credential_profile_id=None,
+    )
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    scope.store_login_tokens(access_token="access-1", refresh_token="refresh-1")
+
+    # Read back through the PLAIN (pre-scoping) API -- the exact call the
+    # old unscoped write used -- to prove key equivalence.
+    assert (
+        credential_store.get_secret(server_id, SERVER_CREDENTIAL_BEARER_TOKEN)
+        == "access-1"
+    )
+
+
+def test_store_login_tokens_round_trips_through_the_same_scoped_profile(tmp_path):
+    """The service's own round trip: login stores the bearer, and the
+    SAME profile's resolver finds it again (not just the default one)."""
+    server_id = "https://server.example.com/api"
+    provider = _real_provider(
+        tmp_path,
+        suffix="round-trip",
+        server_id=server_id,
+        credential_store=InMemoryServerCredentialStore(),
+        credential_profile_id="only-profile",
+    )
+    scope = AuthAccountScopeService(server_context_provider=provider)
+
+    scope.store_login_tokens(access_token="round-trip-token")
+
+    assert provider.get_active_context().auth_token == "round-trip-token"

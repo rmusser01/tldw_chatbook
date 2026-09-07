@@ -214,15 +214,72 @@ _STATUS_LINE_RE = _re.compile(r"^status:\s*(.+)$", _re.MULTILINE)
 _AC_DONE_RE = _re.compile(r"^- \[x\]", _re.MULTILINE | _re.IGNORECASE)
 _AC_OPEN_RE = _re.compile(r"^- \[ \]", _re.MULTILINE)
 _HEAD_READ_BYTES = 4096
+#: The `title:` key and everything on its own line (TASK-31665 AC#2).
+_TITLE_LINE_RE = _re.compile(r"^title:[ \t]*(.*)$", _re.MULTILINE)
+#: YAML block-scalar introducers backlog.md emits for a wrapped title.
+_BLOCK_SCALAR_INTRODUCERS = frozenset({">", ">-", ">+", "|", "|-", "|+", ""})
+
+
+def _parse_title(frontmatter: str) -> str:
+    """Extract ``title`` from a frontmatter block, folded onto one line.
+
+    Regex-first for the same reason ``_parse_status`` is: backlog.md writes
+    ``assignee:\\n  - @name``, which is not valid top-level YAML (a bare
+    ``@`` cannot start a flow scalar), so ``yaml.safe_load`` over the whole
+    block raises and would silently drop the title of every file using that
+    idiom. Handles the folded form backlog.md emits for any title long
+    enough to wrap::
+
+        title: >-
+          Inspect rail critique 2026-09-05: minor batch + background
+          banding investigation
+
+    Args:
+        frontmatter: The block between the two ``---`` fences.
+
+    Returns:
+        The title on one line with runs of whitespace collapsed, or ``""``
+        when there is no usable ``title``. Never raises.
+    """
+    match = _TITLE_LINE_RE.search(frontmatter)
+    if match is None:
+        return ""
+    value = match.group(1).strip()
+    if value not in _BLOCK_SCALAR_INTRODUCERS:
+        return " ".join(value.strip("'\"").split())
+    # Block scalar: the title is the indented run of lines following it.
+    lines = frontmatter[match.end():].split("\n")
+    parts: list[str] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        if not line[:1].isspace():
+            break  # back at column 0 -- the next frontmatter key
+        parts.append(line.strip())
+    return " ".join(" ".join(parts).split())
 
 
 class BacklogTaskScanner:
     """Scans <workspace>/backlog/tasks/ with an instance-scoped (mtime, size) cache."""
 
     def __init__(self) -> None:
-        self._cache: dict[str, tuple[tuple[float, int], str]] = {}
+        self._cache: dict[str, tuple[tuple[float, int], tuple[str, str]]] = {}
 
-    def _parse_status(self, path: Path) -> str:
+    def _parse_head(self, path: Path) -> tuple[str, str]:
+        """Return ``(status, title)`` from a task file's frontmatter.
+
+        TASK-31665 AC#2: the title comes out of the SAME bounded head-read
+        the status already needed, so reading it costs no extra I/O. Rail
+        rows used to show the filename slug
+        ("Inspect-rail-critique-2026-09-05-minor-batch-background-banding-
+        investigation"), which is a hyphenated, width-hostile
+        transliteration of a title the frontmatter already holds in prose.
+
+        Returns:
+            ``(status, title)``. Either half is ``""`` when the frontmatter
+            is absent or does not carry it -- the caller keeps the filename
+            slug as the title in that case, which is what it always used.
+        """
         try:
             # Bounded read: only the first 4096 chars ever need decoding for
             # a frontmatter block, and never the full file -- read_text()
@@ -231,11 +288,16 @@ class BacklogTaskScanner:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 head = fh.read(_HEAD_READ_BYTES)
         except OSError:
-            return ""
+            return ("", "")
         match = _FRONT_MATTER_RE.match(head)
         if not match:
-            return ""
+            return ("", "")
         frontmatter = match.group(1)
+        return (self._parse_status(frontmatter), _parse_title(frontmatter))
+
+    @staticmethod
+    def _parse_status(frontmatter: str) -> str:
+        """Extract ``status`` from an already-read frontmatter block."""
         # Fast path: a plain `status:` line covers the overwhelming majority
         # of task files and never needs a full-block YAML parse. This also
         # sidesteps backlog.md's own `assignee:\n  - @name` idiom, which is
@@ -263,18 +325,19 @@ class BacklogTaskScanner:
             return ""
         return str(meta.get("status") or "").strip()
 
-    def _status_for(self, path: Path) -> str:
+    def _head_for(self, path: Path) -> tuple[str, str]:
+        """Return the cached ``(status, title)`` for one task file."""
         try:
             stat = path.stat()
         except OSError:
-            return ""
+            return ("", "")
         signature = (stat.st_mtime, stat.st_size)
         cached = self._cache.get(str(path))
         if cached is not None and cached[0] == signature:
             return cached[1]
-        status = self._parse_status(path)
-        self._cache[str(path)] = (signature, status)
-        return status
+        parsed = self._parse_head(path)
+        self._cache[str(path)] = (signature, parsed)
+        return parsed
 
     @staticmethod
     def _ac_progress(path: Path) -> tuple[int, int]:
@@ -302,10 +365,15 @@ class BacklogTaskScanner:
             match = _TASK_FILENAME_RE.match(path.name)
             if not match:
                 continue
-            task_id, title = match.group(1), match.group(2)
-            status = self._status_for(path)
+            task_id, slug_title = match.group(1), match.group(2)
+            status, frontmatter_title = self._head_for(path)
             if not status:
                 continue
+            # TASK-31665 AC#2: prefer the prose title the frontmatter
+            # already carried; fall back to the filename slug (which is a
+            # hyphen-joined transliteration of the same string) only when
+            # the file has no usable `title:`.
+            title = frontmatter_title or slug_title
             if status == "In Progress":
                 in_progress += 1
             elif status == "To Do":

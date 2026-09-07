@@ -26,6 +26,7 @@ from tldw_chatbook.Library.library_media_state import (
     LIBRARY_MEDIA_TRASH_RESTORE_TOOLTIP,
     LibraryMediaTrashState,
     MediaTrashMutationTarget,
+    media_trash_age_copy,
 )
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_shell_state import (
@@ -563,8 +564,20 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 identity.styles.overflow = ("hidden", "hidden")
                 with identity:
                     media_type = self.confirmation_target.media_type or "Unknown type"
+                    # task-31635 (critique #5 item 2): the same relative
+                    # phrasing the row that opened this confirmation shows
+                    # ("trashed 6h"). An unparseable stamp keeps its own raw
+                    # text rather than being flattened into "Unknown" -- it
+                    # IS the value the store holds.
+                    raw_trash_date = self.confirmation_target.trash_date or ""
                     trash_date = (
-                        self.confirmation_target.trash_date or "Unknown deletion time"
+                        # The state's OWN clock, so the row and this line
+                        # cannot land either side of an hour boundary.
+                        media_trash_age_copy(
+                            raw_trash_date, now=self.canvas.reference_now
+                        )
+                        or raw_trash_date
+                        or "Unknown deletion time"
                     )
                     type_identity = Static(
                         media_type,
@@ -583,6 +596,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     time_identity.styles.height = 1
                     time_identity.styles.min_height = 1
                     time_identity.styles.overflow = ("hidden", "hidden")
+                    # The exact instant stays one hover away.
+                    time_identity.tooltip = raw_trash_date or None
                     yield time_identity
 
                 buttons = Horizontal(
@@ -655,20 +670,28 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             restore.tooltip = restore_tooltip
             restore.styles.min_width = 0
             restore.styles.padding = 0
-            # Textual's non-removable Button line-pad reserves one blank cell
-            # on each edge. At the shipped 32-column compact Items allocation,
-            # the two exact disabled labels need 33 content/line-pad cells.
-            # Overlap only those adjacent blank edge cells; both labels and
-            # both focus targets remain whole and inside the action row.
-            restore.styles.margin = (0, -1, 0, 0)
+            restore.styles.margin = 0
             yield restore
             if bounded:
                 delete = Button(
-                    library_disabled_action_label(
-                        "Delete permanently", action_disabled
-                    ),
+                    # task-31635 (critique #5 item 3): "Delete forever", not
+                    # "Delete permanently". Textual's non-removable Button
+                    # line-pad reserves one blank cell per edge, so at the
+                    # shipped 32-column compact Items allocation the two
+                    # DISABLED labels needed 33 cells and shipped overlapping
+                    # their adjacent blank edge cells -- a NEGATIVE gap
+                    # between recovery and destruction. Two cells apart, the
+                    # longer word does not fit (35 > 32, measured); the
+                    # shorter one does (31), and the F-018 tooltip below
+                    # still carries the full sentence. The confirmation this
+                    # opens keeps the long form beside "This cannot be
+                    # undone."
+                    library_disabled_action_label("Delete forever", action_disabled),
                     id="library-media-trash-delete",
-                    classes="library-canvas-action",
+                    # The danger class the select-mode "Delete" carries:
+                    # separated and quiet, never a second loud button beside
+                    # the recoverable one.
+                    classes="library-canvas-action library-media-action-danger",
                     compact=True,
                     disabled=action_disabled,
                     tooltip=(
@@ -677,9 +700,11 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         else "Delete this Trash item permanently."
                     ),
                 )
-                delete._library_disabled_marker_base = "Delete permanently"
+                delete._library_disabled_marker_base = "Delete forever"
                 delete.styles.min_width = 0
                 delete.styles.padding = 0
-                delete.styles.margin = 0
-                delete.styles.offset = (-1, 0)
+                # The class's own 4-cell danger margin overflows this pane's
+                # 32-cell floor; two cells is the widest gap that keeps both
+                # labels whole there.
+                delete.styles.margin = (0, 0, 0, 2)
                 yield delete

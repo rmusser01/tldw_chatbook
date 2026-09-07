@@ -21,6 +21,7 @@ from tldw_chatbook.Library.library_conversations_state import (
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -66,7 +67,11 @@ class LibraryConversationsCanvas(
         pager = self.canvas.pager
         title_count = pager.title_count if pager is not None else None
         title = (
-            "Conversations" if title_count is None else f"Conversations ({title_count})"
+            self.canvas.title
+            if self.canvas.title != "Conversations"
+            else "Conversations"
+            if title_count is None
+            else f"Conversations ({title_count})"
         )
         yield Static(
             title,
@@ -244,7 +249,10 @@ class LibraryConversationsCanvas(
                 # rendered text), so the raw remainder is stashed here at
                 # the single point of truth.
                 label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                button = Button(
+                # task-31945: a row is one full-width Button and gets
+                # clicked twice in a row (☐ then the title); the shared
+                # helper drops the press flash that swallowed the second.
+                button = library_row_button(
                     f"{marker}{label_rest}",
                     id=f"library-conversation-row-{index}",
                     classes="library-conversation-row",

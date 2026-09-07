@@ -155,6 +155,10 @@ BACKLOG_BYTES = 10 * FRAME_BYTES   # 200 ms
 TAP_BUFFER_MAX = 50 * FRAME_BYTES  # 1 s
 BYTES_PER_S = 32000
 
+#: How much recent PCM `pcm_window` can still answer for, per source.
+RING_SECONDS = 60
+SAMPLE_RATE = 16000
+
 
 def mix_int16(a: bytes, b: bytes) -> bytes:
     """Saturating sum of two equal-length int16 buffers."""
@@ -162,6 +166,53 @@ def mix_int16(a: bytes, b: bytes) -> bytes:
     x = np.frombuffer(a, dtype=np.int16).astype(np.int32)
     y = np.frombuffer(b, dtype=np.int16).astype(np.int32)
     return np.clip(x + y, -32768, 32767).astype(np.int16).tobytes()
+
+
+def select_mic_device(recorder: Any, name: str) -> bool:
+    """Point `recorder` at the microphone the user chose, by name.
+
+    Enumeration returns names while ``set_device`` wants an id, so the name
+    is resolved against the recorder's own device list. A name that no longer
+    resolves is NOT silently downgraded to the system default: recording the
+    wrong microphone is worse than refusing (same rule as ``DeviceTap``) --
+    for a whole meeting, and equally for a voice enrollment, which would
+    otherwise build a voiceprint from a different input channel than the
+    meetings it is matched against (TASK-31826 review I5).
+
+    Args:
+        recorder: An `AudioRecordingService`-shaped object.
+        name: The configured microphone's device name.
+
+    Returns:
+        True when the device was found AND the recorder accepted it. A
+        recorder that answers `False` (`AudioRecordingService.set_device`
+        validates the id against its own live enumeration, and refuses while
+        recording) is refused here too, rather than reported as selected and
+        left to fail in the recording thread -- or, worse, to record the
+        default input for a whole meeting (Qodo review 6).
+    """
+    try:
+        devices = list(recorder.get_audio_devices())
+    except Exception as exc:  # noqa: BLE001 - treated as "cannot resolve"
+        # Type only (final review Minor 11): a backend's enumeration error
+        # can quote the device it choked on, and the rule three lines below
+        # -- audio devices are routinely named after their owner -- applies
+        # just as much to a failure as to a miss.
+        logger.warning("Meeting microphone enumeration failed ({})", type(exc).__name__)
+        devices = []
+    for device in devices:
+        if str(device.get("name", "")) == name:
+            # `is not False`, not truthiness: a recorder that returns nothing
+            # has no verdict to honour, and every fake in the tree predates
+            # this contract. Only an explicit refusal refuses.
+            if recorder.set_device(device.get("id", device.get("index"))) is not False:
+                return True
+            logger.warning("the configured meeting microphone was rejected by the recorder")
+            return False
+    # The device NAME stays out of the log: audio devices are routinely
+    # named after their owner ("<Name>'s AirPods"), and the user picked it.
+    logger.warning("the configured meeting microphone was not found; not falling back to the default input")
+    return False
 
 
 def _default_vad_factory():
@@ -229,6 +280,15 @@ class MeetingCapture:
         self.fault: Exception | None = None
         self._gate_carry = bytearray()
         self._stopped = False
+        self._pcm_rings: dict[str, Deque[Tuple[int, bytes]]] = {
+            "you": deque(),
+            "others": deque(),
+            "mixed": deque(),
+        }
+        # Cumulative sample count per source, independent of any writer --
+        # `_push_pcm` is called directly in tests without a real write path,
+        # so the ring's absolute positions can't be read back off a writer.
+        self._pcm_next_sample: dict[str, int] = {"you": 0, "others": 0, "mixed": 0}
 
     # ---- recorder surface -------------------------------------------------
     def start_recording(self, callback=None, save_to_file=None) -> bool:
@@ -266,13 +326,11 @@ class MeetingCapture:
         return True if started else self._abandon_start()
 
     def _select_mic_device(self, name: str) -> bool:
-        """Point the recorder at the microphone the user chose, by name.
+        """Select the configured microphone; records the failure as a fault.
 
-        Enumeration returns names while ``set_device`` wants an id, so the
-        name is resolved against the recorder's own device list. A name that
-        no longer resolves is NOT silently downgraded to the system default:
-        recording the wrong microphone for a whole meeting is worse than
-        refusing to start (same rule as ``DeviceTap``).
+        The lookup itself is `select_mic_device` (shared with explicit voice
+        enrollment); this only adds the capture-level fault the caller
+        reports, since the device NAME must stay out of the log.
 
         Args:
             name: The configured microphone's device name.
@@ -280,19 +338,8 @@ class MeetingCapture:
         Returns:
             True when the device was found and selected.
         """
-        try:
-            devices = list(self._mic.get_audio_devices())
-        except Exception as exc:  # noqa: BLE001 - treated as "cannot resolve"
-            logger.warning("Meeting microphone enumeration failed: {}", exc)
-            devices = []
-        for device in devices:
-            if str(device.get("name", "")) == name:
-                self._mic.set_device(device.get("id", device.get("index")))
-                return True
-        # The device NAME stays out of the log: audio devices are routinely
-        # named after their owner ("<Name>'s AirPods"), and the user picked
-        # it -- `self.fault` carries it to the caller instead.
-        logger.warning("the configured meeting microphone was not found; not falling back to the default input")
+        if select_mic_device(self._mic, name):
+            return True
         self.fault = LookupError(f"microphone {name!r} not found")
         return False
 
@@ -372,6 +419,48 @@ class MeetingCapture:
     def dominant_source(self, start_s: float, end_s: float) -> str:
         return self._ring.dominant_source(start_s, end_s)
 
+    def _push_pcm(self, source: str, chunk: bytes) -> None:
+        """Append ``chunk`` to ``source``'s ring, keyed by absolute sample index.
+
+        Trims to the trailing `RING_SECONDS` so memory stays bounded by time,
+        not meeting length -- called from the same place each source's frame
+        reaches its WAV writer. Position is tracked per source by a running
+        sample count (not read off the writer): all three sources receive
+        equal-length chunks per real frame, so the counts stay in lockstep
+        with `audio_position_s`, and a direct call (as in tests) still gets
+        correct, monotonically increasing positions.
+        """
+        ring = self._pcm_rings.setdefault(source, deque())
+        start_sample = self._pcm_next_sample.get(source, 0)
+        n = len(chunk) // 2
+        ring.append((start_sample, chunk))
+        self._pcm_next_sample[source] = start_sample + n
+        cutoff = start_sample + n - RING_SECONDS * SAMPLE_RATE
+        while ring and ring[0][0] + len(ring[0][1]) // 2 <= cutoff:
+            ring.popleft()
+
+    def pcm_window(self, source: str, start_s: float, end_s: float) -> bytes:
+        """PCM16 mono 16 kHz bytes for `source` over `[start_s, end_s)`.
+
+        Clipped to whatever the bounded ring still holds; empty bytes once
+        the window has aged out of the ring.
+        """
+        ring = self._pcm_rings.get(source)
+        if not ring:
+            return b""
+        a = int(start_s * SAMPLE_RATE)
+        b = int(end_s * SAMPLE_RATE)
+        out = bytearray()
+        for start_sample, chunk in list(ring):
+            n = len(chunk) // 2
+            lo, hi = start_sample, start_sample + n
+            if hi <= a or lo >= b:
+                continue
+            s = max(a, lo) - lo
+            e = min(b, hi) - lo
+            out += chunk[s * 2 : e * 2]
+        return bytes(out)
+
     def _tap_backlog_bytes(self) -> int:
         with self._tap_lock:
             return len(self._tap_buf)
@@ -407,10 +496,13 @@ class MeetingCapture:
             mixed = mix_int16(chunk, sys_part) if self._tap is not None else chunk
             start_pos = self.audio_position_s
             self._writers["mixed"].write(mixed)
+            self._push_pcm("mixed", mixed)
             if "you" in self._writers:
                 self._writers["you"].write(chunk)
+                self._push_pcm("you", chunk)
             if "others" in self._writers:
                 self._writers["others"].write(sys_part)
+                self._push_pcm("others", sys_part)
             mic_rms, sys_rms = rms_int16(chunk), rms_int16(sys_part)
             self._levels = (min(1.0, mic_rms / 32768.0), min(1.0, sys_rms / 32768.0))
             self._ring.add(start_pos, mic_rms, sys_rms)

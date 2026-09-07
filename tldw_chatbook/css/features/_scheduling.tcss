@@ -264,6 +264,21 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
    handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
    Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
 
+/* task-31823: the reminder pane's second compact action row (Duplicate ·
+ * View runs · View results) -- the rest of spec §5's deferred kebab
+ * list, same auto-height shape as the lifecycle row above. */
+#scheduling-task-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+/* task-31823: shared by BOTH panes' secondary-actions buttons (reminder
+ * + definition) -- a plain class on each Button, never an
+ * ancestor-scoped bare-type rule. */
+.detail-secondary-action-button {
+    margin: 0 1 0 0;
+}
+
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
     margin-top: 1;
@@ -294,6 +309,13 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 
 #scheduling-automation-detail-lifecycle .detail-lifecycle-button {
     margin: 0 1 0 0;
+}
+
+/* task-31823: the definitions pane's own second compact action row --
+ * `.detail-secondary-action-button` above already covers the buttons. */
+#scheduling-automation-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
 }
 
 /* Same pair as the reminder pane's rule above: docked + pushed instance. */
@@ -341,6 +363,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-task-status-badge.archived {
     background: $surface-darken-1;
     color: $text-muted;
+}
+
+/* 31712 AC#6: same "empty state replaces the real content" idiom as
+ * `#scheduling-task-detail-empty-state` above -- distinguishes "no task
+ * selected" from a selected task whose metadata rows read "-" too. */
+#scheduling-task-inspector-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
 }
 
 /* Inspector metadata */
@@ -509,9 +540,32 @@ DetailValueRow .detail-value-row-error {
     margin: 0 0 0 1;
 }
 
+/* 31712 AC#4: Textual's own `Collapsible`/`Contents` body chrome --
+ * `Collapsible`'s widget-tier `padding-bottom: 1`, the app-wide
+ * `Collapsible { margin-bottom: 1 }` / `Collapsible { border: tall
+ * $surface }` / `Collapsible > Contents { padding: 1 }` rules
+ * (`tldw_cli_modular.tcss`, "Collapsible styling enhancements") -- costs 5
+ * blank rows per EXPANDED group before a single row of real content is
+ * drawn (measured: a 4-row Frequency group rendered at height 13, only 4
+ * of those rows readable). The stray `border: tall` is the sneaky one:
+ * this rule already set `border-top` only, but CSS `border-top` never
+ * clears the other 3 edges, so the app-wide rule's bottom/left/right
+ * `tall` border kept bleeding through underneath a rule that reads as a
+ * full override -- an explicit `border: none;` before `border-top:` is
+ * what actually clears it. Same idiom `LibraryIngestCanvas Collapsible`/
+ * `Collapsible Contents` already uses for the same complaint (task-2043)
+ * -- scoped to `DetailGroup` only, not the app-wide type, so every other
+ * Collapsible in the app keeps its own spacing/border. */
 DetailGroup {
     background: $ds-surface-panel;
+    border: none;
     border-top: hkey $ds-grid-line;
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+DetailGroup Contents {
+    padding: 0 0 0 3;
 }
 
 /* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay

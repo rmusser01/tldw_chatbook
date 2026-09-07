@@ -16,10 +16,13 @@ from loguru import logger
 
 from ...Constants import (
     CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+    LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
+    LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
     LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
 )
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_COLLECTIONS,
+    LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_PROMPTS,
 )
@@ -51,34 +54,21 @@ class LibraryNavigationController:
         self.repair_present_on_resume = False
         self.keyword_generation = 0
         self.semantic_generation = 0
+        self.character_route = None
+        self.character_candidate = None
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
-        """Apply route context supplied by shell navigation.
+        """Admit shell routes without replacing a view before its save guards.
 
         Args:
-            context: Navigation payload from ``NavigateToScreen``. A valid
-                Library mode switches the active mode. A ``conversation_id``
-                selects that conversation when the local source snapshot
-                arrives, defaulting the mode to Conversations when no valid
-                mode is supplied. A ``notes_create`` flag lands on the
-                in-canvas Create > New note view (the retired Notes tab's
-                "new note" deep link). A ``note_id`` opens that note's
-                in-canvas editor directly (the retired Notes tab's
-                chat-sidebar deep link); ``mode="notes"`` alone (no
-                ``note_id``) lands on the Notes list instead. An
-                ``ingest_media`` flag lands on the in-canvas Ingest >
-                Import media view (Home's ingest-jobs "Open details"
-                control, L3b Task 6). A supported ``open_source_type`` and
-                exact ``open_source_id`` pair delegates to Library's existing
-                item opener.
+            context: Ordinary mode/ID/create/ingest/source navigation or typed
+                Character inspection, browse, or independently presented repair.
         """
-        # wave-6 (prompts) retarget: the flat `_library_prompts_mutation_in_
-        # flight` attribute this line read on dev was deleted by the prompts
-        # cleanup PR; the field now lives on the Prompts state object.
-        if self.screen._prompts_state.mutation_in_flight:
+        screen = self.screen
+        if screen._prompts_state.mutation_in_flight or not isinstance(context, Mapping):
             return
-        if not isinstance(context, Mapping):
-            return
+        self.character_candidate = None
+        screen._library_navigation_context_generation += 1
         if set(context) == {LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR}:
             from ..Navigation.character_conversation_navigation import (
                 deserialize_library_character_repair_context,
@@ -94,40 +84,50 @@ class LibraryNavigationController:
                 return
             self.pending_repair_context = repair_context
             self.repair_present_on_resume = True
-            if self.screen.is_mounted:
-                self.screen.call_after_refresh(self.present_pending_repair)
+            if screen.is_mounted:
+                screen.call_after_refresh(self.present_pending_repair)
             return
-        target_row_id = self.screen._library_navigation_context_target_row(context)
-        if target_row_id is None:
-            return
-        self.screen._library_navigation_context_generation += 1
+        character_admission = None
+        if set(context) in (
+            {LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION},
+            {LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE},
+        ):
+            navigation = screen._unavailable_navigation
+            character_admission = navigation._library_character_navigation_admission(
+                screen,
+                context,
+                generation=screen._library_navigation_context_generation,
+            )
+            if character_admission is None:
+                return
+            target_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+        else:
+            target_row_id = screen._library_navigation_context_target_row(context)
+            if target_row_id is None:
+                return
         if target_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._invalidate_media_browse()
         if target_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
             self._unmount_collections_capture()
-        generation = self.screen._library_navigation_context_generation
+        generation = screen._library_navigation_context_generation
         if (
-            self.screen.is_mounted
+            screen.is_mounted
             and target_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-            and self.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+            and screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         ):
             return
-        if self.screen.is_mounted:
-            # A cached mounted screen must admit the route through the same
-            # awaited save/leave guards as a rail switch. Applying it
-            # synchronously could discard a dirty editor or an active Prompt
-            # selection before the transition is actually admitted.
-            self.screen.run_worker(
-                self.screen._apply_navigation_context_after_flush(
-                    dict(context),
-                    target_row_id,
-                    generation,
+        if screen.is_mounted:
+            screen.run_worker(
+                screen._apply_navigation_context_after_flush(
+                    dict(context), target_row_id, generation, character_admission
                 ),
                 exclusive=True,
                 group="library_nav_context",
             )
             return
-        self.screen._apply_navigation_context_state(context)
+        screen._apply_navigation_context_state(
+            context, character_admission=character_admission
+        )
 
     def present_pending_repair(self) -> None:
         """Present a typed context once the retained Library owns the screen."""

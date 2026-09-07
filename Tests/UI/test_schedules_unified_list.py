@@ -195,19 +195,22 @@ async def test_mixed_listing_renders_both_kinds_painted():
         for index, row in enumerate(workbench._visible_rows):
             painted = table.get_row_at(index)
             assert str(painted[0]) == row.glyph
-            # `row.title` is the bare title for both kinds -- a definition
-            # cell wraps it in the automation_name_cell owner-prefix
-            # ("[This device] <name>"), checked precisely below.
+            # `row.title` is the bare title for both kinds.
             assert row.title in str(painted[1])
 
-        # The definition row's title carries the automation_name_cell
-        # owner-prefix rendering (reused verbatim, per the brief).
+        # 31713 AC#1: a LOCAL definition row's title carries no owner
+        # label at all, same as a local reminder's -- `automation_name_
+        # cell` used to always prefix even a local row with "[This
+        # device]", the exact inconsistency this AC closed.
         def_index = next(
             i
             for i, row in enumerate(workbench._visible_rows)
             if row.kind == "definition"
         )
-        assert "[This device]" in str(table.get_row_at(def_index)[1])
+        assert "This device" not in str(table.get_row_at(def_index)[1])
+        assert str(table.get_row_at(def_index)[1]).strip() == workbench._visible_rows[
+            def_index
+        ].title
 
         # The unread definition's title carries the bold unread dot.
         unread_index = next(

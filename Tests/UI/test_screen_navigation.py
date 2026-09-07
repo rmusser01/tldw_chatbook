@@ -12,6 +12,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.library_media_rows import summary_row
 from textual.widgets import Button, Input
 from unittest.mock import AsyncMock, patch
 
@@ -3062,13 +3063,12 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     screen._library_media_browse_controller.applied_result = MediaBrowseResult(
         scope=applied_scope,
         items=(
-            {
-                "id": "local:media:1",
-                "backing_media_id": 1,
-                "title": "Clip",
-                "media_type": "video",
-                "updated_at": "2026-08-20T00:00:00Z",
-            },
+            summary_row(
+                id=1,
+                title="Clip",
+                media_type="video",
+                updated_at="2026-08-20T00:00:00Z",
+            ),
         ),
         total=1,
         limit=LIBRARY_MEDIA_BROWSE_PAGE_SIZE,

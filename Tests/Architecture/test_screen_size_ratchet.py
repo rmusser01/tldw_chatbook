@@ -665,7 +665,45 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # -9 - 66 - 10 = -85. The 456 `self.<flat>` -> `self._media_state.<field>`
     # retargets, the 9 `getattr(self, "<flat>", ...)` receiver fixes and the
     # 6 dynamic-dispatch string values are all line-neutral by construction.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 34669, 1260),
+    #
+    # 2026-09-07, wave-7 final review: `origin/dev` reconciliation merge --
+    # the LARGEST of this program at 306 commits (merge-base 761416317).
+    # Fresh `_measure()` on the MERGED tree: 34669/1260 -> 35626/1289.
+    #
+    # The METHOD count is the load-bearing check, and it is a SET check, not
+    # a count check: `merged - branch` is EXACTLY dev's 29 new
+    # `LibraryScreen` method names, and `branch - merged` is EMPTY. That
+    # pair is what proves the resolution neither re-added a moved body nor
+    # dropped a wave-7 delegator -- the two failure modes a naive
+    # conflict resolution produces. 1260 + 29 = 1289.
+    #
+    # Line delta +957, reconciled against DEV's own delta rather than
+    # estimated. Dev moved this file 37537 -> 38525 (+988) over the same
+    # range. Of that, +63 is dev's edits to ELEVEN bodies this wave had
+    # already moved to `LibraryMediaController`; those edits follow the body
+    # into the controller (see its ratchet row), so the merged screen does
+    # not take them: 988 - 63 = 925 from dev. The remaining +32 is this
+    # merge's own:
+    #   +24  eight new keyword arguments at the `LibraryMediaController(...)`
+    #        construction site (3 lines each), for dev's new screen methods
+    #        the ported bodies call; the group-(e) block goes 35 -> 43 and the
+    #        site's total kwarg count 83 -> 91 (measured with `ast`, matching
+    #        the controller's own keyword-only arity);
+    #   +5   the `_library_media_trash_actions_live` retarget, where dev's
+    #        `getattr(self, "_library_media_view", _MEDIA_VIEW_LIST)` shape is
+    #        preserved and only the receiver swapped, under a 5-line comment
+    #        saying why the getattr is kept;
+    #   +3   a comment on dev's new `_library_media_rename_cache` field in
+    #        `__init__`, whose own comment referred to the analyze reason
+    #        cache "above" -- a field that now lives on `LibraryMediaState`.
+    # 925 + 24 + 5 + 3 = 957.
+    #
+    # Nine further screen-side flat-field references dev's 306 commits added
+    # were retargeted to `_media_state` and are line-neutral (a receiver
+    # swap): three of them WRITES, which is the silent class -- a write to a
+    # deleted flat name creates a stray attribute split from the state object
+    # instead of raising.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35626, 1289),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

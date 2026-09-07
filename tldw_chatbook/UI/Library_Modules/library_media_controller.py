@@ -615,6 +615,7 @@ class LibraryMediaController:
         request_library_reader_layout_refresh,
         # -- named late-binding callables for the media exclusions (group
         #    (e)) that a MOVER still calls internally.
+        after_library_media_viewer_sync,
         arm_library_media_return_settlement,
         build_library_media_trash_state,
         cancel_library_media_bulk_delete,
@@ -622,22 +623,28 @@ class LibraryMediaController:
         clear_library_media_selection_for_scope_change,
         close_library_media_find,
         commit_library_media_return,
+        decorate_library_media_reviewed,
         exit_library_media_trash,
         exit_library_media_viewer,
         library_media_analysis_provider_reason,
         library_media_backing_id,
+        library_media_can_rename_speakers,
         library_media_content_matches,
         library_media_content_signature,
         library_media_focus_target_matches_receipt,
         library_media_layout_signature,
+        library_media_list_unselectable,
         library_media_reader_exit_available,
         library_media_return_candidate,
+        library_media_selected_backing_id,
         library_media_settlement_tree,
+        library_media_trash_action_disabled_reason,
         library_media_trash_focus_selectors,
         library_media_trash_retry_visible,
         library_media_type_options,
         library_media_viewer_state_cached,
         open_selected_media_handoff,
+        queue_after_library_media_viewer_recompose,
         reconcile_library_media_stage_presentation,
         refresh_library_media_detail,
         request_library_media_browse,
@@ -648,6 +655,7 @@ class LibraryMediaController:
         stop_library_media_filter_timer,
         sync_library_media_browse_state,
         sync_library_media_reader_layout_from_shell,
+        sync_library_media_surfaces_or_recompose,
         sync_library_media_trash_state,
         toggle_library_media_select_mode,
     ) -> None:
@@ -722,6 +730,7 @@ class LibraryMediaController:
         self._sync_library_skills_reader_layout_from_shell_fn = sync_library_skills_reader_layout_from_shell
         self._walk_active_review_set_fn = walk_active_review_set
         self.request_library_reader_layout_refresh_fn = request_library_reader_layout_refresh
+        self._after_library_media_viewer_sync_fn = after_library_media_viewer_sync
         self._arm_library_media_return_settlement_fn = arm_library_media_return_settlement
         self._build_library_media_trash_state_fn = build_library_media_trash_state
         self._cancel_library_media_bulk_delete_fn = cancel_library_media_bulk_delete
@@ -729,22 +738,28 @@ class LibraryMediaController:
         self._clear_library_media_selection_for_scope_change_fn = clear_library_media_selection_for_scope_change
         self._close_library_media_find_fn = close_library_media_find
         self._commit_library_media_return_fn = commit_library_media_return
+        self._decorate_library_media_reviewed_fn = decorate_library_media_reviewed
         self._exit_library_media_trash_fn = exit_library_media_trash
         self._exit_library_media_viewer_fn = exit_library_media_viewer
         self._library_media_analysis_provider_reason_fn = library_media_analysis_provider_reason
         self._library_media_backing_id_fn = library_media_backing_id
+        self._library_media_can_rename_speakers_fn = library_media_can_rename_speakers
         self._library_media_content_matches_fn = library_media_content_matches
         self._library_media_content_signature_fn = library_media_content_signature
         self._library_media_focus_target_matches_receipt_fn = library_media_focus_target_matches_receipt
         self._library_media_layout_signature_fn = library_media_layout_signature
+        self._library_media_list_unselectable_fn = library_media_list_unselectable
         self._library_media_reader_exit_available_fn = library_media_reader_exit_available
         self._library_media_return_candidate_fn = library_media_return_candidate
+        self._library_media_selected_backing_id_fn = library_media_selected_backing_id
         self._library_media_settlement_tree_fn = library_media_settlement_tree
+        self._library_media_trash_action_disabled_reason_fn = library_media_trash_action_disabled_reason
         self._library_media_trash_focus_selectors_fn = library_media_trash_focus_selectors
         self._library_media_trash_retry_visible_fn = library_media_trash_retry_visible
         self._library_media_type_options_fn = library_media_type_options
         self._library_media_viewer_state_cached_fn = library_media_viewer_state_cached
         self._open_selected_media_handoff_fn = open_selected_media_handoff
+        self._queue_after_library_media_viewer_recompose_fn = queue_after_library_media_viewer_recompose
         self._reconcile_library_media_stage_presentation_fn = reconcile_library_media_stage_presentation
         self._refresh_library_media_detail_fn = refresh_library_media_detail
         self._request_library_media_browse_fn = request_library_media_browse
@@ -755,6 +770,7 @@ class LibraryMediaController:
         self._stop_library_media_filter_timer_fn = stop_library_media_filter_timer
         self._sync_library_media_browse_state_fn = sync_library_media_browse_state
         self._sync_library_media_reader_layout_from_shell_fn = sync_library_media_reader_layout_from_shell
+        self._sync_library_media_surfaces_or_recompose_fn = sync_library_media_surfaces_or_recompose
         self._sync_library_media_trash_state_fn = sync_library_media_trash_state
         self._toggle_library_media_select_mode_fn = toggle_library_media_select_mode
 
@@ -1022,6 +1038,15 @@ class LibraryMediaController:
 
 
     # -- named late-binding callables for the exclusions (group (e)) -------
+    #
+    # The last EIGHT are dev-side screen methods this wave's reconciliation
+    # merge introduced: the 11 dev-edited mover bodies ported in here call
+    # them, and they stay screen-resident (they are dev's new methods, not
+    # this wave's movers). Same late-binding shape as every other row.
+
+    @property
+    def _after_library_media_viewer_sync(self) -> Any:
+        return self._after_library_media_viewer_sync_fn
 
     @property
     def _arm_library_media_return_settlement(self) -> Any:
@@ -1052,6 +1077,10 @@ class LibraryMediaController:
         return self._commit_library_media_return_fn
 
     @property
+    def _decorate_library_media_reviewed(self) -> Any:
+        return self._decorate_library_media_reviewed_fn
+
+    @property
     def _exit_library_media_trash(self) -> Any:
         return self._exit_library_media_trash_fn
 
@@ -1066,6 +1095,10 @@ class LibraryMediaController:
     @property
     def _library_media_backing_id(self) -> Any:
         return self._library_media_backing_id_fn
+
+    @property
+    def _library_media_can_rename_speakers(self) -> Any:
+        return self._library_media_can_rename_speakers_fn
 
     @property
     def _library_media_content_matches(self) -> Any:
@@ -1084,6 +1117,10 @@ class LibraryMediaController:
         return self._library_media_layout_signature_fn
 
     @property
+    def _library_media_list_unselectable(self) -> Any:
+        return self._library_media_list_unselectable_fn
+
+    @property
     def _library_media_reader_exit_available(self) -> Any:
         return self._library_media_reader_exit_available_fn
 
@@ -1092,8 +1129,16 @@ class LibraryMediaController:
         return self._library_media_return_candidate_fn
 
     @property
+    def _library_media_selected_backing_id(self) -> Any:
+        return self._library_media_selected_backing_id_fn
+
+    @property
     def _library_media_settlement_tree(self) -> Any:
         return self._library_media_settlement_tree_fn
+
+    @property
+    def _library_media_trash_action_disabled_reason(self) -> Any:
+        return self._library_media_trash_action_disabled_reason_fn
 
     @property
     def _library_media_trash_focus_selectors(self) -> Any:
@@ -1114,6 +1159,10 @@ class LibraryMediaController:
     @property
     def _open_selected_media_handoff(self) -> Any:
         return self._open_selected_media_handoff_fn
+
+    @property
+    def _queue_after_library_media_viewer_recompose(self) -> Any:
+        return self._queue_after_library_media_viewer_recompose_fn
 
     @property
     def _reconcile_library_media_stage_presentation(self) -> Any:
@@ -1154,6 +1203,10 @@ class LibraryMediaController:
     @property
     def _sync_library_media_reader_layout_from_shell(self) -> Any:
         return self._sync_library_media_reader_layout_from_shell_fn
+
+    @property
+    def _sync_library_media_surfaces_or_recompose(self) -> Any:
+        return self._sync_library_media_surfaces_or_recompose_fn
 
     @property
     def _sync_library_media_trash_state(self) -> Any:
@@ -1637,16 +1690,7 @@ class LibraryMediaController:
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             return
-        viewer = self._mounted_library_media_viewer()
-        if viewer is not None and self._sync_library_media_viewer_state(viewer):
-            try:
-                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-            except (NoMatches, QueryError):
-                pass
-            else:
-                canvas.apply_reader_state(self._build_library_media_state())
-            return
-        self.refresh(recompose=True)
+        self._sync_library_media_surfaces_or_recompose()
 
     async def _apply_library_media_list_return(
         self,
@@ -1793,7 +1837,9 @@ class LibraryMediaController:
         state = build_library_media_browse_state(
             controller.applied_result,
             type_options=controller.type_options,
-            retained_items=controller.retained_items,
+            retained_items=self._decorate_library_media_reviewed(
+                controller.retained_items
+            ),
             selected_id=self._selected_media_id,
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
@@ -1887,6 +1933,9 @@ class LibraryMediaController:
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         """Return controller-owned inputs shared by every Media canvas path."""
         controller = self._library_media_browse_controller
+        backing_id = self._library_media_selected_backing_id()
+        db = getattr(self.app_instance, "media_db", None)
+        can_rename = self._library_media_can_rename_speakers(db, backing_id)
         return {
             "pager": controller.pager,
             "type_options": self._library_media_type_options(),
@@ -1904,8 +1953,26 @@ class LibraryMediaController:
                 else ""
             ),
             "analysis_action_reason": self._library_media_analyze_reason(),
+            # task-31632: the page-or-facet load failure the canvas paints as
+            # ONE recovery callout, Retry inside it. ``None`` whenever the
+            # last load of each fence succeeded.
+            "load_failure": controller.failure,
+            # task-31635 fix round 1: the NARROWER predicate the list-wide
+            # actions gate on -- a failure with no rows behind it. The
+            # callout above is broader on purpose (a page failure retains
+            # its rows); those rows still export fine.
+            "list_unselectable": self._library_media_list_unselectable(),
             "compact": False,
             "show_preview": False,
+            # Task 8 (meeting diarization spec): whether the selected item is
+            # a finished meeting recording whose speakers can still be
+            # renamed, plus what a canvas needs to actually do that (the
+            # real DB and the resolved backing id -- `media_db`/
+            # `speaker_rename_media_id` are harmless when `can_rename` is
+            # False; the canvas only uses them when it's True).
+            "can_rename_speakers": can_rename,
+            "media_db": db,
+            "speaker_rename_media_id": backing_id,
         }
 
     @staticmethod
@@ -2058,12 +2125,11 @@ class LibraryMediaController:
         pending = self._library_media_reader_session.pending_request
         assert pending is not None
         if sync_surfaces:
-            try:
-                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-            except (NoMatches, QueryError):
+            # M-2: the row patch is the sync wrapper's own tail now
+            # (``_sync_library_media_surfaces_or_recompose``); only the
+            # no-canvas fallback is still this call site's to make.
+            if not self.query("#library-media-canvas"):
                 self._sync_library_media_browse_state(None)
-            else:
-                canvas.apply_reader_state(self._build_library_media_state())
             self._sync_library_media_viewer_or_recompose()
         if immediate:
             self._dispatch_library_media_detail_request(
@@ -2173,14 +2239,7 @@ class LibraryMediaController:
         mutation_in_flight = bool(
             state.mutation_pending or self._library_media_bulk_delete_in_flight
         )
-        if state.loading or mutation_in_flight:
-            action_disabled_reason = "Trash is refreshing."
-        elif state.freshness != "fresh":
-            action_disabled_reason = "Refresh Trash before changing this item."
-        elif not state.selected_id:
-            action_disabled_reason = "Select a Trash item first."
-        else:
-            action_disabled_reason = ""
+        action_disabled_reason = self._library_media_trash_action_disabled_reason()
         return {
             "pager": controller.pager,
             "types": state.types,
@@ -3549,6 +3608,17 @@ class LibraryMediaController:
             image_preview_source=preview_source,
             review_banner=self._active_review_set_banner() or "",
             back_visible=self._library_media_reader_exit_available(),
+            # task-31635 (critique #5 item 12): only the EMPTY Reader reads
+            # this -- with the list load failed there is nothing to select.
+            list_failed=self._library_media_list_unselectable(),
+            # task-31635 (critique #5 item 11): the Items pane beside this
+            # Reader is the Trash list, so the Reader names the list its own
+            # (live) item actually belongs to.
+            trash_list_open=self._library_media_view == "trash",
+            # TASK-31745: what the speaker-rename legend needs to actually
+            # persist a rename (harmless when the state says it cannot).
+            media_db=getattr(self.app_instance, "media_db", None),
+            speaker_rename_media_id=self._library_media_selected_backing_id(),
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -3700,6 +3770,11 @@ class LibraryMediaController:
         # decides it changes under resizes and pane toggles, and a viewer
         # attribute missing from this compare silently never updates.
         back_visible = self._library_media_reader_exit_available()
+        # task-31635 item 11: a compose input like any other -- the Trash
+        # entry recomposes the screen today, but a viewer-scoped sync landing
+        # after it must not paint a Reader that has forgotten which list it
+        # is standing beside.
+        trash_list_open = self._library_media_view == "trash"
         # task-28007 AC#5: a compose input like any other -- resolved once
         # per sync and read by both halves below.
         # Review I1: only ``_compose_analysis`` consumes this, and
@@ -3719,6 +3794,7 @@ class LibraryMediaController:
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
             and viewer.back_visible == back_visible
+            and viewer.trash_list_open == trash_list_open
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -3790,6 +3866,14 @@ class LibraryMediaController:
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            viewer.trash_list_open = trash_list_open
+            # TASK-31745: the backing id follows the selection like any other
+            # compose input (the state's own rename fields are in the compare
+            # above, so a stale id here could never outlive them).
+            viewer.media_db = getattr(self.app_instance, "media_db", None)
+            viewer.speaker_rename_media_id = (
+                self._library_media_selected_backing_id()
+            )
             # task-31567: this recompose replaces every child, so whatever
             # the user was standing on (the content box, the Find input, an
             # action button) is about to be removed and Textual will pick
@@ -3817,15 +3901,24 @@ class LibraryMediaController:
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
-        self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
+        # task-31950: both tail follow-ups read the viewer's children (the
+        # edit Save, the content body's scroller) and the rebuild above runs
+        # on the VIEWER's pump, so they ride the viewer's hook rather than
+        # the screen's -- the same ordering PR H2 gave the focus follow-ups.
+        # On the no-change path nothing was rebuilt and the seam falls back
+        # to ``call_after_refresh``, exactly as before.
+        self._queue_after_library_media_viewer_recompose(
+            self._sync_library_media_viewer_mutation_gate, viewer
+        )
         loaded_id = self._library_media_reader_session.loaded_id
         if (
             loaded_id is not None
             and self._library_media_progress_restored_id != loaded_id
         ):
             self._library_media_progress_restored_id = loaded_id
-            self.call_after_refresh(
-                self._restore_library_media_loaded_progress, loaded_id
+            self._queue_after_library_media_viewer_recompose(
+                partial(self._restore_library_media_loaded_progress, loaded_id),
+                viewer,
             )
         return True
 
@@ -3844,13 +3937,26 @@ class LibraryMediaController:
 
     @on(Button.Pressed, "#library-media-reader-more")
     def handle_library_media_reader_more(self, event: Button.Pressed) -> None:
-        """Toggle the transient inline secondary-action region."""
+        """Toggle the transient inline secondary-action region.
+
+        Args:
+            event: The More button press. Stopped here so the Reader's own
+                toolbar handling never sees it.
+
+        Returns:
+            None.
+        """
         event.stop()
         session = self._library_media_reader_session
         self._library_media_reader_session = set_more_open(
             session, not session.more_open
         )
-        self._sync_library_media_viewer_or_recompose()
+        # task-31633 AC#3: the disclosure owns its own focus target -- PR F's
+        # restore seam otherwise leaves focus wherever it already was (the
+        # Items row that opened the Reader), so More could not be closed
+        # again without hunting for it. The shared seam is what orders that
+        # target against the viewer's own rebuild.
+        self._after_library_media_viewer_sync("#library-media-reader-more")
 
     @on(Button.Pressed, "#library-media-image-preview-toggle")
     def handle_library_media_image_preview_toggle(self, event: Button.Pressed) -> None:
@@ -3901,20 +4007,29 @@ class LibraryMediaController:
             return
         mode = button_id.removeprefix(prefix)
         self._capture_library_media_loaded_progress()
-        if mode == "read":
-            self._library_media_progress_restored_id = None
         self._reset_library_media_search_on_mode_change(mode)
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
         )
-        self._sync_library_media_viewer_or_recompose()
-        if mode == "read":
-            loaded_id = self._library_media_reader_session.loaded_id
-            if loaded_id is not None:
-                self.call_after_refresh(
-                    self._restore_library_media_loaded_progress, loaded_id
-                )
+        # The one follow-up here is not a focus move -- the stored reading
+        # position is restored against the rebuilt body, and reading it from
+        # the OLD children (or after they are detached) is the same race.
+        loaded_id = self._library_media_reader_session.loaded_id
+        if mode == "read" and loaded_id is not None:
+            # task-31954: ONE owner. This used to re-arm the sync tail's
+            # arm-once guard (``_library_media_progress_restored_id = None``)
+            # as well, so a single Analysis -> Read press restored twice --
+            # harmless only while the restore stays an idempotent
+            # ``scroll_to``. Claiming the id here instead keeps the tail
+            # quiet for this sync and leaves it owning the LOAD path, where
+            # the id genuinely changes.
+            self._library_media_progress_restored_id = loaded_id
+            self._after_library_media_viewer_sync(
+                partial(self._restore_library_media_loaded_progress, loaded_id)
+            )
+        else:
+            self._sync_library_media_viewer_or_recompose()
 
     def _consume_library_media_find_focus(self) -> bool:
         """Return and clear the one-shot Find-gesture focus token (task-31269)."""
@@ -3973,11 +4088,14 @@ class LibraryMediaController:
         Three choke points reach here, covering every media recompose: the
         ``kind == "media"`` branch of ``_sync_library_canvas`` and
         ``_sync_library_media_viewer_state`` (both canvas-scoped, via
-        ``queue_after_recompose``), and ``LibraryScreen.refresh`` for any
-        WHOLE-screen ``refresh(recompose=True)``. The last was added in the
-        Qodo round: background workers and ``_sync_library_canvas``'s own
-        failure fallback both take that bare path -- the fallback after
-        CLEARING the follow-up it had queued -- and left focus at ``None``.
+        ``queue_after_recompose``), and -- for any WHOLE-screen
+        ``refresh(recompose=True)`` -- ``restore_focus_after_recompose``,
+        the shared ``BaseAppScreen`` seam this screen overrides (task-31946
+        moved that hop off ``LibraryScreen.refresh`` itself). The last was
+        added in the Qodo round: background workers and
+        ``_sync_library_canvas``'s own failure fallback both take that bare
+        path -- the fallback after CLEARING the follow-up it had queued --
+        and left focus at ``None``.
 
         Args:
             previous: Identity captured by
@@ -4067,9 +4185,7 @@ class LibraryMediaController:
         # a recompose actually happens). The whole-screen fallback needs
         # nothing here -- ``LibraryScreen.refresh`` captures and restores
         # around every screen recompose (Qodo round).
-        viewer = self._mounted_library_media_viewer()
-        if viewer is None or not self._sync_library_media_viewer_state(viewer):
-            self.refresh(recompose=True)
+        self._sync_library_media_surfaces_or_recompose()
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""

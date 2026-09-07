@@ -263,6 +263,86 @@ every interleaved run.
 
 ---
 
+## `super().on_unmount()` under MRO dispatch runs the base body TWICE — the teardown-side twin of the `on_mount` trap (TASK-31418, 2026-09-05)
+
+Same mechanism as fact #1 in the `display = False` lesson above, on the
+teardown side. `MessagePump._get_dispatch_methods` walks `self.__class__.__mro__`
+and calls EVERY distinct implementation of a lifecycle handler for one event.
+So a subclass that both overrides `on_unmount` AND calls `super().on_unmount()`
+runs the base body twice — once from its explicit call, once from Textual's
+own walk.
+
+Probed on the installed Textual 8.2.8 with a two-level `Screen` subclass whose
+base and child each append their name: one Unmount event yielded
+`['child', 'base', 'base']` — the base fired twice. The identical double-fire
+reproduced for `on_mount` and `on_screen_resume`; all three MRO-dispatched
+lifecycle handlers are affected.
+
+Harmless while `BaseAppScreen.on_unmount` only logs, but the next
+non-idempotent teardown added to a base handler (a close, a release, a
+decrement, a dispatch) becomes a double-teardown bug in every subclass still
+carrying `super().on_unmount()`, and the symptom surfaces far from the line
+that caused it — which is why this was fixed while the base body was still
+idempotent rather than after a real corruption.
+
+**Convention (this repo): a subclass handler for a lifecycle event Textual
+dispatches by MRO does NOT call `super().on_*()`** — the dispatcher already
+runs the base. Every `BaseAppScreen` / `SafeModalDismissMixin` subclass follows
+this for `on_mount` / `on_unmount` / `on_screen_resume`, and each site carries a
+`# No super().on_*(): the dispatcher already invokes <Base>.on_* separately`
+comment naming the base whose handler would otherwise double-fire.
+
+**Is there ever a safe `super().on_*()`? Not to a normally-defined base
+handler.** A base `on_mount`/`on_unmount` defined in its own class `__dict__` is
+separately MRO-dispatched, so an explicit `super()` call ALWAYS runs it a second
+time — there is no "shadowing." The legitimate way to keep a base body that runs
+once *and* is invoked explicitly is the `BaseWizard.on_mount` pattern: end the
+base handler by calling a PLAIN method (`_post_mount_hook()`), and let subclasses
+override *that* plain method instead of `on_mount` — a non-dispatched method runs
+exactly once. So the convention reduces to: a subclass never calls `super().on_*()`
+for a dispatched handler; a base that needs an explicit call exposes a plain,
+non-`on_*` method for it (as `BaseWizard` does).
+
+**The mount side carried the same latent bug (TASK-31822, 2026-09-06,
+converted).** All 19 live `super().on_mount()` calls found repo-wide —
+including the two Console modals and `change_review_screen.py`'s
+`ChangeGitCommitModal`/`ChangeGitPushModal`, whose docstring misdescribed the
+mechanism as "ordinary attribute lookup … so defining one here SHADOWS the
+mixin's" (it does not — Textual walks the MRO and dispatches both, so that
+`super().on_mount()` double-fired `SafeModalDismissMixin.on_mount`) —
+classified as redundant: every one resolved to a base (`SafeModalDismissMixin`
+in 18 sites, `LibraryAdaptiveReaderShell` in 1) whose `on_mount` is defined in
+its own class `__dict__` and therefore already separately MRO-dispatched.
+Zero sites needed the plain-method escape hatch; `BaseWizard._post_mount_hook`
+remains the only genuine run-once-and-callable case in the repo. One site
+(`PersonalContextReviewModal.on_mount`) had no body besides the `super()`
+call, so the override was deleted outright rather than left as a dead
+pass-through. The two misleading `change_review_screen.py` docstrings were
+corrected to describe the MRO walk instead of "shadowing."
+
+One extra check the mount side needed that the unmount side did not:
+Textual's `_get_dispatch_methods` walks `self.__class__.__mro__` — most
+derived class first — so a subclass's own `on_mount` is dispatched *before*
+its base's separately-dispatched `on_mount`. That means removing a leading
+`super().on_mount()` does not just drop a redundant call, it also **reorders**
+the base's body to run strictly after the whole subclass method returns
+(rather than inline, before the subclass's later statements). This is safe
+only if nothing later in the subclass method reads state the base's `on_mount`
+sets. Audited every site for reads of `SafeModalDismissMixin`'s
+`_safe_cancel_pending` / `_safe_opener_focus_ref` / `_safe_opener_focus_id` /
+`_safe_mount_generation` / `_safe_backdrop_event_in_attempt` (none found) and
+the `LibraryAdaptiveReaderShell` site (base does layout sync + a deferred
+`post_message`, subclass queries a static DOM id — no overlap either) before
+converting.
+
+Guarded by `Tests/UI/test_on_unmount_mro_convention.py` (unmount) and its
+sibling `Tests/UI/test_on_mount_mro_convention.py` (mount, TASK-31822): each
+pairs a runtime count test pinning the base handler firing exactly once under
+the no-super convention with an AST scan that fails if any screen/modal/widget
+re-introduces a `super().on_*()` call to a dispatched handler.
+
+---
+
 ## A cached widget reference cannot be validated by `is_mounted` — it lags detachment, and `_pruning` marks the corpse first
 
 **TASK-23025, 2026-08-28.** To get Library resize frames and focus changes off
@@ -586,3 +666,15 @@ budget's history is three cycles of silent regrowth."*
 before opening a PR that adds CSS, and attribute any growth to the segment that caused it —
 the failure message names segments and sources precisely so that attribution is not
 guesswork.
+
+## A UI-thread owner method must never take the owner's stop lock (TASK-31826)
+
+`MeetingSessionOwner._stop_lock` is held across `session.stop()`, which blocks on
+`call_from_thread` (the ingest submit runs on the UI thread). A controller ruling had the
+learning-offer release path take `_stop_lock` "so nothing closes a worker under a batch pass";
+the re-reviewer's probe deadlocked the app: a "Not now" press on the UI thread waited for the
+lock while the stop worker waited for the UI thread. The phase-1 final review found the same
+shape (C2, the session RLock across the ingest submit). Rule: any owner method a screen may call
+on the UI thread takes only a short pointer-swap lock and runs `close()` outside every lock; the
+structural guarantee ("the retained slot is written only after `session.stop()` returned") is
+what prevents the mid-batch close, not a lock.

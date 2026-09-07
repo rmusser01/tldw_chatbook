@@ -147,7 +147,15 @@ def _patch_library_disabled_marker_label(button: Button) -> None:
     base = getattr(button, "_library_disabled_marker_base", None)
     if base is None:
         return
-    button.label = library_disabled_action_label(base, button.disabled)
+    # task-31635 (critique #5 item 4): a button that opted into
+    # marker-width alignment at compose time keeps it here -- this patcher
+    # IS the path the first selection takes, so rebuilding the plain label
+    # is exactly where the two-cell jump came back.
+    button.label = library_disabled_action_label(
+        base,
+        button.disabled,
+        align=getattr(button, "_library_disabled_marker_align", False),
+    )
 
 
 def _apply_library_row_toggle(

@@ -228,6 +228,15 @@ _BUDGETS: dict[str, int] = {
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
+    # DELIBERATELY NOT RAISED, fourth consecutive Library wave. This row is
+    # RED on `origin/dev` itself and has been since before the wave-6
+    # merge-base: the file is dev's, the creep is dev's, and no Library
+    # extraction has ever touched it. Measured at each merge: 410 (wave-6),
+    # 649 (wave-7's own `origin/dev` reconciliation, 2026-09-07) against a
+    # pin of 371 -- dev's creep has now MORE than tripled the overshoot.
+    # Raising it from a passing branch would launder dev-side debt behind a
+    # Library merge, which this file's own guidance forbids; it needs an
+    # owner on dev. Recorded in recipe §7's documented-pre-existing list.
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -267,7 +276,33 @@ _BUDGETS: dict[str, int] = {
     # the fourth and is already excluded under class 2, which is exactly how
     # a census that stops at newly-excluded methods undercounts the shape.
     # 4461 -> 4496.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4496,
+    #
+    # 2026-09-07, wave-7 final review: `origin/dev` reconciliation merge (306
+    # commits, merge-base 761416317). Re-measured on the MERGED tree with this
+    # file's own `_measure`: 4496 -> 4612 (+116), itemised so the number is
+    # not an estimate:
+    #   +63  the ELEVEN mover bodies dev edited on its side of the range. The
+    #        screen keeps its delegator and dev's edit follows the body here
+    #        (the wave-5 precedent). Each port is AST- AND text-IDENTICAL to
+    #        dev's own `LibraryScreen` version, which is possible only because
+    #        all 11 controller bodies were still byte-identical to the
+    #        merge-base screen bodies (verified before porting) and because
+    #        the shims below expose the same names.
+    #   +8   eight new group-(e) keyword-only parameters,
+    #   +8   their constructor assignments,
+    #   +37  their late-binding properties plus the block's new comment.
+    #        The eight are dev's NEW screen methods that the ported bodies
+    #        call (`_after_library_media_viewer_sync`,
+    #        `_decorate_library_media_reviewed`,
+    #        `_library_media_can_rename_speakers`,
+    #        `_library_media_list_unselectable`,
+    #        `_library_media_selected_backing_id`,
+    #        `_library_media_trash_action_disabled_reason`,
+    #        `_queue_after_library_media_viewer_recompose`,
+    #        `_sync_library_media_surfaces_or_recompose`). They stay
+    #        screen-resident; keyword-only arity 83 -> 91.
+    # No other body was touched: the 140 movers are otherwise unchanged.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4612,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -419,6 +454,21 @@ _BUDGETS: dict[str, int] = {
 #: controller shrinks (a cleanup PR that forgot to lower its row), not to
 #: pin every file to its exact byte count at all times.
 _SLACK_TOLERANCE_LINES = 50
+
+# TASK-31244: initial exact pin for the focused navigation helper. Existing
+# controller ceilings remain unchanged; route hooks stay outside LibraryScreen.
+#
+# 2026-09-07, wave-7 final review: `origin/dev` reconciliation merge. Dev
+# landed this file at 811; the +6 is this merge's own port and nothing else.
+# Dev moved `_apply_navigation_context_state`'s whole body out of
+# `LibraryScreen` and into this module, carrying two writes to the flat
+# `_selected_media_id` / `_library_media_view` attributes the media cleanup
+# PR deleted. Left alone those were SILENT stray attributes -- writes, not
+# reads -- so every "open in Library" media deep link would have painted the
+# wrong surface with no exception anywhere. Retargeted to
+# `_media_state.selected_media_id` / `.view` with a six-line comment naming
+# the retarget (the two lines themselves are replaced in place). 811 -> 817.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 817
 
 
 @lru_cache(maxsize=None)

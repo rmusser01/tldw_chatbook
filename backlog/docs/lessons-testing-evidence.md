@@ -155,6 +155,19 @@ A per-trajectory-marker close was removed because it split the real worker
 lifetime and added unnecessary checkpoint work. Broader older fixtures still
 retain handles, so this scoped result is not a claim of repository-wide cleanup.
 
+**TASK-31245, Library inspection qualification, 2026-09-07.** Closing the
+inspection fixture's SQLite registry, collections and evaluation owners removed
+the warning but still left seven regular descriptors per mounted case. A full
+post-teardown `fstat` census plus basename-only Darwin `F_GETPATH` and successful
+`lsof` identified the never-run app's workspace/subscriptions SQLite handles and
+profile lock. Capturing those exact constructor owners and disposing them only
+after harness/worker completion made the 103-case affected gate plateau at seven
+regular descriptors (logs/capture files), without changing production pooling or
+GC. An empty filtered basename report had initially missed those resource names.
+Measure all resource types after teardown, record diagnostic exit/stderr, and
+distinguish fixture lifetime from ordinary production reads; falling below the
+warning threshold is not evidence of a plateau.
+
 ## Capture queued UI ownership in the row, not only in the event
 
 **PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
@@ -11597,6 +11610,50 @@ both resolved to white. Switching this local host to the existing
 the combined targeted gate then passed635. No production styling changed. Extending
 the shared authority does not repair local hosts that continue to bypass it.
 
+## A "settled geometry" assertion bounded by WALL CLOCK is load-sensitive — run the base arm N times before blaming a diff (TASK-31663, 2026-09-05)
+
+The covering batch for TASK-31663 failed intermittently on the branch —
+twice, on two *different* tests — while the first two runs of the same batch
+at the base commit were clean. Two clean base runs against two dirty branch
+runs reads like a regression, and it was treated as one.
+
+It was not. `Tests/UI/test_console_right_rail.py::_wait_for_right_rail_condition`
+polls a predicate against a **wall-clock** deadline (`timeout: float = 5.0`),
+and the caller then spends one more `await pilot.pause()` before re-asserting
+the same predicate. The failing tuple is the tell: every geometry value was
+correct (`desired_content_lines=15`, `viewport=15`, `hint=False`) and the only
+false term was `rail._outer_reconcile_scheduled` — one extra pause re-arming
+the reconcile, not wrong geometry. On a busy machine the 5 s budget and the
+extra pause land differently run to run.
+
+Final tally, same 4-file batch, same machine: **branch 4 failures in 6 runs;
+base 1 failure in 5** — the base failure being the identical test and
+parametrisation. One base run would have "proved" a regression that does not
+exist; three would still have missed it (it appeared on the third).
+
+Two branch-local mechanisms were formed and both disproven before the control
+settled it, and disproving them is what kept the search honest:
+
+- *"The new density hook flips on transient layout heights."* A spy on every
+  call showed it fires twice while opening the rail — `rail_rows=0` (early
+  return) then the settled height — and **never flips** at the sizes involved.
+- *"The new `outline-left` descendant rule invalidates layout on N widgets."*
+  The cost is real (`outline-left` is a `BoxProperty` whose setter calls
+  `refresh(layout=True)`, and `Stylesheet.replace_rules` assigns through those
+  descriptors), but the failing test never focuses the widget the rule is
+  scoped to — and **removing the rule entirely did not stop the failure**.
+
+Rules this pays for:
+
+- For an intermittent failure, the base arm needs **as many runs as the branch
+  arm**, not one. A single clean control is not a control.
+- A predicate that is re-asserted after an extra `pause()` is asserting
+  "settled AND stays settled", which no wall-clock wait can guarantee. Prefer
+  asserting the settled predicate once, at the point the wait returns.
+- Disproving your own suspect is progress. Both mechanisms above were cheap to
+  test directly (a spy; a rule deletion) and both were wrong — which is what
+  stopped a needed focus carrier from being deleted to "fix" an unrelated flake.
+
 ## A `-k` name filter is not a gate for a behaviour change that flips an existing pin (media wave 5 PR E, 2026-09-05)
 
 **The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
@@ -11785,6 +11842,15 @@ of all subsequent pytest execution while the worker was limited to static edits.
 When a procedural warning demonstrably fails, narrow the execution workflow
 instead of repeating the warning and treating intent as isolation evidence.
 
+Follow-up incident (TASK-31245 activation review, 2026-09-07): a coordinator-only
+stdin diagnostic imported `Chat.__init__` → server/runtime-policy bootstrap →
+config before establishing a disposable profile. Logs showed ambient config
+loading and chat_dicts ensure; no prior metadata established whether directory
+creation or permission hardening occurred. No real-profile inspection/undo was
+attempted. The regression belongs in repository pytest's pre-import disposable
+bootstrap (with compatible qualification dependencies), not a raw import probe;
+an apparently pure coordinator module does not bypass its package initializer.
+
 ## Parameter IDs can accidentally activate keyword-based test gates
 
 Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium
@@ -11854,3 +11920,132 @@ guard on a modal must measure from first paint, not from mount: under load
 those diverge by seconds. Note also that the wizard's bottom hint line stays
 visible while the dialog is up, so grepping the footer proves nothing about
 whether a dialog opened.
+
+### TASK-31244: navigation completion is not completion of every app worker
+
+During the Character Context fix-round return tests, all Back, focus-paint and
+preference assertions passed, but a blanket `app.workers.wait_for_complete()`
+made all three cases fail with `WorkerCancelled`: normal navigation had
+cancelled unrelated visit-scoped workers. The covering run recorded 231 passes
+and those three fixture failures. Waiting instead for the destination's bounded
+loading/layout completion produced 19 passing ownership/return regressions.
+Do not make successful completion of every app worker a navigation assertion;
+observe the destination's completion state. Preserve genuine late-publish
+stacks separately: this incident also found and fixed an owned Character
+presentation callback running after its screen stack had been removed.
+
+### PR G (task-31632): a shallower widget's presence does not mean the deeper ones remounted -- and the rerun set is the census, not the files you edited
+
+PR G moved the Media Retry from the pager strip into a failure callout that
+composes BEFORE the row scroll. Three tests waited for "Retry is present" and
+then immediately asserted the retained row count; after the move the wait was
+satisfied mid-recompose (callout mounted, rows not yet) and
+`test_library_media_side_by_side.py::test_compact_media_stale_and_retry_actions_remain_truthful`
+went red WHOLE-FILE on dev while passing alone (`assert 0 == 20`; a probe
+showed the canvas state holding 20 rows and the row scroll holding 0 children).
+G's own fix-round had caught and commented exactly this race at one site in
+`test_library_shell.py` -- and fixed only that site. It shipped because G's
+rerun set was the files G edited plus its neighbours; `side_by_side` was not
+in it, and the Fast Lane does not run it either. Bisected on detached
+worktrees: dev parent green, G's merge commit red.
+
+**What to do.** When a widget moves in compose order, grep EVERY test that
+waits on its selector and check what the next assertions read; the wait
+condition must cover the deepest thing they touch (the row count itself, not
+the Retry that used to imply it). And a PR's rerun set is the census of every
+file that references the ids it moves (`grep -l '<id>' Tests/UI/*.py`), run
+whole-file in separate processes -- not the files the diff touched.
+### TASK-31796: a list can render from more than one cache — patch every source
+
+The Library Notes list kept a renamed note's stale "Untitled" title until a
+filter re-query, even though the DB row and the editor were both correct.
+There was already a save-time list patch (`patch_note_records_after_save`
+inside `_patch_library_note_list_from_session`) that looked complete and
+carried a confident "one helper owns the substitution rule" comment — but it
+only patched the FLAT source records (`_local_source_records["notes"]` /
+`_library_notes_filter_records`). The Notes tree actually renders its
+placement rows from a DIFFERENT cache: the paged branch slices
+(`_library_notes_tree_branches`), and while a filter is active from the filter
+window (`_library_notes_tree_filter_state`). The save patch never touched
+those, so the visible row stayed stale; typing in the filter box was the only
+"fix" because that path re-queried the DB and rebuilt the slices from scratch.
+**What to do.** When a save-time patch updates a list "in place", first find
+EVERY cache the visible widget can render from — grep the widget's compose for
+each branch (this one had `if tree_projection is not None: ...` selecting the
+branch cache over the flat list-state) — and patch all of them, or the one you
+missed is exactly the one on screen. A comment claiming a single helper "owns"
+the update is describing intent, not coverage; verify it against the render
+paths. The durable regression test asserts the projected ROW LABEL after the
+patch (build the projection from the patched cache), not just that the flat
+record changed — the flat-record assertion was green the whole time the bug
+shipped.
+
+Verification note for this area: the Library Notes UI-mount suites carry a
+pre-existing red baseline on dev — `Tests/UI/test_library_notes_reader.py`
+(13 red) and `Tests/Widgets/Library/test_library_notes_canvas.py` (2 red),
+15 total, unchanged by this fix. Confirmed by paired arms: an origin/dev
+worktree run produced the identical 15 failures / 59 passes. Run the fast pure
+tree tests (`Tests/Library/test_library_notes_tree_*.py`) and a focused
+non-mounting wiring test instead of trusting these mounting suites' green/red.
+
+## "Base-red" means red at the MERGE-BASE, not at the branch's own earlier head (media wave 5 PR H / task-31633, 2026-09-06)
+
+PR H's Task 2 implementer compared its whole-file runs against a detached copy of
+7f3629949 — the branch head after Tasks 1 and 3 — and labelled three failures
+"known base-red … fails identically on the base". The final whole-branch reviewer
+re-ran them against the true merge-base (a9e13f4e3) with a control resolver:
+`test_library_media_reader_state.py:196` (56 vs 40 — Task 1's growth) and two
+`test_library_media_return_settlement.py` tests (a hard-coded `(0, 42)` scroll offset
+— Task 2's two-rows-per-item change) were green there and red on the branch. Task 1
+had never run those two files at all. Two task reviews approved the reports because
+the name-set tables looked complete; only the reviewer who chose a different base
+caught it.
+
+**What to do.** The comparison base for a task's evidence is the branch's merge-base
+with dev (`git merge-base origin/dev HEAD`), detached into its own worktree — never an
+earlier head of the same branch, which already contains the earlier tasks' behaviour.
+A controller dispatching Task N must hand the implementer the merge-base SHA
+explicitly, and the task reviewer should check which SHA the "base" column was
+measured against before trusting a "fails identically" claim. (This is the companion
+to the PR G lesson above: the rerun set is the census of files that assert on the
+change — this one is about the commit you compare that census against.)
+
+## A "both sides kept" conflict resolution can drop a line git factored out as shared context (media wave 5 PR I dev merge, 2026-09-06)
+
+Merging dev into PR I conflicted only in `test_library_media_render_fixes.py`, where
+both branches had appended tests. A mechanical both-keep (HEAD block, then the incoming
+block) produced a file that did not parse: git had factored the identical trailing
+`        )` of both blocks' last calls into the SHARED suffix, so the first block's call
+lost its closer; likewise the identical leading `@pytest.mark.asyncio` was factored into
+the shared prefix, so the second block's first test lost its decorator and would have run
+unmarked. The merge was committed before the parse check ran (a `;` instead of `&&` in
+the command chain) and had to be amended.
+
+**What to do.** Both-keep is fine for appended blocks, but the shared context around a
+hunk belongs to ONE side, not both: after resolving, run
+`python -c "import ast; ast.parse(open(f).read())"`, `pytest <file> --collect-only -q`,
+and an `awk` census of `async def test_` lines whose previous line is not a
+marker/parametrize — and gate the commit on all three with `&&`, never `;`.
+
+### TASK-31826: every Meetings UI pilot ran at 160x45 -- seven new rail rows shipped clipped out of the compositor
+
+Task 5 of the voiceprint program added seven rows to the Meetings rail (a plain `Vertical`) and its
+tests all passed: every pilot in `Tests/UI/test_meetings_screen.py` used `size=(160, 45)`. The
+task reviewer re-ran the screen at 100x30 and 80x24 and found the learning-offer buttons and the
+whole Voice row outside the compositor -- the offer was unanswerable on a normal laptop terminal.
+Rule: a change that adds rows to a rail gets a pilot at 100x30 and 80x24 that asserts the new
+widgets' `region` is non-zero after `scroll_end()` (a `VerticalScroll` rail) and that the primary
+control stays reachable.
+
+Second half of the same incident: the reviewer's "regression" baseline was measured in a harness
+WITHOUT the app stylesheet (see lessons-textual.md, "A geometry or `.display` test without
+`CSS_PATH = BUNDLED_STYLESHEET` measures nothing"): with the bundle loaded the parent commit
+already had Start below the fold at <=120x32. Measure layout baselines with the real bundle, on
+both commits, before calling something a regression.
+
+### TASK-31826: a controller-applied fix runs preflight like any implementer's commit
+
+The SDD controller applied a three-line round-2 fix by hand (a `logger.debug` in `on_unmount`)
+and committed without `./scripts/preflight.sh`; the next task's implementer hit the diagnostic
+inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
+`logger.*` change -> read the rows, `--write`") binds the controller too.

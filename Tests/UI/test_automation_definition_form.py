@@ -85,7 +85,13 @@ def _future_run_at() -> str:
 
 
 async def _fill_minimal_valid_form(screen) -> None:
-    """Name + question + a valid future one-time run-at -- nothing else."""
+    """Name + question + a valid future one-time run-at -- nothing else.
+
+    31712 AC#2 flipped create mode's default Schedule Kind to Recurring,
+    so a helper that means "one-time schedule" now sets that explicitly
+    rather than relying on the form's own default.
+    """
+    screen.query_one("#automation-schedule-kind", Select).value = "one_time"
     screen.query_one("#automation-name", Input).value = "Daily standup digest"
     screen.query_one("#automation-question", TextArea).text = "What shipped today?"
     screen.query_one("#automation-run-at", Input).value = _future_run_at()
@@ -117,10 +123,12 @@ async def test_form_renders_expected_fields(local_service):
         ):
             assert screen.query_one(selector) is not None, selector
 
-        # Default schedule kind is one-time -- the run-at group is visible,
-        # the recurring cron group is not.
-        assert screen.query_one("#automation-run-at-group").display
-        assert not screen.query_one("#automation-cron-group").display
+        # 31712 AC#2: create mode defaults Schedule Kind to Recurring (the
+        # form's whole purpose) -- the cron group is visible, the one-time
+        # run-at group is not.
+        assert screen.query_one("#automation-schedule-kind", Select).value == "recurring"
+        assert not screen.query_one("#automation-run-at-group").display
+        assert screen.query_one("#automation-cron-group").display
 
 
 @pytest.mark.asyncio
@@ -247,6 +255,11 @@ async def test_blank_run_at_blocks_preview_without_calling_the_service(local_ser
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
         screen = app.screen
+        # 31712 AC#2 flipped the create-mode default to Recurring (whose
+        # cron fields are pre-populated and therefore always valid) --
+        # switch to One Time explicitly so a blank run-at is the thing
+        # under test.
+        screen.query_one("#automation-schedule-kind", Select).value = "one_time"
         screen.query_one("#automation-name", Input).value = "No run at"
         screen.query_one("#automation-question", TextArea).text = "Question?"
         await pilot.pause()

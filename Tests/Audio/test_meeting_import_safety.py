@@ -80,17 +80,77 @@ def test_app_import_survives_a_missing_numpy():
 
 def test_meeting_owner_imports_without_numpy_and_leaves_the_mixer_unloaded():
     """The owner module itself must import numpy-free, and must not have
-    pulled `meeting_capture` (the numpy-dependent mixer) along with it."""
+    pulled `meeting_capture` (the numpy-dependent mixer) or `Audio.voiceprint`
+    (TASK-31826, spec §3.1/§7) along with it. `meeting_owner.py` only ever
+    reaches `.voiceprint` from inside `_voiceprint_store()` (called from
+    `enroll_from_mic`/`accept_learning`/`_load_voiceprint`, all lazy) --
+    never at module scope -- because that module pulls the keyring backend,
+    and boot must not."""
     script = _BLOCK_NUMPY + textwrap.dedent("""
         import sys
         import tldw_chatbook.Audio.meeting_owner  # noqa: F401
 
-        pulled = "tldw_chatbook.Audio.meeting_capture" in sys.modules
-        print(f"RESULT: OWNER IMPORTED, capture_pulled={pulled}")
+        capture_pulled = "tldw_chatbook.Audio.meeting_capture" in sys.modules
+        voiceprint_pulled = "tldw_chatbook.Audio.voiceprint" in sys.modules
+        print(f"RESULT: OWNER IMPORTED, capture_pulled={capture_pulled}, voiceprint_pulled={voiceprint_pulled}")
     """)
     result = _run_probe(script)
-    assert "RESULT: OWNER IMPORTED, capture_pulled=False" in result.stdout, (
-        f"meeting_owner did not import cleanly without numpy "
+    assert "RESULT: OWNER IMPORTED, capture_pulled=False, voiceprint_pulled=False" in result.stdout, (
+        f"meeting_owner did not import cleanly without numpy, or pulled in "
+        f"the mixer/voiceprint module at boot (exit={result.returncode}):\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+
+
+def test_meetings_screen_imports_pull_in_no_voiceprint_module():
+    """The Meetings screen module itself must not import `Audio.voiceprint`
+    at module scope (TASK-31826): the screen only reaches it from inside
+    `_build_store()`, called off the UI thread by the prepare worker, never
+    while the module is being imported. Run in a fresh subprocess (import
+    order across the suite would otherwise make this meaningless) with
+    numpy blocked too, matching the probes above -- the screen module chain
+    reaches `meeting_owner`, which must survive the same way."""
+    script = _BLOCK_NUMPY + textwrap.dedent("""
+        import sys
+        import tldw_chatbook.UI.Screens.meetings_screen  # noqa: F401
+
+        pulled = "tldw_chatbook.Audio.voiceprint" in sys.modules
+        print(f"RESULT: SCREEN IMPORTED, voiceprint_pulled={pulled}")
+    """)
+    result = _run_probe(script)
+    assert "RESULT: SCREEN IMPORTED, voiceprint_pulled=False" in result.stdout, (
+        f"importing meetings_screen pulled in Audio.voiceprint at module "
+        f"scope (exit={result.returncode}):\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+
+
+def test_app_import_pulls_in_no_diarizer_module():
+    """Boot must never import the diarizer backends, or torch (spec §3.4,
+    §7): `build_diarizer()` (`meeting_owner.py`) imports `SpeechBrainDiarizer`
+    from `diarizer_local` LAZILY, only when a meeting actually starts with
+    `live_diarization` on, and `diarizer_local` itself only spawns
+    `diarizer_worker.py` as a SEPARATE subprocess (never imports it) --
+    `torch`/`speechbrain` therefore only ever load in that child process, not
+    in the TUI. Run with numpy blocked too, matching the two probes above:
+    app import must survive with neither numpy nor the diarizer/torch stack
+    present.
+    """
+    script = _BLOCK_NUMPY + textwrap.dedent("""
+        import sys
+        import tldw_chatbook.app  # noqa: F401
+
+        watched = (
+            "tldw_chatbook.Audio.diarizer_local",
+            "tldw_chatbook.Audio.diarizer_worker",
+            "torch",
+        )
+        pulled = sorted(name for name in watched if name in sys.modules)
+        print(f"RESULT: PULLED={pulled}")
+    """)
+    result = _run_probe(script)
+    assert "RESULT: PULLED=[]" in result.stdout, (
+        f"app import pulled in a diarizer module or torch at boot "
         f"(exit={result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )

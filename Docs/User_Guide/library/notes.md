@@ -77,7 +77,12 @@ editor's own Back control returns to its list.
   "Filter notes… (Enter)" field, a toolbar (sort / Add from files… /
   Export… / Select), and one row per note showing its title and age. Its own
   grip collapses or restores the list without changing the Folder Files tree
-  choice.
+  choice. Renaming a note updates its list row as soon as the note saves —
+  returning to the list shows the new title with no filter re-query needed.
+
+  *Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31796: the
+  list row no longer keeps the pre-rename "Untitled" title until a filter
+  re-query).*
 - **Note work area** — opens when you click a note. **Edit** shows the title
   and body, **Preview** renders the Markdown, and **Info** holds keywords,
   dates, version details, copy/export actions, and Delete. Save status and

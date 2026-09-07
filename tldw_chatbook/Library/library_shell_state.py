@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.cells import cell_len
+
 # task-4023 AC#7: no "on the left" -- at ≤100 columns the shell shows one
 # pane at a time (the rail fills the width and this canvas is hidden), so
 # spatial copy was width-dependent nonsense. The copy now holds at every
@@ -106,17 +108,37 @@ LIBRARY_DISABLED_ACTION_MARKER = "○"
 LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
 
 
-def library_disabled_action_label(label: str, disabled: bool) -> str:
+#: Blank stand-in for the marker prefix, exactly as wide as it renders
+#: (task-31635, critique #5 item 4). The marker is part of the LABEL, so an
+#: action whose disabled state flips moved two cells under the cursor that
+#: had just flipped it -- measured on the select-mode bulk row, where
+#: crossing 0 -> 1 selected shifted "Delete" left as it became pressable.
+#: Derived from the marker rather than hard-coded so the two can never
+#: drift out of alignment.
+LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
+
+
+def library_disabled_action_label(
+    label: str, disabled: bool, *, align: bool = False
+) -> str:
     """Prefix ``label`` with the non-colour disabled marker when disabled.
 
     Args:
         label: The action's plain enabled label.
         disabled: Whether the control renders disabled.
+        align: Whether the ENABLED label reserves the marker's own width, so
+            the word holds its column across a disabled flip. Off by default:
+            most Library actions never flip in place, and an unconditional
+            two-cell indent would cost every one of them two cells of a pane
+            whose floor is 36.
 
     Returns:
-        ``"○ <label>"`` while disabled, ``label`` unchanged otherwise.
+        ``"○ <label>"`` while disabled; ``label`` unchanged otherwise, or
+        blank-padded to the same width when ``align``.
     """
-    return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}" if disabled else label
+    if disabled:
+        return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}"
+    return f"{LIBRARY_ACTION_LABEL_PAD}{label}" if align else label
 
 
 # task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row

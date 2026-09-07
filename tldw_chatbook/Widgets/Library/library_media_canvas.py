@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from rich.markup import escape as escape_markup
-from textual import events
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -15,6 +16,20 @@ from textual.message import Message
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.Audio.meeting_session import normalize_speaker_name
+# Re-exported (TASK-31745 moved these out of this module unchanged) so every
+# existing importer -- and this canvas's own hidden legend -- keeps working.
+from tldw_chatbook.Library.meeting_speaker_rename import (  # noqa: F401
+    RENAME_REFUSED_EMPTY_TRANSCRIPT,
+    RENAME_REFUSED_NOT_MEETING_CONTENT,
+    SpeakerRenameResult,
+    _meeting_speaker_legend_rows,
+    _read_meeting_transcript_segments,
+    _render_meeting_transcript,
+    _write_meeting_transcript_row,
+    can_rename_meeting_speakers,
+    rename_meeting_speaker,
+)
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_media_state import (
     LibraryMediaCanvasState,
@@ -34,9 +49,15 @@ from tldw_chatbook.Library.library_shell_state import (
     library_choice_tooltip,
     library_disabled_action_label,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+)
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -115,6 +136,30 @@ def _capped_choice_value(value: str, cap: int = 8) -> str:
     return value if len(value) <= cap else value[: cap - 1] + "…"
 
 
+def _media_row_marker(
+    *,
+    select_mode: bool,
+    checked: bool,
+    reviewed: bool | None,
+    selected: bool,
+    compact: bool,
+) -> str:
+    """Return the row's ONE leading state cell.
+
+    task-28009 (controller ruling 4): a row never carries two slots. Select
+    mode owns the cell (☑/☐); otherwise an active review set owns it (``✓``
+    reviewed, ``·`` not yet), and only a row outside any active set falls
+    through to the wide-mode current-row cue (``▸``). The row that is open
+    in the Reader keeps its ``library-media-row-selected`` class either way,
+    so nothing about the selection becomes invisible when a set is active.
+    """
+    if select_mode:
+        return "☑" if checked else "☐"
+    if reviewed is not None:
+        return "✓" if reviewed else "·"
+    return "▸" if selected and not compact else " "
+
+
 def _media_row_label_rest(
     title: str,
     secondary: str,
@@ -182,6 +227,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         width: 100%;
         height: auto;
     }
+    /* Task 8: same trap as #library-media-filter above -- Input defaults to
+     * width 100%, which inside a row Horizontal would blow the label off
+     * to the side. */
+    .library-media-speaker-row {
+        width: 100%;
+        height: auto;
+    }
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
+    Static.library-media-speaker-label {
+        width: auto;
+        min-width: 0;
+    }
+    Input.library-media-speaker-input {
+        width: 1fr;
+    }
     """
 
     def __init__(
@@ -193,8 +254,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
         analysis_action_reason: str = "",
+        load_failure: DestinationRecoveryState | None = None,
+        list_unselectable: bool = False,
         compact: bool = False,
         show_preview: bool = True,
+        can_rename_speakers: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -206,8 +272,27 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
         self.analysis_action_reason = analysis_action_reason
+        self.load_failure = load_failure
+        # task-31635 fix round 1: the screen's OWN "the load failed leaving
+        # nothing to select" predicate (`_library_media_list_unselectable`),
+        # not re-derived here -- a page failure that retained rows and a
+        # facet-only failure both keep `load_failure` set over rows that
+        # export fine.
+        self.list_unselectable = list_unselectable
         self.compact = compact
         self.show_preview = show_preview
+        # Task 8 (meeting diarization spec): True only when the selected
+        # item's meeting folder still holds a `meeting.json`
+        # (`can_rename_meeting_speakers`, computed by the caller). `media_db`
+        # + `speaker_rename_media_id` are the real `MediaDatabase` and the
+        # selected item's backing id -- needed here (breaking this canvas's
+        # otherwise pure-state design on purpose) so the legend below can
+        # read the meeting folder and actually call `rename_meeting_speaker`
+        # rather than just showing an inert control. Absent, not merely
+        # disabled, when False/None -- there is nothing to rename.
+        self.can_rename_speakers = can_rename_speakers
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -234,8 +319,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
         analysis_action_reason: str = "",
+        load_failure: DestinationRecoveryState | None = None,
+        list_unselectable: bool = False,
         compact: bool = False,
         show_preview: bool = True,
+        can_rename_speakers: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -253,9 +343,95 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
         self.analysis_action_reason = analysis_action_reason
+        self.load_failure = load_failure
+        self.list_unselectable = list_unselectable
         self.compact = compact
         self.show_preview = show_preview
+        self.can_rename_speakers = can_rename_speakers
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         self.refresh(recompose=True)
+
+    # ---- Task 8 (meeting diarization spec): inline speaker rename ---------
+    _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
+
+    @on(Input.Submitted, "#library-media-speaker-legend Input")
+    def _handle_speaker_rename_submitted(self, event: Input.Submitted) -> None:
+        """Rename the submitted row's speaker and refresh the shown transcript.
+
+        Mirrors the live Meetings screen's Task 7 `_apply_rename`: the
+        rename itself is unconditional (a submit racing teardown should
+        still persist), and only the widget refresh afterwards is
+        `is_mounted`-guarded.
+        """
+        event.stop()
+        widget_id = event.input.id or ""
+        if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
+            return
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        name = normalize_speaker_name(event.value)
+        event.input.value = ""
+        if self.media_db is None or self.speaker_rename_media_id is None:
+            return
+        # Qodo Q3: the rename reads the transcript file, runs several DB
+        # writes, FTS maintenance and a post-ingest dispatch -- all of which
+        # would freeze the UI on a large transcript or a busy database.
+        self.run_worker(
+            lambda: self._rename_speaker_off_thread(cluster_id, name),
+            group="library-media-speaker-rename",
+            thread=True,
+            exit_on_error=False,
+        )
+
+    def _rename_speaker_off_thread(self, cluster_id: str, name: str) -> None:
+        """Persist one rename on a worker thread, then refresh on the UI one."""
+        try:
+            outcome = rename_meeting_speaker(
+                self.media_db, self.speaker_rename_media_id, cluster_id, name
+            )
+        except Exception as exc:  # noqa: BLE001 - a rename must not crash the canvas
+            # `rename_meeting_speaker` reads/writes `meeting.json`; a
+            # filesystem failure's `str()` embeds the meeting folder path
+            # (task-9 diagnostic inventory review) -- redact it, mirroring
+            # `meetings_screen.py`'s own rename-persist failure log.
+            logger.warning("Library media speaker rename failed: {}", redact_user_paths(str(exc)))
+            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+        self.app.call_from_thread(self._apply_speaker_rename_outcome, cluster_id, outcome)
+
+    def _apply_speaker_rename_outcome(
+        self, cluster_id: str, outcome: SpeakerRenameResult
+    ) -> None:
+        """Report a refused/failed rename, or repaint after a successful one.
+
+        Qodo Q15: a rename that changed nothing used to leave only a debug
+        log, so the user saw the old name and no explanation.
+        """
+        if not outcome.ok:
+            self.app.notify(f"Couldn't rename this speaker: {outcome.reason}.", severity="warning")
+            return
+        if not self.is_mounted:
+            return
+        self._refresh_after_speaker_rename(cluster_id)
+
+    def _refresh_after_speaker_rename(self, cluster_id: str) -> None:
+        """Re-read the rewritten `Media.content` and patch the preview text
+        plus the just-renamed row's own legend label in place."""
+        row = self.media_db.get_media_by_id(self.speaker_rename_media_id)
+        content = row["content"] if row else ""
+        try:
+            self.query_one("#library-media-preview-lines", Static).update(content)
+        except NoMatches:
+            pass
+        try:
+            speaker_rows = dict(
+                _meeting_speaker_legend_rows(self.media_db, self.speaker_rename_media_id)
+            )
+            label_widget = self.query_one(
+                f"#library-media-speaker-label-{cluster_id}", Static
+            )
+            label_widget.update(speaker_rows.get(cluster_id, cluster_id))
+        except Exception:  # noqa: BLE001 - legend label refresh is best-effort
+            pass
 
     def apply_compact_presentation(self, compact: bool) -> None:
         """Patch mounted Media density and preview participation in place."""
@@ -275,14 +451,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 loaded=button._library_media_loaded,
             )
             button._library_row_label_rest = label_rest
-            if select_mode:
-                marker = "☑" if button._library_media_checked else "☐"
-            else:
-                marker = (
-                    "▸"
-                    if button._library_media_selected and not compact
-                    else " "
-                )
+            marker = _media_row_marker(
+                select_mode=select_mode,
+                checked=button._library_media_checked,
+                reviewed=button._library_media_reviewed,
+                selected=button._library_media_selected,
+                compact=compact,
+            )
             button.label = f"{marker}{label_rest}"
             button.set_class(
                 button._library_media_selected and not compact and not select_mode,
@@ -316,6 +491,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             button._library_media_checked = row.checked
             button._library_media_loading = row.loading
             button._library_media_loaded = row.loaded
+            button._library_media_reviewed = row.reviewed
             label_rest = _media_row_label_rest(
                 row.title,
                 row.secondary,
@@ -324,10 +500,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 loaded=row.loaded,
             )
             button._library_row_label_rest = label_rest
-            if select_mode:
-                marker = "☑" if row.checked else "☐"
-            else:
-                marker = "▸" if row.selected and not self.compact else " "
+            marker = _media_row_marker(
+                select_mode=select_mode,
+                checked=row.checked,
+                reviewed=row.reviewed,
+                selected=row.selected,
+                compact=self.compact,
+            )
             button.label = f"{marker}{label_rest}"
             button.set_class(
                 row.selected and not self.compact and not select_mode,
@@ -398,12 +577,26 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if danger:
             classes += " library-media-action-danger"
         button = Button(
-            library_disabled_action_label(base, bulk_disabled),
+            library_disabled_action_label(base, bulk_disabled, align=True),
             id=widget_id,
             classes=classes,
             compact=True,
         )
         button._library_disabled_marker_base = base
+        # task-31635 (critique #5 item 4): these four flip disabled IN PLACE
+        # (the selection count crossing 0), so they visibly jumped two cells
+        # when the marker left the label. The enabled spelling reserves the
+        # marker's width, and the in-place patcher reads this flag so the
+        # label it rebuilds holds the same column
+        # (``_patch_library_disabled_marker_label``).
+        #
+        # Scope, fix round 1: applied on the MEDIA canvas only. The
+        # Conversations and Notes canvases stash the same marker base on
+        # their own "Export selected" (`library_conversations_canvas.py`,
+        # `library_notes_canvas.py`) and `_apply_library_row_toggle` patches
+        # all three kinds, so those two still shift -- a follow-up, not a
+        # widened diff.
+        button._library_disabled_marker_align = True
         button.disabled = bulk_disabled
         # F-018: a disabled action says why.
         button.tooltip = disabled_tooltip if bulk_disabled else enabled_tooltip
@@ -459,6 +652,50 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             danger=True,
         )
 
+    def _gate_failed_action(self, button: Button, base_label: str) -> Button:
+        """Disable a list-wide action whose list failed with nothing in it.
+
+        task-31635 (critique #5 item 6): with the FIRST load failed,
+        "Export…" -- which exports the whole filtered list -- stayed live
+        and colour-normal beside the recovery callout, while "Select" had
+        already gone to its "○" marker with a reason. Fix round 1: the
+        predicate is failure AND nothing retained (the screen's
+        ``_library_media_list_unselectable``), not the callout's broader
+        one: a later-page failure keeps its rows (that retention is the
+        callout's whole point) and a facet-only failure never touches them,
+        and those rows export fine.
+
+        Applied BEFORE ``_gate_stale_action`` at each call site, so a write
+        in flight or a stale page still wins the tooltip: those are the
+        more immediate blocker, and PR E's precedence is untouched.
+
+        task-31960 (J final review M1) settled the one asymmetry this gate
+        had: "Review these" pins the whole filtered list as an ordered
+        review set -- the same shape of action as "Export…" -- and it alone
+        stayed outside this gate, standing live beside a dimmed Export on a
+        failed first page. It was defensible (its worker re-fetches and
+        notifies on failure), but the asymmetry was unexplained at the
+        surface and symmetry cost one line, so both whole-list actions now
+        gate here. Still deliberately NOT gated: "Trash" (a route into a
+        view with its own fetch, callout and Retry) and the callout's own
+        Retry (``_gate_mutation_action`` only) -- both are how a reader
+        gets out of a failed list.
+
+        Args:
+            button: The list-wide action to gate.
+            base_label: The action's plain enabled label.
+
+        Returns:
+            The same button, gated when the list failed with no rows behind
+            it.
+        """
+        failure = self.load_failure
+        if failure is not None and self.list_unselectable:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = failure.disabled_tooltip
+        return button
+
     def _gate_mutation_action(self, button: Button, base_label: str) -> Button:
         """Disable even recovery controls only while a write is unsettled."""
         if self.mutation_action_reason:
@@ -494,10 +731,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # title row carries ~9 chars in a min-width-40 pane, so both widgets
         # always render at full width. Auto-width Static + fixed compact
         # Button only (task-4023's render-safe grammar: no 1fr sibling).
-        # Hidden in select mode like the other list-level actions; on the
-        # fresh-empty page it is not composed at all -- that page pins
-        # exactly ONE recovery action (and display:none still matches DOM
-        # queries).
+        # Hidden in select mode like the other list-level actions.
+        # task-31635 (critique #5 item 7): it survives the fresh-empty page
+        # too. It used to be composed under the same gate as the page's ONE
+        # recovery action, so filtering to zero rows removed the only route
+        # back to a saved review set exactly when the list had nothing else
+        # to offer -- and Sets is navigation, not a result. It is never
+        # disabled here: the picker opens over any list (it carries its own
+        # empty copy, and "Read later" needs no saved set at all). The
+        # recovery-action budget is unaffected -- that count is about the
+        # empty page's own body, and this lives on the title row.
         title_row = Horizontal(id="library-media-title-row")
         title_row.styles.height = "auto"
         with title_row:
@@ -506,16 +749,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # the whole row, pushing the button out of view (live-verified).
             title_static.styles.width = "auto"
             yield title_static
-            if not fresh_zero:
-                sets_btn = Button(
-                    "Sets",
-                    id="library-media-review-sets",
-                    classes="library-canvas-action",
-                    compact=True,
-                    tooltip="Resume, switch, or dismiss saved review sets.",
-                )
-                sets_btn.display = not select_mode
-                yield sets_btn
+            sets_btn = Button(
+                "Sets",
+                id="library-media-review-sets",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Resume, switch, or dismiss saved review sets.",
+            )
+            sets_btn.display = not select_mode
+            yield sets_btn
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:
@@ -634,15 +876,20 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             compact=True,
         )
         export_btn.display = not select_mode
+        self._gate_failed_action(export_btn, "Export…")
         self._gate_stale_action(export_btn, "Export…")
         # task-4025: the browsable Trash surface's entry point -- a
         # plain navigation action (never a `type:` cycle value: `type:`
         # cycles CONTENT types derived from the records, and trash is a
         # STATE). Always enabled: the trash count isn't known until its
         # view fetches, and an empty Trash shows its honest empty copy
-        # rather than this button lying disabled. Hidden in select mode
-        # like "Export…" -- Select's toolbar is for acting on the
-        # selection, not navigating away from it.
+        # rather than this button lying disabled. task-31635 fix round 1
+        # keeps that even under a failed Media load -- Trash is a route into
+        # a view with its OWN fetch, callout and Retry, so disabling it
+        # would remove the only way to reach deleted items exactly when the
+        # store is unhappy. Hidden in select mode like "Export…" -- Select's
+        # toolbar is for acting on the selection, not navigating away from
+        # it.
         trash_btn = Button(
             "Trash",
             id="library-media-trash-open",
@@ -662,6 +909,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tooltip="Review every item in this list, one by one.",
         )
         review_btn.display = not select_mode
+        # task-31960: "Review these" pins the WHOLE filtered list, exactly
+        # like "Export…" -- so it takes the same failed-list gate, in the
+        # same order (failed first, stale second, so a write in flight or a
+        # stale page still wins the tooltip). Before this it was the one
+        # list-wide action outside that gate and stood live and
+        # colour-normal beside a dimmed Export on a failed first page.
+        self._gate_failed_action(review_btn, "Review these")
         self._gate_stale_action(review_btn, "Review these")
         # Disable only when there's nothing to select AND we're not
         # already in select mode -- in select mode the button is "Done"
@@ -1103,11 +1357,45 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                         yield self._gate_mutation_action(analyze_dismiss, "Dismiss")
 
+        # task-31632 (critique #5 P1): ONE recovery callout for a failed
+        # load -- what failed, why, and the Retry that recovers it, INSIDE
+        # the callout. Measured before this: "Couldn't load page 1." painted
+        # as a bare sentence with no reason at all, and its only Retry sat
+        # 33 rows below in the pager strip (15 rows at 100x30). The
+        # ``.ds-recovery-callout`` grammar is the Library hub's own "Needs
+        # attention" row; ``.is-blocked`` is the repo-wide error tint that
+        # overrides the base warning tint, so a timeout (recoverable by a
+        # later attempt) and a hard failure never paint alike.
+        failure = self.load_failure
+        if failure is not None:
+            # PR M carry I1: the widget is the shared
+            # ``load_failure_callout`` -- the landing hub and the Library
+            # browse row paint the same one, from the same builder. This
+            # canvas keeps its own action styling and its write-in-flight
+            # gate (even recovery controls wait for an unsettled write).
+            yield load_failure_callout(
+                failure,
+                id="library-media-load-failure",
+                copy_id="library-media-load-failure-copy",
+                retry_id="library-media-retry",
+                retry_classes="library-canvas-action",
+                gate=self._gate_mutation_action,
+            )
+
         status_text = (
             self.pager.status_copy
             if self.pager is not None and self.pager.status_copy
             else self.canvas.status_copy or self.canvas.empty_copy
         )
+        if failure is not None and status_text.startswith(failure.unavailable_what):
+            # The callout above IS this sentence with its reason attached
+            # (the controller derives both halves in the same branch, so
+            # they can never name different failures) -- painting the bare
+            # form again directly under it is the duplicate the callout
+            # exists to remove. A STALE page's own gate copy ("Media
+            # changed…", "Couldn't retry · <reason>") names a different
+            # event and survives untouched.
+            status_text = ""
         status = Static(
             status_text,
             id="library-media-status",
@@ -1152,10 +1440,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         else _MEDIA_ROW_WIDE_HEIGHT
                     )
                     for index, row in enumerate(self.canvas.rows):
-                        if select_mode:
-                            marker = "☑" if row.checked else "☐"
-                        else:
-                            marker = "▸" if row.selected and not self.compact else " "
+                        marker = _media_row_marker(
+                            select_mode=select_mode,
+                            checked=row.checked,
+                            reviewed=row.reviewed,
+                            selected=row.selected,
+                            compact=self.compact,
+                        )
                         # task-281 (PR #665 review): the in-place toggle needs the
                         # marker-less RAW label to rebuild from -- reading it back
                         # off the mounted Button un-escapes user titles (both
@@ -1169,7 +1460,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             loading=row.loading,
                             loaded=row.loaded,
                         )
-                        button = Button(
+                        # task-31631 AC#2 / task-31945: the whole row is
+                        # the toggle target, and the shared helper drops
+                        # Textual's 0.2s press flash so a second click on
+                        # the same row (☐ then its title -- what critique
+                        # #5 did) is not swallowed by ``Button._on_click``.
+                        # Browse mode wants it too: it stops a fast
+                        # double-click on a browse row being lost, and the
+                        # feedback there is the item loading into the
+                        # Reader, not the flash.
+                        button = library_row_button(
                             f"{marker}{label_rest}",
                             id=f"library-media-row-{index}",
                             classes="library-media-row",
@@ -1183,22 +1483,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_checked = row.checked
                         button._library_media_loading = row.loading
                         button._library_media_loaded = row.loaded
+                        button._library_media_reviewed = row.reviewed
                         button.tooltip = escape_markup(row.title)
-                        # task-31631 AC#2: the whole row is the toggle
-                        # target. It already was one full-width Button
-                        # ("☐ <title>"), but Textual's ``Button._on_click``
-                        # DROPS any click landing while the previous press's
-                        # 0.2s ``-active`` flash is still on the widget --
-                        # so clicking ☐ and then the same row's title (what
-                        # critique #5 did) lost the second click, and the row
-                        # read as a one-cell target. A list row has no use
-                        # for a press flash; the marker flip is the feedback.
-                        # This applies in browse mode too (not just select
-                        # mode): dropping the flash there also stops a fast
-                        # double-click on a browse row from being swallowed,
-                        # and browse-mode feedback is the item loading into
-                        # the Reader, not the flash.
-                        button.active_effect_duration = 0
                         button.set_class(
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",
@@ -1241,6 +1527,48 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     open_viewer.can_focus = self.show_preview and not self.compact
                     yield self._gate_stale_action(open_viewer, "Open in viewer")
 
+                # Task 8 (meeting diarization spec): a finished meeting
+                # recording's speakers can still be renamed after the fact --
+                # one legend row per speaker (mirroring the live Meetings
+                # screen's Task 7 legend), surfaced ONLY while the caller's
+                # `can_rename_meeting_speakers` says the meeting folder is
+                # still there (absent, not disabled, otherwise: a non-meeting
+                # item has nothing to rename).
+                # ... and only while the pane is actually visible: building
+                # the rows parses the whole transcript.jsonl, which is pure
+                # waste on a hidden pane (final review, MINOR).
+                if (
+                    self.can_rename_speakers
+                    and has_preview
+                    and not self.compact
+                    and self.media_db is not None
+                    and self.speaker_rename_media_id is not None
+                ):
+                    try:
+                        speaker_rows = _meeting_speaker_legend_rows(
+                            self.media_db, self.speaker_rename_media_id
+                        )
+                    except Exception:  # noqa: BLE001 - a bad read just means no legend
+                        speaker_rows = []
+                    if speaker_rows:
+                        legend = Vertical(id="library-media-speaker-legend")
+                        with legend:
+                            for cluster_id, label in speaker_rows:
+                                yield Horizontal(
+                                    Static(
+                                        label,
+                                        id=f"library-media-speaker-label-{cluster_id}",
+                                        markup=False,
+                                        classes="library-media-speaker-label",
+                                    ),
+                                    Input(
+                                        placeholder="Rename…",
+                                        id=f"library-media-speaker-input-{cluster_id}",
+                                        classes="library-media-speaker-input",
+                                    ),
+                                    classes="library-media-speaker-row",
+                                )
+
             # task-14900: the wide split's detail half never sits blank --
             # when the preview is hidden (Select mode, or an empty list) a
             # placeholder explains the pane, Collections' own detail-pane
@@ -1268,6 +1596,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # first page.", "No more results.") are pure noise. Show only the item
         # range and keep the (disabled) controls; both return the moment a
         # second page exists.
+        # task-31632: while a load failure renders its own callout, the ONE
+        # Retry lives there, next to the reason -- not down here. The stale
+        # gate has no callout (its copy is a different event) and keeps its
+        # Retry in this strip.
+        retry_visible = pager.retry_visible and self.load_failure is None
         disabled_reasons = (
             ()
             if pager.single_page
@@ -1306,8 +1639,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # pager controls -- two dead "○ Previous ○ Next" forms under
             # every short list were pure noise. The range Static above
             # stays; the controls return the moment a second page exists.
-            # A failed fetch still needs its Retry even on one page.
-            if pager.single_page and not pager.retry_visible:
+            # A stale page still needs its Retry here even on one page
+            # (task-31632 moved a FAILED fetch's Retry into the callout,
+            # which is why this reads the gated ``retry_visible``).
+            if pager.single_page and not retry_visible:
                 return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
@@ -1322,7 +1657,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 if pager.previous_disabled:
                     previous.tooltip = pager.previous_reason
                 yield self._gate_mutation_action(previous, "Previous")
-                if pager.retry_visible:
+                if retry_visible:
                     retry = Button(
                         "Retry",
                         id="library-media-retry",

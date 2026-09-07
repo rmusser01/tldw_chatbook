@@ -37,6 +37,9 @@ and **"World Books (copied into this character)"**. The rail's **New**,
 
 ## Included pixel-migu character and Buddy
 
+For the complete setup, movement, voice, and troubleshooting workflow, see the
+[Persona Buddy guide](../buddy.md).
+
 ![pixel-migu expression palette](../images/roleplay/pixel-migu-expressions.png)
 
 A fresh local profile includes **pixel-migu** in both **Characters** and

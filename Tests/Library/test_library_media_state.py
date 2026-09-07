@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from hypothesis import given, settings, strategies as st
 
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseScope,
@@ -13,25 +14,17 @@ from tldw_chatbook.Library.library_media_state import (
     build_media_browse_result,
     build_library_media_browse_state,
     build_library_media_state,
+    validate_media_browse_items,
 )
+from Tests.UI.library_media_rows import summary_row, summary_rows
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
-
-
-def _summary_item(media_id: int) -> dict[str, object]:
-    return {
-        "id": f"local:media:{media_id}",
-        "backing_media_id": media_id,
-        "title": f"Media {media_id}",
-        "media_type": "document",
-        "updated_at": "2026-08-16T00:00:00+00:00",
-    }
 
 
 def _page(scope: MediaBrowseScope, *, total: int) -> dict[str, object]:
     count = min(20, max(total - scope.offset, 0))
     return {
-        "items": [_summary_item(scope.offset + index + 1) for index in range(count)],
+        "items": summary_rows(count, start=scope.offset + 1, media_type="document"),
         "total": total,
         "limit": 20,
         "offset": scope.offset,
@@ -148,6 +141,78 @@ def test_media_browse_result_rejects_malformed_identity_and_shape(mutate) -> Non
 
     with pytest.raises((TypeError, ValueError)):
         build_media_browse_result(scope, payload)
+
+
+def test_validator_accepts_the_exact_seven_key_summary_row() -> None:
+    """has_analysis and reviewed are part of the contract, not decoration."""
+    frozen = validate_media_browse_items(
+        [summary_row(id=1, has_analysis=True, reviewed=False)]
+    )
+
+    assert set(frozen[0]) == {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "updated_at",
+        "has_analysis",
+        "reviewed",
+    }
+    assert frozen[0]["has_analysis"] is True
+    assert frozen[0]["reviewed"] is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda item: item.pop("has_analysis"), id="five-key-legacy-row"),
+        pytest.param(lambda item: item.pop("reviewed"), id="six-key-row"),
+        pytest.param(
+            lambda item: item.__setitem__("match_reason", "keyword"), id="eighth-key"
+        ),
+    ],
+)
+def test_validator_rejects_any_key_set_but_the_seven(mutate) -> None:
+    item = summary_row(id=1)
+    mutate(item)
+
+    with pytest.raises(ValueError, match="seven"):
+        validate_media_browse_items([item])
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", None, "yes"])
+def test_validator_rejects_non_boolean_has_analysis(value: object) -> None:
+    """A truthy int would paint the analysed marker off a SQL 1/0 leak."""
+    item = summary_row(id=1)
+    item["has_analysis"] = value
+
+    with pytest.raises((TypeError, ValueError), match="has_analysis"):
+        validate_media_browse_items([item])
+
+
+@pytest.mark.parametrize("value", ["yes", "", 0, 1, "True"])
+def test_validator_rejects_non_tristate_reviewed(value: object) -> None:
+    item = summary_row(id=1)
+    item["reviewed"] = value
+
+    with pytest.raises((TypeError, ValueError), match="reviewed"):
+        validate_media_browse_items([item])
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    has_analysis=st.booleans(),
+    reviewed=st.sampled_from([None, False, True]),
+)
+def test_validator_accepts_the_whole_marker_value_domain(
+    has_analysis: bool, reviewed: bool | None
+) -> None:
+    frozen = validate_media_browse_items(
+        [summary_row(id=1, has_analysis=has_analysis, reviewed=reviewed)]
+    )
+
+    assert frozen[0]["has_analysis"] is has_analysis
+    assert frozen[0]["reviewed"] is reviewed
 
 
 def test_media_browse_result_rejects_duplicate_page_identity() -> None:

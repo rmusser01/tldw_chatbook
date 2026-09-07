@@ -19,24 +19,34 @@ the chooser bug needs the screen's focus-on-open):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import re
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from types import SimpleNamespace
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Static, TextArea
 from textual.worker import WorkerState
 
-from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+)
 from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
     LibraryMediaReaderShell,
 )
 
 from Tests.UI.test_library_media_side_by_side import (
+    _active_library_screen,
     _build_media_test_app,
     _open_media_list,
     _two_media_items,
+    _wait_for_library_shell,
 )
 from Tests.UI.test_library_media_reader_flow import (
     ControlledDetailMediaService,
@@ -1540,8 +1550,9 @@ async def test_no_join_artifact_after_find_closes():
         await _open_first_reader_row(screen, pilot)
 
         def join_slices() -> list[str]:
-            """The five grip columns left of the Reader, top three rows."""
+            """The grip's own columns left of the Reader, top three rows."""
             viewer = screen.query_one("#library-media-viewer")
+            grip = screen.query_one("#library-media-items-grip")
             title = screen.query_one("#library-media-viewer-title")
             # The sample must actually cover the header: Back, title, toolbar.
             assert title.region.y - viewer.region.y <= 2, (
@@ -1552,7 +1563,10 @@ async def test_no_join_artifact_after_find_closes():
             # so the pane's first row is the title row itself; the sample
             # still starts at the viewer's top edge, where the grip paints.
             return [
-                _painted_row(host, y)[title.region.x - 5 : title.region.x]
+                # task-31633 AC#2: the grip is one column now, not five, so
+                # the sample is anchored to the grip itself -- a literal five
+                # reaches back into the Items pane and reads its border.
+                _painted_row(host, y)[grip.region.x : grip.region.right]
                 for y in range(viewer.region.y, viewer.region.y + 3)
             ]
 
@@ -1692,7 +1706,16 @@ async def test_reader_body_wraps_at_a_reading_measure():
         await _open_first_reader_row(screen, pilot)
         box = screen.query_one("#library-media-viewer-content")
         body = screen.query_one("#library-media-viewer-content-text")
-        assert box.region.width > 120, box.region
+        # task-31633: the Items column now takes half of the Reader's surplus
+        # and each grip costs one cell instead of five, so the Reader pane of
+        # the 231-cell shell is 139 cells rather than 147. The box still spans
+        # the whole pane -- only the prose inside it is capped.
+        work = screen.query_one(".library-adaptive-reader-work")
+        assert box.region.width == work.region.width, (box.region, work.region)
+        # The equality alone would also hold if the pane itself collapsed, so
+        # keep an absolute floor now that the pane width is dynamic. 139 is the
+        # measured pane width here, not a comfort minimum.
+        assert work.region.width >= 139, work.region
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.
@@ -2146,3 +2169,1559 @@ async def test_reader_focus_changes_border_glyphs_not_only_colour():
         assert unfocused.startswith("┌") and "─" in unfocused, unfocused
         assert focused.startswith("┏") and "━" in focused, focused
         assert "─" not in focused, focused
+
+
+# --- task-31633 AC#3: More is one row, not a push -------------------------
+#
+# Critique #5 P1 (capture 10): the Reader's "More" disclosure composed a
+# bare ``Vertical`` above the mode row. An unstyled Vertical defaults to
+# ``1fr``, so it claimed 19 rows for three one-row buttons -- pushing the
+# tab row and the whole reading body down and leaving ~16 painted-blank
+# rows before the content resumed. These pin the row, not the widget: the
+# painted tab-row offset at both the wide and the compact size.
+
+_MORE_ACTION_LABELS = (
+    "Edit metadata",
+    "Open original",
+    "Open manager",
+    "Move to trash",
+)
+
+
+def _four_action_host() -> LibraryProductionCSSHarness:
+    """A Reader whose items carry a URL, so More renders all four actions.
+
+    ``Open original`` is composed only when the item has an original
+    source, and the shared fixture has none -- without a URL the row this
+    test measures would be three buttons wide and the "all four readable"
+    assertion would be vacuous.
+    """
+    app = _build_media_test_app()
+    items = [
+        {**item, "url": f"https://example.test/{item['id']}"}
+        for item in _two_media_items()
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+async def _open_reader_more(screen, pilot):
+    screen.query_one("#library-media-reader-more", Button).press()
+    actions = await _wait_for_selector(
+        screen, pilot, "#library-media-reader-more-actions"
+    )
+    # The disclosure's row has to be laid out before a caller can measure it;
+    # its own region is the thing that settles, so wait on that rather than on
+    # a fixed number of frames.
+    await _wait_for_condition(
+        pilot,
+        lambda: actions.region.height > 0,
+        message="The More actions row never took a painted region.",
+    )
+    return actions
+
+
+def _reader_row_tops(screen) -> tuple[int, int]:
+    """The painted top row of the tab strip and of the reading body."""
+    return (
+        screen.query_one("#library-media-reader-mode-toolbar").region.y,
+        screen.query_one("#library-media-reader-mode-read").region.y,
+    )
+
+
+@pytest.mark.asyncio
+async def test_more_opens_one_row_and_moves_the_reader_body_by_one():
+    """At 235x52 More costs exactly one row, and all four actions paint on it."""
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        closed_tabs, closed_body = _reader_row_tops(screen)
+
+        actions = await _open_reader_more(screen, pilot)
+        open_tabs, open_body = _reader_row_tops(screen)
+
+        assert actions.region.height == 1, actions.region
+        assert open_tabs - closed_tabs == 1, (closed_tabs, open_tabs)
+        assert open_body - closed_body == 1, (closed_body, open_body)
+
+        painted = _painted(host, actions.region)
+        for label in _MORE_ACTION_LABELS:
+            assert label in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_more_reads_as_an_open_disclosure_while_it_is_open():
+    """The primary row paints "More ▴" while open and "More" when closed."""
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" not in _painted(host, primary.region)
+
+        await _open_reader_more(screen, pilot)
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" in _painted(host, primary.region)
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="More never closed.",
+        )
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" not in _painted(host, primary.region)
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_leaves_focus_on_the_more_button():
+    """Toggling the disclosure never hands focus to the row it opened.
+
+    The Reader recomposes on this toggle, so the focused identity is
+    whatever the restore seam last saw (the Items row that opened the
+    Reader). The disclosure owns its own focus target explicitly.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        await _open_reader_more(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-reader-more",
+            message=lambda: f"Opening More never focused it: {screen.focused!r}.",
+        )
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="More never closed.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-reader-more",
+            message=lambda: f"Closing More never focused it: {screen.focused!r}.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_more_stays_compact_at_the_narrow_reader_width():
+    """At 100x30 the four actions fit or wrap once; the body moves <= 2 rows."""
+    host = _four_action_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        closed_tabs, closed_body = _reader_row_tops(screen)
+
+        actions = await _open_reader_more(screen, pilot)
+        open_tabs, open_body = _reader_row_tops(screen)
+
+        assert actions.region.height <= 2, actions.region
+        assert 1 <= open_tabs - closed_tabs <= 2, (closed_tabs, open_tabs)
+        assert 1 <= open_body - closed_body <= 2, (closed_body, open_body)
+
+        painted = _painted(host, actions.region)
+        for label in _MORE_ACTION_LABELS:
+            assert label in painted, painted
+
+
+async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
+    """Fail the applied Media page in place and return its call counter.
+
+    A page-1 request that fails AFTER page 1 applied is the critique's
+    exact state ("Couldn't load page 1."): the rows stay retained, the
+    pager keeps its counters, and the only recovery is Retry.
+    """
+    calls: list[int] = []
+
+    async def _fails(**_kwargs):
+        calls.append(1)
+        raise exc
+
+    host.app_instance.media_reading_scope_service.search_media = _fails
+    controller = screen._library_media_browse_controller
+    screen._request_library_media_page(1, focus_identity=None)
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            controller.failure is not None
+            and not controller.loading
+            # The callout composes before the row scroll: settle on BOTH the
+            # mounted callout and the remounted retained rows, not on the
+            # controller alone (a single pause raced the mount elsewhere).
+            and bool(screen.query("#library-media-load-failure-copy"))
+            and len(screen.query(".library-media-row"))
+            == len(controller.retained_items)
+        ),
+        message="The forced Media page failure never settled.",
+    )
+    await pilot.pause()
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_media_load_failure_paints_one_callout_with_retry_inside(size):
+    """task-31632 AC#1: the reason and its Retry, painted together.
+
+    Critique #5 P1: ``Couldn't load page 1.`` painted as a bare sentence
+    with no reason, and its only Retry 34 rows below in the pager strip.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        retry = screen.query_one("#library-media-retry", Button)
+
+        painted = " ".join(_painted(host, copy.region).split())
+        assert painted == "Couldn't load page 1 · database is locked", painted
+        assert "Retry" in _painted(host, retry.region)
+
+        # The Retry is IN the callout, on the message's own row or the one
+        # directly below it -- never the pager strip 34 rows down.
+        assert retry in callout.query(Button)
+        assert 0 <= retry.region.y - copy.region.y <= 1, (
+            copy.region,
+            retry.region,
+        )
+        assert retry.region.y - copy.region.y <= 3
+
+        # Exactly one Retry, and the pager strip does not carry a second.
+        assert len(screen.query("#library-media-retry")) == 1
+        pager = screen.query_one("#library-media-pager")
+        assert not pager.query("#library-media-retry")
+
+        # The retained rows stay exactly as they were.
+        assert len(screen.query(".library-media-row")) == 2
+
+
+@pytest.mark.asyncio
+async def test_media_load_failure_callout_retry_issues_a_new_request():
+    """task-31632 AC#1: the Retry inside the callout is the live one."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        calls = await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+        assert len(calls) == 1
+
+        screen.query_one("#library-media-load-failure").query_one(
+            "#library-media-retry", Button
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) == 2,
+            message="The callout's Retry never issued a new request.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="The retried request never settled.",
+        )
+        await pilot.pause()
+
+        # Still one callout, repainted with the fresh reason -- never a
+        # silent press.
+        assert len(screen.query("#library-media-load-failure")) == 1
+        assert controller.failure is not None
+
+
+@pytest.mark.asyncio
+async def test_media_facet_failure_paints_the_same_callout():
+    """task-31632 AC#1 (Task 2 review carry-over): the type-list failure was
+    only ever covered at controller level. It reaches the SAME callout, with
+    the same single Retry, because the type list has no control of its own.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+
+        async def _fails(**_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        host.app_instance.media_reading_scope_service.list_library_media_types = _fails
+        screen._request_library_media_facets()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.facet_failure is not None and not controller.facet_loading,
+            message="The forced Media facet failure never settled.",
+        )
+        await pilot.pause()
+
+        assert controller.page_failure is None
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        painted = " ".join(_painted(host, copy.region).split())
+        assert painted == "Couldn't load media types · database is locked", painted
+        retry = screen.query_one("#library-media-retry", Button)
+        assert retry in callout.query(Button)
+        assert len(screen.query("#library-media-retry")) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_failure_callout_tint_follows_the_severity():
+    """task-31632 AC#1: a timeout and a hard failure do not paint alike."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(host, screen, pilot, TimeoutError())
+
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        assert " ".join(_painted(host, copy.region).split()) == (
+            "Couldn't load page 1 · timed out"
+        )
+        assert not callout.has_class("is-blocked")
+        timeout_border = callout.styles.border_top
+
+        await _force_media_page_failure(host, screen, pilot, RuntimeError("boom"))
+        callout = screen.query_one("#library-media-load-failure")
+        assert callout.has_class("is-blocked")
+        assert callout.styles.border_top != timeout_border, timeout_border
+
+
+# ---------------------------------------------------------------------------
+# task-31633 (critique #5 P1): two rows per item, not three.
+#
+# Painted, not region-only: the third row was a bottom margin on the row
+# button, so every region assertion on the button itself already read "2" --
+# only the painted list shows the blank row that margin bought, and the eleven
+# items it cost a 52-row terminal.
+# ---------------------------------------------------------------------------
+
+_ROWS_PER_MEDIA_ITEM = 2
+
+
+def _fifteen_item_host() -> LibraryProductionCSSHarness:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items(15))
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_item_lines(host, screen) -> list[str]:
+    """Return the painted row-scroll lines of the Media list."""
+    scroll = screen.query_one("#library-media-row-scroll")
+    strips = list(host.screen._compositor.render_strips())
+    return [
+        strips[y].crop(scroll.region.x, scroll.region.right).text
+        for y in range(scroll.region.y, min(scroll.region.bottom, len(strips)))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
+    """Fifteen seeded items all paint in a 52-row terminal, two rows each."""
+    host = _fifteen_item_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(4):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        titles = [
+            index
+            for index, line in enumerate(lines)
+            if "Media item " in line
+        ]
+
+        assert len(titles) >= 15, (len(titles), lines)
+        for previous, current in zip(titles, titles[1:]):
+            assert current - previous == _ROWS_PER_MEDIA_ITEM, (titles, lines)
+            meta = lines[previous + 1].strip()
+            assert meta.split(" ", 1)[0] in {"video", "audio", "PDF"}, (
+                meta,
+                lines,
+            )
+
+
+# ---------------------------------------------------------------------------
+# task-28008 / task-28009 (render half): the row's state slot and the
+# "analysed" segment of its secondary line.
+# ---------------------------------------------------------------------------
+
+
+_ANALYSED_SECONDARY = "document · 5m · analysed"
+
+
+def _review_state_items(count: int = 4, analysed: int = 2) -> list[dict]:
+    """``count`` ``document`` items, the first ``analysed`` of them analysed.
+
+    The stamp is fixed 5m30s back so every row's age label is "5m" and the
+    secondary line is exactly the 24-cell ``document · 5m · analysed`` the
+    Items pane has to hold.
+    """
+    stamp = (
+        datetime.now(timezone.utc) - timedelta(minutes=5, seconds=30)
+    ).isoformat()
+    return [
+        {
+            "id": f"media-{index}",
+            "title": f"Doc {index}",
+            "type": "document",
+            "last_modified": stamp,
+            "content": f"Body of doc {index}.",
+            "version": 1,
+            "has_analysis": index <= analysed,
+        }
+        for index in range(1, count + 1)
+    ]
+
+
+def _review_state_host(count: int = 4, analysed: int = 2):
+    """A production-CSS Library host over :func:`_review_state_items`."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_review_state_items(count, analysed))
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
+    """Return the painted (title lines, secondary lines) of the Media list."""
+    lines = _painted_item_lines(host, screen)
+    titles = [line for line in lines if "Doc " in line]
+    secondaries = [line for line in lines if "document · " in line]
+    return titles, secondaries
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_media_rows_paint_analysed_only_for_analysed_items(size):
+    """task-28008: the row says which items already carry an analysis, in words.
+
+    What this pins about width: BOTH parametrized sizes resolve the Items
+    pane to 52 cells (the resolver's automatic width here), and the 24-cell
+    ``document · 5m · analysed`` paints whole in it, indented, with room to
+    spare. The narrower 36-cell FLOOR is pinned separately by
+    ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
+    ``>= 36`` assertion here would have claimed a floor that never ran.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+
+        _titles, secondaries = _painted_media_rows(host, screen)
+        assert len(secondaries) == 4, secondaries
+        assert [line.strip() for line in secondaries[:2]] == [
+            _ANALYSED_SECONDARY,
+            _ANALYSED_SECONDARY,
+        ], secondaries
+        assert [line.strip() for line in secondaries[2:]] == [
+            "document · 5m",
+            "document · 5m",
+        ], secondaries
+        assert _items_pane_width(screen) == 52
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_media_rows_paint_the_active_sets_review_state(size):
+    """task-28009: every row in the active set carries a state glyph -- `·`
+    until it is reviewed, `✓` after -- and rows outside it carry neither."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        service = screen._review_set_service()
+        set_id = service.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        for _ in range(3):
+            await pilot.pause()
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["·", "·", " ", " "], titles
+
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+        _sync_library_canvas(screen, "media")
+        for _ in range(3):
+            await pilot.pause()
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["✓", "·", " ", " "], titles
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_checkbox_replaces_the_review_state_slot(size):
+    """Controller ruling (4): one slot. In select mode it is the ☑/☐."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        service = screen._review_set_service()
+        service.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await _enter_media_select_mode(screen, pilot)
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["☐", "☐", "☐", "☐"], titles
+        assert "·" not in "".join(line[1] for line in titles), titles
+
+
+def _review_reader_host(count: int = 2):
+    """The same seeded rows, behind a gated detail service so the Reader can
+    be settled on a known row before the mark gestures are pressed."""
+    items = _review_state_items(count, analysed=1)
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = ControlledDetailMediaService(items)
+    app.media_reading_scope_service = service
+    return LibraryProductionCSSHarness(app), service
+
+
+def _painted_slots(host, screen) -> list[str]:
+    """The painted one-cell state slot of each Media row, in order."""
+    titles, _secondaries = _painted_media_rows(host, screen)
+    return [line[1] for line in titles]
+
+
+@pytest.mark.asyncio
+async def test_marking_reviewed_in_the_reader_repaints_the_row_slot():
+    """task-28009: `m` and the final `]` change the MARK, not the loaded item.
+
+    Both land on the viewer-scoped sync seam without loading anything, and
+    the Items list stays mounted beside the Reader -- so unless that seam
+    repaints the rows, the slot stays a gesture behind the banner that just
+    moved. Painted on the real screen, because the row markers are exactly
+    what a state-only assertion would miss.
+    """
+    host, service = _review_reader_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        review = screen._review_set_service()
+        review.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await _load_row_0(screen, service, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["·", "·"],
+            message="The active set never painted its unreviewed rows.",
+        )
+
+        await pilot.press("m")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "·"],
+            message="`m` did not repaint the loaded row's slot as reviewed.",
+        )
+
+        # ...and it is a live read, not a one-shot: un-marking flips it back.
+        await pilot.press("m")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["·", "·"],
+            message="A second `m` did not repaint the row as unreviewed.",
+        )
+
+        # Advancing marks the row it leaves (that path loads an item and
+        # repaints through the selection seam)...
+        await _walk_next(screen, service, pilot, expected_row=1)
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "·"],
+            message="] did not repaint the row it left as reviewed.",
+        )
+
+        # ...and the final ] on the last item is the completion gesture: it
+        # marks in place, loading nothing, so only this seam can repaint it.
+        await pilot.press("right_square_bracket")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "✓"],
+            message="The final ] did not repaint the last row as reviewed.",
+        )
+
+
+# --- PR H2 (Qodo on #2470): every viewer-sync follow-up rides the VIEWER ---
+#
+# ``_sync_library_media_viewer_or_recompose`` rebuilds the Reader on the
+# VIEWER's message pump. A ``screen.call_after_refresh`` follow-up has no
+# ordering against that pump: it focuses the control the recompose is about
+# to detach, Textual re-picks focus for the pruned widget, and task-31567's
+# restore -- whose captured identity went with the same children -- takes
+# its list-entry fallback. Measured on 43b0a7440: Escape from inside the
+# open More disclosure left focus on ``#library-media-row-0``, outside the
+# Reader, so the next Escape acted on the LIST. PR H fixed the More BUTTON;
+# these pin the Escape paths, which took the same shape.
+
+
+async def _open_reader_find(screen, pilot):
+    """Open the Reader's Find bar and wait for its input to take focus."""
+    screen.query_one("#library-media-reader-find", Button).press()
+    search_input = await _wait_for_selector(
+        screen, pilot, "#library-media-content-search"
+    )
+    await _wait_for_condition(
+        pilot,
+        lambda: search_input.has_focus,
+        message=lambda: f"Find never focused its input: {screen.focused!r}.",
+    )
+    return search_input
+
+
+def _focus_report(screen) -> str:
+    focused = screen.focused
+    return (
+        f"{focused!r} (id={getattr(focused, 'id', None)!r}, "
+        f"attached={getattr(focused, 'is_attached', None)!r})"
+    )
+
+
+async def _settle_focus_on(screen, pilot, control_id: str, what: str) -> None:
+    """Wait until ``control_id`` holds focus as a MOUNTED widget."""
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen.focused is not None
+            and screen.focused.id == control_id
+            and screen.focused.is_attached
+        ),
+        message=lambda: f"{what} left focus on {_focus_report(screen)}.",
+    )
+    # The identity check the orphan cannot pass: the focused widget IS the
+    # one a fresh query returns, not a detached same-id predecessor.
+    assert screen.focused is screen.query_one(f"#{control_id}", Button)
+    assert screen.focused.is_attached
+
+
+@pytest.mark.asyncio
+async def test_escape_closing_more_lands_on_the_live_more_button():
+    """Escape closes the disclosure and leaves focus on the NEW More button.
+
+    Qodo High on #2470 ("Readers lose keys after escape"): the follow-up ran
+    on the screen's pump while the viewer rebuilt on its own, so it never
+    held the control it named. The first half passes on 43b0a7440 by
+    coincidence -- the identity task-31567 captured IS the More button, so
+    its restore lands where the follow-up wanted; the second half, from
+    inside the disclosure, is where the two differ and the base fails.
+    Both then press Enter on whatever holds focus: only a live, mounted More
+    button re-opens the row.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_reader_more(screen, pilot)
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-more", "Opening More"
+        )
+
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="Escape never closed More.",
+        )
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-more", "Escape closing More"
+        )
+
+        # Again from INSIDE the disclosure, where the restore cannot mask the
+        # bug: the focused action is recomposed away, so PR F's captured
+        # identity is gone and its fallback leaves the Reader entirely (on
+        # 43b0a7440 this landed on the media list row). The disclosure's own
+        # target has to survive the rebuild.
+        await _open_reader_more(screen, pilot)
+        screen.query_one("#library-media-edit", Button).focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="Escape never closed More from inside it.",
+        )
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-more",
+            "Escape closing More from inside it",
+        )
+
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+
+@pytest.mark.asyncio
+async def test_escape_closing_find_lands_on_the_live_find_button():
+    """Both Escape-closes-Find branches land on the mounted Find button.
+
+    First from INSIDE the bar (the branch that reads the focused widget's
+    ancestry), then with focus moved out to the content body (the branch
+    that consumes an open bar regardless of where focus sits).
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        await _open_reader_find(screen, pilot)
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Escape never closed the Find bar.",
+        )
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-find", "Escape closing Find"
+        )
+
+        await _open_reader_find(screen, pilot)
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Escape never closed the Find bar from the content body.",
+        )
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-find",
+            "Escape closing Find from the content body",
+        )
+
+        # Keys still work afterwards: Enter on the restored button re-opens.
+        await pilot.press("enter")
+        await _wait_for_selector(
+            screen, pilot, "#library-media-content-search-controls"
+        )
+
+
+# --- PR L (task-31950 / task-31954): the LAST screen-pump follow-ups ---
+#
+# Two siblings of the Escape defect above survived PR H2, both queued from
+# ``_sync_library_media_viewer_state``'s own tail: the edit-Save mutation
+# gate and the reading-progress restore. Neither is a focus move, so the
+# race shows up as a LOST follow-up rather than a stranded focus -- the
+# screen callback flushes while the viewer's new children are not mounted,
+# ``query_one`` raises ``NoMatches``, and the gate silently no-ops.
+
+
+_VIEWER_RECOMPOSE_ANCHOR = re.compile(
+    r"_sync_library_media_viewer_or_recompose\(\)|viewer\.refresh\(recompose=True\)"
+)
+
+
+def _screen_pump_follow_ups_after_a_viewer_recompose(
+    window: int = 14,
+) -> list[tuple[int, str]]:
+    """The task-31950 census: a viewer recompose, then ``screen.call_after_refresh``.
+
+    The brief's ``awk`` rule, in Python so it can fail a test: any
+    ``self.call_after_refresh(`` within ``window`` lines after a line that
+    hands the rebuild to the VIEWER's message pump. Those two pumps have no
+    ordering, so a follow-up queued that way runs against whichever tree it
+    happens to find.
+    """
+    source = Path(library_screen_module.__file__).read_text(encoding="utf-8")
+    anchor: int | None = None
+    hits: list[tuple[int, str]] = []
+    for number, line in enumerate(source.splitlines(), start=1):
+        if _VIEWER_RECOMPOSE_ANCHOR.search(line):
+            anchor = number
+            continue
+        if anchor is None or number - anchor > window:
+            continue
+        if "self.call_after_refresh(" in line:
+            hits.append((number, line.strip()))
+    return hits
+
+
+def test_no_viewer_recompose_follow_up_rides_the_screen_pump():
+    """task-31950 AC#2: every one of them goes through the viewer seam.
+
+    On the merge-base this returns the two ``_sync_library_media_viewer_
+    state`` tail sites (the mutation gate and the progress restore).
+    """
+    hits = _screen_pump_follow_ups_after_a_viewer_recompose()
+    assert hits == [], (
+        "These follow-ups still ride the screen's pump after a viewer "
+        f"recompose; route them through the viewer seam: {hits}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_save_mounts_already_gated_while_a_media_write_is_in_flight():
+    """task-31950: the mutation gate has to see the RECOMPOSED Save button.
+
+    Opening the edit form while a Media write holds the interlock is the
+    one gesture that mounts a Save the gate has not already been applied
+    to. The gate was queued with ``screen.call_after_refresh`` from the
+    sync's tail, so it ran while the viewer's new children were not mounted
+    yet -- ``query_one`` raised ``NoMatches``, the gate returned, and the
+    form came up with a live Save on top of an unsettled write.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_reader_more(screen, pilot)
+
+        # The shared write interlock, taken exactly as
+        # ``_run_library_media_mutation`` takes it.
+        screen._media_state.bulk_delete_in_flight = True
+        screen.query_one("#library-media-edit", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-save")
+        # Let both pumps drain: the gate is a one-shot, so a settle window
+        # is the honest wait (a poll would pass the moment it happened to
+        # land and hide the ordering this pins).
+        for _ in range(4):
+            await pilot.pause()
+
+        save = screen.query_one("#library-media-edit-save", Button)
+        assert save.is_attached
+        assert save.disabled, (
+            "The edit form mounted a live Save while a Media write was in "
+            f"flight (label={save.label!r})."
+        )
+
+
+@pytest.mark.asyncio
+async def test_returning_to_read_restores_the_reading_position_once():
+    """task-31954 AC#2: ONE owner schedules the restore for a mode change.
+
+    ``handle_library_media_reader_mode`` schedules it through the viewer
+    seam AND used to re-arm ``_sync_library_media_viewer_state``'s own
+    arm-once guard by nulling ``_media_state.progress_restored_id``, so a
+    single Analysis -> Read press restored twice. Idempotent today only
+    because the restore is a ``scroll_to``.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        loaded_id = screen._media_state.reader_session.loaded_id
+        assert loaded_id is not None
+        screen._media_state.read_scroll_by_id[loaded_id] = (0, 3)
+
+        restores: list[str] = []
+        real_restore = screen._restore_library_media_loaded_progress
+
+        def counting_restore(expected_id: str) -> None:
+            restores.append(expected_id)
+            real_restore(expected_id)
+
+        screen._restore_library_media_loaded_progress = counting_restore
+
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.reader_session.mode == "analysis",
+            message="The Reader never switched to Analysis.",
+        )
+        for _ in range(4):
+            await pilot.pause()
+        restores.clear()
+
+        screen.query_one("#library-media-reader-select-read", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: restores,
+            message="Returning to Read never restored the reading position.",
+        )
+        for _ in range(4):
+            await pilot.pause()
+
+        assert restores == [loaded_id], (
+            f"one Analysis -> Read press scheduled {len(restores)} restores: "
+            f"{restores}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_analysed_secondary_survives_the_36_cell_items_floor():
+    """M-1: the 24-cell secondary at the Items pane's 36-cell floor.
+
+    The automatic resolver gives Items 52 cells at both tested terminal
+    sizes, so the floor only runs when a custom Items width asks for it (a
+    custom width is obeyed as typed). 36 is ``list_min_width`` + Media's two
+    one-cell grips -- the narrowest the pane ever gets.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._media_state.reader_preferences = dataclasses.replace(
+            screen._media_state.reader_preferences,
+            custom_widths_enabled=True,
+            items_width=36,
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await _wait_for_condition(
+            pilot,
+            lambda: _items_pane_width(screen) == 36,
+            message="The Items pane never reached its 36-cell floor.",
+        )
+
+        # The crop at this width clips a neighbouring pane border into the
+        # right edge, so strip that too before comparing the row's own text.
+        _titles, secondaries = _painted_media_rows(host, screen)
+        assert [line.strip(" │") for line in secondaries[:2]] == [
+            _ANALYSED_SECONDARY,
+            _ANALYSED_SECONDARY,
+        ], secondaries
+        assert "…" not in "".join(secondaries), secondaries
+
+
+# ---------------------------------------------------------------------------
+# task-28008 (critique #5 P2): a keyword-only hit says which keyword matched.
+# ---------------------------------------------------------------------------
+
+
+def _match_reason_items() -> list[dict]:
+    """Three ``article`` rows, all aged "2m", for the query ``notes``.
+
+    Row 1 matches ONLY through its keyword; row 2 matches through its title
+    (so it explains itself and earns no reason); row 3 matches only through
+    a keyword too long for the Items pane's 36-cell floor.
+    """
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "id": "media-1",
+            "title": "Opening remarks",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=10)).isoformat(),
+            "keywords": ["notes"],
+            "content": "Transcript of the opening session.",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Field notes",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=20)).isoformat(),
+            "keywords": [],
+            "content": "A body about nothing in particular.",
+            "version": 1,
+        },
+        {
+            "id": "media-3",
+            "title": "Closing remarks",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=30)).isoformat(),
+            "keywords": ["notesandmorestuff"],
+            "content": "Transcript of the closing session.",
+            "version": 1,
+        },
+    ]
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
+    """The reason is WORDS on the secondary line, and only where it is needed.
+
+    ``Field notes`` matched the query in its own painted title, so it says
+    nothing extra; the two rows whose match lives in a keyword name it. The
+    keyword is capped at ten characters because the Items pane's floor is
+    36 cells -- ``notesandmorestuff`` would push the line past it whole.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_match_reason_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "notes")
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        secondaries = [line.strip() for line in lines if "article · " in line]
+        assert secondaries == [
+            "article · 2m · keyword: notes",
+            "article · 2m",
+            "article · 2m · keyword: notesandmo…",
+        ], secondaries
+
+
+
+@pytest.mark.asyncio
+async def test_keyword_reason_clips_at_the_36_cell_items_floor():
+    """Fix round 1 (1): what the floor actually does, pinned honestly.
+
+    The ten-character cap keeps the line SHORT; it does not make it fit
+    here. The Items pane's 36-cell floor leaves ~29 cells after the row's
+    four-cell indent, and `article · 2m · keyword: notes` needs 29 before
+    the pane's own edge -- so at the floor a keyword row clips mid-term,
+    for the short keyword as well as the long one. The neighbouring
+    `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
+    a line that DOES fit looks like there; this one is the honest contrast,
+    and it exists so nobody re-derives the false "the cap makes it fit".
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_match_reason_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "notes")
+        screen._media_state.reader_preferences = dataclasses.replace(
+            screen._media_state.reader_preferences,
+            custom_widths_enabled=True,
+            items_width=36,
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await _wait_for_condition(
+            pilot,
+            lambda: _items_pane_width(screen) == 36,
+            message="The Items pane never reached its 36-cell floor.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        # The crop at this width clips a neighbouring pane border into the
+        # right edge, so strip that before comparing the row's own text.
+        secondaries = [
+            line.strip(" │") for line in lines if "article · " in line
+        ]
+        assert secondaries == [
+            "article · 2m · keyword: not",
+            "article · 2m",
+            "article · 2m · keyword: not",
+        ], secondaries
+        # The row without a reason still paints whole -- the clipping is the
+        # suffix's own cost, not a regression in the base secondary line.
+        assert "…" not in "".join(secondaries), secondaries
+
+
+@pytest.mark.asyncio
+async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone():
+    """PR F's restore is CHAINED behind the follow-up, never evicted.
+
+    ``queue_after_recompose`` REPLACES, and the sync queues task-31567's
+    focus restore on that same one slot. The helper captures it and calls it
+    after its own target, so a follow-up whose target is not composed leaves
+    focus where the restore puts it (the captured identity) -- never on the
+    pane grip Textual re-picks when the focused child is recomposed away.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+
+        screen._media_state.reader_session = set_more_open(
+            screen._media_state.reader_session, True
+        )
+        screen._after_library_media_viewer_sync("#library-media-reader-absent")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-find",
+            "An absent follow-up target",
+        )
+        assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 items 12, 14): the empty Reader under a failed list,
+# and the rendered Markdown H1's alignment against the reading column.
+# ---------------------------------------------------------------------------
+
+
+def _first_glyph_column(host, widget) -> int:
+    """Absolute column of the first painted glyph inside ``widget``."""
+    region = widget.region
+    strips = list(host.screen._compositor.render_strips())
+    for y in range(region.y, min(region.bottom, len(strips))):
+        row = strips[y].crop(region.x, region.right).text
+        if row.strip():
+            return region.x + len(row) - len(row.lstrip())
+    raise AssertionError(f"Nothing painted inside {widget!r} at {region}.")
+
+
+async def _open_media_with_a_failed_first_page(host, pilot, exc: BaseException):
+    """Open Media with its FIRST page failing, so no rows are ever retained.
+
+    ``_force_media_page_failure`` fails a page that already applied, which
+    keeps ``retained_items`` -- the state where rows stay painted and
+    pressable. This is the other one: nothing was ever applied, so there is
+    genuinely nothing to select.
+    """
+
+    async def _fails(**_kwargs):
+        raise exc
+
+    host.app_instance.media_reading_scope_service.search_media = _fails
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    screen.query_one("#library-row-browse-media").press()
+    controller = screen._library_media_browse_controller
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            controller.failure is not None
+            and not controller.loading
+            and not controller.retained_items
+            and bool(screen.query("#library-media-load-failure-copy"))
+        ),
+        message="The first-page Media failure never settled.",
+    )
+    await pilot.pause()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_empty_reader_placeholder_names_a_failed_list():
+    """task-31635 (critique #5 item 12): "Select a media item" was a lie.
+
+    With the FIRST list load failed there is nothing to select, and the
+    empty Reader still invited the user to select something -- the only
+    line on screen saying so while the callout beside it said the load
+    had failed.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_with_a_failed_first_page(
+            host, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        assert not screen.query(".library-media-row")
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Nothing loaded — the list could not be loaded."
+        assert "Nothing loaded" in _painted(host, empty.region)
+
+
+@pytest.mark.asyncio
+async def test_page_failure_that_retains_rows_keeps_the_select_invitation():
+    """task-31635 fix round 1: retained rows ARE selectable, so say so.
+
+    A page-1 failure after page 1 applied keeps every row painted, enabled
+    and pressable (the recovery callout's whole point). Telling the reader
+    "the list could not be loaded" there contradicts the two rows it can
+    still open.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Select a media item to read it here."
+
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
+        assert not any(row.disabled for row in rows)
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Select a media item to read it here."
+        assert "Select a media item to read it here." in _painted(host, empty.region)
+
+
+def _h1_markdown_host() -> LibraryProductionCSSHarness:
+    """Two Markdown items whose first line is an H1 heading."""
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Quarterly notes {index}",
+            "type": "markdown",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "content": (
+                "# Quarterly budget\n\n"
+                "The reading column starts at the left edge of the box.\n"
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_rendered_markdown_h1_starts_in_the_body_column():
+    """task-31635 (critique #5 item 14): the H1 aligns with the prose.
+
+    Textual's ``MarkdownH1`` default is ``content-align: center middle``,
+    so a document title floated to the middle of the 92-cell reading
+    measure while every other line began at its left edge -- the heading
+    read as a banner detached from the text it introduces.
+    """
+    from textual.widgets._markdown import MarkdownH1, MarkdownParagraph
+
+    host = _h1_markdown_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        markdown = screen.query_one("#library-media-viewer-content-markdown")
+        heading = markdown.query_one(MarkdownH1)
+        body = markdown.query_one(MarkdownParagraph)
+
+        assert "Quarterly budget" in _painted(host, heading.region)
+        assert _first_glyph_column(host, heading) == _first_glyph_column(host, body), (
+            heading.region,
+            body.region,
+            _painted(host, heading.region),
+        )
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 item 6): with the FIRST list load failed and
+# nothing behind it, "Export…" -- which exports the whole filtered list --
+# stayed live and colour-normal beside the failure callout, while "Select"
+# next to it already rendered its "○" marker and said why.
+#
+# Fix round 1 narrows it to the same predicate the empty Reader uses
+# (`_library_media_list_unselectable`): a failure with NO retained rows. A
+# later-page failure keeps its rows -- that retention is the callout's whole
+# point -- and those rows export fine. "Trash" is never gated: it is a route
+# into a view with its own fetch, callout and Retry, and disabling it would
+# remove the only way to reach deleted items exactly when the store is
+# unhappy.
+#
+# task-31960: "Review these" -- the other whole-filtered-list action -- was
+# the one left outside that gate, so it stood live and colour-normal beside
+# a dimmed Export on the same failed first page. Symmetry was one line, so
+# both are pinned here together.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_failed_first_page_gates_export_with_its_reason(size):
+    """A first load that failed with nothing behind it disables the two
+    whole-filtered-list actions -- Export… and "Review these" (task-31960).
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_with_a_failed_first_page(
+            host, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        export = screen.query_one("#library-media-export", Button)
+        assert export.disabled
+        assert str(export.label) == "○ Export…"
+        assert str(export.tooltip) == "Couldn't load media · database is locked."
+        assert "○" in _painted(host, export.region), _painted(host, export.region)
+
+        # task-31960: the same gate, the same reason, the same marker --
+        # "Review these" pins the whole filtered list as a review set, and
+        # there is no list to pin.
+        review = screen.query_one("#library-media-review", Button)
+        assert review.disabled
+        assert str(review.label) == "○ Review these"
+        assert str(review.tooltip) == "Couldn't load media · database is locked."
+        assert "○" in _painted(host, review.region), _painted(host, review.region)
+
+        # Trash stays the live route into the deleted items.
+        trash = screen.query_one("#library-media-trash-open", Button)
+        assert not trash.disabled
+        assert str(trash.label) == "Trash"
+        assert "Trash" in _painted(host, trash.region)
+
+
+@pytest.mark.asyncio
+async def test_page_failure_that_retains_rows_leaves_export_live():
+    """Fix round 1's negative control: retained rows export fine."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        # The callout IS up (the broad predicate this used to gate on)...
+        assert screen.query("#library-media-load-failure-copy")
+        assert screen._library_media_browse_controller.failure is not None
+        assert len(screen.query(".library-media-row")) == 2
+        # ...and Export… is still live over the rows that survived it.
+        export = screen.query_one("#library-media-export", Button)
+        assert not export.disabled
+        assert str(export.label) == "Export…"
+        # task-31960: so is "Review these" -- retained rows are reviewable.
+        review = screen.query_one("#library-media-review", Button)
+        assert not review.disabled
+        assert str(review.label) == "Review these"
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_list_leaves_export_and_trash_live():
+    """The other negative control: no failure, no gate (task-31635 item 6)."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        export = screen.query_one("#library-media-export", Button)
+        trash = screen.query_one("#library-media-trash-open", Button)
+        review = screen.query_one("#library-media-review", Button)
+        assert not export.disabled
+        assert not trash.disabled
+        assert not review.disabled
+        assert str(export.label) == "Export…"
+        assert str(trash.label) == "Trash"
+        assert str(review.label) == "Review these"
+
+
+# --- task-31635 Task 3 (critique #5 items 7/8/11/19 + Qodo 18) ----------------
+
+
+@pytest.mark.asyncio
+async def test_raising_follow_up_still_runs_the_queued_focus_restore():
+    """Qodo on #2473 (item 18): the chained restore rides a ``finally``.
+
+    ``_after_library_media_viewer_sync`` chains its own follow-up ahead of
+    whatever the sync already queued -- PR F's task-31567 focus restore. A
+    follow-up that raises (the scroll-progress restore is one) dropped that
+    restore on the floor and left focus wherever the recompose put it. The
+    exception must still surface; only the ordering guarantee changes.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer")
+        # Stand on a child the viewer owns so the sync's own restore has
+        # something to put back.
+        screen.query_one("#library-media-reader-more", Button).focus()
+        await pilot.pause()
+        # A real compose-input flip, so the sync genuinely recomposes and
+        # queues task-31567's restore for us to chain behind.
+        screen._media_state.reader_session = set_more_open(
+            screen._media_state.reader_session, True
+        )
+
+        def boom() -> None:
+            raise RuntimeError("follow-up blew up")
+
+        with pytest.raises(RuntimeError, match="follow-up blew up"):
+            screen._after_library_media_viewer_sync(boom)
+            chained = viewer._post_recompose_callback
+            assert chained is not None
+            chained()
+
+        await pilot.pause()
+        await pilot.pause()
+        focused = screen.focused
+        assert focused is not None
+        assert focused is viewer or viewer in focused.ancestors, focused
+
+
+@pytest.mark.asyncio
+async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
+    """Qodo on #2475 (item 19): the row follows the analysis it just gained.
+
+    ``analysed`` is projected in SQL and frozen into the retained row at
+    browse-state build, so a freshly saved analysis left its own row
+    unmarked until the next page fetch -- the one row the user just proved
+    has an analysis. The save seam re-reads that ONE row from the same SQL
+    projection (an id-scoped re-fetch on a human-paced gesture, never on the
+    page path) and the existing canvas patch paints it.
+
+    It asks the projection rather than trusting the write's own claim,
+    because live on 2026-09-07 those disagreed -- see
+    ``_reproject_library_media_analysis_row``.
+    """
+    host = _review_state_host(count=4, analysed=0)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+        _titles, before = _painted_media_rows(host, screen)
+        assert [line.strip() for line in before] == ["document · 5m"] * 4, before
+
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+        screen.query_one("#library-media-analysis-edit", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+        screen.query_one(
+            "#library-media-analysis-edit-text", TextArea
+        ).text = "A brand new analysis"
+        searches_before = len(host.app_instance.media_reading_scope_service.search_calls)
+        screen.query_one("#library-media-analysis-save", Button).press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(host.app_instance.media_reading_scope_service.analysis_calls)
+            and not screen._media_state.editing_analysis,
+            message="The analysis save never completed.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        _titles, after = _painted_media_rows(host, screen)
+        assert [line.strip() for line in after] == [
+            _ANALYSED_SECONDARY,
+            "document · 5m",
+            "document · 5m",
+            "document · 5m",
+        ], after
+        # ...and the only read it cost was one id-scoped row, never a
+        # re-page of the list.
+        extra = host.app_instance.media_reading_scope_service.search_calls[
+            searches_before:
+        ]
+        assert len(extra) == 1, extra
+        assert extra[0]["id_allowlist"] == [1], extra[0]
+        assert extra[0]["limit"] == 1, extra[0]
+
+
+async def _apply_media_filter(screen, pilot, query: str) -> None:
+    """Type ``query`` into the Media filter and settle the authoritative page."""
+    screen.query_one("#library-media-filter", Input).value = query
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_media_browse_controller.applied_scope is not None
+            and screen._library_media_browse_controller.applied_scope.query == query
+            and not screen._library_media_browse_controller.loading
+        ),
+        message=f"The filter {query!r} never applied.",
+    )
+    for _ in range(3):
+        await pilot.pause()
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_zero_result_filter_keeps_the_sets_entry(size):
+    """Item 7: Sets is navigation, not a result.
+
+    The fresh-empty page distils to exactly ONE recovery action, and the
+    Sets opener was composed under that same gate -- so filtering to zero
+    rows took away the only route back to a saved review set at the moment
+    the list had nothing else to offer. The picker opens over any list
+    (it carries its own empty copy and "Read later"), so it is never
+    disabled here.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "zzz-nothing-matches")
+
+        assert not screen.query(".library-media-row")
+        sets = screen.query_one("#library-media-review-sets", Button)
+        assert sets.display is True
+        assert not sets.disabled
+        assert "Sets" in _painted(host, sets.region)
+
+
+@pytest.mark.asyncio
+async def test_a_single_result_filter_announces_that_enter_opens_it():
+    """Item 8 (declined, announced): the filter's first hit auto-loads.
+
+    Selecting the first authoritative result is intentional and pinned
+    (``test_filter_uses_authoritative_search_and_restores_page_three_anchor``
+    in Tests/UI/test_library_media_reader_flow.py -- and clearing the
+    filter restores the previous anchor, the symmetric half). So the list
+    says what happened instead of changing it.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "Doc 3")
+
+        assert len(screen.query(".library-media-row")) == 1
+        status = screen.query_one("#library-media-status", Static)
+        assert status.display is True
+        assert str(status.renderable) == "1 result · Enter opens"
+        assert "1 result · Enter opens" in _painted(host, status.region)
+
+        # Two hits say nothing -- this line only explains the single-hit
+        # auto-load.
+        await _apply_media_filter(screen, pilot, "Doc")
+        assert len(screen.query(".library-media-row")) == 4
+        assert screen.query_one("#library-media-status", Static).display is False
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_the_reader_says_its_item_is_not_in_the_open_trash_list(size):
+    """Item 11: the Reader beside Trash still holds a LIVE media item.
+
+    Opening Trash swaps the Items pane for the deleted-items list and leaves
+    the Reader on whatever was open -- a live item sitting beside a list of
+    deleted ones, with nothing saying which list it came from. The cheaper
+    honest option of the two on offer: one identity line, in the slot the
+    server-item line already uses (task-31277's grammar), instead of
+    clearing the Reader -- clearing would throw away the reading position
+    the user comes back to.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        assert not screen.query("#library-media-reader-identity")
+
+        screen.query_one("#library-media-trash-open", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
+        for _ in range(3):
+            await pilot.pause()
+
+        identity = screen.query_one("#library-media-reader-identity", Static)
+        assert str(identity.renderable) == "Showing a Media item · not in Trash"
+        assert "not in Trash" in _painted(host, identity.region)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_more_row_actions_share_one_grid_column_grammar(size):
+    """Item 16 (declined, shipped by PR H #2470): the indent is the grid's.
+
+    "Open manager" used to sit one cell further in than its siblings. PR H
+    replaced the More disclosure's bare Vertical with a single ``ItemGrid``
+    (``#library-media-reader-more-actions``, fixed 15-16 cell columns), so
+    every action in the row is laid out on the same column origins by
+    construction. This is the painted proof, kept as a pin so the column
+    grammar cannot silently drift back.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-reader-more", Button).press()
+        grid = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-more-actions"
+        )
+        for _ in range(2):
+            await pilot.pause()
+
+        actions = list(grid.query(Button))
+        assert [action.id for action in actions] == [
+            "library-media-edit",
+            "library-media-open",
+            "library-media-delete",
+        ], actions
+        columns = sorted({action.region.x for action in actions})
+        # One pitch for the whole row: "Open manager" starts exactly one
+        # column after "Edit metadata" and one before "Move to trash",
+        # never on an origin (or an extra cell of indent) of its own.
+        pitches = {
+            second - first for first, second in zip(columns, columns[1:])
+        }
+        assert len(pitches) == 1, [
+            (action.id, action.region) for action in actions
+        ]
+        # ...and every row of the grid starts at the same leftmost column.
+        rows: dict[int, list[int]] = {}
+        for action in actions:
+            rows.setdefault(action.region.y, []).append(action.region.x)
+        assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
+        painted = _painted(host, grid.region)
+        assert "Open manager" in painted, painted

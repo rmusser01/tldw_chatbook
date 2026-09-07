@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Library.library_media_reader_state import (
+    MEDIA_READER_LAYOUT_PROFILE,
+)
 from tldw_chatbook.Utils.adaptive_reader_state import (
     PANE_GRIP_WIDTH,
+    READER_COMFORT_WIDTH,
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     AdaptiveReaderLayoutProfile,
@@ -59,9 +64,13 @@ class _ProbeApp(ConsolidatedCSSApp):
         focusable_content: bool = False,
         hidden_items_subtree: bool = False,
         work_disabled: bool = False,
+        grip_width: int = PANE_GRIP_WIDTH,
     ) -> None:
         super().__init__()
-        self.layout = layout or _layout()
+        # task-31952 AC#3: the grip width reaches the shell ONLY on the
+        # layout the resolver produced, so a probe cannot paint a width the
+        # resolver never reserved.
+        self.layout = replace(layout or _layout(), grip_width=grip_width)
         self.focusable_content = focusable_content
         self.hidden_items_subtree = hidden_items_subtree
         self.work_disabled = work_disabled
@@ -119,8 +128,19 @@ def _painted_rows_containing(app: _ProbeApp, widget: Widget, token: str) -> list
 
 
 @pytest.mark.asyncio
-async def test_shell_mounts_three_concrete_widgets_and_two_five_column_grips():
-    app = _ProbeApp()
+@pytest.mark.parametrize(
+    ("grip_width", "arrow"),
+    # task-31633 AC#2: the grip width is the destination profile's, and the
+    # arrow is as wide as the grip. Five columns is the shared default Notes,
+    # File Notes and Prompts still use; one column is Media's, and since
+    # task-31951 also Conversations', Skills' and Collections'.
+    [(PANE_GRIP_WIDTH, "<---"), (MEDIA_READER_LAYOUT_PROFILE.grip_width, "‹")],
+)
+async def test_shell_mounts_three_concrete_widgets_and_two_profile_width_grips(
+    grip_width: int,
+    arrow: str,
+) -> None:
+    app = _ProbeApp(grip_width=grip_width)
 
     async with app.run_test(size=(160, 30)) as pilot:
         await pilot.pause()
@@ -139,9 +159,12 @@ async def test_shell_mounts_three_concrete_widgets_and_two_five_column_grips():
         ]
         assert str(shell.work.renderable) == "Work"
         assert [shell.library_grip.region.width, shell.items_grip.region.width] == [
-            PANE_GRIP_WIDTH,
-            PANE_GRIP_WIDTH,
+            grip_width,
+            grip_width,
         ]
+        # task-31952 AC#3: painted width IS the resolver's reservation.
+        assert shell.effective_layout.grip_width == grip_width
+        assert _painted_rows_containing(app, shell.items_grip, arrow), arrow
 
 
 @pytest.mark.asyncio
@@ -552,6 +575,34 @@ def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
     )
 
 
+@pytest.mark.parametrize(
+    "sheet",
+    [
+        CSS_SOURCE,
+        # The rebuilt sheet: `build_css` routes this screen-scoped rule here
+        # rather than into `tldw_cli_modular.tcss`, which carries only the
+        # grip's :hover/.-active pair.
+        CSS_SOURCE.parents[1] / "screen_agentic_library.tcss",
+    ],
+    ids=["component-source", "generated-screen-sheet"],
+)
+def test_no_sheet_declares_a_grip_width_beside_the_inline_one(sheet: Path) -> None:
+    """task-31952 AC#1: the five-column fallback is gone everywhere.
+
+    Every mounted grip sets its width inline from the layout the resolver
+    produced, and an inline style outranks a rule -- so ``width: 5`` here was
+    dead for Media, dead for the three siblings task-31951 narrowed, and a
+    second (stale) answer to a question the resolver already settles.
+    """
+    grip_block = sheet.read_text(encoding="utf-8").split(
+        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
+        1,
+    )[1].split("}", 1)[0]
+
+    for declaration in ("width:", "min-width:", "max-width:"):
+        assert declaration not in grip_block, (sheet.name, declaration)
+
+
 def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     source = CSS_SOURCE.read_text(encoding="utf-8")
     shared_grip = source.split(
@@ -595,6 +646,7 @@ from Tests.UI.test_library_media_side_by_side import (  # noqa: E402
 )
 from Tests.UI.test_library_shell import (  # noqa: E402
     LibraryGlobalKeyProductionCSSHarness,
+    LibraryProductionCSSHarness,
     _seed_conversations,
     _two_conversations,
     _wait_for_condition,
@@ -649,3 +701,143 @@ async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
         assert not screen.focused.has_class(
             "library-adaptive-reader-pane-grip"
         ), screen.focused
+
+
+# ---------------------------------------------------------------------------
+# task-31633 AC#1/AC#4: the Items column grows with the terminal.
+#
+# Painted, not just resolved: critique #5 P1 measured a 98-character title
+# truncated after 31 characters at 235x52 while the SAME title survived to 39
+# at 100x30 -- the wider terminal painted the narrower list. The 100x30 pane
+# width is pinned exactly, because PR D/F/G rows are sized against it.
+# ---------------------------------------------------------------------------
+
+MEDIA_LONG_TITLE = (
+    "Quarterly roadmap interview recording with the leadership panel "
+    "and appendix notes " * 2
+)[:98]
+
+
+def _media_items_with_a_long_title() -> list[dict[str, object]]:
+    rows = _two_media_items()
+    rows[0]["title"] = MEDIA_LONG_TITLE
+    return rows
+
+
+def _painted_lines(host, region) -> list[str]:
+    strips = list(host.screen._compositor.render_strips())
+    return [
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("size", "expected_items_width", "expected_title_characters"),
+    [
+        # 235x52 was 40 cells / 31 painted title characters at badff73f1.
+        # 56 is the profile's list comfort ceiling, the same one the
+        # library-closed branch of the resolver already uses.
+        ((235, 52), 56, 46),
+        # 100x30 was 44 cells / 39 painted title characters while the two pane
+        # grips still cost five columns each (task-31633 AC#2). The Reader is
+        # on its 46-cell minimum here, so the eight cells the grips gave back
+        # went to the list -- and the same 98-character title now survives to
+        # the same 46 characters at BOTH sizes.
+        ((100, 30), 52, 46),
+    ],
+)
+@pytest.mark.asyncio
+async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortable(
+    size: tuple[int, int],
+    expected_items_width: int,
+    expected_title_characters: int,
+) -> None:
+    assert len(MEDIA_LONG_TITLE) == 98
+    app = _build_media_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_items_with_a_long_title()
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(4):
+            await pilot.pause()
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+        )
+        row = next(
+            candidate
+            for candidate in screen.query(".library-media-row").results(Button)
+            if MEDIA_LONG_TITLE[:20] in str(candidate.label)
+        )
+        painted_title = _painted_lines(host, row.region)[0]
+
+        assert "\u2026" in painted_title, painted_title
+        visible = painted_title.split("\u2026", 1)[0].strip()
+        assert MEDIA_LONG_TITLE.startswith(visible), (visible, painted_title)
+        assert (shell.items.region.width, len(visible)) == (
+            expected_items_width,
+            expected_title_characters,
+        ), (shell.items.region, painted_title)
+        assert shell.work.region.width >= READER_COMFORT_WIDTH
+        if size == (235, 52):
+            # AC#4 floors: the wide list is at least as wide as the compact
+            # one, and the 98-character title survives past 44 characters.
+            assert shell.items.region.width >= 47
+            assert len(visible) >= 44
+
+
+# ---------------------------------------------------------------------------
+# task-31633 AC#2: no 5-cell dead gutter between rail, list and Reader.
+#
+# Painted, not region-only: the gutter is the pane grip's own columns, and a
+# region assertion is blind to what those columns actually carry. The slice
+# bounds come from the pane regions, but every assertion below reads glyphs --
+# the panes' own border glyphs anchor the slice, and the slice itself must be
+# dead (the grip's arrow paints on its own rows, not on a list row).
+# ---------------------------------------------------------------------------
+
+MAX_PANE_GUTTER_CELLS = 2
+
+
+def _dead_gutters(host, screen, shell) -> tuple[str, str]:
+    """Return the painted columns flanking the Items pane on a list row."""
+    row = screen.query_one("#library-media-row-0", Button)
+    painted = list(host.screen._compositor.render_strips())[row.region.y].text
+    return (
+        painted[shell.library.region.right : shell.items.region.x],
+        painted[shell.items.region.right : shell.work.region.x],
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_dead_gutter_flanks_the_media_items_pane_at_235x52() -> None:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(4):
+            await pilot.pause()
+
+        shell = screen.query_one(
+            "#library-media-reader-shell", LibraryAdaptiveReaderShell
+        )
+        assert shell.library.display, "the rail pane is closed at 235x52"
+        left_gutter, right_gutter = _dead_gutters(host, screen, shell)
+        row = screen.query_one("#library-media-row-0", Button)
+        painted = list(host.screen._compositor.render_strips())[row.region.y].text
+
+        # Anchors: the slice really is the run between two painted panes.
+        assert painted[shell.library.region.right - 1] == "│", painted
+        assert painted[shell.items.region.x] == "│", painted
+        assert painted[shell.items.region.right - 1] == "│", painted
+
+        assert left_gutter.strip() == "", (left_gutter, painted)
+        assert right_gutter.strip() == "", (right_gutter, painted)
+        assert len(left_gutter) <= MAX_PANE_GUTTER_CELLS, (left_gutter, painted)
+        assert len(right_gutter) <= MAX_PANE_GUTTER_CELLS, (right_gutter, painted)

@@ -2569,6 +2569,7 @@ PromptVariablesDialog {
     text-overflow: clip;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #prompt-variables-scroll {
     width: 100%;
     height: 1fr;
@@ -2580,7 +2581,8 @@ PromptVariablesDialog {
     overflow-y: auto;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -3244,6 +3246,10 @@ ConsoleTerminalWorkspace Button:focus {
     text-style: underline bold;
 }
 
+#console-character-context .console-character-row.-opening {
+    text-style: italic;
+}
+
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
 ConsoleBoundedSection {
@@ -3670,6 +3676,29 @@ ChatScreen.-focus #console-workbench-header {
     color: $ds-text-muted;
 }
 
+
+/* Meetings rail: the voice rows (TASK-31826). Class-keyed on purpose -- an
+   `#id Button` rule would be an ancestor-scoped bare-type subject, which the
+   Perf Guard CSS ratchet counts.
+
+   A Textual container defaults to `height: 1fr`, so these blocks split the
+   rail's leftover rows between them and collapsed to one row (the offer's
+   three answer buttons were clipped out of the compositor entirely at
+   100x30 -- review C1). Sizing them to their content instead lets the rail's
+   VerticalScroll do the work. */
+.meetings-rail-block,
+.meetings-rail-actions {
+    height: auto;
+}
+
+/* Same treatment `.console-retrieval-scope-action` needed (TASK-24607):
+   `width: auto` alone does not shrink a Button, its DEFAULT_CSS carries
+   `min-width: 16`. Four 16-column buttons need 65 columns; the rail is half
+   a workbench, so "Import…" was clipped to one column at 100 (review I4). */
+.meetings-rail-button {
+    width: auto;
+    min-width: 0;
+}
 
 #artifacts-workbench,
 #personas-workbench,
@@ -5478,6 +5507,29 @@ ConsoleExchangeExportDialog {
 
 .density-compact .workbench-pane {
     padding: 0 1;
+}
+
+/* task-31825: the auto height trigger, distinct from `.density-compact`
+   above (the user's own global density preference, and on Console an
+   inner `#console-shell` wrapper it manages itself -- reusing that class
+   name here would let the two signals fight over the same selector).
+   `BaseAppScreen.VERTICAL_BREAKPOINTS` puts `shell-header-compact` on the
+   screen itself at/below the 24-row floor (task-31419's 80x24
+   measurement), so any `.workbench-header` under it -- every plain
+   DestinationHeader caller, with no per-screen CSS of its own -- picks up
+   the same compact geometry `.density-compact` already declares. A screen
+   with its own higher-specificity override (Console's `#console-workbench-
+   header.console-header-inline`, Lab's `.lab-header-inline`, Research
+   Workspace's `#research-workspace-header .workbench-header`) keeps its
+   existing shape unchanged, same as it does against `.density-compact`
+   today. */
+.shell-header-compact .workbench-header {
+    min-height: 1;
+    padding: 0 1;
+}
+
+.shell-header-compact .workbench-header-subtitle {
+    display: none;
 }
 
 /* task-1232 round 1 (fleet-UX expert review F2, Critical fix): the F1 help
@@ -12887,6 +12939,13 @@ TaskDetail, DefinitionDetail {
     padding: 0 1;
 }
 
+/* task-31823: shared by BOTH panes' secondary-actions buttons (reminder
+ * + definition) -- a plain class on each Button, never an
+ * ancestor-scoped bare-type rule. */
+.detail-secondary-action-button {
+    margin: 0 1 0 0;
+}
+
 /* Both live instances of the pane: the docked one and, at narrow widths,
  * the fresh instance `WorkbenchHostScreen` hosts (redesign PR-4, task 6).
  * Listed by id rather than re-keyed to `TaskDetail .follow-why`, which
@@ -13067,9 +13126,32 @@ DetailValueRow .detail-value-row-error {
     margin: 0 0 0 1;
 }
 
+/* 31712 AC#4: Textual's own `Collapsible`/`Contents` body chrome --
+ * `Collapsible`'s widget-tier `padding-bottom: 1`, the app-wide
+ * `Collapsible { margin-bottom: 1 }` / `Collapsible { border: tall
+ * $surface }` / `Collapsible > Contents { padding: 1 }` rules
+ * (`tldw_cli_modular.tcss`, "Collapsible styling enhancements") -- costs 5
+ * blank rows per EXPANDED group before a single row of real content is
+ * drawn (measured: a 4-row Frequency group rendered at height 13, only 4
+ * of those rows readable). The stray `border: tall` is the sneaky one:
+ * this rule already set `border-top` only, but CSS `border-top` never
+ * clears the other 3 edges, so the app-wide rule's bottom/left/right
+ * `tall` border kept bleeding through underneath a rule that reads as a
+ * full override -- an explicit `border: none;` before `border-top:` is
+ * what actually clears it. Same idiom `LibraryIngestCanvas Collapsible`/
+ * `Collapsible Contents` already uses for the same complaint (task-2043)
+ * -- scoped to `DetailGroup` only, not the app-wide type, so every other
+ * Collapsible in the app keeps its own spacing/border. */
 DetailGroup {
     background: $ds-surface-panel;
+    border: none;
     border-top: hkey $ds-grid-line;
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+DetailGroup Contents {
+    padding: 0 0 0 3;
 }
 
 /* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay

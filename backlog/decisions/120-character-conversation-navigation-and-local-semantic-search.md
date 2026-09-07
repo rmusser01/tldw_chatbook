@@ -97,8 +97,28 @@ opener returns exactly `OPENED`, `CANCELLED_PRECOMMIT`, `NOT_FOUND`,
 `commit_started` acknowledgement is the cancellation linearization point:
 cancellation that wins before it guarantees no Console target, tab, draft, or
 focus change; once commit starts, the caller waits for success or atomic rollback.
-Only `OPENED`, after the exact destination is current and visible, dismisses the
-calling activation surface.
+Public `OPENED` requires the exact destination to be current and visible.
+For the request-owned switcher only, the canonical mutation lane may first prove
+that exact destination ready immediately beneath the same live source overlay,
+synchronously consume its matching committed completion and dismiss it, and then
+perform the ordinary exposed-destination proof before returning `OPENED`.
+There is no await between the final owner/readiness check, dismissal, and proof.
+The source fence includes request, mount/query generation, cancellation owner,
+immediate stack position, and an epoch invalidated even by away-and-back overlays.
+Single-flight joining includes this completion owner's identity; ordinary
+Context/Roleplay callers never inherit an overlay's authorization. Successful
+dismissal preserves composer focus instead of restoring the old source control.
+Refused/stale completion retains the source and uses existing owned rollback.
+An exceptional reentrant stack change after synchronous pop can still fail the
+final proof; it does not authorize recreating a dismissed source or global stack.
+Waiting for an exposed destination before dismissing its retained modal was
+rejected because genuine-owner verification demonstrated circular failure.
+
+Resume prepares cold real-token estimates off the UI thread before switching the
+target session, using immutable rows and target-specific provider/model settings.
+It reuses the estimator's existing cache, not the UI-owned cost-chip cache, and
+rejects stale target/settings preparation. No approximate pricing, startup eager
+warmup, or changed token semantics are introduced.
 
 Roleplay deep links pass through an app-owned navigation coordinator before
 selection changes. The coordinator snapshots all incumbent Roleplay draft and
@@ -113,6 +133,56 @@ the same `data_authority_id`; shows the old and proposed identity; requires an
 explicit user selection and confirmation; and commits through compare-and-set.
 Context, `Ctrl+K`, and Roleplay may navigate to that flow but cannot repair.
 Names never select or preselect a repair target.
+
+Task4 release clarification (2026-09-05): unavailable inspection and unavailable
+browse deep links originate only from Console Context and retain its Character
+return anchor. Both their typed objects and wire payloads reject other origins;
+their native return action is **Back to Console**. Incumbent repair continues to
+accept its existing Console and Roleplay return targets. This scopes the two
+new Task4 routes, not future navigation origins; later delivery must explicitly
+define any extension. Returning reveals Character transiently and does not write
+manual disclosure preferences.
+
+Task5 admission correction (2026-09-06, TASK-31245): a switcher-to-Library
+inspection is accepted only after Library prepares the exact immutable local
+conversation and admits its existing save guards. Generic destination stack
+ownership is not evidence that the requested inspection was accepted. Library
+owns preparation through its existing bounded local conversation locator; the
+app's existing navigation coordinator owns the one-way commit and screen
+transfer. Preparation must not replace the retained Library view or dismiss the
+source switcher. It captures the database, authority, exact conversation,
+navigation generation, and originating visit, and rejects stale or cancelled
+requests before commit.
+
+Cold and retained Library screens use the same prepared inspection contract.
+Commit installs the validated route and exact reader selection, without a
+second competing admission lookup on mount. Later transcript rendering remains
+Library-owned and is not confused with route admission. Until commit begins,
+rejection or cancellation preserves the switcher's query, highlight, scroll,
+and recovery identity; after commit begins, source controls cannot cancel or
+retarget the transfer. This does not broaden repair authority or return origins,
+create a parallel navigation service, or redesign generic overlay rollback for
+an unrelated late synchronous screen-switch failure. The existing Context
+Character return anchor remains unchanged.
+
+Task5 failed-transfer correction (2026-09-07, TASK-31245): Library retains a
+request-owned commit receipt until the app determines target stack ownership.
+It captures only the synchronous inspection commit's changed destination,
+navigation, conversation-page/reader, prepared-marker, workspace-cache and
+transient Notes-phase fields, after save guards have completed. A transfer
+that fails without target ownership restores those fields only while the
+captured destination owners, monotonic navigation/page generations, reader
+identity and installed state still agree. A newer Library operation wins:
+stale completion clears only its own still-identical prepared marker and must
+not rewind newer state. Generations and completed saves are never rolled back.
+Synchronous partial-commit exceptions restore immediately before escaping.
+Once target ownership is acquired, later mounting or bookkeeping failure does
+not roll back that target. Receipt retirement releases only its own lease,
+exactly once. No dismissed source overlay or global screen stack is recreated.
+Deferring commit until after switching was rejected because cold mount/resume
+and synchronous screen-change observers require the exact prepared selection
+already installed. Moving commit only past overlay teardown would leave the
+subsequent no-ownership switch-failure gap.
 
 Surface roles remain distinct:
 

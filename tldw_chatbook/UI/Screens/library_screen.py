@@ -79,7 +79,6 @@ from ...config import (
     save_settings_to_cli_config,
 )
 from ...Constants import (
-    LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
@@ -101,7 +100,6 @@ from ...Library.library_content_evidence import (
 from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
-    PANE_GRIP_WIDTH,
     PaneName,
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,
@@ -227,6 +225,7 @@ from ...Library.library_notes_tree_paging import (
     begin_notes_slice_load,
     empty_notes_slice,
     fail_notes_slice_load,
+    patch_notes_tree_branches_title,
 )
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Library.library_notes_session import (
@@ -447,6 +446,10 @@ from ...Widgets.Library.library_media_canvas import (
     LibraryMediaRowGeometryChanged,
     LibraryMediaRowScroll,
 )
+from ...Library.meeting_speaker_rename import (
+    _meeting_speaker_legend_rows,
+    can_rename_meeting_speakers,
+)
 from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
@@ -512,7 +515,13 @@ from ..Library_Modules.library_snapshot_cache import (
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+from ..destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+    load_failure_recovery_state,
+    policy_denied_recovery_state,
+    sync_load_failure_callout,
+)
 from .model_browser_state import install_failure_message
 from .study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
@@ -531,6 +540,10 @@ if TYPE_CHECKING:
         LibraryFileNotesWorkspace,
     )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ..Library_Modules.library_inspection_admission import PreparedLibraryInspection
+    from ..Library_Modules.library_unavailable_navigation import (
+        _LibraryCharacterNavigationAdmission,
+    )
 else:
 
     def LibraryFileNotesWorkspace(*args: Any, **kwargs: Any) -> Any:
@@ -715,6 +728,9 @@ from ..Library_Modules.screen_constants import (
     _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY,
     LIBRARY_SERVICE_ERROR_COPY,
     LIBRARY_SERVICE_UNAVAILABLE_COPY,
+    LIBRARY_SOURCE_FAILURE_SELECTOR,
+    LIBRARY_SOURCE_RETRY_ID,
+    LIBRARY_SOURCE_TIMEOUT_COPY,
     LIBRARY_EMPTY_COPY,
     LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
     LIBRARY_ONBOARDING_EVIDENCE_TIMEOUT_SECONDS,
@@ -839,6 +855,21 @@ def _assign_library_reader_preferences_attribute(
     head, _, tail = attribute.rpartition(".")
     target = operator.attrgetter(head)(owner) if head else owner
     setattr(target, tail, value)
+
+
+def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
+    """The one warning both source-snapshot failure branches share.
+
+    task-31632 final review I-2: splitting the deadline into its own
+    ``except TimeoutError`` branch left it with no log line at all, while
+    the hard-failure branch kept the single ``warning`` the old bare
+    ``except`` gave every failure kind. Routing both branches through this
+    one call -- instead of adding a second ``logger.*`` site -- keeps the
+    call-site count unchanged; only its own text (the marker) differs.
+    """
+    logger.opt(exception=True).warning(
+        f"Failed to load local Library source snapshot.{deadline_marker}"
+    )
 
 
 class LibraryScreen(BaseAppScreen):
@@ -991,6 +1022,15 @@ class LibraryScreen(BaseAppScreen):
         # the current item's done mark (the manual counterpart to ]'s auto-mark).
         Binding("R", "library_media_exit_review", "Exit review", show=False),
         Binding("m", "library_media_toggle_reviewed", "Toggle reviewed", show=False),
+        # task-31635 (critique #5 item 3): the Trash view's two row actions
+        # were mouse-or-six-Tabs only. Both gate on the SAME predicate the
+        # buttons do (``_library_media_trash_actions_live``), so a key can
+        # never fire where its button is disabled, and the footer chips
+        # below appear and disappear with them. "r" is also the Ingest
+        # canvas's "Retry this batch" -- disjoint contexts, and Textual
+        # tries each binding for a key until one's ``check_action`` passes.
+        Binding("r", "library_media_trash_restore", "Restore", show=False),
+        Binding("x", "library_media_trash_delete", "Delete forever", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -2156,6 +2196,11 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
+        from ..Library_Modules import library_unavailable_navigation
+
+        self._unavailable_navigation = library_unavailable_navigation
+        self._pending_library_character_navigation = None
+        self._library_unavailable_browse_scope = None
         from ..Library_Modules.library_navigation_controller import (
             LibraryNavigationController,
         )
@@ -2879,6 +2924,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             # -- named late-binding callables for the media exclusions a
             #    MOVER still calls internally.
+            after_library_media_viewer_sync=(
+                lambda *a, **k: self._after_library_media_viewer_sync(*a, **k)
+            ),
             arm_library_media_return_settlement=(
                 lambda *a, **k: self._arm_library_media_return_settlement(*a, **k)
             ),
@@ -2900,6 +2948,9 @@ class LibraryScreen(BaseAppScreen):
             commit_library_media_return=(
                 lambda *a, **k: self._commit_library_media_return(*a, **k)
             ),
+            decorate_library_media_reviewed=(
+                lambda *a, **k: self._decorate_library_media_reviewed(*a, **k)
+            ),
             exit_library_media_trash=(
                 lambda *a, **k: self._exit_library_media_trash(*a, **k)
             ),
@@ -2911,6 +2962,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             library_media_backing_id=(
                 lambda *a, **k: self._library_media_backing_id(*a, **k)
+            ),
+            library_media_can_rename_speakers=(
+                lambda *a, **k: self._library_media_can_rename_speakers(*a, **k)
             ),
             library_media_content_matches=(
                 lambda *a, **k: self._library_media_content_matches(*a, **k)
@@ -2924,14 +2978,23 @@ class LibraryScreen(BaseAppScreen):
             library_media_layout_signature=(
                 lambda *a, **k: self._library_media_layout_signature(*a, **k)
             ),
+            library_media_list_unselectable=(
+                lambda *a, **k: self._library_media_list_unselectable(*a, **k)
+            ),
             library_media_reader_exit_available=(
                 lambda *a, **k: self._library_media_reader_exit_available(*a, **k)
             ),
             library_media_return_candidate=(
                 lambda *a, **k: self._library_media_return_candidate(*a, **k)
             ),
+            library_media_selected_backing_id=(
+                lambda *a, **k: self._library_media_selected_backing_id(*a, **k)
+            ),
             library_media_settlement_tree=(
                 lambda *a, **k: self._library_media_settlement_tree(*a, **k)
+            ),
+            library_media_trash_action_disabled_reason=(
+                lambda *a, **k: self._library_media_trash_action_disabled_reason(*a, **k)
             ),
             library_media_trash_focus_selectors=(
                 lambda *a, **k: self._library_media_trash_focus_selectors(*a, **k)
@@ -2947,6 +3010,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             open_selected_media_handoff=(
                 lambda *a, **k: self._open_selected_media_handoff(*a, **k)
+            ),
+            queue_after_library_media_viewer_recompose=(
+                lambda *a, **k: self._queue_after_library_media_viewer_recompose(*a, **k)
             ),
             reconcile_library_media_stage_presentation=(
                 lambda *a, **k: self._reconcile_library_media_stage_presentation(*a, **k)
@@ -2977,6 +3043,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             sync_library_media_reader_layout_from_shell=(
                 lambda *a, **k: self._sync_library_media_reader_layout_from_shell(*a, **k)
+            ),
+            sync_library_media_surfaces_or_recompose=(
+                lambda *a, **k: self._sync_library_media_surfaces_or_recompose(*a, **k)
             ),
             sync_library_media_trash_state=(
                 lambda *a, **k: self._sync_library_media_trash_state(*a, **k)
@@ -3103,6 +3172,14 @@ class LibraryScreen(BaseAppScreen):
         # Qodo on #2366: one in-flight undo owns the receipt until it
         # settles (blocks a second Undo and a racing receipt-close).
         self._review_dismiss_undo_in_flight: bool = False
+        # (wave-7 merge) dev's new screen-resident media field. Its comment's
+        # "the reason cache above" now lives on ``LibraryMediaState``
+        # (``_media_state.analyze_reason_cache``); the motivation is unchanged.
+        # (fix I3) One-slot memo of "is the SELECTED item a renameable meeting
+        # recording": ``(media_id, answer)``. Same motivation as the reason
+        # cache above -- it is read on every media sync and costs a DB read
+        # plus a filesystem check, but can only change with the selection.
+        self._library_media_rename_cache: tuple[int, bool] | None = None
         # task-28007 AC#1/AC#2: outcomes recorded by the Import queue's
         # "Analyze N skipped" run-summary action, media-id-string ->
         # (ok, reason). Read by ``_build_library_ingest_state`` to overlay
@@ -3878,6 +3955,39 @@ class LibraryScreen(BaseAppScreen):
                 if escape_label:
                     shortcuts.append(("esc", escape_label))
                 return tuple(shortcuts)
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._media_state.view == "trash"
+            ):
+                # task-31635 item 3: the detail-back set this view already
+                # returned, plus its own two keys spliced in before the
+                # Escape chip -- gated through the same ``check_action`` the
+                # bindings use, so a stale page or an armed confirmation
+                # drops both instead of teaching a key that no-ops
+                # (task-28005's rule). Spliced, never re-literalled: the
+                # constant stays the one definition of the other three.
+                trash_keys = tuple(
+                    (key, label)
+                    for key, gated_action, label in (
+                        ("r", "library_media_trash_restore", "restore"),
+                        ("x", "library_media_trash_delete", "delete"),
+                    )
+                    if self.check_action(gated_action, ())
+                )
+                escape_chip = tuple(
+                    pair
+                    for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                    if pair[0] == "esc"
+                )
+                return (
+                    tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    )
+                    + trash_keys
+                    + escape_chip
+                )
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -3959,7 +4069,11 @@ class LibraryScreen(BaseAppScreen):
                 ("", progress),
             )
         return (
-            ("]", "finish review" if at_last else "next in set"),
+            # task-31635 (critique #5 item 9, ruling): a forward step marks
+            # the item you leave done, and "next in set" hid that -- users
+            # read the mark as an accident. The behaviour stays (it is the
+            # set's contract since task-31233); the chip stops being coy.
+            ("]", "finish review" if at_last else "next (marks reviewed)"),
             ("[", "prev in set"),
             ("m", "toggle reviewed"),
             ("R", "exit review"),
@@ -6296,6 +6410,41 @@ class LibraryScreen(BaseAppScreen):
 
     def _expire_library_media_return_settlement(self, request_id: int, outer_generation: int) -> None:
         return self._media_controller._expire_library_media_return_settlement(request_id, outer_generation)
+
+    @on(LibraryMediaViewer.SpeakerRenamed)
+    def _handle_library_media_speaker_renamed(
+        self, event: LibraryMediaViewer.SpeakerRenamed
+    ) -> None:
+        """Re-read the renamed item so the memoized detail stops being stale.
+
+        TASK-31745: the reader repaints itself the moment the rename lands,
+        but this screen's viewer state is memoized by detail IDENTITY -- the
+        next sync would otherwise repaint the pre-rename transcript over the
+        new name (and re-derive the legend labels from it). Storing a NEW
+        detail dict carrying the rewritten content is what clears that memo;
+        a full ``_refresh_library_media_detail`` would re-run the reader
+        session's request/supersede machinery to change the one field the
+        rename touched.
+
+        Touches no widget, so it needs no ``is_mounted`` guard -- the DB read
+        is the only thing that can fail here, and a torn-down screen just
+        drops the assignment.
+        """
+        event.stop()
+        if event.media_id != self._library_media_selected_backing_id():
+            # The selection moved on mid-rename; the next detail load reads
+            # the renamed text from the DB anyway.
+            return
+        detail = self._media_state.detail
+        db = getattr(self.app_instance, "media_db", None)
+        if not isinstance(detail, Mapping) or db is None:
+            return
+        try:
+            row = db.get_media_by_id(event.media_id)
+        except Exception:  # noqa: BLE001 - a closed/failed DB just means no patch
+            return
+        if row is not None:
+            self._media_state.detail = {**detail, "content": row["content"] or ""}
 
     @on(LibraryMediaRowGeometryChanged)
     def _handle_library_media_row_geometry_changed(self, event: LibraryMediaRowGeometryChanged) -> None:
@@ -8662,27 +8811,22 @@ class LibraryScreen(BaseAppScreen):
         end in, and what ``_sync_library_canvas`` falls back to after
         CLEARING the follow-up it had queued -- bypassed both and left
         ``screen.focused`` at ``None`` (reproduced at 235x52 and 100x30).
-        This is the narrowest hook the screen already owns, so every such
-        call site is covered at once.
 
-        Gated on ``recompose`` (a plain repaint is the hot path and must
-        not capture, restore or queue anything) and on Media being the
-        active destination, so the other canvases are untouched. The
-        restore is queued with ``call_after_refresh`` -- correct for a
-        WHOLE-screen recompose, where ``Screen._on_timer_update`` runs the
-        recompose before ``_invoke_and_clear_callbacks``; a widget-scoped
-        recompose has no such ordering and keeps riding
-        ``queue_after_recompose`` instead. Explicit targets still win
-        exactly as ``_restore_library_media_focus`` already decides.
+        task-31946 moved the capture/restore PAIR itself down to
+        ``BaseAppScreen`` -- one seam for every screen and every route, not
+        a Media-only patch on this override -- and this screen composes its
+        Media rules into it through ``_focus_identity_for_recompose`` /
+        ``restore_focus_after_recompose`` below. There is therefore exactly
+        one restore callback queued per whole-screen recompose; nothing
+        here queues a second one.
+
+        What stays here is the NOTES recompose state, which is a rehydrate
+        (widget values, stage visibility, footer context), not a focus
+        restore. Gated on ``recompose``: a plain repaint is the hot path
+        and must not capture or queue anything.
         """
         if recompose:
             self._commit_library_note_widgets_before_recompose()
-        media_focus = (
-            self._capture_library_media_focus_identity()
-            if recompose
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            else None
-        )
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
             self._library_notes_recompose_generation += 1
@@ -8704,9 +8848,81 @@ class LibraryScreen(BaseAppScreen):
         elif recompose:
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
-        if media_focus is not None:
-            self.call_after_refresh(self._restore_library_media_focus, media_focus)
         return result
+
+    def _focus_identity_for_recompose(self) -> str | None:
+        """Media's capture rules; the base rule everywhere else (task-31946).
+
+        The Media route refuses to record a reader pane GRIP -- Textual
+        dumps focus there by accident on exactly this recompose, so
+        restoring it would perpetuate the bug PR F fixed rather than undo
+        it. Every other route has no such trap and uses the base's plain
+        "the focused widget's id" rule.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            return self._capture_library_media_focus_identity()
+        return super()._focus_identity_for_recompose()
+
+    def restore_focus_after_recompose(self, previous: str | None) -> None:
+        """One owner per recompose window (task-31946 AC#2).
+
+        The shared seam schedules this ONCE per whole-screen recompose, so
+        the Media restore and the generic one cannot double-fire: they are
+        two statements of the same callback, and the generic tail is a
+        no-op the moment ``_restore_library_media_focus`` has focused
+        something real (it only acts when focus is still ``None``). The
+        tail is the only restore on the other three routes.
+
+        A one-shot focus CHANNEL stands the whole seam down, not just the
+        Media half: it lands its focus in a LATER callback, and ANY
+        foreign ``set_focus`` inside its window disarms it outright
+        (``on_descendant_focus`` revokes the pending receipt for anything
+        that is not the armed list's own row class) -- the generic tail
+        would do exactly that.
+
+        But it only stands down when the channel will actually LAND
+        something (PR L review item 2). ``_focus_library_list_entry``
+        returns without focusing anything in two cases, and in both the
+        seam is the only thing left between the user and a dead keyboard:
+
+        * the ``rail-only`` emergency stage, and
+        * a route with no row class at all -- Conversations is absent
+          from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed channel
+          is a no-op there by design.
+
+        (The third case, a row class whose list is EMPTY, is closed at
+        the channel itself: notes now falls back to its filter input the
+        way prompts and skills already did.)
+        """
+        if self._library_focus_channel_owns_this_window():
+            return
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            self._restore_library_media_focus(previous)
+        super().restore_focus_after_recompose(previous)
+
+    def _library_focus_channel_owns_this_window(self) -> bool:
+        """Whether an armed one-shot channel will land focus itself.
+
+        The two ``return``s below mirror the two at the TOP of
+        ``_focus_library_list_entry`` -- deliberately those two and no
+        more, so this predicate stays a statement about which route/stage
+        the channel serves and never a second copy of its row-picking
+        logic. Two no-landing cases are knowingly left inside "owns":
+        a pending Find focus whose input never mounts, and an empty
+        Media list whose four fallback controls are all absent or
+        disabled -- both narrow, both end at ``None`` rather than at a
+        wrong widget.
+        """
+        if self._media_state.find_focus_pending:
+            return True
+        if not self._library_pending_list_entry_focus:
+            return False
+        if self._library_emergency_stage == "rail-only":
+            return False
+        return (
+            _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
+            is not None
+        )
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -9142,6 +9358,7 @@ class LibraryScreen(BaseAppScreen):
         along the MRO separately for this event (the on_mount contract).
         """
         self._library_screen_suspended = True
+        self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
         self._stop_library_media_selection_debounce()
         self._stop_library_media_filter_timer()
@@ -9180,6 +9397,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_screen_suspended = False
         self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
+        if getattr(self, "_prepared_library_inspection_entry", None) is not None:
+            from ..Library_Modules.library_inspection_admission import (
+                consume_prepared_character_inspection,
+            )
+
+            self.run_worker(
+                consume_prepared_character_inspection(self),
+                exclusive=True,
+                group="library_nav_character",
+            )
         self._refresh_library_visit_surfaces()
 
     def _stop_library_media_selection_debounce(self) -> None:
@@ -9202,8 +9429,22 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             and self._pending_library_source_open is None
+            and self._pending_library_character_navigation is None
+            and self._library_unavailable_browse_scope is None
+            and getattr(self, "_prepared_library_inspection_entry", None) is None
         ):
             self._start_library_conversation_page_request(
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
+            )
+        elif (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            and self._pending_library_source_open is None
+            and self._pending_library_character_navigation is None
+            and self._library_unavailable_browse_scope is not None
+        ):
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
                 self._conversations_state.requested_page,
                 self._conversations_state.requested_query,
             )
@@ -9254,7 +9495,15 @@ class LibraryScreen(BaseAppScreen):
                     origin="entry",
                     focus_identity=None,
                 )
-        self._refresh_local_source_snapshot()
+        # task-31632 AC#2: returning to Library is the source snapshot's
+        # automatic retry -- one per return, no timer. A snapshot that missed
+        # its DEADLINE is exactly the case a later attempt may beat, so it
+        # keeps this refresh; a HARD failure does not re-run itself (its
+        # callout carries the Retry, in reach, and a failing read is not
+        # worth the deadline again on every visit).
+        source_failure = self._library_source_load_failure()
+        if source_failure is None or source_failure.severity != "error":
+            self._refresh_local_source_snapshot()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
@@ -9441,6 +9690,12 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_nav_open_source",
             )
+        if self._pending_library_character_navigation is not None:
+            self.run_worker(
+                self._unavailable_navigation._open_pending_library_character_navigation(self, ),
+                exclusive=True,
+                group="library_nav_character",
+            )
 
     async def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -9569,7 +9824,8 @@ class LibraryScreen(BaseAppScreen):
         self._clear_library_prompt_selection(announce=False)
         self._prompts_state.mutation_disabled_states.clear()
         self._invalidate_library_external_submission()
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
@@ -10602,6 +10858,13 @@ class LibraryScreen(BaseAppScreen):
             fallback_selector = {
                 "library-prompt-row": "#library-prompts-filter",
                 "library-skill-row": f"#{LIBRARY_SKILLS_FILTER_ID}",
+                # task-31946 (PR L review item 2): an empty NOTES list left
+                # this a no-op, so a background recompose inside the armed
+                # settle window -- which stands the screen-level focus seam
+                # down, precisely because this channel owns the window --
+                # ended with nothing focused at all. Same filter-input
+                # answer the two rows above already give.
+                "library-notes-row": "#library-notes-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -10733,9 +10996,45 @@ class LibraryScreen(BaseAppScreen):
             and skill_flush_allowed
         )
 
+
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Admit route context through the Library-owned navigation controller."""
         self._navigation_controller.apply_navigation_context(context)
+
+    async def prepare_character_inspection(
+        self, context: Mapping[str, Any], *, is_current: Callable[[], bool]
+    ) -> PreparedLibraryInspection | None:
+        """Prepare exact local inspection without replacing the retained view.
+
+        Args:
+            context: Closed typed Character inspection navigation context.
+            is_current: Request-owned visit and cancellation validity callback.
+
+        Returns:
+            A single-use Library preparation, or None if admission is rejected.
+        """
+        from ..Library_Modules.library_inspection_admission import (
+            prepare_character_inspection,
+        )
+
+        return await prepare_character_inspection(
+            self, context, is_current=is_current
+        )
+
+    def commit_character_inspection(self, prepared: PreparedLibraryInspection) -> bool:
+        """Consume the Library-owned preparation synchronously.
+
+        Args:
+            prepared: Exact selection token returned by this screen's preparation.
+
+        Returns:
+            True if the still-current token installs its selection; False otherwise.
+        """
+        from ..Library_Modules.library_inspection_admission import (
+            commit_character_inspection,
+        )
+
+        return commit_character_inspection(self, prepared)
 
     def _library_navigation_context_target_row(
         self,
@@ -10791,6 +11090,7 @@ class LibraryScreen(BaseAppScreen):
         context: Mapping[str, Any],
         target_row_id: str | None = None,
         generation: int | None = None,
+        character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
         """Admit every mounted editor/source, then apply navigation context.
 
@@ -10808,7 +11108,12 @@ class LibraryScreen(BaseAppScreen):
             generation = self._library_navigation_context_generation
         if generation != self._library_navigation_context_generation:
             return
+        if not await self._unavailable_navigation._validate_library_character_admission(self, character_admission):
+            return
         file_notes_flush_allowed = await self._flush_active_file_notes()
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if generation != self._library_navigation_context_generation:
             return
         if not file_notes_flush_allowed:
@@ -10821,6 +11126,7 @@ class LibraryScreen(BaseAppScreen):
                 context,
                 target_row_id,
                 generation,
+                character_admission,
             )
         finally:
             if callable(release_source):
@@ -10831,234 +11137,61 @@ class LibraryScreen(BaseAppScreen):
         context: Mapping[str, Any],
         target_row_id: str,
         generation: int,
+        character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
+        from ..Library_Modules.library_inspection_admission import (
+            _flush_library_navigation_sources,
+        )
+
         if self._prompts_state.mutation_in_flight:
             return
         if generation != self._library_navigation_context_generation:
             return
-        note_flush = await self._flush_library_note_save()
-        if generation != self._library_navigation_context_generation:
-            return
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        prompt_flush_allowed = await self._flush_library_prompt_save()
-        if generation != self._library_navigation_context_generation:
-            return
-        if not prompt_flush_allowed:
-            return
-        skill_flush_allowed = await self._flush_library_skill_save()
-        if generation != self._library_navigation_context_generation:
-            return
-        if not skill_flush_allowed:
-            self._notify_skill_dirty_veto()
+        def source_is_current() -> bool:
+            return (
+                generation == self._library_navigation_context_generation
+                and self._unavailable_navigation._library_character_admission_is_current(
+                    self, character_admission
+                )
+            )
+
+        if not await _flush_library_navigation_sources(
+            self, is_current=source_is_current
+        ):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
             return
         if target_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._clear_library_prompt_selection(announce=True)
-        self._apply_navigation_context_state(context, recompose=False)
+        self._apply_navigation_context_state(
+            context,
+            recompose=False,
+            character_admission=character_admission,
+        )
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if self.is_mounted and self._pending_library_source_open is None:
             await self.recompose()
+            if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+                self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+                return
+        if character_admission is not None:
+            await self._unavailable_navigation._open_pending_library_character_navigation(self, )
 
     def _apply_navigation_context_state(
         self,
         context: Mapping[str, Any],
         *,
         recompose: bool = True,
+        character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
-        """Apply validated navigation context to canvas state and recompose.
+        """Commit admitted routes through the Library navigation owner."""
+        from ..Library_Modules import library_unavailable_navigation
 
-        Split from ``apply_navigation_context`` so its mounted path can admit
-        every pending save first (see
-        ``_apply_navigation_context_after_flush``) while the pre-mount and
-        clean-editor paths apply directly.
-        """
-        if self._prompts_state.mutation_in_flight:
-            return
-        self._supersede_library_notes_navigation()
-        raw_open_source_type = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
-        raw_open_source_id = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
-        open_source_type = ""
-        open_source_id = ""
-        should_open_pending_source = False
-        if type(raw_open_source_type) is str and type(raw_open_source_id) is str:
-            validated_source_type = self._safe_text(
-                raw_open_source_type,
-                max_length=64,
-            )
-            validated_source_id = self._safe_text(
-                raw_open_source_id,
-                max_length=500,
-            )
-            if (
-                validated_source_type == raw_open_source_type
-                and validated_source_id == raw_open_source_id
-                and validated_source_type
-                in ("media", "notes", "conversations", "prompt")
-                and validated_source_id
-            ):
-                open_source_type = validated_source_type
-                open_source_id = validated_source_id
-                self._pending_library_source_open = (
-                    open_source_type,
-                    open_source_id,
-                )
-                should_open_pending_source = True
-        requested_mode = self._safe_text(
-            context.get(LIBRARY_NAV_CONTEXT_MODE),
-            max_length=64,
+        library_unavailable_navigation._apply_navigation_context_state(
+            self, context, recompose=recompose, character_admission=character_admission
         )
-        conversation_id = self._safe_text(
-            context.get(LIBRARY_NAV_CONTEXT_CONVERSATION_ID),
-            max_length=200,
-        )
-        note_id = self._safe_text(
-            context.get(LIBRARY_NAV_CONTEXT_NOTE_ID),
-            max_length=200,
-        )
-        notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
-        ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
-        target_mode = (
-            requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
-        )
-        if conversation_id and not target_mode:
-            target_mode = LIBRARY_MODE_CONVERSATIONS
-        if target_mode:
-            selected_row_id = LIBRARY_NAV_MODE_TO_ROW_ID.get(target_mode)
-            if selected_row_id:
-                self._set_library_destination_with_conversation_fence(selected_row_id)
-            self._invalidate_library_workspace_depth_state()
-        if conversation_id:
-            self._selected_conversation_id = conversation_id
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_BROWSE_CONVERSATIONS
-            )
-            if not should_open_pending_source:
-                # Persona still emits the legacy conversation_id context.
-                # A paged snapshot may not contain that id, so resolve it
-                # through the same point-lookup opener used by Search/RAG.
-                self._pending_library_source_open = (
-                    "conversations",
-                    conversation_id,
-                )
-                should_open_pending_source = True
-        if requested_mode == "notes" and not note_id:
-            # "notes" is a canvas row, not a nav-context table entry (see
-            # target_mode above), so it needs its own selection here --
-            # mirrors handle_library_notes_row's list-view entry state.
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_BROWSE_NOTES
-            )
-        if notes_create:
-            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE) --
-            # the create-note rail row's own target_id. The rail row's
-            # flush of a dirty editor is handled upstream by
-            # apply_navigation_context's mounted dirty-editor branch; here we
-            # only apply the selection the recompose reads. Reset the note
-            # editor state FIRST (a mounted screen re-entered via this
-            # deep link can still hold a previously opened note's
-            # id/detail/version) then re-assert the create-note target state
-            # AFTER, since the reset flips _library_notes_view back to
-            # "list" -- same reset-then-set ordering as
-            # _open_library_item_by_id's notes branch.
-            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-            self._dispatch_database_note_identity_cleared()
-            self._reset_library_note_editor_state()
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_CREATE_NOTE
-            )
-        if ingest_media:
-            # Home's ingest-jobs "Open details" control re-points here
-            # (L3b Task 6): running/queued/failed Library ingest jobs
-            # mirror into Home's Running and Needs Attention sections, and
-            # this deep link is their one-hop route back to the in-canvas
-            # ingest queue. Mirrors
-            # _select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA) -- unlike
-            # collections/note_id above, the ingest canvas reads the job
-            # registry directly on recompose, so no async data fetch (and
-            # therefore no on_mount deferral) is needed even pre-mount.
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_INGEST_MEDIA
-            )
-            # Mirrors _select_library_rail_row's reset: a cached LibraryScreen
-            # re-entered via this deep link (e.g. from Home's ingest-jobs
-            # "Open details" control) must never show a stale half-filled
-            # form left over from a previous Ingest visit.
-            self._reset_library_ingest_transient_state()
-        if note_id:
-            # Forward-compat entry point: the retired Notes tab's chat-sidebar
-            # deep link carried a note id, and this rebuilds the editor for it.
-            # No caller in the tree emits a note_id context today (the surviving
-            # open_notes_workspace route carries none, landing on the list), so
-            # this is exercised only by tests until such a producer is wired --
-            # not orphaned wiring.
-            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_BROWSE_NOTES
-            )
-            if self.is_mounted:
-                self._begin_library_note_load(note_id)
-            else:
-                self._library_note_session.close_session()
-                self._selected_note_id = note_id
-                self._library_notes_view = "editor"
-                self._library_note_load_state = "loading"
-                self._library_note_load_message = ""
-                self._library_note_autosave_state = "idle"
-                self._library_note_confirming_delete = False
-                self._library_note_preview = False
-                self._library_note_editor_armed = False
-            # A deep link never owns the current blank-note GC identity.
-            self._library_note_pending_blank_gc_id = None
-            self._library_note_session_blank_id = None
-            self._library_note_title_user_edited = False
-        if open_source_type:
-            self._set_library_destination_with_conversation_fence(
-                {
-                    "media": LIBRARY_ROW_BROWSE_MEDIA,
-                    "notes": LIBRARY_ROW_BROWSE_NOTES,
-                    "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
-                    "prompt": LIBRARY_ROW_BROWSE_PROMPTS,
-                }[open_source_type]
-            )
-            if open_source_type == "media":
-                self._media_state.selected_media_id = open_source_id
-                self._media_state.view = "list"
-            elif open_source_type == "notes":
-                self._selected_note_id = open_source_id
-                self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-                self._library_notes_view = "list"
-            elif open_source_type == "conversations":
-                self._selected_conversation_id = open_source_id
-            elif open_source_type == "prompt":
-                try:
-                    self._prompts_state.selected_prompt_id = int(open_source_id)
-                except ValueError:
-                    self._prompts_state.selected_prompt_id = None
-                self._prompts_state.view = "list"
-        if should_open_pending_source and self.is_mounted:
-            self.run_worker(
-                self._open_pending_library_source(),
-                exclusive=True,
-                group="library_nav_open_source",
-            )
-        # F-012: a deep link can change the active canvas (e.g. mode="search")
-        # without a rail-row press -- the footer's `u` hint must follow the
-        # canvas, not just the rail switch, or the key works unadvertised.
-        self._register_footer_shortcuts()
-        if self._library_notes_workflow_active():
-            self._library_notes_stage = "notes"
-            self._library_notes_explicit_stage_intent = not self.is_mounted
-        else:
-            self._library_notes_explicit_stage_intent = False
-        if self.is_mounted:
-            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-                self.run_worker(
-                    self._load_library_collections_capture_entry(),
-                    exclusive=True,
-                    group="library_collections_capture_entry",
-                )
-            elif recompose and not open_source_type:
-                self.refresh(recompose=True)
 
     async def _open_pending_library_source(
         self,
@@ -12080,6 +12213,26 @@ class LibraryScreen(BaseAppScreen):
     async def _apply_library_media_active_surface(self) -> None:
         return await self._media_controller._apply_library_media_active_surface()
 
+    def _sync_library_media_surfaces_or_recompose(self) -> None:
+        """Patch the mounted Reader and the Items rows in place, else recompose.
+
+        The shared tail of the two Media sync seams (task-28009 review M-3).
+        A viewer-scoped sync that succeeds must repaint the Items rows beside
+        it too: the row's review-state slot moves on a done mark that loads no
+        new item (`m`, and the final `]` completion gesture). A viewer that is
+        gone, or a sync that reports nothing patched, falls back to the
+        whole-screen recompose, which rebuilds both surfaces anyway.
+        """
+        viewer = self._mounted_library_media_viewer()
+        if viewer is None or not self._sync_library_media_viewer_state(viewer):
+            self.refresh(recompose=True)
+            return
+        try:
+            canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.apply_reader_state(self._build_library_media_state())
+
     async def _apply_library_media_list_return(self, media_return: _LibraryMediaReturnReceipt | None) -> None:
         return await self._media_controller._apply_library_media_list_return(media_return)
 
@@ -12208,12 +12361,17 @@ class LibraryScreen(BaseAppScreen):
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"
-            replacement = Static(
-                self._library_lookup_error,
-                id="library-canvas-error",
-                classes="destination-purpose",
-                markup=False,
-            )
+            # An already-mounted surface is never remounted below (no
+            # ``sync_kind``), so a repeat failure repaints here or nowhere.
+            # PR M carry M3/M6: only a SHAPE change (bare Static <-> callout
+            # with its own Retry) is worth a replacement widget -- clearing
+            # ``expected_selector`` sends it down the mount path, which
+            # removes the stale node first.
+            was_mounted = bool(self.query(expected_selector))
+            if not self._sync_library_canvas_error():
+                replacement = self._library_canvas_error_widget()
+                if was_mounted:
+                    expected_selector = ""
 
         if expected_selector and self.query(expected_selector):
             if sync_kind is None:
@@ -12355,6 +12513,71 @@ class LibraryScreen(BaseAppScreen):
         self._complete_library_entry_reconcile(generation, route_key)
         return LibraryEntryReconcileResult.APPLIED
 
+    def _library_canvas_error_widget(self) -> Widget:
+        """Build the browse canvas's failed-source surface.
+
+        task-31948: a failure a refetch can clear (the snapshot's own
+        deadline/hard-failure states, the only ones carrying
+        ``LIBRARY_SOURCE_RETRY_ID``) gets the same one-callout grammar the
+        landing hub already paints -- reason and Retry side by side, the
+        Retry running the same ``_refresh_local_source_snapshot``. Before
+        this, a browse row's only recovery from a failed snapshot was to
+        leave the surface and come back. Failures a Retry cannot clear (a
+        policy denial, a runtime with no source services) keep the bare
+        sentence: an inert Retry is worse than none.
+
+        Returns:
+            The callout, or the plain error Static. Either way it is the
+            ``#library-canvas-error`` node the reconcile mounts and
+            ``_sync_library_canvas_error`` refreshes.
+        """
+        failure = self._library_source_load_failure()
+        if failure is None:
+            return Static(
+                self._library_lookup_error or "",
+                id="library-canvas-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+        return load_failure_callout(
+            failure,
+            id="library-canvas-error",
+            copy_id="library-canvas-error-copy",
+            retry_id=LIBRARY_SOURCE_RETRY_ID,
+        )
+
+    def _sync_library_canvas_error(self) -> bool:
+        """Refresh a MOUNTED browse error surface in place.
+
+        The reconcile treats an already-mounted ``#library-canvas-error``
+        as current and returns without remounting it, so without this a
+        Retry against a failure that has not cleared would repaint nothing
+        at all -- the "Retry reads as inert" bug task-31632 fixed on the
+        hub, where a canvas ``sync_state`` does this job instead.
+
+        PR M carry M2/M3: the shared sync moves the SEVERITY TINT with the
+        copy (a Retry can turn a deadline into a hard failure), and reports
+        a shape change -- the bare Static a failure with no Retry paints,
+        and the callout -- as "remount me" instead of silently no-op'ing.
+
+        Returns:
+            ``True`` when the mounted node still fits the current failure
+            and was repainted; ``False`` when the caller must build and
+            mount the other shape (including when nothing is mounted yet).
+        """
+        node = next(iter(self.query("#library-canvas-error")), None)
+        if node is None:
+            return False
+        failure = self._library_source_load_failure()
+        if failure is None:
+            # A failure a Retry cannot clear (a policy denial, a runtime
+            # with no source services) keeps the bare sentence.
+            if not isinstance(node, Static):
+                return False
+            node.update(self._library_lookup_error or "")
+            return True
+        return sync_load_failure_callout(node, failure)
+
     def _apply_local_source_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
@@ -12376,6 +12599,29 @@ class LibraryScreen(BaseAppScreen):
             if study_counts is not None
             else {"study_decks": None, "flashcards_due": None, "quizzes": None}
         )
+        if recovery_state is not None:
+            previous_recovery = self._library_lookup_recovery_state
+            if (
+                previous_recovery is not None
+                and dataclasses.replace(recovery_state, attempt=1)
+                == dataclasses.replace(previous_recovery, attempt=1)
+            ):
+                # task-31632 final review I-1: a byte-identical repeat
+                # failure must still visibly repaint, never go silent --
+                # bumping ``attempt`` breaks the equality check below (and
+                # the ones above never differ for a repeat, since records/
+                # counts/lookup_error are just as static) so the callout
+                # reads a fresh attempt number instead of nothing at all.
+                recovery_state = dataclasses.replace(
+                    recovery_state, attempt=previous_recovery.attempt + 1
+                )
+                # Keep the two in sync: every existing ``_library_lookup_
+                # error`` consumer (the rail's Details line, and the
+                # ``#library-canvas-error`` surface -- task-31948's callout
+                # for a retryable failure, the bare Static otherwise)
+                # already reads ``recovery_state.message`` through this
+                # field.
+                lookup_error = recovery_state.message
         presentation_changed = not self._library_loaded or (
             normalized_records != self._local_source_records
             or normalized_counts != self._local_source_counts
@@ -12901,16 +13147,54 @@ class LibraryScreen(BaseAppScreen):
                 recovery_state,
                 empty_study_counts,
             )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to load local Library source snapshot.",
+        except TimeoutError:
+            # task-31632 AC#2: ``asyncio.TimeoutError`` IS ``TimeoutError``
+            # on 3.11+, and it must be told apart from a hard failure --
+            # collapsed into the same static sentence, a deadline the next
+            # attempt may beat read as an indefinite outage. This is the one
+            # place the deadline figure is true, so the reason quotes it.
+            # Final review I-2: shares the generic branch's one warning
+            # (via ``_log_source_snapshot_failure``) with a deadline marker,
+            # so a chronic/repeated deadline stays diagnosable off-screen
+            # too, without a second ``logger.*`` call site.
+            _log_source_snapshot_failure(
+                f" (deadline: waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
+            )
+            timeout_state = load_failure_recovery_state(
+                what=LIBRARY_SOURCE_TIMEOUT_COPY,
+                reason=f"waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s",
+                retry_id=LIBRARY_SOURCE_RETRY_ID,
+                stable_selector=LIBRARY_SOURCE_FAILURE_SELECTOR,
+                kind="timeout",
             )
             return (
                 empty_records,
                 empty_counts,
                 empty_total_known,
-                LIBRARY_SERVICE_ERROR_COPY,
-                None,
+                timeout_state.message,
+                timeout_state,
+                empty_study_counts,
+            )
+        except Exception as exc:
+            _log_source_snapshot_failure()
+            # ``_retry_failure_reason`` is the shared leak rule the Media
+            # callout already applies: an OS/SQLite message is the reader's
+            # own words, anything else is reduced to its KIND of failure
+            # (task-31944's map, or "an unexpected error") so an arbitrary
+            # exception's text -- which can carry a private path -- never
+            # reaches the screen.
+            failure_state = load_failure_recovery_state(
+                what=LIBRARY_SERVICE_ERROR_COPY,
+                reason=_retry_failure_reason(exc),
+                retry_id=LIBRARY_SOURCE_RETRY_ID,
+                stable_selector=LIBRARY_SOURCE_FAILURE_SELECTOR,
+            )
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                failure_state.message,
+                failure_state,
                 empty_study_counts,
             )
 
@@ -13153,11 +13437,20 @@ class LibraryScreen(BaseAppScreen):
         loading policy `_build_library_shell_input()` applies to the rail's
         own count suffixes. `_hub_source_count_value()` appends "+" when
         the source's total is an estimate, mirroring the rail. On a lookup
-        ERROR the line carries the error itself rather than misleading
-        zeros (PR #1318 review; the F-014 count policy: a failed fetch
-        must not dress up as an empty Library).
+        ERROR the line never reports zeros (PR #1318 review; the F-014
+        count policy: a failed fetch must not dress up as an empty
+        Library) -- it carries the error itself, or stays EMPTY when the
+        failure has its own recovery callout above (task-31632).
         """
         if self._library_lookup_error is not None:
+            if self._library_source_load_failure() is not None:
+                # task-31632: the recovery callout above already reads
+                # "<what> · <why>"; repeating it here as a bare line under
+                # its own bordered card is the duplicate the callout exists
+                # to remove. Failures WITHOUT a load-failure state (policy
+                # denials, a runtime with no source services) have no
+                # callout and keep carrying their sentence here.
+                return ""
             return self._library_lookup_error
 
         def value(source_type: str) -> str:
@@ -13170,6 +13463,23 @@ class LibraryScreen(BaseAppScreen):
             f"Conversations ({value('conversations')})"
         )
 
+    def _library_source_load_failure(self) -> DestinationRecoveryState | None:
+        """Return the source-snapshot failure the hub paints as a callout.
+
+        Only the snapshot's OWN load failures (the deadline and the hard
+        failure raised at the ``wait_for`` site) carry this Retry id -- a
+        policy denial keeps its taxonomy state and its own copy, and a
+        runtime without source services has no recovery state at all.
+
+        Returns:
+            The recovery state to render, or ``None`` when the current
+            lookup error is not one of the snapshot's load failures.
+        """
+        state = self._library_lookup_recovery_state
+        if state is None or state.retry_id != LIBRARY_SOURCE_RETRY_ID:
+            return None
+        return state
+
     def _library_landing_canvas_state(self) -> LibraryLandingCanvasState:
         """Build the landing owner's display-only snapshot."""
         get_started = self._library_lifecycle in (
@@ -13177,6 +13487,13 @@ class LibraryScreen(BaseAppScreen):
             LibraryLifecycle.STARTER,
         )
         lifecycle_status = self._library_onboarding_status_copy if get_started else ""
+        # Qodo PR G finding 5: the source-snapshot failure is valid
+        # regardless of lifecycle -- a new profile's first source read can
+        # time out or fail exactly like a returning one's, and withholding
+        # it here left a STARTER/UNKNOWN visit with empty counts and no
+        # callout or Retry. The canvas is the one that decides how to
+        # compose it per mode (above the starter content in Get-started).
+        load_failure = self._library_source_load_failure()
         attention_action = (
             self._library_landing_attention_action()
             if not get_started and not self._library_notes_compact
@@ -13213,6 +13530,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_landing_continue_action() if not get_started else None
             ),
             attention_action=attention_action,
+            load_failure=load_failure,
         )
 
     def _library_landing_attention_action(
@@ -13949,6 +14267,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_library_ordinary_canvas_entry)
         preferences = self._library_rail_preferences()
 
+        yield from self._unavailable_navigation.compose_character_return(self)
         yield Static(
             self._library_header_line(shell.header_line),
             id="library-header-line",
@@ -14067,12 +14386,7 @@ class LibraryScreen(BaseAppScreen):
                     markup=False,
                 )
             elif self._library_lookup_error:
-                items_child = Static(
-                    self._library_lookup_error,
-                    id="library-canvas-error",
-                    classes="destination-purpose",
-                    markup=False,
-                )
+                items_child = self._library_canvas_error_widget()
             else:
                 items_child = LibraryNotesCanvas(
                     **self._library_notes_list_canvas_kwargs(),
@@ -14468,12 +14782,7 @@ class LibraryScreen(BaseAppScreen):
                         and self._library_lookup_error
                         and shell.canvas_kind != "conversations"
                     ):
-                        yield Static(
-                            self._library_lookup_error,
-                            id="library-canvas-error",
-                            classes="destination-purpose",
-                            markup=False,
-                        )
+                        yield self._library_canvas_error_widget()
                     elif shell.canvas_kind == "conversations":
                         conversations_state = self._build_library_conversations_state()
                         self._adopt_library_conversation_state_selection(
@@ -14940,6 +15249,7 @@ class LibraryScreen(BaseAppScreen):
             and row_id != LIBRARY_ROW_BROWSE_CONVERSATIONS
         ):
             self._invalidate_library_conversation_reader_authority()
+            self._library_unavailable_browse_scope = None
         self._library_selected_row_id = row_id
 
     def _ensure_library_conversation_reader_selection(self) -> None:
@@ -14966,6 +15276,8 @@ class LibraryScreen(BaseAppScreen):
 
 
     def _start_library_conversation_page_request(self, page: int, query: str, *, refocus_filter: bool=False, focus_after_apply: str='') -> None:
+        self._library_unavailable_browse_scope = None
+        self._conversations_state.projection = ""
         return self._conversations_controller._start_library_conversation_page_request(page, query, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
 
 
@@ -14985,8 +15297,47 @@ class LibraryScreen(BaseAppScreen):
         return await self._conversations_controller._load_library_conversation_page(page, query, generation, _clamp_attempted=_clamp_attempted)
 
 
+
+
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         return self._media_controller._build_library_media_state()
+
+    def _decorate_library_media_reviewed(
+        self, items: Sequence[Mapping[str, Any]]
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Stamp each browse row's ``reviewed`` from the ACTIVE review set.
+
+        The Media projection cannot know this -- a review set lives in the
+        Library collections DB, not the Media DB -- so the exact browse row
+        arrives with ``reviewed=None`` and is decorated here, at the one seam
+        every Media canvas build routes through (task-28009). A row in the
+        set carries its done mark (``True``/``False``); a row outside it, or
+        every row when no set is active, keeps ``None``.
+
+        Args:
+            items: The controller's retained exact browse rows.
+
+        Returns:
+            The rows with ``reviewed`` decorated.
+
+        Note:
+            Fails OPEN on a storage error (task-30042 doctrine): an
+            unreadable collections DB costs the markers, never the list.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return tuple(items)
+        try:
+            review_set = service.get_active_review_set()
+        except Exception:
+            return tuple(items)
+        if review_set is None:
+            return tuple(items)
+        done_by_id = {item.backing_media_id: item.done for item in review_set.items}
+        return tuple(
+            {**item, "reviewed": done_by_id.get(item["backing_media_id"])}
+            for item in items
+        )
 
     def _review_dismiss_receipt_name(self) -> str:
         """Display name for the pending dismiss-undo receipt, "" when none."""
@@ -15021,6 +15372,46 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         return self._media_controller._library_media_canvas_presentation()
+
+    def _library_media_can_rename_speakers(self, db: Any, backing_id: int | None) -> bool:
+        """Whether the selected item is a renameable meeting, memoized per id.
+
+        The presentation this feeds is rebuilt on EVERY media selection,
+        filter and page change, and the answer costs a DB read plus a
+        filesystem `exists()` on the UI thread (fix I3) -- while it can only
+        change when the selection does. One slot is enough: the cache is
+        keyed by the selected id, so a new selection replaces it.
+
+        Args:
+            db: The media database, or None when the app has none.
+            backing_id: The selected item's media id, or None.
+
+        Returns:
+            True only for a selected meeting recording whose folder survives.
+        """
+        if backing_id is None or db is None:
+            return False
+        cached = self._library_media_rename_cache
+        if cached is not None and cached[0] == backing_id:
+            return cached[1]
+        can_rename = can_rename_meeting_speakers(db, backing_id)
+        self._library_media_rename_cache = (backing_id, can_rename)
+        return can_rename
+
+    def _library_media_selected_backing_id(self) -> int | None:
+        """Resolve the selected Media list identity to its positive int id.
+
+        ``self._media_state.selected_media_id`` is the canonical ``"local:media:<id>"``
+        list identity, not a bare id -- ``_library_media_backing_id``
+        (already used by every real mutation path in this screen) does the
+        actual resolution; this just narrows its ``int | str`` result to
+        "a usable id, or None".
+        """
+        media_id = self._media_state.selected_media_id
+        if not media_id:
+            return None
+        backing_id = self._library_media_backing_id(media_id)
+        return backing_id if type(backing_id) is int and backing_id > 0 else None
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
         """Return the unfiltered sentinel plus every complete stored facet."""
@@ -15153,7 +15544,13 @@ class LibraryScreen(BaseAppScreen):
         media_id: str,
         record: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        """Normalize one known restored row for stale retained display."""
+        """Normalize one known restored row for stale retained display.
+
+        The restore seam does not project ``has_analysis``, so the marker
+        reads as absent until the next page fetch replaces this placeholder
+        -- understating rather than inventing an analysis. ``reviewed`` is
+        decorated from the active review set, never carried here.
+        """
         backing_id = self._required_library_media_backing_id(media_id)
         return {
             "id": f"local:media:{backing_id}",
@@ -15161,6 +15558,8 @@ class LibraryScreen(BaseAppScreen):
             "title": record.get("title"),
             "media_type": record.get("media_type", record.get("type")),
             "updated_at": record.get("updated_at", record.get("last_modified")),
+            "has_analysis": bool(record.get("has_analysis")),
+            "reviewed": None,
         }
 
     @staticmethod
@@ -15378,6 +15777,16 @@ class LibraryScreen(BaseAppScreen):
             # Treat that automatic fallback as part of this guarded restore;
             # keyboard and mouse input disarm the generation before callback.
             self._library_notes_restoring_focus = True
+        # task-31635 (critique #5 item 12): the EMPTY Reader's placeholder is
+        # derived from this controller's failure state, and the canvas sync
+        # below only rebuilds the Items pane -- so without this a failed page
+        # left "Select a media item to read it here." standing beside the
+        # recovery callout that says nothing could be loaded. Patched in
+        # place (never a recompose): a loaded Reader must not re-parse its
+        # document because the list beside it failed.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None:
+            viewer.sync_list_failed(self._library_media_list_unselectable())
         _sync_library_canvas(self, "media", then=then)
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
@@ -15505,6 +15914,50 @@ class LibraryScreen(BaseAppScreen):
                 selected_id="",
             )
         return presentation
+
+    def _library_media_trash_action_disabled_reason(self) -> str:
+        """Why the Trash row actions cannot run right now, or "".
+
+        One predicate, read by the Restore / Delete-forever buttons' F-018
+        tooltips, by the ``r``/``x`` bindings' ``check_action`` gate, and
+        by the footer chips that advertise them (task-31635 item 3) -- so a
+        key can never fire where its button is disabled, and the footer can
+        never advertise a key that would no-op.
+
+        Returns:
+            The blocking reason in user language, or "" when both actions
+            are genuinely pressable.
+        """
+        state = self._library_media_trash_browse_controller.state
+        if (
+            state.loading
+            or state.mutation_pending
+            or self._media_state.bulk_delete_in_flight
+        ):
+            return "Trash is refreshing."
+        if state.freshness != "fresh":
+            return "Refresh Trash before changing this item."
+        if not state.selected_id:
+            return "Select a Trash item first."
+        return ""
+
+    def _library_media_trash_actions_live(self) -> bool:
+        """Whether the Trash view's row actions are on screen and pressable."""
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+            # (wave-7 merge) receiver swap only -- dev wrote
+            # ``getattr(self, "_library_media_view", _MEDIA_VIEW_LIST)``; the
+            # getattr SHAPE is preserved (matching this file's own retargeted
+            # site at the compact-media check) because the default is what
+            # keeps a fixture-built ``_media_state`` double working.
+            or getattr(self._media_state, "view", _MEDIA_VIEW_LIST) != "trash"
+        ):
+            return False
+        # The confirmation replaces the whole action row with Cancel /
+        # Delete permanently, so neither key has a control to stand for.
+        if self._library_media_trash_browse_controller.state.confirmation_target:
+            return False
+        return not self._library_media_trash_action_disabled_reason()
 
     def _library_media_trash_canvas_presentation(self) -> dict[str, Any]:
         return self._media_controller._library_media_trash_canvas_presentation()
@@ -19370,6 +19823,9 @@ class LibraryScreen(BaseAppScreen):
             return
         baseline = snapshot.baseline
         persisted_title = library_note_persisted_title(baseline.title)
+        # Capture the title the list caches currently show BEFORE patching, so
+        # a genuine rename (vs. a body-only autosave) can be detected below.
+        cached_title = self._cached_library_note_list_title(baseline.note_id)
         self._local_source_records["notes"] = patch_note_records_after_save(
             self._local_source_records.get("notes", ()),
             baseline.note_id,
@@ -19385,6 +19841,90 @@ class LibraryScreen(BaseAppScreen):
                     modified_at=baseline.modified_at,
                 )
             )
+        # task-31796: the Database Notes tree renders placement rows from the
+        # cached branch slices (and, while filtering, an FTS filter window) --
+        # NOT the flat records patched above. Retitle the matching placement in
+        # the branch slices AND re-sort the affected slice, because repository
+        # pages are ordered by title so a rename changes collation position
+        # (Qodo #3). Cross-page offset boundaries are reconciled on the next
+        # slice reload/visit; see patch_notes_tree_branches_title's contract.
+        self._library_notes_tree_branches, _tree_retitled = (
+            patch_notes_tree_branches_title(
+                self._library_notes_tree_branches,
+                note_id=baseline.note_id,
+                title=persisted_title,
+                modified_at=baseline.modified_at,
+            )
+        )
+        # Qodo #4: the notes filter is an FTS MATCH over title+body+keywords
+        # (and folder paths), so a rename can change filter membership in ways
+        # a client-side, title-only edit cannot compute -- an in-place retitle
+        # of the filter window would keep showing a now-nonmatching note (or a
+        # stale title) until the user reran the query. When a genuine rename
+        # touches a note the active filter is currently showing, clear the
+        # now-stale filter and drop to the unfiltered tree, exactly as the
+        # create/delete note mutations already do (see _delete_library_note_
+        # claimed). The unfiltered branch view above already carries the fresh,
+        # re-sorted title.
+        title_changed = cached_title is not None and cached_title != persisted_title
+        filter_state = self._library_notes_tree_filter_state
+        filter_active = (
+            bool(getattr(self, "_library_notes_filter", "").strip())
+            and filter_state is not None
+        )
+        if title_changed and filter_active and self._active_notes_filter_shows_note(
+            filter_state, baseline.note_id
+        ):
+            self._library_notes_filter = ""
+            self._library_notes_filter_records = None
+            self._library_notes_filter_generation = (
+                getattr(self, "_library_notes_filter_generation", 0) + 1
+            )
+            self._library_notes_tree_filter_state = None
+
+    @staticmethod
+    def _placement_note_id(placement: Any) -> str:
+        """Read a placement record's stable note id defensively."""
+        note = getattr(placement, "note", None)
+        if not isinstance(note, Mapping):
+            return ""
+        return str(note.get("id", note.get("note_id", "")) or "")
+
+    def _active_notes_filter_shows_note(
+        self, filter_state: LibraryNotesFilterState, note_id: str
+    ) -> bool:
+        """Whether the active FTS filter window currently lists ``note_id``."""
+        target = str(note_id)
+        return any(
+            self._placement_note_id(placement) == target
+            for placement in filter_state.placements
+        )
+
+    def _cached_library_note_list_title(self, note_id: str) -> str | None:
+        """The title the list caches currently show for ``note_id``, or None.
+
+        Consulted BEFORE a save patch to tell a real rename from a body-only
+        autosave. Checks the active filter window, then the branch slices,
+        then the flat list records -- the three surfaces that render a note's
+        title -- returning the first match's title.
+        """
+        target = str(note_id)
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        if filter_state is not None:
+            for placement in filter_state.placements:
+                if self._placement_note_id(placement) == target:
+                    return str(placement.note.get("title", "") or "")
+        for state in getattr(self, "_library_notes_tree_branches", {}).values():
+            for item in state.items:
+                if (
+                    isinstance(item, NotePlacementRecord)
+                    and self._placement_note_id(item) == target
+                ):
+                    return str(item.note.get("title", "") or "")
+        for record in self._local_source_records.get("notes", ()):
+            if isinstance(record, Mapping) and str(record.get("id")) == target:
+                return str(record.get("title", "") or "")
+        return None
 
     def _focus_library_note_validation_field(self, field: str) -> None:
         """Restore keyboard focus to the field named by a validation veto."""
@@ -20857,6 +21397,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
             self._refresh_library_onboarding_evidence()
 
+    @on(Button.Pressed, "#library-source-retry")
+    def _retry_library_source_snapshot(self, event: Button.Pressed) -> None:
+        """Re-run the source snapshot from the failure callout's own Retry."""
+        event.stop()
+        self._refresh_local_source_snapshot()
+
     @on(Button.Pressed, "#library-hub-continue")
     async def _continue_library_landing(self, event: Button.Pressed) -> None:
         """Resume the receipt through the existing guarded source route."""
@@ -21499,6 +22045,7 @@ class LibraryScreen(BaseAppScreen):
             self._skills_state.filter_cursor_context = None
             self._library_skills_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
+        self._library_unavailable_browse_scope = None
         if (
             self._pending_library_source_open is not None
             and self._pending_library_source_open[0] == "conversations"
@@ -22490,7 +23037,20 @@ class LibraryScreen(BaseAppScreen):
                 failed = list(media_ids)
 
             if succeeded:
-                succeeded_ids = set(succeeded)
+                # task-31943: ``succeeded`` holds canvas row ids
+                # (``local:media:<backing>``), but the snapshot's own media
+                # records key on the BACKING id -- so compared raw the two
+                # never matched, and this prune silently kept every deleted
+                # row in the sample while the count below dropped. Undo's
+                # "already present, don't re-add (or re-count)" guard then
+                # read a row that had never left, leaving the rail's
+                # "Media N" stuck at the post-delete number after a restore.
+                # Both spellings are matched: a record carrying the canvas
+                # id is equally valid and equally this item.
+                succeeded_ids = set(succeeded) | {
+                    str(self._required_library_media_backing_id(media_id))
+                    for media_id in succeeded
+                }
                 self._local_source_records["media"] = tuple(
                     record
                     for record in self._local_source_records.get("media", ())
@@ -22905,6 +23465,30 @@ class LibraryScreen(BaseAppScreen):
 
     def _focus_library_media_trash_entry(self) -> None:
         return self._media_controller._focus_library_media_trash_entry()
+
+    def _press_library_media_trash_action(self, selector: str) -> None:
+        """Route a Trash accelerator through its own button (task-31635).
+
+        Pressing the control rather than re-entering its handler keeps one
+        implementation of each action -- including ``Button.press``'s own
+        refusal to fire while the button is disabled, which is the second
+        guard behind ``check_action``.
+
+        Args:
+            selector: Id selector of the Trash action button to press.
+        """
+        try:
+            self.query_one(selector, Button).press()
+        except (NoMatches, QueryError):
+            return
+
+    def action_library_media_trash_restore(self) -> None:
+        """Keyboard "r": restore the selected Trash item (task-31635 item 3)."""
+        self._press_library_media_trash_action("#library-media-trash-restore")
+
+    def action_library_media_trash_delete(self) -> None:
+        """Keyboard "x": arm the permanent-delete confirmation (task-31635)."""
+        self._press_library_media_trash_action("#library-media-trash-delete")
 
     @on(Button.Pressed, "#library-media-trash-delete")
     def handle_library_media_trash_delete(self, event: Button.Pressed) -> None:
@@ -24449,6 +25033,13 @@ class LibraryScreen(BaseAppScreen):
                 and getattr(self._media_state, "view", "list") == "trash"
                 and not bool(getattr(trash_state, "mutation_pending", False))
             )
+        if action in {
+            "library_media_trash_restore",
+            "library_media_trash_delete",
+        }:
+            # task-31635 item 3: exactly when the buttons these keys stand
+            # for are pressable -- see ``_library_media_trash_actions_live``.
+            return self._library_media_trash_actions_live()
         if action == "library_note_editor_back":
             return (
                 self._library_note_editor_active()
@@ -30406,19 +30997,13 @@ class LibraryScreen(BaseAppScreen):
             and (focused is find_controls or find_controls in focused.ancestors)
         ):
             self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-find"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-find")
             return
         if self._media_state.reader_session.more_open:
             self._media_state.reader_session = set_more_open(
                 self._media_state.reader_session, False
             )
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-more"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-more")
             return
         # task-31272: the Items pane's own type/sort strips open over the
         # three-pane Reader too, and this action owns Escape there (the
@@ -30475,10 +31060,7 @@ class LibraryScreen(BaseAppScreen):
         # never consumes the reader's find state.
         if find_open:
             self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-find"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-find")
             return
         if layout.items_open:
             self._focus_library_media_items_pane()
@@ -30679,6 +31261,46 @@ class LibraryScreen(BaseAppScreen):
             self._notify_review_set(f"All {live_count} reviewed.")
         return True
 
+    def _review_cursor_for_display(self, review_set) -> int:
+        """The set position the READER is on, else the persisted cursor.
+
+        task-31635 (critique #5 item 10): clicking a row inside the active
+        set loads it without committing a walk position, so the persisted
+        cursor stayed put and every "X of M" readout described an item
+        nobody was looking at. ``_walk_active_review_set_unguarded`` has
+        measured from the DISPLAYED item since Qodo #2333 and
+        ``_active_review_loaded_at_last`` since Qodo on #2386 -- this is the
+        same rule, shared by the two readouts that were still on the cursor.
+
+        Deliberately READ-ONLY: no ``set_cursor`` here. A click moves what
+        the readouts describe, not where the set resumes -- that stays the
+        walk's own gesture.
+
+        Args:
+            review_set: The active set.
+
+        Returns:
+            The loaded item's position when the Reader holds one of the
+            set's items, else ``review_set.cursor``.
+        """
+        loaded = getattr(
+            self._media_state.reader_session, "loaded_backing_id", None
+        )
+        try:
+            loaded = int(loaded) if loaded is not None else None
+        except (TypeError, ValueError):
+            loaded = None
+        if loaded is None:
+            return review_set.cursor
+        return next(
+            (
+                item.position
+                for item in review_set.items
+                if item.backing_media_id == loaded
+            ),
+            review_set.cursor,
+        )
+
     def _active_review_progress(self) -> ReviewProgress | None:
         """Return the active set's live progress, or ``None``.
 
@@ -30706,7 +31328,11 @@ class LibraryScreen(BaseAppScreen):
             item.backing_media_id for item in review_set.items
         )
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
-        return review_progress(review_set.items, review_set.cursor, is_live)
+        return review_progress(
+            review_set.items,
+            self._review_cursor_for_display(review_set),
+            is_live,
+        )
 
     def _active_review_loaded_at_last(self) -> bool:
         """True when the Reader's LOADED item is the set's last live item.
@@ -30777,7 +31403,9 @@ class LibraryScreen(BaseAppScreen):
             progress = format_review_progress(
                 review_progress(
                     review_set.items,
-                    review_set.cursor,
+                    # task-31635 item 10: the ordinal names the item the
+                    # Reader is SHOWING, so a click inside the set moves it.
+                    self._review_cursor_for_display(review_set),
                     lambda candidate: candidate in live_ids,
                 )
             )
@@ -31091,7 +31719,13 @@ class LibraryScreen(BaseAppScreen):
                 f"Review set capped at the first {REVIEW_SET_CAP} items.",
                 severity="warning",
             )
-        else:
+        elif self._active_review_set_banner() is None:
+            # task-31635 (critique #5 item 17, ruling): the Reader this
+            # create is about to open paints "Reviewing: <name> — 1 of N ·
+            # 0 reviewed" -- strictly more than this toast said, and at
+            # 100x30 the toast landed ON that Reader's border. So it is
+            # dropped whenever the banner can carry the fact, and kept as
+            # the fallback when it cannot (no active set to describe).
             self._notify_review_set(f"Reviewing {len(items)} items.")
         if displaced is not None and displaced.completed_at is None:
             from rich.markup import escape
@@ -32053,6 +32687,24 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_media_active_child(self) -> Widget:
         return self._media_controller._build_library_media_active_child()
 
+    def _library_media_list_unselectable(self) -> bool:
+        """Whether the Media list load failed leaving NOTHING to select.
+
+        task-31635 (critique #5 item 12), fix round 1: ``controller.failure``
+        alone is too broad. A page failure RETAINS the rows it already
+        applied (``retained_items``) and a facet-only failure never touches
+        them at all -- in both states the rows stay painted, enabled, and
+        pressable, so telling the reader nothing could be loaded is simply
+        wrong. The critique's case is the first load failing with an empty
+        list behind it.
+
+        Returns:
+            True when the browse controller carries a failure AND no rows
+            survive to be selected.
+        """
+        controller = self._library_media_browse_controller
+        return controller.failure is not None and not controller.retained_items
+
     def _build_library_media_reader(self) -> LibraryMediaViewer:
         return self._media_controller._build_library_media_reader()
 
@@ -32121,8 +32773,48 @@ class LibraryScreen(BaseAppScreen):
             )
             if force_raw:
                 state = dataclasses.replace(state, is_markdown=False)
+            state = dataclasses.replace(
+                state, **self._library_media_speaker_rename_facts(detail)
+            )
             states[key] = state
         return state
+
+    def _library_media_speaker_rename_facts(
+        self, detail: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """TASK-31745: the selected item's meeting speaker-rename facts.
+
+        Resolved on the memo MISS above (once per detail arrival x build
+        parameters), never per sync: the legend rows parse the whole
+        ``transcript.jsonl``, which is the per-interaction cost class
+        task-22208 exists to keep off this path. A rename re-fetches the
+        detail, so the memo's own invalidation keeps the labels fresh.
+
+        Args:
+            detail: The detail this state is being built for. ``None`` is the
+                EMPTY state -- nothing is on screen to rename -- and the
+                reader discards the legend for it anyway, so the whole
+                ``transcript.jsonl`` parse is skipped (final review M1).
+
+        Returns:
+            The ``can_rename_speakers``/``speaker_legend_rows`` fields, ready
+            for ``dataclasses.replace``.
+        """
+        if detail is None:
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        if self._media_state.reader_session.external_detail:
+            # A server item is being read; the local selection's id says
+            # nothing about it, and nothing local is renameable from here.
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        db = getattr(self.app_instance, "media_db", None)
+        backing_id = self._library_media_selected_backing_id()
+        if not self._library_media_can_rename_speakers(db, backing_id):
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        try:
+            rows = tuple(_meeting_speaker_legend_rows(db, backing_id))
+        except Exception:  # noqa: BLE001 - a bad read just means no legend
+            rows = ()
+        return {"can_rename_speakers": bool(rows), "speaker_legend_rows": rows}
 
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
         return self._media_controller._sync_library_media_viewer_state(viewer)
@@ -32382,8 +33074,9 @@ class LibraryScreen(BaseAppScreen):
         # token below is what lets its mount take focus -- once.
         self._media_state.find_open = True
         self._media_state.find_focus_pending = True
-        self._sync_library_media_viewer_or_recompose()
-        self.call_after_refresh(self._focus_library_media_content_search_input)
+        self._after_library_media_viewer_sync(
+            self._focus_library_media_content_search_input
+        )
 
     @on(Button.Pressed, '#library-media-open-original')
     def handle_library_media_open_original(self, event: Button.Pressed) -> None:
@@ -32397,6 +33090,108 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_media_viewer_or_recompose(self) -> None:
         return self._media_controller._sync_library_media_viewer_or_recompose()
+
+    def _after_library_media_viewer_sync(
+        self, follow_up: str | Callable[[], object]
+    ) -> None:
+        """Sync the media viewer, then run ``follow_up`` against its NEW children.
+
+        task-31633 / Qodo High on #2470 ("Readers lose keys after escape").
+        A viewer-scoped sync rebuilds the Reader on the VIEWER's message pump,
+        and ``screen.call_after_refresh`` queues onto the SCREEN's -- two
+        pumps with no ordering. Measured on 43b0a7440 with the screen seam:
+        Escape from inside the More disclosure focused the control the
+        recompose was about to detach, Textual re-picked focus for the pruned
+        widget, and task-31567's restore (its captured identity gone with the
+        rest of the children) fell back to the media list row -- focus out of
+        the Reader entirely, so the next Escape acted on the list.
+
+        So the follow-up rides the viewer's own post-recompose hook, and is
+        CHAINED behind whatever is already queued there rather than replacing
+        it: ``queue_after_recompose`` replaces, and the sync above just
+        queued task-31567's restore on that same one slot (that is how
+        task-31567 lost a receipt's "land on Undo"). Order inside the chain:
+        our ``_focus_library_control`` DEFERS (``Widget.focus`` goes through
+        ``app.call_later``), so when the chained restore runs, focus is still
+        wherever the recompose left it and the restore does its own landing
+        (the captured identity, else the list entry); the deferred focus then
+        lands on the target and wins. The transient is benign -- the list
+        entry is focused with ``scroll_visible=False`` and the programmatic
+        marker armed -- and when the target is not composed at all the focus
+        call no-ops and the restore's landing stands.
+
+        Args:
+            follow_up: A Library control selector to focus once the sync has
+                landed (``"#library-media-reader-more"``), or a zero-argument
+                callable to run there instead.
+
+        Returns:
+            None.
+        """
+        self._sync_library_media_viewer_or_recompose()
+        self._queue_after_library_media_viewer_recompose(
+            partial(self._focus_library_control, follow_up)
+            if isinstance(follow_up, str)
+            else follow_up
+        )
+
+    def _queue_after_library_media_viewer_recompose(
+        self,
+        callback: Callable[[], object],
+        viewer: LibraryMediaViewer | None = None,
+    ) -> None:
+        """Run ``callback`` against the viewer's NEW children.
+
+        Split out of ``_after_library_media_viewer_sync`` for task-31950:
+        ``_sync_library_media_viewer_state``'s own tail queues follow-ups
+        too -- the edit-Save mutation gate and the load path's progress
+        restore -- and both read children the rebuild it just asked for is
+        about to replace. On the screen's pump they took the same race,
+        only quieter: measured, the gate flushed before the recomposed Save
+        mounted, returned on ``NoMatches``, and the edit form came up with
+        a live Save on top of an unsettled write.
+
+        Args:
+            callback: Zero-argument follow-up to run once the rebuild lands.
+            viewer: The viewer being synced, when the caller already holds
+                it (the sync's tail does); looked up otherwise.
+
+        Returns:
+            None.
+        """
+        if viewer is None:
+            viewer = self._mounted_library_media_viewer()
+        # ``refresh(recompose=True)`` arms this flag synchronously and only
+        # ``_check_recompose`` (on the viewer's pump) clears it, before
+        # awaiting ``recompose()``; read here with no await in between it is
+        # the honest
+        # answer to "did THIS sync hand the rebuild to the viewer's pump?".
+        # False covers both cases where the hook would swallow the follow-up
+        # instead of ordering it: the no-change short-circuit (nothing is
+        # rebuilt, so nothing ever fires the hook and the target is still
+        # mounted anyway) and the whole-screen fallback (the screen's pump
+        # owns the ordering, and this viewer is the one being torn down).
+        if viewer is None or not getattr(viewer, "_recompose_required", False):
+            self.call_after_refresh(callback)
+            return
+        pending = viewer._post_recompose_callback
+
+        def callback_then_pending() -> None:
+            # Qodo on #2473: ``finally``, not a bare sequence. A raising
+            # follow-up (the scroll-progress restore is one) used to take
+            # task-31567's focus restore down with it and strand focus on a
+            # pane grip -- the exact defect that restore exists to prevent.
+            # The exception still propagates; only the ordering guarantee
+            # changes. (If ``pending()`` itself raises inside the ``finally``,
+            # its exception replaces the follow-up's -- accepted: the restore
+            # is the invariant, and both surface in the log either way.)
+            try:
+                callback()
+            finally:
+                if pending is not None:
+                    pending()
+
+        viewer.queue_after_recompose(callback_then_pending)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         return self._media_controller._sync_library_media_viewer_mutation_gate()
@@ -32587,6 +33382,14 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_analysis_warning(
                 "Analysis editing is unavailable."
             )
+        if saved:
+            # Qodo on #2475: the list row learns about the analysis the app
+            # just made durable, instead of waiting for the next page fetch.
+            # One seam covers both producers -- the Reader's Generate/Save
+            # and the bulk Analyze run -- because both persist through here.
+            # Outside the try above on purpose: this is a READ, and a read
+            # that fails must not be reported as a failed save.
+            await self._reproject_library_media_analysis_row(media_id)
         if viewer_owned:
             self._media_state.editing_analysis = False
         if viewer_owned or media_id == self._media_state.selected_media_id:
@@ -32596,6 +33399,71 @@ class LibraryScreen(BaseAppScreen):
             # so the Reader never shows a stale analysis.
             await self._refresh_library_media_detail(media_id)
         return saved
+
+    async def _reproject_library_media_analysis_row(self, media_id: str) -> None:
+        """Re-read one row's ``has_analysis`` from the projection after a write.
+
+        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
+        retained row when the page applied, so a freshly saved analysis left
+        its own row unmarked until something re-paged the list.
+
+        Asks the projection rather than trusting the write's own claim. Live
+        on 2026-09-07 the two disagreed: the Reader's Save returned a version
+        record while nothing reached the database (``create_document_version``
+        documents that it "assumes it's called within an existing transaction
+        context", and this service calls it standalone), so a row patched
+        from the write said "analysed" beside a Reader still saying "No
+        analysis yet.". One targeted id-scoped SELECT on a human-paced
+        gesture cannot say that; it is never on the page path.
+
+        Args:
+            media_id: The canonical media id whose row should be re-read.
+
+        Returns:
+            None. A missing service, an unresolvable id, or a failed read
+            leaves the row exactly as it was -- the next page fetch is still
+            authoritative.
+        """
+        controller = self._library_media_browse_controller
+        if not controller.retained_items:
+            return
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        search_media = getattr(service, "search_media", None)
+        backing_id = self._library_media_int_backing_id(media_id)
+        if not callable(search_media) or backing_id is None:
+            return
+        try:
+            payload = await self._run_library_service_call(
+                search_media,
+                mode="local",
+                query="",
+                library_summary=True,
+                isolate_in_worker=True,
+                id_allowlist=[backing_id],
+                limit=1,
+                offset=0,
+            )
+        except Exception:
+            # Silent on purpose (and no new diagnostic owner): this is a
+            # decoration read. A row that keeps its previous marker for one
+            # more page fetch is the understating direction, and the save
+            # itself already reported its own outcome.
+            return
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        if not items:
+            return
+        row = items[0]
+        if controller.note_analysis_state(
+            str(row.get("id") or ""), has_analysis=bool(row.get("has_analysis"))
+        ):
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
+
+    def _library_media_int_backing_id(self, media_id: str) -> int | None:
+        """The integer backing id for ``media_id``, or None when it has none."""
+        try:
+            return int(self._library_media_backing_id(media_id))
+        except (TypeError, ValueError):
+            return None
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.
@@ -33136,6 +34004,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Submitted, "#library-conversations-filter")
     def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                1,
+                self._safe_text(event.value, max_length=200),
+                refocus_filter=True,
+            )
+            return
         return self._conversations_controller.handle_library_conversations_filter_submitted(event)
 
 
@@ -33161,26 +34038,75 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._conversations_state.loading:
             return
-        self._start_library_conversation_page_request(
-            1,
-            "",
-            refocus_filter=True,
-        )
+        if self._library_unavailable_browse_scope is not None:
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                1,
+                "",
+                refocus_filter=True,
+            )
+        else:
+            self._start_library_conversation_page_request(
+                1,
+                "",
+                refocus_filter=True,
+            )
 
 
 
     @on(Button.Pressed, "#library-conversations-retry")
     def handle_library_conversations_retry(self, event: Button.Pressed) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            if self._conversations_state.loading:
+                return
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
+                focus_after_apply="#library-conversations-retry",
+            )
+            return
         return self._conversations_controller.handle_library_conversations_retry(event)
 
 
     @on(Button.Pressed, "#library-conversations-previous")
     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            if (
+                self._conversations_state.loading
+                or self._conversations_state.freshness != "fresh"
+                or self._conversations_state.page <= 1
+            ):
+                return
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                self._conversations_state.page - 1,
+                self._conversations_state.query,
+                focus_after_apply="#library-conversations-previous",
+            )
+            return
         return self._conversations_controller.handle_library_conversations_previous(event)
 
 
     @on(Button.Pressed, "#library-conversations-next")
     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            if (
+                self._conversations_state.loading
+                or self._conversations_state.freshness != "fresh"
+                or not self._conversations_state.has_more
+            ):
+                return
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                self._conversations_state.page + 1,
+                self._conversations_state.query,
+                focus_after_apply="#library-conversations-next",
+            )
+            return
         return self._conversations_controller.handle_library_conversations_next(event)
 
 
@@ -33532,6 +34458,8 @@ class LibraryScreen(BaseAppScreen):
         record_id: str,
         *,
         entry_origin: bool = False,
+        required_database: Any | None = None,
+        required_authority: str = "",
     ) -> LibraryEntryReconcileResult | None:
         """Open a Library item straight to its detail surface by id.
 
@@ -33575,15 +34503,30 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
 
+        def required_character_scope_is_current() -> bool:
+            if required_database is None:
+                return True
+            return getattr(
+                self.app_instance, "chachanotes_db", None
+            ) is required_database and self._unavailable_navigation._library_character_authority_is_current(
+                self,
+                required_authority
+            )
+
         def entry_is_current() -> bool:
-            return open_generation == self._library_navigation_context_generation and (
-                not entry_origin
-                or (
-                    entry_generation == self._library_snapshot_state_generation
-                    and entry_route_key == self._library_entry_route_key()
-                    and (
-                        entry_conversation_id is None
-                        or entry_conversation_id == self._selected_conversation_id
+            return (
+                required_character_scope_is_current()
+                and open_generation == self._library_navigation_context_generation
+                and (
+                    not entry_origin
+                    or (
+                        entry_generation == self._library_snapshot_state_generation
+                        and entry_route_key == self._library_entry_route_key()
+                        and (
+                            entry_conversation_id is None
+                            or entry_conversation_id
+                            == self._selected_conversation_id
+                        )
                     )
                 )
             )
@@ -33696,6 +34639,20 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
+            # task-31797: the ingest "Open in Library" deep-link (and the
+            # sibling Search/RAG evidence + landing-hub "Open" routes) jump
+            # straight to the media viewer but -- unlike the rail-row path in
+            # _select_library_rail_row_after_source_admission -- never asked
+            # the browse controller to load a page, leaving the middle Items
+            # pane stuck on "0 of 0 · type: None / No page loaded". Mirror the
+            # rail's browse+facets request so the list lands populated
+            # alongside the opened item. focus_identity=None keeps focus on the
+            # just-opened viewer rather than yanking it to the first list row.
+            self._request_library_media_browse(
+                self._library_media_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+            self._request_library_media_facets()
             await self._apply_library_media_active_surface()
             return None
 

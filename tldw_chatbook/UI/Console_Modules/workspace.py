@@ -4259,6 +4259,9 @@ class ConsoleWorkspaceController:
         store = controller.store
         prior_active_session_id = store.active_session_id
         try:
+            from .conversation_token_preparation import prepare_conversation_tokens
+
+            await prepare_conversation_tokens(self._screen, store, session_id)
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
@@ -4695,11 +4698,38 @@ class ConsoleWorkspaceController:
         target: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
         cancellation: asyncio.Event | None = None,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
     ) -> ConsoleConversationActivationResult:
-        """Open one exact typed target through the canonical Console coordinator."""
+        """Open one exact typed target through the canonical Console coordinator.
+
+        Args:
+            target: Captured local target and optional query revision.
+            cancellation: Precommit cancellation event.
+            complete_presentation: Optional synchronous request-owned switcher
+                completion; ordinary callers retain strict exposed visibility.
+
+        Returns:
+            The canonical exact-open or rolled-back failure result.
+        """
 
         return await self._character_conversation_activation.activate(
-            target, cancellation
+            target, cancellation, complete_presentation=complete_presentation
+        )
+
+    async def wait_until_character_conversation_commit_started(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
+    ) -> None:
+        """Wait for the canonical coordinator's non-cancellable boundary."""
+
+        await self._character_conversation_activation.wait_until_commit_started(
+            request, complete_presentation=complete_presentation
         )
 
     async def _revalidate_character_conversation_target(
@@ -4837,8 +4867,21 @@ class ConsoleWorkspaceController:
         focus_id = screen._pending_character_return_focus_id
         if focus_id is None or screen.app.screen is not screen:
             return
+        if focus_id == "console-context-character":
+            screen._character_context.return_reveal = True
+            rail_state = screen._current_console_rail_state()
+            screen._sync_console_rail_visibility_if_changed(rail_state)
+            if not rail_state.left_open:
+                self._focus_composer_if_needed_fn(force=True)
+                return
+            # Rail reveal restores saved child display flags. Apply the
+            # transient disclosure afterwards, without persisting a gesture.
+            screen.query_one("#console-left-rail").sync_sections(rail_state)
+            focus_id = "console-character-search"
         try:
-            screen.set_focus(screen.query_one(f"#{focus_id}"))
+            target = screen.query_one(f"#{focus_id}")
+            screen.set_focus(target)
+            target.scroll_visible(animate=False)
         except NoMatches:
             return
         screen._pending_character_return_focus_id = None
@@ -5035,7 +5078,18 @@ class ConsoleWorkspaceController:
         request: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
     ) -> bool:
-        """Require exact store, mounted screen, transcript, and composer focus."""
+        """Require an exposed Console plus its exact prepared target."""
+        return (
+            self._screen.app.screen is self._screen
+            and self._character_conversation_target_ready(request)
+        )
+
+    def _character_conversation_target_ready(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+    ) -> bool:
+        """Check exact store, mounted transcript, and composer without revealing."""
         from ...Chat.console_conversation_activation import (
             CharacterConversationActivationRequest,
         )
@@ -5057,7 +5111,6 @@ class ConsoleWorkspaceController:
             or str(active.persisted_conversation_id or "")
             != target.conversation_id
             or not self._screen.is_mounted
-            or self._screen.app.screen is not self._screen
         ):
             return False
         try:
@@ -5246,6 +5299,9 @@ class ConsoleWorkspaceController:
             # Warm the effective conversation/workspace scope before the final
             # activation commit so any failure leaves the prior session active.
             await self._resolve_console_effective_scope_state(session)
+            from .conversation_token_preparation import prepare_conversation_tokens
+
+            await prepare_conversation_tokens(self._screen, store, session.id)
             store.switch_session(session.id)
             self._set_active_workspace_for_console_session(session.id)
             self._sync_console_retrieval_scope_row()

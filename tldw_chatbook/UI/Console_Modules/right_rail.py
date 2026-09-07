@@ -105,6 +105,10 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionState,
 )
+from ...Widgets.Console.console_send_authority_summary import (
+    CONSOLE_AUTHORITY_SUMMARY_HEIGHT,
+    CONSOLE_AUTHORITY_SUMMARY_ID,
+)
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
@@ -116,6 +120,21 @@ from .rail_section_layout import outer_hint_required
 INSPECTOR_OUTER_HINT = "▼ more sections — scroll"
 INSPECTOR_OUTER_HINT_ID = "console-inspector-outer-scroll-hint"
 INSPECTOR_SCROLL_OWNER_CLASS = "console-inspector-scroll-owner"
+
+#: Rows one Inspector section occupies at rest: its header, four rows, and
+#: the "Refresh" tail's own margin plus button. Measured by TASK-31662 (see
+#: `Tests/UI/test_console_environment_section.py::test_environment_at_rest_
+#: shows_its_four_top_level_rows_unscrolled`).
+INSPECTOR_SECTION_AT_REST_ROWS = 7
+
+#: Rail rows below which the pinned send-authority block gives up four of its
+#: six lines (TASK-31663 AC#5). Derived, not chosen: the full pinned stack
+#: (rail header 1 + project-instruction row 1 + the block's six) plus the
+#: one-row overflow hint plus one section at rest. At 80x24 the rail gets 12
+#: content rows, so it compacts; at 200x50 it gets 36 and does not.
+INSPECTOR_FULL_DENSITY_MIN_ROWS = (
+    1 + 1 + CONSOLE_AUTHORITY_SUMMARY_HEIGHT + 1 + INSPECTOR_SECTION_AT_REST_ROWS
+)
 
 
 @dataclass(frozen=True)
@@ -570,7 +589,36 @@ class ConsoleInspectorRail(Vertical):
     def on_mount(self) -> None:
         """Schedule the first owner pass after descendant layout settles."""
 
+        self._sync_authority_summary_density(self.size.height)
         self.request_outer_reconcile()
+
+    def _sync_authority_summary_density(self, rail_rows: int) -> None:
+        """Compact the pinned authority block when the rail cannot afford it.
+
+        TASK-31663 AC#5. Measured at 80x24: the rail's pinned stack was
+        EIGHT rows -- the header, the project-instruction row, and six for
+        `#console-send-authority-summary` -- over a THREE-row scroll body,
+        so the Environment section (``seven`` rows at rest since TASK-31662)
+        could not show even its four rows, let alone its Refresh tail. The
+        block gives up four of its six rows below the threshold, which turns
+        that 3-row body into a 7-row one.
+
+        The threshold is derived, not picked: the full pinned stack (8) plus
+        the overflow-hint row (1) plus one section's at-rest height (7).
+
+        Args:
+            rail_rows: The rail's own content height in rows.
+        """
+
+        if rail_rows <= 0:
+            return
+        try:
+            summary = self.query_one(
+                f"#{CONSOLE_AUTHORITY_SUMMARY_ID}", ConsoleSendAuthoritySummary
+            )
+        except (NoMatches, QueryError):
+            return
+        summary.set_compact(rail_rows < INSPECTOR_FULL_DENSITY_MIN_ROWS)
 
     def on_unmount(self) -> None:
         """Discard pending generations when the Inspector leaves the DOM."""
@@ -843,9 +891,16 @@ class ConsoleInspectorRail(Vertical):
             return
         hint.update(text, layout=False)
 
-    def on_resize(self, _event: Resize) -> None:
-        """Recompute fixed-child overflow on terminal grow and shrink."""
+    def on_resize(self, event: Resize) -> None:
+        """Recompute fixed-child overflow on terminal grow and shrink.
 
+        Args:
+            event: The rail's resize event. Its ``size.height`` drives the
+                authority-summary density choice, so a short rail drops the
+                summary's optional lines instead of overflowing.
+        """
+
+        self._sync_authority_summary_density(event.size.height)
         self.request_outer_reconcile()
 
     @staticmethod
@@ -1513,7 +1568,9 @@ class ConsoleInspectorRail(Vertical):
             collapse_button = Button(
                 f"{resolve_glyph(GLYPH_COLLAPSE_RIGHT)} Inspect",
                 id="console-inspector-rail-collapse",
-                classes="console-rail-collapse-button",
+                # `console-rail-focus-carrier` keys the focus-edge rule
+                # (TASK-31663); see `console_inspector_section.py`'s toggle.
+                classes="console-rail-collapse-button console-rail-focus-carrier",
                 compact=True,
             )
             collapse_button.tooltip = "Collapse Inspector rail"
@@ -1541,8 +1598,10 @@ class ConsoleInspectorRail(Vertical):
             # of the staged-context tray, per the redesign spec's rail
             # ordering. Pure display state supplied by the screen (a
             # projection of the controller's current snapshot, or the
-            # empty-state projection of a default `EnvironmentSnapshot()`
-            # pre-wiring); this rail never gathers environment data itself.
+            # PENDING projection of a default `EnvironmentSnapshot()`
+            # pre-wiring -- "Checking workspace…", never a negative claim,
+            # per TASK-31660); this rail never gathers environment data
+            # itself.
             # Each section hides itself (`styles.display = "none"`) when its
             # projection has no rows -- the fleet pattern this rail already
             # uses for the live-work header Statics above.
@@ -1554,6 +1613,12 @@ class ConsoleInspectorRail(Vertical):
                 collapsible=True,
                 open=self._environment_open,
                 view_all_label="Refresh",
+                # TASK-31662 AC#3: this summary IS the branch row and the
+                # Changes row's counts, so it only earns header columns
+                # while the body is hidden. The fleet section below keeps
+                # its own summary open -- "2 working, 1 done" is an
+                # aggregate no row of it restates.
+                suppress_summary_when_open=True,
                 id="console-environment-section",
             )
             environment_section.styles.display = (
@@ -1568,6 +1633,9 @@ class ConsoleInspectorRail(Vertical):
                 summary=self._tasks_section_state.summary,
                 collapsible=True,
                 open=self._tasks_open,
+                # Same reasoning as Environment above: open, the branch
+                # task's own row carries what the summary says.
+                suppress_summary_when_open=True,
                 id="console-tasks-section",
             )
             tasks_section.styles.display = (

@@ -368,7 +368,7 @@ from ...Library.library_skills_state import (
     skill_invocation_copy,
     skill_review_identity_line,
 )
-from ...Utils.adaptive_reader_state import PANE_GRIP_WIDTH, resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
 from ...config import coerce_bool_setting
 from ...Widgets.Library import (
     LIBRARY_SKILLS_FILTER_ID,
@@ -803,7 +803,7 @@ class LibrarySkillsController:
             and self._library_skills_reader_preferences.items_open
         ):
             items_priority_floor = (
-                2 * PANE_GRIP_WIDTH
+                2 * LIBRARY_SKILLS_READER_PROFILE.grip_width
                 + LIBRARY_SKILLS_READER_PROFILE.list_min_width
                 + LIBRARY_SKILLS_READER_PROFILE.work_min_width
             )

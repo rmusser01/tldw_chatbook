@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 MAX_WIRE_INTEGER = (1 << 53) - 1
+SUPPORTED_CANVAS_RUNTIME_PROFILE = "canvas-v1"
 MAX_CANVASES_PER_CONVERSATION = 10
 MAX_REVISIONS_PER_CANVAS = 100
 MAX_TEMPORARY_SOURCE_BYTES_PER_SESSION = 8 * 1024 * 1024
@@ -29,6 +30,10 @@ JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dic
 
 class CanvasLimitError(ValueError):
     """Raised when a Canvas value exceeds a closed runtime boundary."""
+
+
+class UnsupportedCanvasRuntimeProfile(CanvasLimitError):
+    """Raised when stored source requests an unavailable runtime contract."""
 
 
 @dataclass(frozen=True, slots=True)

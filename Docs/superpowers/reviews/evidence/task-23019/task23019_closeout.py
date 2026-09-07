@@ -150,7 +150,7 @@ CATALOGUE: dict[str, Contract] = {
     "SH-01": Contract(
         automated_nodes=(
             "Tests/UI/test_library_adaptive_reader_shell.py::test_sync_layout_retains_every_mounted_child_identity",
-            "Tests/UI/test_library_media_reader_shell.py::test_media_shell_mounts_library_items_reader_and_two_five_column_grips",
+            "Tests/UI/test_library_media_reader_shell.py::test_media_shell_mounts_library_items_reader_and_its_two_grips",
             "Tests/UI/test_library_conversation_reader.py::test_conversations_mount_three_retained_roles_once",
             "Tests/UI/test_library_notes_reader.py::test_database_notes_mount_three_retained_roles_once",
             "Tests/UI/test_library_prompts_reader.py::test_prompts_mount_three_retained_roles_once",

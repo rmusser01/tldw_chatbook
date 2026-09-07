@@ -16,6 +16,7 @@ from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
+    DuplicateTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
     ReminderFieldEditRequested,
@@ -79,7 +80,6 @@ _REPEAT_CUSTOM_REFUSAL = "Use the full Edit form to set a custom cron expression
 _RUNS_ON_EDITOR_ID = "scheduling-detail-runs-on-editor"
 _RUNS_ON_CANCEL_ID = "scheduling-detail-runs-on-cancel"
 _RUNS_ON_RETRY_ID = "scheduling-detail-runs-on-retry"
-
 
 SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
     status_label="Select an active run",
@@ -185,7 +185,7 @@ def _format_next_run(
 
     A disabled reminder will not run at its stored ``next_run_at``, so a
     concrete future time would be a false promise (task-23101). The
-    detail pane uses the full form ("2026-08-28 09:00 UTC (in 14h)");
+    detail pane uses the full form ("YYYY-MM-DD HH:MM UTC (in 14h)");
     the queue column passes ``compact=True`` to drop the timezone token
     and keep the column width sane (task-23111). ``now`` is injectable
     for deterministic tests.
@@ -325,13 +325,6 @@ def _was_missed_while_away(task: ReminderTask | ScheduledTask) -> bool:
     return isinstance(task, ReminderTask) and task.missed_at is not None
 
 
-def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return a readable type label for the task."""
-    if isinstance(task, ReminderTask):
-        return _humanize_schedule_kind(task.schedule_kind)
-    return task.type.replace("_", " ").title()
-
-
 #: Which screen owns each read-only projection row (task-23106). Briefings
 #: are configured from the Watchlists screen, so both point there.
 _PROJECTION_MANAGERS: dict[str, str] = {
@@ -355,13 +348,6 @@ def _managed_elsewhere_notice(
         f"Managed by another screen — this row is read-only here; "
         f"{verb} it where it was created."
     )
-
-
-def _task_schedule_label(task: ReminderTask | ScheduledTask) -> str:
-    """Return a human-readable schedule summary for the task."""
-    if isinstance(task, ReminderTask):
-        return _humanize_schedule(task)
-    return task.schedule_summary or "-"
 
 
 def _task_sync_label(task: ReminderTask | ScheduledTask) -> str:
@@ -462,6 +448,17 @@ def _queue_owner_suffix(task: ReminderTask | ScheduledTask, *, compact: bool) ->
 #: config to read (survey §4), so this is a fixed label, never derived.
 _REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
 
+#: 31712 AC#1: this row's affordance stays permanently off (no `row_key`,
+#: `affordance` left at its default False) while an automation's own
+#: Notifications row (`definition_detail.py`) is an editable On/Off toggle
+#: -- explains the difference in the row itself rather than leaving two
+#: same-named rows silently inconsistent.
+_REMINDER_NOTIFICATIONS_TOOLTIP = (
+    "Fixed: a reminder always notifies via inbox + toast. Unlike an "
+    "automation's Notifications row, there is no per-reminder setting to "
+    "turn on/off."
+)
+
 
 def _reminder_runs_on_label(task: ReminderTask) -> str:
     """'Runs on' row value (spec §5 Details group): the shared prose owner
@@ -549,6 +546,15 @@ class TaskDetail(Vertical):
         width: 10;
     }
 
+    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+       line, value on the next), not paired with a value in a Horizontal --
+       the shared class's fixed 10-column width above wraps them instead of
+       aligning anything. */
+    .scheduling-detail-label-stacked {
+        width: auto;
+        min-width: 0;
+    }
+
     .scheduling-detail-value {
         color: $text;
     }
@@ -572,6 +578,11 @@ class TaskDetail(Vertical):
         self._at_row: DetailValueRow | None = None
         self._timezone_row: DetailValueRow | None = None
         self._last_fire_row: DetailValueRow | None = None
+        #: 31712 AC#5: "Run history" -> "See list below" -- rather than
+        #: leave the pseudo-link value inert, activating it scrolls the
+        #: already-visible "Recent runs:" section into view (a real
+        #: affordance, not a wording change dressing up dead text).
+        self._history_link_row: DetailValueRow | None = None
         self._body_card: Static | None = None
         # PR-3 task 3: cached from `set_lifecycle_lock` (never re-derived
         # here, same "one source of truth" rule survey §8 names) so the
@@ -630,6 +641,12 @@ class TaskDetail(Vertical):
             # doc, finding 2). It carries the one Edit-in-full affordance
             # this pane has (no kebab -- plan ruling 1), so it now composes
             # FIRST, mirroring `DefinitionDetail`'s own Pause/Run-now row.
+            # task-31823: the REST of spec §5's kebab list this pane can
+            # actually use (Duplicate · View runs) lands as a second
+            # compact button row right below -- same "no popup menu"
+            # ruling, still. `View results` has no reminder-pane target
+            # and is not rendered here at all (final review F2) -- see
+            # that row's own comment below.
             yield Horizontal(
                 Button(
                     "Edit",
@@ -674,6 +691,42 @@ class TaskDetail(Vertical):
                 ),
                 id="scheduling-task-detail-lifecycle",
             )
+            # task-31823: spec §5's kebab (Run now · Duplicate · View runs
+            # · View results · Edit in full… · Delete/Archive) minus the
+            # four already covered by the lifecycle row above -- a second
+            # compact button row rather than a popup menu (same idiom as
+            # the lifecycle row itself; a dropdown menu buys nothing here
+            # and adds a dismissal/focus-trap surface this pane does not
+            # otherwise have). `View runs` reuses 31712 AC#5's existing
+            # scroll-to-"Recent runs:" affordance -- reminders have no
+            # separate run-history VIEW to push, only this inline
+            # section. `View results` is NOT rendered here at all (final
+            # review F2): a reminder has no results target
+            # (`automation_results` is keyed by `definition_id`, a
+            # `recurring_question`-only concept) and never will, so a
+            # permanently-disabled button plus its own always-visible
+            # reason Static was pure standing weight on a pane whose one
+            # outstanding problem is running out of vertical room at the
+            # 24-row floor -- not a *conditionally* unavailable action
+            # UX-073's disabled+reason idiom is for. AC#1 only requires
+            # the action be reachable from a reminder OR definition pane;
+            # the definition pane's own View results (always meaningful
+            # there) satisfies it.
+            yield Horizontal(
+                Button(
+                    "Duplicate",
+                    id="scheduling-duplicate-task",
+                    tooltip="Duplicate this scheduled task.",
+                    classes="detail-secondary-action-button",
+                ),
+                Button(
+                    "View runs",
+                    id="scheduling-view-runs-task",
+                    tooltip="Scroll to this task's recent runs.",
+                    classes="detail-secondary-action-button",
+                ),
+                id="scheduling-task-detail-secondary-actions",
+            )
             yield Horizontal(
                 Static("Title:", classes="scheduling-detail-label"),
                 Static(
@@ -682,28 +735,12 @@ class TaskDetail(Vertical):
                     classes="scheduling-detail-value",
                 ),
             )
-            # task-3 brief: the old combined Type/Schedule rows only apply
-            # to a `ScheduledTask` projection (watchlist_job/briefing_job)
-            # now -- reminders render Repeat/At/Timezone/Notifications
-            # through the Frequency `DetailGroup` below instead. `set_task`
-            # toggles this container's `.display` per task type.
-            with Vertical(id="scheduling-task-detail-legacy-fields"):
-                yield Horizontal(
-                    Static("Type:", classes="scheduling-detail-label"),
-                    Static(
-                        "-",
-                        id="scheduling-task-detail-type",
-                        classes="scheduling-detail-value",
-                    ),
-                )
-                yield Horizontal(
-                    Static("Schedule:", classes="scheduling-detail-label"),
-                    Static(
-                        "-",
-                        id="scheduling-task-detail-schedule",
-                        classes="scheduling-detail-value",
-                    ),
-                )
+            # task-31413: the combined Type/Schedule rows this comment used
+            # to describe rendered a `ScheduledTask` projection
+            # (watchlist_job/briefing_job) -- deleted as provably
+            # unreachable (see the unreachability note in `set_task`
+            # below). Reminders render Repeat/At/Timezone/Notifications
+            # through the Frequency `DetailGroup` below instead.
             yield Horizontal(
                 Static("Status:", classes="scheduling-detail-label"),
                 Static("-", id="scheduling-task-status-badge"),
@@ -795,6 +832,7 @@ class TaskDetail(Vertical):
                     "Notifications",
                     _REMINDER_NOTIFICATIONS_LABEL,
                     value_id="scheduling-detail-notifications",
+                    tooltip=_REMINDER_NOTIFICATIONS_TOOLTIP,
                 )
                 yield DetailGroup(
                     self._repeat_row,
@@ -810,22 +848,40 @@ class TaskDetail(Vertical):
                 # Final review N2: labelled "Recent runs" pointing at a
                 # section whose own label is also "Recent runs" -- one of
                 # the two had to be renamed.
-                history_link_row = DetailValueRow(
+                # 31712 AC#5: real affordance, not dead pseudo-link text --
+                # activating this row scrolls the pane to the "Recent
+                # runs:" section it names (`on_detail_value_row_activated`
+                # below), and `affordance=True`/`can_focus=True` show the
+                # same `▾` glyph the editable Frequency rows use so the
+                # click/Enter target is honest about being actionable.
+                self._history_link_row = DetailValueRow(
                     "Run history",
                     "See list below",
                     value_id="scheduling-detail-history-link",
+                    row_key="history_link",
+                    affordance=True,
+                    can_focus=True,
                 )
                 yield DetailGroup(
                     self._last_fire_row,
-                    history_link_row,
+                    self._history_link_row,
                     title="History",
                     collapsed=True,
                     id="scheduling-detail-group-history",
                 )
             # TASK-26026: durable per-dispatch run history -- the whole
             # point is that run N-1 is recoverable, not just the latest.
+            # 31712 AC#5: unlike the Title/Status/Next-Run trio above,
+            # this label and its value are stacked (plain siblings of this
+            # Vertical, not paired in a Horizontal) -- the shared
+            # `.scheduling-detail-label` class's fixed `width: 10` buys no
+            # column alignment here and only wrapped "Recent runs:" (12
+            # chars) across two lines. `-stacked` overrides just these two
+            # rows' width to `auto`, leaving the trio's aligned columns
+            # untouched.
             yield Static(
-                "Recent runs:", classes="scheduling-detail-label"
+                "Recent runs:",
+                classes="scheduling-detail-label scheduling-detail-label-stacked",
             )
             yield Static(
                 "No runs recorded yet",
@@ -834,7 +890,8 @@ class TaskDetail(Vertical):
             )
             # TASK-26027: open failure incidents + an acknowledge action.
             yield Static(
-                "Open incidents:", classes="scheduling-detail-label"
+                "Open incidents:",
+                classes="scheduling-detail-label scheduling-detail-label-stacked",
             )
             yield Static(
                 "No open incidents",
@@ -847,9 +904,9 @@ class TaskDetail(Vertical):
         # (`_runs_on_cancel_button`/`_runs_on_retry_button` above) is now
         # the one transfer surface (PR-3 task 5's "coexistence pinned"
         # window is over). `#scheduling-transfer-why` stays: `set_
-        # lifecycle_lock` still writes the Edit/Enable/Disable/Delete
-        # read-only reason into it (UX-073 -- keyboard users can't see
-        # hover tooltips).
+        # lifecycle_lock` still writes the Edit/Duplicate/Enable/Disable/
+        # Delete read-only reason into it (UX-073 -- keyboard users can't
+        # see hover tooltips).
         yield Static("", id="scheduling-transfer-why", classes="follow-why")
         yield Button(
             "Follow in Console",
@@ -871,6 +928,8 @@ class TaskDetail(Vertical):
             "scheduling-disable-task",
             "scheduling-delete-task",
             "scheduling-ack-incident",
+            "scheduling-duplicate-task",
+            "scheduling-view-runs-task",
             _RUNS_ON_CANCEL_ID,
             _RUNS_ON_RETRY_ID,
         }:
@@ -887,6 +946,10 @@ class TaskDetail(Vertical):
             self.request_delete()
         elif button_id == "scheduling-ack-incident":
             self._request_acknowledge()
+        elif button_id == "scheduling-duplicate-task":
+            self._request_duplicate()
+        elif button_id == "scheduling-view-runs-task":
+            self._request_view_runs()
         elif button_id == _RUNS_ON_CANCEL_ID:
             self._request_runs_on_cancel()
         elif button_id == _RUNS_ON_RETRY_ID:
@@ -936,6 +999,20 @@ class TaskDetail(Vertical):
         """Post a run-now request for the current reminder (task-18938)."""
         if isinstance(self._current_task, ReminderTask):
             self.post_message(RunReminderNowRequested(self._current_task))
+
+    def _request_duplicate(self) -> None:
+        """Post a duplicate request for the current reminder (task-31823)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(DuplicateTaskRequested(self._current_task))
+
+    def _request_view_runs(self) -> None:
+        """`View runs` button pressed (task-31823) -- reuses the SAME
+        scroll-to-"Recent runs:" affordance `_history_link_row`'s own
+        activation already performs (31712 AC#5): reminders have no
+        separate run-history view to push, only this inline section.
+        """
+        run_history = self.query_one("#scheduling-task-detail-run-history", Static)
+        run_history.scroll_visible()
 
     def _request_runs_on_cancel(self) -> None:
         """Post a cancel request from the Runs-on row's own mini-bar
@@ -1137,6 +1214,16 @@ class TaskDetail(Vertical):
         -- show why editing is refused instead of doing nothing (ruling 2).
         """
         row = event.row
+        if row is self._history_link_row:
+            # 31712 AC#5: not an editor -- scroll the pane to the section
+            # this row names. Checked before `_editable_rows()` below,
+            # which this row deliberately is NOT part of (it has no
+            # editor to open or close). task-31823: the SAME scroll the
+            # secondary-actions row's own `View runs` button now performs
+            # (`_request_view_runs`) -- two entry points, one action.
+            event.stop()
+            self._request_view_runs()
+            return
         if row not in self._editable_rows():
             return
         event.stop()
@@ -1328,7 +1415,7 @@ class TaskDetail(Vertical):
 
     def set_task(
         self,
-        task: ReminderTask | ScheduledTask | None,
+        task: ReminderTask | None,
         *,
         queue_empty: bool = False,
         run_history=None,
@@ -1339,9 +1426,11 @@ class TaskDetail(Vertical):
         """Update the detail view for the given task (or clear it).
 
         Args:
-            task: The row to paint, or ``None`` for the empty state. A
-                `ReminderTask` fills every group; a bare `ScheduledTask`
-                (the legacy shape) paints only what it carries.
+            task: The row to paint, or ``None`` for the empty state.
+                task-31413: only ever a `ReminderTask` in practice -- see
+                the unreachability note further down and the runtime
+                assert it backs. The old bare-`ScheduledTask` legacy shape
+                this docstring used to describe is no longer accepted.
             queue_empty: True when the queue has no rows at all, which
                 picks the "schedule your first task" empty copy over the
                 "select a task" one. Read only when ``task`` is ``None``.
@@ -1413,17 +1502,24 @@ class TaskDetail(Vertical):
 
         empty_state.display = False
         metadata.display = True
+        # task-31413: `TaskDetail(` is constructed in exactly TWO places in
+        # the repo (both in `schedules_workbench.py`), both fed through the
+        # same `_update_detail_for_index` seam, which asserts
+        # `isinstance(task, ReminderTask)` before ever calling `set_task`.
+        # A `ScheduledTask` projection provably never reaches here --
+        # regressing that is the ONE thing the deleted legacy-fields layer
+        # used to render, so guard it loudly instead of silently painting
+        # a near-empty pane. `test_set_task_rejects_a_scheduled_task_
+        # projection` pins this.
+        assert isinstance(task, ReminderTask), (
+            "TaskDetail only ever renders a ReminderTask (task-31413 "
+            "deleted the ScheduledTask projection-rendering layer)"
+        )
         lifecycle.display = isinstance(task, ReminderTask)
 
         # schedules-redesign PR-1, task 3: the Details/Frequency/History
-        # groups are reminder-only (spec §5's reminder column); a
-        # `ScheduledTask` projection (watchlist_job/briefing_job) keeps the
-        # legacy Type/Schedule rows instead, since this regrammar does not
-        # touch projection rendering.
+        # groups are reminder-only (spec §5's reminder column).
         is_reminder = isinstance(task, ReminderTask)
-        self.query_one("#scheduling-task-detail-legacy-fields", Vertical).display = (
-            not is_reminder
-        )
         self.query_one("#scheduling-task-detail-groups", Vertical).display = (
             is_reminder
         )
@@ -1497,10 +1593,6 @@ class TaskDetail(Vertical):
                 run_now_button.label = "Run now"
 
         self._update_static("scheduling-task-detail-title", task.title)
-        self._update_static("scheduling-task-detail-type", _task_type_label(task))
-        self._update_static(
-            "scheduling-task-detail-schedule", _task_schedule_label(task)
-        )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
         self._update_static(
@@ -1610,7 +1702,8 @@ class TaskDetail(Vertical):
         self._runs_on_transfer_errors = list(errors)
 
     def set_lifecycle_lock(self, reason: str | None) -> None:
-        """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
+        """Freeze Edit/Duplicate/Enable/Disable/Delete while a transfer is
+        in flight.
 
         Spec §6.3's "dormant and in-flight rows are read-only except
         cancel" (final review I7): the transfer snapshotted this row's
@@ -1627,12 +1720,18 @@ class TaskDetail(Vertical):
         handler (`self._lifecycle_lock_reason`) -- the SAME reason, not a
         second `transfer_lock_reason` call, per survey §8's one-source-
         of-truth rule.
+
+        task-31823: `Duplicate` joins Edit/Delete in this same gate -- a
+        row mid-transfer is about to adopt a different id/owner, so a
+        "snapshot now" copy would fork off transitional state rather
+        than the settled row the user actually means to duplicate.
         """
         self._lifecycle_lock_reason = reason
         locked = reason is not None
         for button_id, tooltip in (
             ("scheduling-edit-task", "Edit this scheduled task."),
             ("scheduling-delete-task", "Delete this scheduled task."),
+            ("scheduling-duplicate-task", "Duplicate this scheduled task."),
         ):
             button = self.query_one(f"#{button_id}", Button)
             button.disabled = locked
@@ -1649,11 +1748,11 @@ class TaskDetail(Vertical):
             disable_btn.tooltip = "Disable this scheduled task."
 
         why = self.query_one("#scheduling-transfer-why", Static)
-        line = f"Edit/Enable/Disable/Delete: {reason}" if reason else ""
+        line = f"Edit/Duplicate/Enable/Disable/Delete: {reason}" if reason else ""
         existing = [
             text
             for text in str(why.renderable).split("\n")
-            if text and not text.startswith("Edit/Enable/Disable/Delete:")
+            if text and not text.startswith("Edit/Duplicate/Enable/Disable/Delete:")
         ]
         if line:
             existing.append(line)
@@ -1673,6 +1772,15 @@ class TaskInspector(Vertical):
             "Inspector",
             id="scheduling-task-inspector-header",
             classes="scheduling-column-title",
+        )
+        # 31712 AC#6: same "empty state replaces the real content" idiom
+        # `TaskDetail` already uses (`scheduling-task-detail-empty-state`)
+        # -- "no task selected" is now a distinct message, not the same
+        # "-" a selected task with nothing to report also shows in every
+        # metadata row below.
+        yield Static(
+            "Select a task to see sync, conflict, and run details.",
+            id="scheduling-task-inspector-empty-state",
         )
         with Vertical(id="scheduling-inspector-metadata"):
             yield Horizontal(
@@ -1706,13 +1814,22 @@ class TaskInspector(Vertical):
 
     def set_task(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Update the inspector view for the given task (or clear it)."""
+        empty_state = self.query_one("#scheduling-task-inspector-empty-state", Static)
+        metadata = self.query_one("#scheduling-inspector-metadata", Vertical)
+        conflict_card = self.query_one("#scheduling-conflict-card", Vertical)
         if task is None:
+            empty_state.display = True
+            metadata.display = False
+            conflict_card.display = False
             self._update_static("scheduling-inspector-sync", "-")
             self._update_static("scheduling-inspector-last-run", "-")
             self._update_static("scheduling-inspector-owner", "-")
             self._update_conflict_card(None)
             return
 
+        empty_state.display = False
+        metadata.display = True
+        conflict_card.display = True
         self._update_static("scheduling-inspector-sync", _task_sync_label(task))
         self._update_static("scheduling-inspector-last-run", _format_last_run(task))
         self._update_static("scheduling-inspector-owner", _task_owner_label(task))

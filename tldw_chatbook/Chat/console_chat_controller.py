@@ -2695,6 +2695,20 @@ class ConsoleSubmitResult:
 
 
 @dataclass(frozen=True)
+class ConsoleNoteDraft:
+    """A ready-to-save note built from the active-path transcript span.
+
+    TASK-31759: produced by the More-menu "up to here" note actions. The
+    controller builds title/content; the screen-side caller owns the
+    ``notes_scope_service.save_note`` write (the controller has no note
+    library seam).
+    """
+
+    title: str
+    content: str
+
+
+@dataclass(frozen=True)
 class ImpersonateResult:
     """Outcome of an Impersonate draft request (task-1683 / Qodo #1160).
 
@@ -2932,6 +2946,12 @@ class ConsoleChatController:
 
     #: Shared guidance cap for summary and impersonation transcript inputs.
     _SUMMARY_SPAN_TOKEN_BUDGET = 12000
+
+    #: Output cap for the More-menu "summarize as note" side call
+    #: (TASK-31759). Modest on purpose: notes are reference material, and
+    #: the stateless call bypasses the policy-merged ``summary_max_tokens``
+    #: used by compaction.
+    _NOTE_SUMMARY_OUTPUT_CAP = 2048
 
     #: TASK-21145 (UAT H-3): "Validating provider." must always reach a
     #: terminal state — the UAT run sat on it 30s+ with no error, no retry,
@@ -15462,6 +15482,209 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
+    def _note_span_messages(
+        self, session_id: str, message_id: str
+    ) -> list[ConsoleChatMessage] | ConsoleSubmitResult:
+        """Active-path USER/ASSISTANT rows up to AND INCLUDING message_id.
+
+        Unlike the manual summarize planning path, the target may be a USER
+        or an ASSISTANT message (the More-menu action reads "up to here"),
+        and no persistence requirement applies -- an unsaved conversation is
+        still a valid transcript to save or summarize into a note.
+
+        Args:
+            session_id: The session whose transcript to slice.
+            message_id: The selected message bounding the span (inclusive).
+
+        Returns:
+            The span messages in transcript order, or a blocked
+            ``ConsoleSubmitResult`` when the message is off the active path
+            or no longer exists.
+        """
+        if message_id not in self.store.active_path_message_ids(session_id):
+            return self._summarize_block(
+                session_id, "Switch to that branch before saving a note."
+            )
+        try:
+            self.store.get_message(message_id)
+        except KeyError:
+            return self._summarize_block(
+                session_id, "Switch to that branch before saving a note."
+            )
+        span: list[ConsoleChatMessage] = []
+        for message in self.store.messages_for_session(session_id):
+            if message.role not in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT):
+                continue
+            if getattr(message, "status", None) == "failed":
+                continue
+            if not (message.content or "").strip():
+                continue
+            span.append(message)
+            if message.id == message_id:
+                return span
+        return self._summarize_block(
+            session_id, "The selected conversation range is not ready."
+        )
+
+    def _note_provenance_header(self, session_id: str, message_id: str) -> str:
+        """Provenance block prefixed to note content (TASK-31759)."""
+        conversation_id = ""
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if owner is not None and owner.persisted_conversation_id is not None:
+            conversation_id = str(owner.persisted_conversation_id)
+        generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        parts = [f"Generated: {generated}"]
+        if conversation_id:
+            parts.append(f"Conversation: {conversation_id}")
+        parts.append(f"Up to message: {message_id}")
+        return "\n".join(f"> {part}" for part in parts)
+
+    def build_transcript_note(self, message_id: str) -> ConsoleNoteDraft | ConsoleSubmitResult:
+        """Format the transcript up to and including message_id as a note.
+
+        Args:
+            message_id: The selected message bounding the span (inclusive).
+
+        Returns:
+            A ``ConsoleNoteDraft`` carrying the note title and
+            role-prefixed Markdown content with a provenance header, or a
+            blocked ``ConsoleSubmitResult`` (no active session, active run,
+            or off-path/missing target).
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        span = self._note_span_messages(session_id, message_id)
+        if isinstance(span, ConsoleSubmitResult):
+            return span
+        title = "Transcript: " + (span[0].content.strip().splitlines() or [""])[0][:48]
+        body_lines = [
+            f"**{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}:** {m.content}"
+            for m in span
+        ]
+        content = (
+            self._note_provenance_header(session_id, message_id)
+            + "\n\n"
+            + "\n\n".join(body_lines)
+        )
+        return ConsoleNoteDraft(title=title, content=content)
+
+    async def summarize_span_as_note(
+        self, message_id: str
+    ) -> ConsoleNoteDraft | ConsoleSubmitResult:
+        """Summarize the span up to message_id into note-ready text.
+
+        TASK-31759. State-by-state separate from the manual compaction
+        path: no attempt ledger, no branch-memory admission, and the
+        session context summary / rewind boundary are never touched. An
+        oversized span is BLOCKED (matching the manual path's contract)
+        rather than silently trimmed, because a user-facing note must not
+        quietly omit turns -- the span is counted UNTRIMMED before the
+        provider call (``_build_summary_span_text``'s oldest-turn trimming
+        is deliberately not used here).
+
+        Args:
+            message_id: The selected message bounding the span (inclusive).
+
+        Returns:
+            A ``ConsoleNoteDraft`` carrying the summary note title/content,
+            or a blocked ``ConsoleSubmitResult`` (active run, no session,
+            off-path/missing target, provider not ready, oversized span,
+            timeout, or provider failure).
+
+        Raises:
+            asyncio.CancelledError: Propagated unchanged when the caller's
+                task is cancelled, so cancellation is never swallowed.
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        service = self._compaction_service
+        if service is None:
+            return self._summarize_block(
+                session_id, "Summarization is unavailable in this session."
+            )
+        span = self._note_span_messages(session_id, message_id)
+        if isinstance(span, ConsoleSubmitResult):
+            return span
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        try:
+            resolution = await self._resolve_for_send_bounded(
+                configuration.provider_selection
+            )
+        except Exception:
+            return self._summarize_block(
+                session_id,
+                "The active provider could not be prepared for summarization.",
+            )
+        if not getattr(resolution, "ready", False):
+            return self._summarize_block(
+                session_id,
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
+            )
+        resolution = await self._auxiliary_compaction_resolution(
+            configuration.provider_selection, resolution
+        )
+        # Deliberately NOT _build_summary_span_text: that helper silently
+        # drops oldest turns to fit the budget, which would defeat the
+        # block-below check below (it would always see an already-fitting
+        # span) and quietly omit turns from a user-facing note.
+        span_text = "\n".join(
+            f"{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}: {m.content}"
+            for m in span
+        )
+        model = resolution.model or ""
+        if (
+            count_console_messages_tokens(
+                [{"role": "user", "content": span_text}], model
+            )
+            > self._SUMMARY_SPAN_TOKEN_BUDGET
+        ):
+            return self._summarize_block(
+                session_id,
+                "That span is too large to summarize in one call. "
+                "Choose an earlier message.",
+            )
+        prompt_text = get_internal_prompt("console.summarize_note")
+        try:
+            summary = await service.summarize_span_to_text(
+                resolution=resolution,
+                messages=(
+                    {"role": "system", "content": prompt_text},
+                    {"role": "user", "content": span_text},
+                ),
+                max_output_tokens=self._NOTE_SUMMARY_OUTPUT_CAP,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            return self._summarize_block(
+                session_id, "Summarization timed out before a note could be saved."
+            )
+        except Exception:
+            return self._summarize_block(
+                session_id, "Summarization failed before a note could be saved."
+            )
+        if not summary:
+            return self._summarize_block(
+                session_id, "Summarization returned nothing to save."
+            )
+        title = "Summary: " + (span[0].content.strip().splitlines() or [""])[0][:48]
+        content = (
+            self._note_provenance_header(session_id, message_id)
+            + "\n\n"
+            + summary
+        )
+        return ConsoleNoteDraft(title=title, content=content)
+
     async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
@@ -22274,30 +22497,18 @@ class ConsoleChatController:
             from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
             from tldw_chatbook.Canvas.models import CanvasScope
 
-            native_path = self.store.active_path_message_ids(session_id)
-            active_path: list[str] = []
-            for native_id in native_path:
-                try:
-                    path_message = self.store.get_message(native_id)
-                except KeyError:
-                    active_path = []
-                    break
-                if (
-                    not session.ephemeral
-                    and path_message.persisted_message_id is None
-                    and path_message.role is ConsoleMessageRole.SYSTEM
-                ):
-                    continue
-                active_path.append(path_message.persisted_message_id or path_message.id)
             canvas_run_id = str(uuid4())
             canvas_scope = CanvasScope(
                 session_id=session_id,
                 conversation_id=conversation_id,
-                active_message_ids=tuple(active_path),
+                active_message_ids=self.store.canvas_active_path_message_ids(
+                    session_id
+                ),
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id=canvas_run_id,
             )
+            canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
             canvas_run = canvas_controller.register_run(
                 canvas_scope,
                 assistant_message_id=assistant_message_id,

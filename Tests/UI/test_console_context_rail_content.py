@@ -77,6 +77,25 @@ async def test_character_avatar_placeholder_does_not_echo_the_name_row() -> None
 
 
 @pytest.mark.asyncio
+async def test_character_is_between_conversations_and_model() -> None:
+    """Character navigation has a stable peer position in the Context rail."""
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        ids = [
+            widget.id
+            for widget in screen.query(".console-rail-section-header")
+            if widget.id
+        ]
+        assert ids.index("console-rail-section-header-conversations") + 1 == ids.index(
+            "console-rail-section-header-character"
+        )
+        assert ids.index("console-rail-section-header-character") + 1 == ids.index(
+            "console-rail-section-header-model"
+        )
+        assert screen.query_one("#console-character-context")
+
+
+@pytest.mark.asyncio
 async def test_no_keyboard_reachable_context_control_paints_nothing() -> None:
     """Every control Tab can reach in the rail must actually be on screen.
 

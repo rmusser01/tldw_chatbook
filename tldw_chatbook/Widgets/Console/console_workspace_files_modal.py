@@ -397,7 +397,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         return True
 
     async def on_mount(self) -> None:  # type: ignore[override]
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self._sync_layout()
         self.call_after_refresh(self._finish_mount)
 
@@ -1130,13 +1132,17 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._on_back_to_console()
 
     async def on_unmount(self) -> None:
-        """Join owned work and close the controller visit on every pop path."""
+        """Join owned work and close the controller visit on every pop path.
+
+        No super().on_unmount(): the dispatcher already invokes
+        SafeModalDismissMixin.on_unmount separately for this Unmount event
+        (TASK-31418).
+        """
         await self.run_cancel_effect_once(self._teardown)
         if not self._visit_closed_notified:
             self._visit_closed_notified = True
             if self._on_visit_closed is not None:
                 self._on_visit_closed()
-        super().on_unmount()
 
 
 __all__ = [

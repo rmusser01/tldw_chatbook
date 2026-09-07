@@ -184,7 +184,9 @@ class ActorPackImportReviewDialog(SafeModalDismissMixin, ModalScreen[str | None]
                 )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         actions = set(self.review.allowed_actions)
         action_buttons = {
             "create_new": self.query_one("#actor-pack-import-create-new", Button),

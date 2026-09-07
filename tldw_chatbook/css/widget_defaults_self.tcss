@@ -1635,6 +1635,26 @@
 
 
 
+/* ===== WIDGET: TaskDetail (UI/Screens/scheduling/task_detail.py) ===== */
+
+
+
+
+
+
+
+    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+       line, value on the next), not paired with a value in a Horizontal --
+       the shared class's fixed 10-column width above wraps them instead of
+       aligning anything. */
+
+
+
+
+
+
+
+
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
 
     TrajectoryScreen {
@@ -2549,6 +2569,14 @@
     /* task-31270: receipts are two rows, full width; the copy wraps and the
      * action row keeps content-width buttons so Undo/Dismiss always paint. */
 
+
+
+    /* Task 8: same trap as #library-media-filter above -- Input defaults to
+     * width 100%, which inside a row Horizontal would blow the label off
+     * to the side. */
+
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
 
 
 

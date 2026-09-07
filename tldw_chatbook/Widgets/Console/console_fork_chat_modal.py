@@ -322,7 +322,9 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         return "Includes cited source details."
 
     def on_mount(self, event: events.Mount) -> None:  # type: ignore[override]
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         self._opened_at = event.time
         title = self.query_one("#console-fork-chat-title", _ConsoleForkTitleInput)
         title.opened_at = event.time

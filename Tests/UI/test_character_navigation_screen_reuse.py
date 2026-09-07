@@ -25,6 +25,234 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "route_kind,size",
+    [("inspection", (52, 20)), ("inspection", (80, 24)), ("browse", (140, 42))],
+)
+async def test_unavailable_route_returns_to_originating_console_character(
+    monkeypatch, tmp_path, route_kind, size
+):
+    from copy import deepcopy
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        UnresolvedConversationKey,
+    )
+    from tldw_chatbook.Constants import (
+        LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
+        LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
+        LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
+        TAB_LIBRARY,
+    )
+    from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+        LibraryUnavailableConversationInspection,
+        LibraryUnavailableConversationsBrowse,
+        RoleplayReturnTarget,
+        serialize_library_unavailable_browse,
+        serialize_library_unavailable_inspection,
+    )
+
+    _scratch_env(monkeypatch, tmp_path)
+    app = TldwCli()
+    _configure_native_ready_console(app)
+    async with app.run_test(size=size) as pilot:
+        await asyncio.wait_for(_boot_settled(app, pilot), 30)
+        await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
+        console = app.screen
+        database = app.chachanotes_db
+        actor = database.add_character_card({"name": "Synthetic lost actor"})
+        authority = database.get_local_authority_id()
+        database.add_conversation(
+            {
+                "id": "synthetic-return-chat",
+                "title": "Synthetic unavailable chat",
+                "character_id": actor,
+                "assistant_kind": "character",
+                "assistant_id": str(actor),
+                "assistant_authority_id": authority,
+            }
+        )
+        with database.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE conversations SET assistant_id = 'Historical actor', assistant_authority_id = NULL WHERE id = ?",
+                ("synthetic-return-chat",),
+            )
+        key = UnresolvedConversationKey(authority, "synthetic-return-chat")
+        anchor = RoleplayReturnTarget.console_context_character()
+        if route_kind == "inspection":
+            context = {
+                LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: serialize_library_unavailable_inspection(
+                    LibraryUnavailableConversationInspection(key, anchor)
+                )
+            }
+        else:
+            context = {
+                LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: serialize_library_unavailable_browse(
+                    LibraryUnavailableConversationsBrowse(key, anchor)
+                )
+            }
+        console._set_console_rail_preference(
+            left_open=False, section_updates={"character": False}
+        )
+        prior_preferences = deepcopy(
+            app.app_config.get("console", {}).get("rail_state", {})
+        )
+        app.post_message(NavigateToScreen(TAB_LIBRARY, context))
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-character-back-console"
+            ):
+                break
+        library = app.screen
+        back = library.query_one("#library-character-back-console", Button)
+        committed = library._navigation_controller.character_route
+        library.apply_navigation_context({LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR: {}})
+        library.apply_navigation_context({LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: {}})
+        assert library._navigation_controller.character_route is committed
+        original_incoming_flush = library._flush_active_file_notes
+        rejected = asyncio.Event()
+
+        async def reject_incoming():
+            rejected.set()
+            return False
+
+        library._flush_active_file_notes = reject_incoming
+        for replacement in ({"mode": "search"}, context):
+            rejected.clear()
+            library.apply_navigation_context(replacement)
+            await asyncio.wait_for(rejected.wait(), 2)
+            await pilot.pause()
+            assert library._navigation_controller.character_route is committed
+            assert library.query_one("#library-character-back-console") is back
+        library._flush_active_file_notes = original_incoming_flush
+        back.focus()
+        await pilot.pause()
+        painted = "\n".join(strip.text for strip in library._compositor.render_strips())
+        assert "Back to Console" in painted
+        app.save_screenshot(
+            filename=f"library-return-{route_kind}-{size[0]}x{size[1]}.svg",
+            path=str(tmp_path),
+        )
+        (tmp_path / "return-paint.txt").write_text(painted)
+        if size == (80, 24):
+            original_flush = library.flush_pending_work
+            vetoed = asyncio.Event()
+
+            async def veto_departure():
+                vetoed.set()
+                return False
+
+            library.flush_pending_work = veto_departure
+            back.press()
+            await asyncio.wait_for(vetoed.wait(), 2)
+            await pilot.pause()
+            assert app.screen is library
+            assert library.query_one("#library-character-back-console") is back
+            library.flush_pending_work = original_flush
+        back.press()
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if app.screen is console and (
+                size[0] == 52
+                or getattr(app.focused, "id", None) == "console-character-search"
+            ):
+                break
+        assert app.screen is console
+        await pilot.pause(0.3)
+        if size[0] == 52:
+            assert not console.query_one("#console-left-rail").display
+            assert getattr(app.focused, "id", None) != "console-character-search"
+            assert app.focused is not None and app.focused.visible
+            assert console.query_one("#console-native-composer") in (
+                app.focused,
+                *app.focused.ancestors,
+            )
+            assert (
+                console._pending_character_return_focus_id
+                == "console-context-character"
+            )
+            app.save_screenshot(
+                filename="console-return-fallback-52x20.svg", path=str(tmp_path)
+            )
+            fallback = app.focused
+            await pilot.resize_terminal(80, 24)
+            await pilot.pause(0.3)
+            assert app.focused is fallback
+            assert (
+                console._pending_character_return_focus_id
+                == "console-context-character"
+            )
+        else:
+            # Refresh-on-resume may replace the first focused Input. Wait for
+            # the final owned node to paint, without scrolling it from the test.
+            from textual.errors import NoWidget
+
+            for _ in range(60):
+                await pilot.pause(0.05)
+                search = console.query_one("#console-character-search")
+                try:
+                    geometry = console.find_widget(search)
+                except NoWidget:
+                    continue
+                if app.focused is search and geometry.clip.contains_region(
+                    search.region
+                ):
+                    break
+            search = console.query_one("#console-character-search")
+            assert app.focused is search
+            geometry = console.find_widget(search)
+            assert geometry.clip.contains_region(search.region)
+            painted_focus = "\n".join(
+                strip.text[search.region.x : search.region.right]
+                for strip in console._compositor.render_strips()[
+                    search.region.y : search.region.bottom
+                ]
+            )
+            assert "Search chats" in painted_focus
+            app.save_screenshot(
+                filename=f"console-return-{route_kind}-{size[0]}x{size[1]}.svg",
+                path=str(tmp_path),
+            )
+        assert (
+            app.app_config.get("console", {}).get("rail_state", {}) == prior_preferences
+        )
+        if size[0] == 52:
+            console._toggle_console_rail_section("character", next_open=True)
+            await pilot.pause(0.3)
+            assert console._pending_character_return_focus_id is None
+            assert app.focused is console.query_one("#console-character-search")
+        console._toggle_console_rail_section("character", next_open=False)
+        assert not console._character_context.return_reveal
+        assert not console.query_one("#console-rail-section-body-character").display
+        await pilot.pause()
+        app.post_message(NavigateToScreen(TAB_LIBRARY, {"mode": "conversations"}))
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if app.screen is library:
+                break
+        assert not library.query("#library-character-back-console")
+        settled_frames = 0
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if (
+                not library._recompose_required
+                and not library._conversations_state.loading
+            ):
+                settled_frames += 1
+                if settled_frames == 3:
+                    break
+            else:
+                settled_frames = 0
+        assert settled_frames == 3
+        assert not library._recompose_required
+        assert not library._conversations_state.loading
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "fail_visibility,prior_resume_gate", [(False, False), (True, False), (True, True)]
 )
 async def test_character_activation_uses_cached_console_and_preserves_rollback(

@@ -16,8 +16,8 @@ layout tour). Everything on this page lives in two places:
 
 - The **tab strip** — the row of tabs directly under the
   "Conversation" title above the transcript.
-- The **"Console context"** rail on the left — its separate **Sessions**,
-  **Workspaces**, **Conversations**, and **Details** sections. If the rail is
+- The **"Console context"** rail on the left — its separate **Workspaces**,
+  **Conversations**, **Character**, and **Details** sections. If the rail is
   collapsed, click the **Context->** handle at the left edge to open it when
   the viewport can retain a usable transcript.
 
@@ -39,9 +39,6 @@ strip: "Each tab runs its own agent — up to 3 in parallel (change in
 Settings > Console Behavior)." Dismiss it with its "✕". The "3" is the
 default limit — the banner shows whatever your configured limit is.
 
-**Sessions section** (left rail). Names the active conversation ("None" when
-no conversation is active yet); hover the value to see its durable id.
-
 **Workspaces section** (left rail). Shows the active workspace on one compact
 line, keeps **Switch**, **New**, and **RAG** together, and renders every
 named workspace in a native Tree with its conversations as children. The
@@ -55,6 +52,22 @@ only Default-workspace and unassigned conversations. A conversation assigned
 to a named workspace appears under that workspace in the Tree instead, never
 in both places. Starred entries sort first inside their one owner; starring is
 a property and action, not a duplicate Starred group.
+
+**Character section** (left rail). Shows up to four local character cards or
+unavailable-character groups, with up to five recent saved conversations in
+the one expanded group. Search returns at most eight saved local character
+conversations and never sends titles or transcript text to a network service.
+Each search result keeps its title, character name, and Local/age metadata
+on separate lines so the metadata remains readable in the narrow rail.
+When a Context search is active, **Continue search in Character chats** opens
+that same validated query in Ctrl+K's complete local Character-chat results.
+Enter or double-click opens an exact saved conversation in its Console tab;
+single-click selects it. **View all N in Roleplay** opens that character's
+complete saved history. A current card with no saved chats offers **Start in
+Console**, while the overall empty state offers **Open Roleplay**. Chats whose
+card was deleted or cannot be identified are never guessed open: use **Repair
+in Library**, or **View all N in Library**, to resolve them. Turning off
+`show_character_avatar` hides only the image; these navigation controls remain.
 
 **Details section** (left rail, collapsed by default). Status lines for
 "Storage", "Sync", "Local file tools", "Server", and "ACP", plus a "Handoff" list.
@@ -100,18 +113,40 @@ match both `saved` and `open`. This keeps a lifecycle detail from hiding an
 otherwise relevant agent or destination.
 
 When a nonblank Active search has no match, the switcher automatically widens
-that search to local **History**. Press **F3** (or choose the Active/History
-buttons) to change modes directly; the query stays in place until you close the
-switcher. History searches every persisted local conversation, groups results
-by local calendar recency, and loads at most 50 rows per page. Previous/Next and
-the internal result scroll keep the complete switcher within 35 terminal rows.
+that search to local **History** and labels the widened scope. Press **F3** (or
+choose a mode button) to cycle **Active**, **History**, and **Character chats**.
+Active and History share one query. Character chats keeps its own Keyword query,
+never widens a zero-match search, and searches local chats in the current Data
+Profile only—no remote results, embeddings, or Meaning mode. Its rows show title,
+character, state, and relative age; only the selected row's matching excerpt and
+absolute update time appear in the fixed detail area. History and Character chats
+load at most 50 rows per page. Previous/Next and the internal result scroll keep
+the complete switcher within 35 terminal rows and retain four two-line results at
+52×20.
 
-With a blank query, **Enter** opens the most recently used *other* tab, making
+Character Keyword queries accept up to 200 characters without control characters;
+Active and History retain their separate 512-character limit. Context hands off
+only a query accepted by the Character Keyword boundary.
+
+In Active with a blank query, **Enter** opens the most recently used *other* tab, making
 Ctrl+K then Enter a fast two-tab toggle. Once you type a query or use ↑/↓,
 Enter opens the highlighted committed result; pointer activation follows the
 same target. **F2** renames only a focused open-agent result—focus the row with
-↓ first—and never falls back to an unrelated tab. **Esc** or the always-visible
-**Cancel** button closes without switching or marking anything seen.
+↓ first—and never falls back to an unrelated tab; it does nothing in Character
+chats. Opening a Character chat keeps Ctrl+K mounted during cancellable
+preflight, changes to a non-cancellable finishing state at commit, and closes
+only after the exact conversation is visible. **Esc** or the always-visible
+**Cancel** button closes without switching or marking anything seen; during
+Character preflight it cancels the open, while a finishing commit must settle.
+
+Unavailable Character rows offer **Open Library** for the exact local chat.
+The switcher stays open while Library checks that exact local selection and pending
+saves. Cancel stops that attempt without losing the query or highlighted row;
+Finishing begins only after admission and cannot be cancelled. Transcript rendering
+then continues in Library for the admitted conversation.
+Library Back returns to Console Context Character where supported, with Console's
+visible fallback at narrow widths. It does not restore the previous switcher visit;
+a fresh Ctrl+K starts in Active.
 
 Unseen successful results show a compact outcome notice at the exact
 destination and are marked seen only after that notice visibly loads. Failed,
@@ -159,15 +194,15 @@ context that is already active:
 | Settings > Console Behavior > Rail layout scope | **Global** is the default and keeps one arrangement across workspace switches. **Per workspace** restores and keeps each workspace's existing saved arrangement. |
 | What the selected layout scope saves | Whether the Context and Inspect rails are open, direct section disclosures (including **More**), and explicit rail-open behavior markers. Compact responsive collapse may temporarily override the rendering without rewriting those choices. |
 | What it does not save | Local or outer scroll positions, Workspaces search disclosure, Tree selection, pointer tooltip, and focus are transient. Switching layout scope neither deletes the inactive scope's records nor turns those transient states into preferences. |
-| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. |
+| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. On a short terminal (the rail below sixteen rows, which includes 80x24) it shrinks to two rows — the heading and **Run**, which already rolls up the other four — so the scrolling body keeps room for a whole section. The heading says so: it reads `If I send now? · +4 more`. The four hidden facts stay complete in the block's tooltip and, with the block focused, in **F1**. |
 | Inspect **More** | Empty Tools, Approvals, and Artifacts groups stay under **More**. A nonzero, pending, blocked, available, or otherwise actionable group promotes into the main Inspect sequence; collapsing More never hides an actionable group. |
 
 Workspaces search can reveal matching conversation results whose parent branch
 was closed. Those temporary disclosure changes are discarded when the search
 is cleared, restoring the exact disclosure state from before the search.
 
-Context preserves complete reading bodies up to 15 rows for Sessions, Model,
-Agent, and Details; 20 for Workspaces and Conversations; and 35 for Character.
+Context preserves complete reading bodies up to 15 rows for Model, Agent, and
+Details; 20 for Workspaces and Conversations; and 35 for Character.
 Longer sections scroll locally, while **▼ more sections — scroll** means to
 scroll the outer rail to reach complete later sections. Inspector sections keep
 their separate 20-row ceiling. Character art remains centered and complete with
@@ -344,13 +379,24 @@ for authority, privacy, limits, key routing, cleanup, and platform support.
 | Key | Action |
 |---|---|
 | Ctrl+T | New Console tab |
-| Ctrl+K | Open the Active/History operational switchboard |
+| Ctrl+K | Open the Active/History/Character chats switchboard |
 | Ctrl+K, Enter | Toggle to the most recently used other open tab when the query is blank |
-| F3 (in switcher) | Toggle Active/History while retaining the query |
+| F3 (in switcher) | Cycle Active/History/Character chats; Active and History share a query while Character chats keeps its own |
 | F2 (focused open-agent result) | Rename that exact open tab |
 | Alt+1 … Alt+9 | Jump to tab 1–9 |
 | Alt+W | "Change Workspace" switcher |
 | Alt+I | Open the Inspect rail and move focus into it; press again to close it. Works at every terminal width, including below 84 columns where the rail's handle is hidden |
+| Tab / Shift+Tab | Move within the Console region you are already in — the composer's controls, the Context rail, the transcript, or the Inspect rail. Tab deliberately does **not** cross between them; **F6** / **Shift+F6** do, and **Alt+I** enters the Inspect rail directly |
+
+Everything in the Inspect rail that Tab can land on shows where focus is
+without relying on colour alone. Buttons — the rail header, section
+chevrons, "Refresh", "Search Library", "Narrow…", **More** — take a solid
+accent edge (`█`) down their left side; the collapsed rail's handle takes
+the same edge on its right, where it has room. A focused row is wrapped in
+corner brackets (`┌ … ┐`) instead, which is what tells "this row has focus"
+apart from "the whole list has focus" — the scrolling body draws the `█`
+edge alongside every one of its sections. The pinned send summary is drawn
+in a full accent box.
 
 ## Related settings & docs
 

@@ -425,7 +425,18 @@ async def test_media_fresh_zero_distills_to_one_recovery_action(
         assert not pilot.app.query("#library-media-select-toggle")
         assert not pilot.app.query("#library-media-export")
         assert not pilot.app.query("#library-media-detail-empty")
-        assert len(pilot.app.query(".library-canvas-action")) == 1
+        # task-31635 (critique #5 item 7): the title row's Sets opener rides
+        # this page too -- it is navigation, not a result, and it is the only
+        # route back to a saved review set from an empty list. The RECOVERY
+        # budget is still exactly one: everything in the page's own body.
+        body_actions = [
+            action
+            for action in pilot.app.query(".library-canvas-action")
+            if action.id != "library-media-review-sets"
+        ]
+        assert len(body_actions) == 1, body_actions
+        sets = pilot.app.query_one("#library-media-review-sets", Button)
+        assert sets.display is True and not sets.disabled
 
 
 @pytest.mark.asyncio
@@ -3164,3 +3175,136 @@ async def test_media_row_title_click_still_opens_the_item_in_browse_mode():
             message="A browse-mode title click did not open the item.",
         )
         assert screen._media_state.row_selection.count == 0
+
+
+# ---------------------------------------------------------------------------
+# task-28009: ONE state slot per row (controller ruling 4)
+# ---------------------------------------------------------------------------
+
+
+def _review_state_canvas_state(*, select_mode: bool) -> LibraryMediaCanvasState:
+    """Three rows: reviewed, in-set-not-yet, and off-set (the selected one)."""
+    rows = (
+        LibraryMediaRow(
+            media_id="1",
+            title="First item",
+            media_type="video",
+            secondary="video · today",
+            reviewed=True,
+        ),
+        LibraryMediaRow(
+            media_id="2",
+            title="Second item",
+            media_type="audio",
+            secondary="audio · today",
+            reviewed=False,
+        ),
+        LibraryMediaRow(
+            media_id="3",
+            title="Third item",
+            media_type="audio",
+            secondary="audio · today",
+            selected=True,
+        ),
+    )
+    return LibraryMediaCanvasState(
+        rows=rows,
+        type_options=("All", "audio", "video"),
+        active_type="All",
+        status_copy="",
+        empty_copy="",
+        selected_id="3",
+        preview_lines=(),
+        count=len(rows),
+        select_mode=select_mode,
+    )
+
+
+class _ReviewStateCanvasApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_review_state_canvas_state(select_mode=False),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_mode_marker_replaces_the_review_state_slot_in_place():
+    """The ☑/☐ takes the state slot rather than adding a second one -- through
+    the in-place select-mode and density patchers, not just a recompose."""
+    app = _ReviewStateCanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        def slots() -> list[str]:
+            return [
+                str(button.label)[0]
+                for button in canvas.query(".library-media-row")
+            ]
+
+        assert slots() == ["✓", "·", "▸"]
+
+        canvas.apply_reader_state(_review_state_canvas_state(select_mode=True))
+        await pilot.pause()
+        assert slots() == ["☐", "☐", "☐"]
+
+        canvas.apply_reader_state(_review_state_canvas_state(select_mode=False))
+        await pilot.pause()
+        assert slots() == ["✓", "·", "▸"]
+
+        # The density patcher rebuilds from the stash, so the slot survives it
+        # (compact drops the ▸ current-row cue, exactly as it always has).
+        canvas.apply_compact_presentation(True)
+        await pilot.pause()
+        assert slots() == ["✓", "·", " "]
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 item 4): a bulk action's label must not move when
+# its enabled state flips. The "○ " disabled marker is part of the label, so
+# crossing 0 -> 1 selected shifted every bulk action two cells left, right
+# under the cursor that had just crossed it.
+# ---------------------------------------------------------------------------
+
+
+def _label_column(host, button, word: str) -> int:
+    """Absolute column where ``word`` is painted inside ``button``."""
+    painted = _painted(host, button.region)
+    assert word in painted, (word, painted)
+    return button.region.x + painted.index(word)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_bulk_action_labels_hold_their_column_across_the_first_selection(size):
+    """The Delete column is painted identically before and after selecting."""
+    host = _row_click_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _enter_media_select_mode(screen, pilot)
+
+        delete = screen.query_one("#library-media-delete-selected", Button)
+        export = screen.query_one("#library-media-export-selected", Button)
+        assert delete.disabled and export.disabled
+        before = (
+            _label_column(host, delete, "Delete"),
+            _label_column(host, export, "Export"),
+        )
+
+        await pilot.press("space")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-media-delete-selected", Button
+            ).disabled,
+            message="Space never selected the focused row.",
+        )
+        await pilot.pause()
+
+        delete = screen.query_one("#library-media-delete-selected", Button)
+        export = screen.query_one("#library-media-export-selected", Button)
+        after = (
+            _label_column(host, delete, "Delete"),
+            _label_column(host, export, "Export"),
+        )
+        assert after == before, (before, after)

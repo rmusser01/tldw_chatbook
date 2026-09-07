@@ -10011,7 +10011,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         if self._feed_server.is_running:
             self._feed_server.stop()
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     # --- Briefing selection-mode, default-preset, and cadence pickers -------
     # (Task 4, phase 2a; cadence added by Task 4, phase 4)

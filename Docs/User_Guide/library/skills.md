@@ -407,3 +407,7 @@ one-press toggles with their full option set now on the label —
 per-project discovery at startup and workspace creation, the fingerprint
 gated prompt ledger, the quarantine/trust-review expectation, and the
 `[skills] project_skills_prompt_enabled` kill-switch.)*
+
+*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Skills
+reader's two pane grips are one column each, painting `‹`/`›` instead of the
+five-column `<---`/`--->` run; opened live at 235x52.)*

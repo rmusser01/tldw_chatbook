@@ -293,6 +293,14 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
    handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
    Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
 
+/* task-31823: the reminder pane's second compact action row (Duplicate ·
+ * View runs · View results) -- the rest of spec §5's deferred kebab
+ * list, same auto-height shape as the lifecycle row above. */
+#scheduling-task-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
     margin-top: 1;
@@ -310,6 +318,13 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     padding: 0 0 1 0;
 }
 
+/* task-31823: the definitions pane's own second compact action row --
+ * `.detail-secondary-action-button` above already covers the buttons. */
+#scheduling-automation-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
 /* Status badge base (detail pane) */
 #scheduling-task-status-badge {
     width: auto;
@@ -319,6 +334,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     color: $text;
     border: none;
     text-align: center;
+}
+
+/* 31712 AC#6: same "empty state replaces the real content" idiom as
+ * `#scheduling-task-detail-empty-state` above -- distinguishes "no task
+ * selected" from a selected task whose metadata rows read "-" too. */
+#scheduling-task-inspector-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
 }
 
 /* Inspector metadata */

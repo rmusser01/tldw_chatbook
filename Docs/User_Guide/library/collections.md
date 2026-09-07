@@ -179,3 +179,7 @@ membership, while member items always remain in the Library.)*
 (TASK-18916 / ADR-067: exact 20-item pages, deterministic mutation
 placement, one-clamp shrink recovery, applied-page restoration, and stale
 Retry posture.)*
+*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Collections
+reader's two pane grips are one column each, painting `‹`/`›` instead of the
+five-column `<---`/`--->` run; opened live at 235x52, and collapsing the
+Library pane repainted its grip as a one-cell `›`.)*
