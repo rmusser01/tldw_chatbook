@@ -16254,6 +16254,102 @@ async def test_source_snapshot_repeated_identical_failure_still_repaints():
         assert "attempt 2" in copy
 
 
+class _FlakyLibraryNotesScopeService:
+    """A notes source that fails until ``fail`` is cleared (task-31948)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.fail = True
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("private-snapshot-failure")
+        return {"items": []}
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_carries_its_own_retry():
+    """task-31948 AC#1/#2/#3: the BROWSE canvas's failed-source surface.
+
+    task-31632 gave the landing hub a ``ds-recovery-callout`` with a Retry
+    inside it, but ``#library-canvas-error`` -- the surface a browse row
+    (Notes, Conversations) paints when the same snapshot failed -- stayed a
+    bare sentence with no action, so the only recovery was to leave the
+    surface and come back. It now carries the same Retry, running the same
+    ``_refresh_local_source_snapshot`` the hub's Retry runs, and the
+    callout gives way to the real canvas once that fetch succeeds.
+    """
+    notes = _FlakyLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+
+        # AC#1: the message and its Retry are one callout, side by side.
+        state = screen._library_lookup_recovery_state
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked")
+        copy = screen.query_one("#library-canvas-error-copy", Static)
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button)), (
+            "the Retry must live INSIDE the callout, next to the reason"
+        )
+        # AC#3: the PAINTED glyphs, not just ``.renderable`` (task-31221).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
+        assert "private-snapshot-failure" not in _visible_text(screen)
+
+        # A Retry against a failure that has not cleared still reads as a
+        # fresh press -- the callout repaints its attempt number in place.
+        calls_before = notes.calls
+        await pilot.click("#library-source-retry")
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: "attempt 2"
+            in " ".join(
+                _painted_text(
+                    host,
+                    screen.query_one("#library-canvas-error-copy", Static).region,
+                ).split()
+            ),
+            message="A repeated failure never repainted the callout.",
+        )
+
+        # AC#2: the same fetch, on success, retires the callout for the
+        # real canvas -- without leaving Library.
+        notes.fail = False
+        # ``press()``, not a second ``pilot.click``: the repaint above grew
+        # the wrapped copy by a row, and a click issued before that reflow
+        # settles resolves against the pre-reflow offset (measured: the
+        # click reports a hit and no ``Pressed`` arrives). The click leg
+        # above already proved the painted button is hittable; this leg is
+        # about what the handler does.
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-canvas-error"),
+            message="A successful Retry never cleared the browse error callout.",
+        )
+        assert screen._library_lookup_error is None
+        assert screen.query("#library-notes-canvas")
+        assert host.seen_routes == []
+
+
 @pytest.mark.asyncio
 async def test_library_reentry_auto_retries_a_timeout_but_not_a_hard_failure(
     monkeypatch,

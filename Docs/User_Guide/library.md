@@ -469,6 +469,20 @@ here in Library.
 - **The palette found "Notes" but opened Library.** The standalone
   Notes, Prompts, Skills, Ingest, Research, and Media screens were
   retired; their names now route to the matching Library row.
+- **A browse row says the Library sources are unavailable.** The message
+  now carries a **Retry** beside it: press it to re-run the same source
+  read without leaving the row. A repeated failure repaints with its
+  attempt number; a success replaces the message with the real list.
+  Failures a retry cannot clear (a policy denial, a runtime with no
+  source services) keep the plain sentence and no button.
+
+—
+*Verified against fix/media-riders-m — 2026-09-07 (task-31943: a bulk delete
+followed by Undo puts the rail's "Media N" back to the restored total without
+leaving the screen; task-31948: the browse-row source-failure message carries
+its own Retry, in the same callout grammar the landing hub uses. Both verified
+live at 235x52 on a scratch profile — the count round trip against a seeded
+media DB, the callout against a profile whose media DB path is a directory.)*
 
 —
 *Verified against fix/media-wave5-g — 2026-09-05 (task-31632: the Library

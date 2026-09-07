@@ -12659,12 +12659,10 @@ class LibraryScreen(BaseAppScreen):
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"
-            replacement = Static(
-                self._library_lookup_error,
-                id="library-canvas-error",
-                classes="destination-purpose",
-                markup=False,
-            )
+            replacement = self._library_canvas_error_widget()
+            # An already-mounted callout is never remounted below (no
+            # ``sync_kind``), so a repeat failure repaints here or nowhere.
+            self._sync_library_canvas_error()
 
         if expected_selector and self.query(expected_selector):
             if sync_kind is None:
@@ -12805,6 +12803,83 @@ class LibraryScreen(BaseAppScreen):
             restore_focus()
         self._complete_library_entry_reconcile(generation, route_key)
         return LibraryEntryReconcileResult.APPLIED
+
+    def _library_canvas_error_widget(self) -> Widget:
+        """Build the browse canvas's failed-source surface.
+
+        task-31948: a failure a refetch can clear (the snapshot's own
+        deadline/hard-failure states, the only ones carrying
+        ``LIBRARY_SOURCE_RETRY_ID``) gets the same one-callout grammar the
+        landing hub already paints -- reason and Retry side by side, the
+        Retry running the same ``_refresh_local_source_snapshot``. Before
+        this, a browse row's only recovery from a failed snapshot was to
+        leave the surface and come back. Failures a Retry cannot clear (a
+        policy denial, a runtime with no source services) keep the bare
+        sentence: an inert Retry is worse than none.
+
+        Returns:
+            The callout, or the plain error Static. Either way it is the
+            ``#library-canvas-error`` node the reconcile mounts and
+            ``_sync_library_canvas_error`` refreshes.
+        """
+        failure = self._library_source_load_failure()
+        if failure is None:
+            return Static(
+                self._library_lookup_error or "",
+                id="library-canvas-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+        # The reason WRAPS, the Retry keeps its content width -- left to the
+        # defaults the 1fr Static swallows the row and pushes the button
+        # outside the callout (the measurement the hub callout records).
+        copy = Static(
+            failure.message,
+            id="library-canvas-error-copy",
+            markup=False,
+        )
+        copy.styles.width = "1fr"
+        copy.styles.min_width = 0
+        retry = Button(
+            "Retry",
+            id=failure.retry_id or LIBRARY_SOURCE_RETRY_ID,
+            classes="console-action-subdued",
+            compact=True,
+            tooltip=failure.disabled_tooltip,
+        )
+        retry.styles.width = "auto"
+        retry.styles.min_width = 0
+        callout = Horizontal(
+            copy,
+            retry,
+            id="library-canvas-error",
+            classes=(
+                "ds-recovery-callout is-blocked"
+                if failure.severity == "error"
+                else "ds-recovery-callout"
+            ),
+        )
+        # Bare harnesses never load the bundle, and Horizontal defaults to
+        # 1fr height -- the callout must wrap to its copy either way.
+        callout.styles.height = "auto"
+        return callout
+
+    def _sync_library_canvas_error(self) -> None:
+        """Refresh a MOUNTED browse error callout's copy in place.
+
+        The reconcile treats an already-mounted ``#library-canvas-error``
+        as current and returns without remounting it, so without this a
+        Retry against a failure that has not cleared would repaint nothing
+        at all -- the "Retry reads as inert" bug task-31632 fixed on the
+        hub, where a canvas ``sync_state`` does this job instead.
+        """
+        failure = self._library_source_load_failure()
+        if failure is None:
+            return
+        with suppress(NoMatches, QueryError):
+            self.query_one("#library-canvas-error-copy", Static).update(
+                failure.message
+            )
 
     def _apply_local_source_snapshot(
         self,
@@ -14692,12 +14767,7 @@ class LibraryScreen(BaseAppScreen):
                     markup=False,
                 )
             elif self._library_lookup_error:
-                items_child = Static(
-                    self._library_lookup_error,
-                    id="library-canvas-error",
-                    classes="destination-purpose",
-                    markup=False,
-                )
+                items_child = self._library_canvas_error_widget()
             else:
                 items_child = LibraryNotesCanvas(
                     **self._library_notes_list_canvas_kwargs(),
@@ -15093,12 +15163,7 @@ class LibraryScreen(BaseAppScreen):
                         and self._library_lookup_error
                         and shell.canvas_kind != "conversations"
                     ):
-                        yield Static(
-                            self._library_lookup_error,
-                            id="library-canvas-error",
-                            classes="destination-purpose",
-                            markup=False,
-                        )
+                        yield self._library_canvas_error_widget()
                     elif shell.canvas_kind == "conversations":
                         conversations_state = self._build_library_conversations_state()
                         self._adopt_library_conversation_state_selection(
