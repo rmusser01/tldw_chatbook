@@ -43,6 +43,7 @@ from .control_protocol import (
 from .limits import (
     CanvasLimitError,
     CanvasLimits,
+    UnsupportedCanvasRuntimeProfile,
     sha256_utf8,
     validate_opaque_identifier,
     validate_utf8_text,
@@ -201,6 +202,7 @@ class CanvasSourceResponse:
 
     source: str = field(repr=False)
     content_sha256: str
+    runtime_profile: str | None = None
 
     def __post_init__(self) -> None:
         validate_utf8_text(
@@ -669,6 +671,7 @@ class ServedCanvasControlHandler:
                     "source_bytes": projection.source_bytes,
                     "render_metadata": {
                         "source": source.source,
+                        "runtime_profile": source.runtime_profile,
                         "projection": _projection_wire(projection),
                         "selection_generation": scope.selection_generation,
                     },
@@ -1902,7 +1905,10 @@ class CanvasGateway:
             self.capabilities.consume(token, expected_scope=expected)
         except CanvasCapabilityError:
             return _error_response("plan_unavailable", 401)
-        plan = await _maybe_await(self._authority.resolve_render_plan(scope))
+        try:
+            plan = await _maybe_await(self._authority.resolve_render_plan(scope))
+        except UnsupportedCanvasRuntimeProfile:
+            return _error_response("plan_unavailable", 503)
         if (
             session.current_load_id != load_id
             or not self._session_is_current(session, scope)

@@ -26,10 +26,13 @@ from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static
 from textual.worker import WorkerState
 
-from tldw_chatbook.Library.library_media_reader_state import set_mode
+from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+)
 from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
     LibraryMediaReaderShell,
 )
@@ -1541,8 +1544,9 @@ async def test_no_join_artifact_after_find_closes():
         await _open_first_reader_row(screen, pilot)
 
         def join_slices() -> list[str]:
-            """The five grip columns left of the Reader, top three rows."""
+            """The grip's own columns left of the Reader, top three rows."""
             viewer = screen.query_one("#library-media-viewer")
+            grip = screen.query_one("#library-media-items-grip")
             title = screen.query_one("#library-media-viewer-title")
             # The sample must actually cover the header: Back, title, toolbar.
             assert title.region.y - viewer.region.y <= 2, (
@@ -1553,7 +1557,10 @@ async def test_no_join_artifact_after_find_closes():
             # so the pane's first row is the title row itself; the sample
             # still starts at the viewer's top edge, where the grip paints.
             return [
-                _painted_row(host, y)[title.region.x - 5 : title.region.x]
+                # task-31633 AC#2: the grip is one column now, not five, so
+                # the sample is anchored to the grip itself -- a literal five
+                # reaches back into the Items pane and reads its border.
+                _painted_row(host, y)[grip.region.x : grip.region.right]
                 for y in range(viewer.region.y, viewer.region.y + 3)
             ]
 
@@ -1693,7 +1700,16 @@ async def test_reader_body_wraps_at_a_reading_measure():
         await _open_first_reader_row(screen, pilot)
         box = screen.query_one("#library-media-viewer-content")
         body = screen.query_one("#library-media-viewer-content-text")
-        assert box.region.width > 120, box.region
+        # task-31633: the Items column now takes half of the Reader's surplus
+        # and each grip costs one cell instead of five, so the Reader pane of
+        # the 231-cell shell is 139 cells rather than 147. The box still spans
+        # the whole pane -- only the prose inside it is capped.
+        work = screen.query_one(".library-adaptive-reader-work")
+        assert box.region.width == work.region.width, (box.region, work.region)
+        # The equality alone would also hold if the pane itself collapsed, so
+        # keep an absolute floor now that the pane width is dynamic. 139 is the
+        # measured pane width here, not a comfort minimum.
+        assert work.region.width >= 139, work.region
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.
@@ -2149,6 +2165,165 @@ async def test_reader_focus_changes_border_glyphs_not_only_colour():
         assert "─" not in focused, focused
 
 
+# --- task-31633 AC#3: More is one row, not a push -------------------------
+#
+# Critique #5 P1 (capture 10): the Reader's "More" disclosure composed a
+# bare ``Vertical`` above the mode row. An unstyled Vertical defaults to
+# ``1fr``, so it claimed 19 rows for three one-row buttons -- pushing the
+# tab row and the whole reading body down and leaving ~16 painted-blank
+# rows before the content resumed. These pin the row, not the widget: the
+# painted tab-row offset at both the wide and the compact size.
+
+_MORE_ACTION_LABELS = (
+    "Edit metadata",
+    "Open original",
+    "Open manager",
+    "Move to trash",
+)
+
+
+def _four_action_host() -> LibraryProductionCSSHarness:
+    """A Reader whose items carry a URL, so More renders all four actions.
+
+    ``Open original`` is composed only when the item has an original
+    source, and the shared fixture has none -- without a URL the row this
+    test measures would be three buttons wide and the "all four readable"
+    assertion would be vacuous.
+    """
+    app = _build_media_test_app()
+    items = [
+        {**item, "url": f"https://example.test/{item['id']}"}
+        for item in _two_media_items()
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+async def _open_reader_more(screen, pilot):
+    screen.query_one("#library-media-reader-more", Button).press()
+    actions = await _wait_for_selector(
+        screen, pilot, "#library-media-reader-more-actions"
+    )
+    # The disclosure's row has to be laid out before a caller can measure it;
+    # its own region is the thing that settles, so wait on that rather than on
+    # a fixed number of frames.
+    await _wait_for_condition(
+        pilot,
+        lambda: actions.region.height > 0,
+        message="The More actions row never took a painted region.",
+    )
+    return actions
+
+
+def _reader_row_tops(screen) -> tuple[int, int]:
+    """The painted top row of the tab strip and of the reading body."""
+    return (
+        screen.query_one("#library-media-reader-mode-toolbar").region.y,
+        screen.query_one("#library-media-reader-mode-read").region.y,
+    )
+
+
+@pytest.mark.asyncio
+async def test_more_opens_one_row_and_moves_the_reader_body_by_one():
+    """At 235x52 More costs exactly one row, and all four actions paint on it."""
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        closed_tabs, closed_body = _reader_row_tops(screen)
+
+        actions = await _open_reader_more(screen, pilot)
+        open_tabs, open_body = _reader_row_tops(screen)
+
+        assert actions.region.height == 1, actions.region
+        assert open_tabs - closed_tabs == 1, (closed_tabs, open_tabs)
+        assert open_body - closed_body == 1, (closed_body, open_body)
+
+        painted = _painted(host, actions.region)
+        for label in _MORE_ACTION_LABELS:
+            assert label in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_more_reads_as_an_open_disclosure_while_it_is_open():
+    """The primary row paints "More ▴" while open and "More" when closed."""
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" not in _painted(host, primary.region)
+
+        await _open_reader_more(screen, pilot)
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" in _painted(host, primary.region)
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="More never closed.",
+        )
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" not in _painted(host, primary.region)
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_leaves_focus_on_the_more_button():
+    """Toggling the disclosure never hands focus to the row it opened.
+
+    The Reader recomposes on this toggle, so the focused identity is
+    whatever the restore seam last saw (the Items row that opened the
+    Reader). The disclosure owns its own focus target explicitly.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        await _open_reader_more(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-reader-more",
+            message=lambda: f"Opening More never focused it: {screen.focused!r}.",
+        )
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="More never closed.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-reader-more",
+            message=lambda: f"Closing More never focused it: {screen.focused!r}.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_more_stays_compact_at_the_narrow_reader_width():
+    """At 100x30 the four actions fit or wrap once; the body moves <= 2 rows."""
+    host = _four_action_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        closed_tabs, closed_body = _reader_row_tops(screen)
+
+        actions = await _open_reader_more(screen, pilot)
+        open_tabs, open_body = _reader_row_tops(screen)
+
+        assert actions.region.height <= 2, actions.region
+        assert 1 <= open_tabs - closed_tabs <= 2, (closed_tabs, open_tabs)
+        assert 1 <= open_body - closed_body <= 2, (closed_body, open_body)
+
+        painted = _painted(host, actions.region)
+        for label in _MORE_ACTION_LABELS:
+            assert label in painted, painted
+
+
 async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
     """Fail the applied Media page in place and return its call counter.
 
@@ -2167,7 +2342,16 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
     screen._request_library_media_page(1, focus_identity=None)
     await _wait_for_condition(
         pilot,
-        lambda: controller.failure is not None and not controller.loading,
+        lambda: (
+            controller.failure is not None
+            and not controller.loading
+            # The callout composes before the row scroll: settle on BOTH the
+            # mounted callout and the remounted retained rows, not on the
+            # controller alone (a single pause raced the mount elsewhere).
+            and bool(screen.query("#library-media-load-failure-copy"))
+            and len(screen.query(".library-media-row"))
+            == len(controller.retained_items)
+        ),
         message="The forced Media page failure never settled.",
     )
     await pilot.pause()
@@ -2301,3 +2485,245 @@ async def test_media_failure_callout_tint_follows_the_severity():
         callout = screen.query_one("#library-media-load-failure")
         assert callout.has_class("is-blocked")
         assert callout.styles.border_top != timeout_border, timeout_border
+
+
+# ---------------------------------------------------------------------------
+# task-31633 (critique #5 P1): two rows per item, not three.
+#
+# Painted, not region-only: the third row was a bottom margin on the row
+# button, so every region assertion on the button itself already read "2" --
+# only the painted list shows the blank row that margin bought, and the eleven
+# items it cost a 52-row terminal.
+# ---------------------------------------------------------------------------
+
+_ROWS_PER_MEDIA_ITEM = 2
+
+
+def _fifteen_item_host() -> LibraryProductionCSSHarness:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items(15))
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_item_lines(host, screen) -> list[str]:
+    """Return the painted row-scroll lines of the Media list."""
+    scroll = screen.query_one("#library-media-row-scroll")
+    strips = list(host.screen._compositor.render_strips())
+    return [
+        strips[y].crop(scroll.region.x, scroll.region.right).text
+        for y in range(scroll.region.y, min(scroll.region.bottom, len(strips)))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
+    """Fifteen seeded items all paint in a 52-row terminal, two rows each."""
+    host = _fifteen_item_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(4):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        titles = [
+            index
+            for index, line in enumerate(lines)
+            if "Media item " in line
+        ]
+
+        assert len(titles) >= 15, (len(titles), lines)
+        for previous, current in zip(titles, titles[1:]):
+            assert current - previous == _ROWS_PER_MEDIA_ITEM, (titles, lines)
+            meta = lines[previous + 1].strip()
+            assert meta.split(" ", 1)[0] in {"video", "audio", "PDF"}, (
+                meta,
+                lines,
+            )
+
+
+# --- PR H2 (Qodo on #2470): every viewer-sync follow-up rides the VIEWER ---
+#
+# ``_sync_library_media_viewer_or_recompose`` rebuilds the Reader on the
+# VIEWER's message pump. A ``screen.call_after_refresh`` follow-up has no
+# ordering against that pump: it focuses the control the recompose is about
+# to detach, Textual re-picks focus for the pruned widget, and task-31567's
+# restore -- whose captured identity went with the same children -- takes
+# its list-entry fallback. Measured on 43b0a7440: Escape from inside the
+# open More disclosure left focus on ``#library-media-row-0``, outside the
+# Reader, so the next Escape acted on the LIST. PR H fixed the More BUTTON;
+# these pin the Escape paths, which took the same shape.
+
+
+async def _open_reader_find(screen, pilot):
+    """Open the Reader's Find bar and wait for its input to take focus."""
+    screen.query_one("#library-media-reader-find", Button).press()
+    search_input = await _wait_for_selector(
+        screen, pilot, "#library-media-content-search"
+    )
+    await _wait_for_condition(
+        pilot,
+        lambda: search_input.has_focus,
+        message=lambda: f"Find never focused its input: {screen.focused!r}.",
+    )
+    return search_input
+
+
+def _focus_report(screen) -> str:
+    focused = screen.focused
+    return (
+        f"{focused!r} (id={getattr(focused, 'id', None)!r}, "
+        f"attached={getattr(focused, 'is_attached', None)!r})"
+    )
+
+
+async def _settle_focus_on(screen, pilot, control_id: str, what: str) -> None:
+    """Wait until ``control_id`` holds focus as a MOUNTED widget."""
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen.focused is not None
+            and screen.focused.id == control_id
+            and screen.focused.is_attached
+        ),
+        message=lambda: f"{what} left focus on {_focus_report(screen)}.",
+    )
+    # The identity check the orphan cannot pass: the focused widget IS the
+    # one a fresh query returns, not a detached same-id predecessor.
+    assert screen.focused is screen.query_one(f"#{control_id}", Button)
+    assert screen.focused.is_attached
+
+
+@pytest.mark.asyncio
+async def test_escape_closing_more_lands_on_the_live_more_button():
+    """Escape closes the disclosure and leaves focus on the NEW More button.
+
+    Qodo High on #2470 ("Readers lose keys after escape"): the follow-up ran
+    on the screen's pump while the viewer rebuilt on its own, so it never
+    held the control it named. The first half passes on 43b0a7440 by
+    coincidence -- the identity task-31567 captured IS the More button, so
+    its restore lands where the follow-up wanted; the second half, from
+    inside the disclosure, is where the two differ and the base fails.
+    Both then press Enter on whatever holds focus: only a live, mounted More
+    button re-opens the row.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_reader_more(screen, pilot)
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-more", "Opening More"
+        )
+
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="Escape never closed More.",
+        )
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-more", "Escape closing More"
+        )
+
+        # Again from INSIDE the disclosure, where the restore cannot mask the
+        # bug: the focused action is recomposed away, so PR F's captured
+        # identity is gone and its fallback leaves the Reader entirely (on
+        # 43b0a7440 this landed on the media list row). The disclosure's own
+        # target has to survive the rebuild.
+        await _open_reader_more(screen, pilot)
+        screen.query_one("#library-media-edit", Button).focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="Escape never closed More from inside it.",
+        )
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-more",
+            "Escape closing More from inside it",
+        )
+
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+
+@pytest.mark.asyncio
+async def test_escape_closing_find_lands_on_the_live_find_button():
+    """Both Escape-closes-Find branches land on the mounted Find button.
+
+    First from INSIDE the bar (the branch that reads the focused widget's
+    ancestry), then with focus moved out to the content body (the branch
+    that consumes an open bar regardless of where focus sits).
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        await _open_reader_find(screen, pilot)
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Escape never closed the Find bar.",
+        )
+        await _settle_focus_on(
+            screen, pilot, "library-media-reader-find", "Escape closing Find"
+        )
+
+        await _open_reader_find(screen, pilot)
+        screen.query_one("#library-media-viewer-content").focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Escape never closed the Find bar from the content body.",
+        )
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-find",
+            "Escape closing Find from the content body",
+        )
+
+        # Keys still work afterwards: Enter on the restored button re-opens.
+        await pilot.press("enter")
+        await _wait_for_selector(
+            screen, pilot, "#library-media-content-search-controls"
+        )
+
+
+@pytest.mark.asyncio
+async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone():
+    """PR F's restore is CHAINED behind the follow-up, never evicted.
+
+    ``queue_after_recompose`` REPLACES, and the sync queues task-31567's
+    focus restore on that same one slot. The helper captures it and calls it
+    after its own target, so a follow-up whose target is not composed leaves
+    focus where the restore puts it (the captured identity) -- never on the
+    pane grip Textual re-picks when the focused child is recomposed away.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+
+        screen._library_media_reader_session = set_more_open(
+            screen._library_media_reader_session, True
+        )
+        screen._after_library_media_viewer_sync("#library-media-reader-absent")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+        await _settle_focus_on(
+            screen,
+            pilot,
+            "library-media-reader-find",
+            "An absent follow-up target",
+        )
+        assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)

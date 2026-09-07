@@ -161,8 +161,8 @@ retain its raw artifact outside automatic pytest retention. Record the result
 without claiming equivalence to the former hardware or closing other PR gates.
 
 - [x] **Step 1: Strengthen measured growth coverage.** Extend the existing real-gateway fixture with repeated completed-tool/next-send transitions; assert hand-counted new surface nodes/events per transition and unchanged earlier reconstruction. Keep ADR-097 growth and latency gates unchanged. Root executes relevant existing tests; no full suite.
-- [ ] **Step 2: Run affected trace, gateway/controller, Canvas and startup checks.** Preserve existing warning/baseline qualifications rather than raising budgets. Run all three mandatory Chromium Canvas browser files after runtime integration is stable; optional browser absences remain explicit skips, not claims of coverage.
-- [ ] **Step 3: Broad review of this repair range and its integration with Canvas.** Reviewer gets the approved spec, complete diff since `c2d5aac3a`, reports and parked findings. Resolve load-bearing issues before merge readiness.
+- [x] **Step 2: Run affected trace, gateway/controller, Canvas and startup checks.** Preserve existing warning/baseline qualifications rather than raising budgets. Run all three mandatory Chromium Canvas browser files after runtime integration is stable; optional browser absences remain explicit skips, not claims of coverage.
+- [x] **Step 3: Broad review of this repair range and its integration with Canvas.** Reviewer gets the approved spec, complete diff since `c2d5aac3a`, reports and parked findings. Resolve load-bearing issues before merge readiness.
 
   Final-review I1 requires real cold/new-gateway tests for the same unresolved
   saved turn with freshly minted AGENT_FIRST actor/chain identities, plus a real
@@ -171,7 +171,7 @@ without claiming equivalence to the former hardware or closing other PR gates.
   correction; use existing accepted recovery authority, never a generic bypass
   or content-based non-delivery assumption. Review a new authority contract
   before implementing one if existing seams cannot express this distinction.
-- [ ] **Step 4: Update ADR/task/evidence, run derived preflight, commit and publish.** Recheck actual dev, rebase if needed with exact force-with-lease and recovery ref retained; inspect overlapping changes and reverify affected behavior. Read Qodo feedback on the new published head and address every finding. Wait for protected current-head CI. Do not merge a known failing integration case even if CI passes.
+- [x] **Step 4: Update ADR/task/evidence, run derived preflight, commit and publish.** Recheck actual dev, rebase if needed with exact force-with-lease and recovery ref retained; inspect overlapping changes and reverify affected behavior. Read Qodo feedback on the new published head and address every finding. Wait for protected current-head CI. Do not merge a known failing integration case even if CI passes.
 
   I3 integration on dev c7f1ca0f6: preserve canonical character-search65→66;
   allocate Canvas66→67/67→68 under the original Canvas plan. ADR required: yes,
@@ -182,7 +182,13 @@ without claiming equivalence to the former hardware or closing other PR gates.
   migration rollback/retry and unchanged character-search state. Fix current-head
   test pins without weakening historical fixtures. Move the later Buddy TASK31741
   claimant to a freshly swept free ID, preserving all shipped references.
-- [ ] **Step 5: Merge PR2432 normally into dev and verify merge SHA.** No admin bypass or deletion of worktrees/recovery refs. Only after verified merge begin V2 brainstorming; V2 implementation is not part of this plan.
+- [x] **Step 5: Merge PR2432 normally into dev and verify merge SHA.** No admin bypass or deletion of worktrees/recovery refs. Only after verified merge begin V2 brainstorming; V2 implementation is not part of this plan.
+
+Completed 2026-09-06T06:11:26Z: merge `f32a16839d1810618107f7e2ffaed8ac2e3e634f`,
+reviewed head `18828038d080f59405828d8634e03b56b504c9ee`; exact-head Qodo clear,
+protected CI passed, fetched dev ancestry verified. Final evidence and baseline
+qualifications are recorded in `Docs/Canvas/V1_VERIFICATION.md`. V2 brainstorming
+began only after that verification; implementation remains design-gated.
 
 ## Plan self-review
 

@@ -264,7 +264,7 @@ async def _seed_resize_transcript(screen, pilot):
 @pytest.mark.parametrize(
     ("stacked", "left_width", "right_width", "left_label", "right_label"),
     [
-        (False, 13, 11, "Context->", "<-Inspect"),
+        (False, 13, 11, "Context ▸", "◂ Inspect"),
         (True, 3, 3, "C\no\nn\nt\ne\nx\nt", "I\nn\ns\np\ne\nc\nt\no\nr"),
     ],
 )

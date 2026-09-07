@@ -21,12 +21,13 @@ Logs, Settings, and Research.
 The screen is a two-pane workbench under a one-line purpose banner:
 
 - **Sources** (left pane) — two device pickers (microphone, system-audio
-  source), three status lines, a consent note, the **Start / Pause / Stop**
+  source), four status lines, a consent note, the **Start / Pause / Stop**
   row, a timer, two audio-level meters, a recovery line, and a **Recover**
   button.
-- Transcript canvas (right pane) — the live transcript log, a partial-line
-  indicator while a segment is still being transcribed, a footer line that
-  appears after Stop, and an **Open in Library** button.
+- Transcript canvas (right pane) — a **Speakers** legend that grows one row
+  per distinct speaker as the meeting identifies them, the live transcript
+  log, a partial-line indicator while a segment is still being transcribed,
+  a footer line that appears after Stop, and an **Open in Library** button.
 
 ## Features & controls
 
@@ -37,6 +38,7 @@ The screen is a two-pane workbench under a one-line purpose banner:
 | **System audio: …** status line | What the system-audio picker resolved to for this session — a native tap ("Native (macOS tap)" / "Native (parec)"), a named virtual device ("Virtual device: BlackHole"), or "Unavailable, mic only (…)" with the reason, in which case the meeting records room-mode (mic only). |
 | **Transcriber: …** status line | The speech-to-text provider and model in use, plus "(finalises per segment)" — each transcript row is a *final* for its own segment, not a running partial for the whole meeting. |
 | **Speaker labels after the meeting: …** status line | Whether offline diarization will run once you stop: "on", or "off (…)" naming the missing Python packages (see "Speaker labels" below). |
+| **Live speaker labels: …** status line | Whether speaker ids will be assigned *while* recording (what fills the Speakers legend): "on", or "off (…)" with the reason — "not enabled in settings" (`meetings.live_diarization` is off), the missing packages, or an unsupported `diarizer_backend`. |
 | Consent note | "Recording other people may require their consent." — a static reminder, not a gate; the app does not ask anyone else for consent on your behalf. |
 | **Start** | Begins recording and live transcription. Disabled while a meeting is already running or before the device probe finishes. |
 | **Pause** / **Resume** | Pauses capture and transcription in place; the same button relabels itself and resumes where it left off. |
@@ -44,6 +46,9 @@ The screen is a two-pane workbench under a one-line purpose banner:
 | Timer | Elapsed recording time as `HH:MM:SS`, updated roughly 5×/second while recording. |
 | Level meters | Two bars (mic, system) showing live input level, 0–100%. |
 | **Recover** | Appears enabled with a line reading "Unfinished meeting found: `<folder-name>`" when the screen finds a meeting folder left behind by a crash or forced quit. Recovering patches the audio files, marks the meeting `recovered` in its metadata, and queues it for Library ingest — same as a normal Stop. |
+| **Speakers** legend | One row per speaker identified so far ("Speaker 1", "Speaker 2", … until renamed), each with a rename box next to it. Only fills in when a backend is actually assigning speaker ids to segments as they arrive (see "Speaker labels" below) — otherwise it stays empty and every row keeps reading "You"/"Others". |
+| Speaker rename box | Type a name and press Enter to rename that speaker everywhere: the legend row and every already-shown transcript line for that speaker, and it's saved into the meeting's `meeting.json` name map immediately (not only at Stop). Clearing the box and pressing Enter reverts that speaker back to the generic "Speaker N" label. |
+| Footer line (after Stop) | What was saved and where it went: segment count and duration, any dropped/failed segments, the folder, and the Library ingest job id (or why none was queued). It also reports "Speaker labels unavailable (…)" when live labelling was wanted but the backend never started or crashed mid-meeting (the recording, transcript and ingest are unaffected — the meeting simply stays on "You"/"Others"), and "Speaker merge to resolve: Alice / Bob" when the final pass decided two speakers you had named separately are one person; both names are kept on the survivor for you to fix. |
 | **Open in Library** | Enabled once a meeting has been queued for ingest (by Stop or Recover); switches to Library's Import view with the ingest queue in view. |
 
 ## Common tasks
@@ -100,6 +105,10 @@ flat keys only — a dotted lookup into a nested table does not work here):
 | `keep_raw_tracks` | `true` | Keep the separate `you.wav` / `others.wav` files after Library ingest finishes (rather than deleting them once the raw-track cleanup runs). |
 | `post_transcribe` | `true` | Run the offline transcription pass on `mixed.wav` during Library ingest. |
 | `post_diarize` | `true` | Ask that offline pass to also diarize (assign speaker labels) — see "Speaker labels" below. |
+| `live_diarization` | `false` | Assign speaker ids while recording instead of only in the offline pass — feeds the Speakers legend. Requires the same diarization packages as `post_diarize` and `diarizer_backend` set to `"local"`. |
+| `diarizer_backend` | `"local"` | Which live diarizer to build when `live_diarization` is on. Only `"local"` is implemented today. |
+| `max_speakers` | `8` | Upper bound the local live diarizer uses when clustering voices into speaker ids. |
+| `diarize_mic_channel` | `false` | Hybrid rooms: also diarize the mic ("you") and overlap ("both") channels in call mode instead of always pre-naming them — see "Speaker labels" below. |
 
 Each finished meeting's folder (named by start time, e.g.
 `2026-09-04_2121/`) contains:
@@ -145,14 +154,68 @@ what happens to a meeting once it's queued.
   loopback device — [BlackHole](https://existential.audio/blackhole/) on
   macOS or [VB-Cable](https://vb-audio.com/Cable/) on Windows — and pick it
   from the system-audio device dropdown instead of "Native (auto)".
-- **Speaker labels ("who said what") are computed after the meeting, not
-  live.** The live transcript during recording only ever distinguishes
-  "You" from "Others" (or omits labels entirely in room mode); per-speaker
-  diarization runs as part of the offline Library ingest pass, and only
-  when `torch`, `torchaudio`, `speechbrain`, and `scikit-learn` are
-  installed — otherwise the "Speaker labels after the meeting" status line
-  reads "off" and names the missing packages, and diarization is simply
-  skipped.
+- **Speaker labels ("who said what") are computed after the meeting by
+  default, not live.** With `meetings.live_diarization` left at its default
+  (off), the live transcript during recording only ever distinguishes "You"
+  from "Others" (or omits labels entirely in room mode), the Speakers legend
+  stays empty, and per-speaker diarization runs once, as part of the offline
+  Library ingest pass — only when `torch`, `torchaudio`, `speechbrain`, and
+  `scikit-learn` are installed (install them together with the
+  `diarization` extra: `pip install -e ".[diarization]"`); otherwise the
+  "Speaker labels after the meeting" status line reads "off" and names the
+  missing packages, and diarization is simply skipped. Turning on
+  `meetings.live_diarization` (with `diarizer_backend` left at its default,
+  `"local"`, and the same packages installed) assigns speaker ids as
+  segments arrive instead: the legend fills in with "Speaker 1", "Speaker
+  2", … as each new voice is heard, and typing a name into a row's rename
+  box relabels that speaker everywhere — the legend, the transcript shown so
+  far, and the name map saved into `meeting.json` for the finished
+  recording. This live path has automated pilot-test coverage only; it has
+  not been exercised in a live session on this page's verification host.
+- **The name that stands in for you is fixed when the meeting starts.** It
+  is your configured chat display name when you have set one (otherwise
+  "You"), and it is stamped onto the recording at Start — so changing that
+  setting while a meeting is running leaves the rows already on screen, the
+  rows still to come, and the saved transcript all saying the same thing.
+  The new value applies to the next meeting you start.
+- **Hybrid rooms — someone else sharing your microphone — can also be
+  diarized, behind `meetings.diarize_mic_channel` (off by default).**
+  Normally the mic ("you") and overlap ("both") channels in call mode are
+  never sent through the diarizer: every mic-channel segment is pre-named as
+  you regardless of who is actually speaking into that mic. Turning this flag
+  on (in addition to `live_diarization`) sends those channels through the
+  diarizer too, so a "you"/"both" segment that gets a speaker id renders by
+  that id (a name, or "Speaker N") instead of your display name — the "You"
+  pre-naming no longer applies once a segment has been diarized. This only
+  changes call mode; room mode already diarizes every segment regardless of
+  this flag.
+- **Speaker names can also be renamed after the fact, on the finished
+  Library item — not only live, during the meeting.** Open the recording in
+  Library ▸ Media and scroll to the bottom of the Read tab: a **Rename
+  speakers** section lists one row per speaker with a rename box, mirroring
+  the live Speakers legend. Type a name, press Enter, and the transcript
+  above repaints with it. It appears only for a recording whose meeting
+  folder still holds `meeting.json`, and it updates that same name map plus
+  the stored, searchable transcript text. Note that this after-the-fact
+  rename rewrites the Library item's stored transcript, so it **refuses** —
+  with the notice "This transcript came from ingest; rename the live
+  transcript in Meetings.", changing nothing on disk or in the database —
+  whenever that stored text is not the meeting's own render, which is the
+  case whenever the offline ingest pass produced the Library copy
+  (`post_transcribe` left on). It **does** work on either shape the app
+  itself writes: the plain `[hh:mm:ss] Name: text` transcript, and the
+  Markdown `transcript.md` that goes to the Library when `post_transcribe`
+  is off — a rename re-renders in whichever shape the item already has, so
+  a Markdown transcript keeps its header and its `**Name:**` lines. It
+  refuses the same way when the recording folder's `transcript.jsonl` is
+  missing or empty. When it does go through, the replaced text is kept as a
+  document version, so the change can be rolled back. If the write fails —
+  a concurrent edit to the same item, say — nothing is left half-applied:
+  the name map on disk is put back, and the rename can simply be retried.
+  Whatever you type is stored as typed apart from control characters, which
+  are dropped; a name containing Markdown punctuation (`*`, `` ` ``, `[…]`)
+  shows as those characters in a Markdown transcript rather than turning
+  into formatting or a link.
 - **Each transcript row is a per-segment final, not a whole-meeting
   transcript.** Rows can lag live speech by up to roughly the length of one
   segment (up to ~10 seconds) plus however long that segment took to
@@ -184,9 +247,41 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against feat/meeting-transcription @ 761590cb8f — 2026-09-05.
+*Verified against feat/meeting-followups @ 97a823256 + the PR #2471 Qodo fix
+wave — 2026-09-06. That wave added the three sentences above about the
+start-stamped display name, the retryable failed rename, and control
+characters / Markdown punctuation in a typed name; all three are covered by
+pilot/unit tests
+(`Tests/UI/test_meetings_screen.py::test_a_display_name_change_mid_meeting_never_splits_the_live_rows`,
+`Tests/UI/test_library_media_speaker_rename.py::test_a_failed_rename_restores_meeting_json_so_a_retry_can_succeed`
+and its Markdown twin, plus the two name-sanitization cases in the same
+file), not by a live session. Earlier stamp: feat/meeting-followups @
+e060f8d27 + the final-review fix wave — 2026-09-06. That wave made the "either shape the app itself writes"
+sentence above true (the rename used to refuse every `post_transcribe =
+false` recording, which this page had implied it accepted); it is covered by
+`Tests/UI/test_library_media_speaker_rename.py::
+test_rename_works_on_the_markdown_transcript_and_keeps_its_shape`, not by a
+live session. Earlier stamp: feat/meeting-diarization @ 14bbf2a7f + the PR
+#2456 fix wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
+status line, the footer's "Speaker labels unavailable" / "Speaker merge to
+resolve" copy, and the Library rename's refusal rules) are covered by pilot
+tests in `Tests/UI/test_meetings_screen.py` and
+`Tests/UI/test_library_media_speaker_rename.py`; they were NOT re-verified
+in a live session (this host still has no System Audio Recording grant).
+Earlier stamp: e26193495 — 2026-09-05.
 The "System source lost" rail copy above was verified by pilot test
 (`Tests/UI/test_meetings_screen.py::test_lost_tap_updates_system_status`),
 not in a live session — this host has no System Audio Recording grant, so
 no real tap loss was observed. Everything else on this page carries the
-2026-09-04 live verification described in the Quirks section.*
+2026-09-04 live verification described in the Quirks section. The Speakers
+legend and rename box (task 7) and the after-the-fact Library rename (task
+8) are covered only by pilot/unit tests —
+`test_legend_row_mounts_and_rename_input_updates_ui` and the `_apply_rename`
+unit cases in `Tests/UI/test_meetings_screen.py`, plus
+`Tests/UI/test_library_media_speaker_rename.py` — not by a live session with
+`live_diarization` turned on. The Library reader's "Rename speakers" section
+(TASK-31745) closed the reachability gap this page used to document, and is
+itself covered only by pilot tests
+(`Tests/UI/test_library_media_viewer_speaker_rename.py`): the section, one
+submitted rename, and the refusal notice were exercised in the test suite,
+not watched in a running app.*

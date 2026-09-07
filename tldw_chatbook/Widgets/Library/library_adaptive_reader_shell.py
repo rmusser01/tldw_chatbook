@@ -43,7 +43,11 @@ class AdaptiveReaderShellResized(Message):
 
 
 class LibraryAdaptiveReaderPaneGrip(Button):
-    """Five-column keyboard and pointer control for one optional pane."""
+    """Narrow keyboard and pointer control for one optional pane.
+
+    ``width`` is the destination profile's ``grip_width``: the grip paints
+    exactly the columns the resolver held back for it (task-31633 AC#2).
+    """
 
     BINDINGS = [Binding("enter,space", "press", "Press button", show=False)]
 
@@ -54,17 +58,39 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         open: bool,
         pane_label: str,
         extra_classes: str = "",
+        width: int = PANE_GRIP_WIDTH,
         **kwargs: Any,
     ) -> None:
+        """Build one pane grip sized to its destination's profile.
+
+        Args:
+            pane: Which optional pane this grip toggles -- ``"library"`` or
+                ``"items"``. Carried on the ``PaneToggleRequested`` message
+                the press posts.
+            open: Whether that pane is open right now. Decides the arrow and
+                the action copy only; geometry never changes with it.
+            pane_label: Human name of the pane, used verbatim in the tooltip
+                and accessible name ("Collapse Items pane").
+            extra_classes: Space-separated CSS classes appended to
+                ``LIBRARY_ADAPTIVE_READER_GRIP_CLASS`` for per-destination
+                styling. The shared class is always present -- the focus
+                restore seam reads it to know it must never land here.
+            width: The destination profile's ``grip_width``, in cells. The
+                grip paints exactly the columns the resolver held back for it
+                (task-31633 AC#2); below four cells the arrow becomes a
+                one-cell guillemet.
+            **kwargs: Forwarded to ``Button`` (``id``, ``disabled``, ...).
+        """
         self.pane = pane
         self.pane_label = pane_label
+        self.grip_width = width
         classes = LIBRARY_ADAPTIVE_READER_GRIP_CLASS
         if extra_classes:
             classes = f"{classes} {extra_classes}"
         super().__init__(compact=True, flat=True, classes=classes, **kwargs)
-        self.styles.width = PANE_GRIP_WIDTH
-        self.styles.min_width = PANE_GRIP_WIDTH
-        self.styles.max_width = PANE_GRIP_WIDTH
+        self.styles.width = width
+        self.styles.min_width = width
+        self.styles.max_width = width
         self.styles.height = "100%"
         self.styles.padding = 0
         self.styles.line_pad = 0
@@ -73,10 +99,28 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         self.sync_open(open)
 
     def sync_open(self, open: bool) -> None:
-        """Patch arrow and action copy without changing geometry."""
+        """Patch arrow and action copy without changing geometry.
+
+        The in-place alternative to recomposing the grip: label, accessible
+        name and tooltip are assigned only when they actually differ, so a
+        shell re-sync that changes nothing costs no refresh -- and the grip
+        cannot be the widget a recompose detaches while it holds focus.
+
+        Args:
+            open: Whether the pane this grip toggles is now open.
+
+        Returns:
+            None.
+        """
         action = "Collapse" if open else "Expand"
         copy = f"{action} {self.pane_label} pane"
-        label = "<---" if open else "--->"
+        # task-31633 AC#2: the arrow is as wide as the grip. The
+        # "<---"/"--->" run is four cells, so a grip narrower than that would
+        # paint a truncated "<" -- it takes the one-cell guillemet instead.
+        if self.grip_width < len("<---"):
+            label = "‹" if open else "›"
+        else:
+            label = "<---" if open else "--->"
         if self.label != label:
             self.label = label
         if self._name != copy:
@@ -125,8 +169,29 @@ class LibraryAdaptiveReaderShell(Horizontal):
         library_label: str,
         items_label: str,
         grip_classes: str = "",
+        grip_width: int = PANE_GRIP_WIDTH,
         **kwargs: Any,
     ) -> None:
+        """Assemble the three-pane shell around caller-owned pane widgets.
+
+        Args:
+            library: Widget for the leftmost (Library rail) pane.
+            items: Widget for the middle (list) pane.
+            work: Widget for the work pane -- the Reader or its equivalent.
+            layout: The resolved layout to mount with: which optional panes
+                are open and how wide each is.
+            id_prefix: Per-destination id stem (``"library-media"``) for the
+                composed grips, giving each destination its own stable
+                selectors.
+            library_label: Human name of the Library pane, for grip copy.
+            items_label: Human name of the items pane, for grip copy.
+            grip_classes: Extra CSS classes for both grips, for
+                per-destination styling.
+            grip_width: The destination profile's ``grip_width`` in cells,
+                passed to both grips so they paint exactly the columns the
+                resolver held back (task-31633 AC#2).
+            **kwargs: Forwarded to ``Horizontal`` (``id``, ``classes``, ...).
+        """
         super().__init__(**kwargs)
         self.add_class("library-adaptive-reader-shell")
         self.library = library
@@ -140,6 +205,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             open=layout.library_open,
             pane_label=library_label,
             extra_classes=grip_classes,
+            width=grip_width,
             id=f"{id_prefix}-library-grip",
         )
         self.items_grip = LibraryAdaptiveReaderPaneGrip(
@@ -147,6 +213,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             open=layout.items_open,
             pane_label=items_label,
             extra_classes=grip_classes,
+            width=grip_width,
             id=f"{id_prefix}-items-grip",
         )
         self._last_focused_descendant: dict[PaneName, Widget | None] = {

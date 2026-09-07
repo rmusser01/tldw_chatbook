@@ -11597,6 +11597,50 @@ both resolved to white. Switching this local host to the existing
 the combined targeted gate then passed635. No production styling changed. Extending
 the shared authority does not repair local hosts that continue to bypass it.
 
+## A "settled geometry" assertion bounded by WALL CLOCK is load-sensitive — run the base arm N times before blaming a diff (TASK-31663, 2026-09-05)
+
+The covering batch for TASK-31663 failed intermittently on the branch —
+twice, on two *different* tests — while the first two runs of the same batch
+at the base commit were clean. Two clean base runs against two dirty branch
+runs reads like a regression, and it was treated as one.
+
+It was not. `Tests/UI/test_console_right_rail.py::_wait_for_right_rail_condition`
+polls a predicate against a **wall-clock** deadline (`timeout: float = 5.0`),
+and the caller then spends one more `await pilot.pause()` before re-asserting
+the same predicate. The failing tuple is the tell: every geometry value was
+correct (`desired_content_lines=15`, `viewport=15`, `hint=False`) and the only
+false term was `rail._outer_reconcile_scheduled` — one extra pause re-arming
+the reconcile, not wrong geometry. On a busy machine the 5 s budget and the
+extra pause land differently run to run.
+
+Final tally, same 4-file batch, same machine: **branch 4 failures in 6 runs;
+base 1 failure in 5** — the base failure being the identical test and
+parametrisation. One base run would have "proved" a regression that does not
+exist; three would still have missed it (it appeared on the third).
+
+Two branch-local mechanisms were formed and both disproven before the control
+settled it, and disproving them is what kept the search honest:
+
+- *"The new density hook flips on transient layout heights."* A spy on every
+  call showed it fires twice while opening the rail — `rail_rows=0` (early
+  return) then the settled height — and **never flips** at the sizes involved.
+- *"The new `outline-left` descendant rule invalidates layout on N widgets."*
+  The cost is real (`outline-left` is a `BoxProperty` whose setter calls
+  `refresh(layout=True)`, and `Stylesheet.replace_rules` assigns through those
+  descriptors), but the failing test never focuses the widget the rule is
+  scoped to — and **removing the rule entirely did not stop the failure**.
+
+Rules this pays for:
+
+- For an intermittent failure, the base arm needs **as many runs as the branch
+  arm**, not one. A single clean control is not a control.
+- A predicate that is re-asserted after an extra `pause()` is asserting
+  "settled AND stays settled", which no wall-clock wait can guarantee. Prefer
+  asserting the settled predicate once, at the point the wait returns.
+- Disproving your own suspect is progress. Both mechanisms above were cheap to
+  test directly (a spy; a rule deletion) and both were wrong — which is what
+  stopped a needed focus carrier from being deleted to "fix" an unrelated flake.
+
 ## A `-k` name filter is not a gate for a behaviour change that flips an existing pin (media wave 5 PR E, 2026-09-05)
 
 **The incident.** Task 3 of the wave-5 bulk-mutation PR moved the receipt's `Undo` off the stale gate — a deliberate behaviour change. The implementer's verification ran `test_library_shell.py -k "undo or receipt or delete"` and reported parity with the base. The task reviewer then found two red tests, one in `test_library_shell.py` and one in `test_library_media_side_by_side.py`, that assert `#library-media-bulk-delete-undo` is DISABLED under a stale page. Their names carry the gate ("stale", "write_gated"), not the action, so the filter never selected them; they had been red since the change and nobody had run them. A whole-file run of both files would have caught it in the same session; it took a second reviewer and a fix round instead.
@@ -11867,3 +11911,57 @@ Do not make successful completion of every app worker a navigation assertion;
 observe the destination's completion state. Preserve genuine late-publish
 stacks separately: this incident also found and fixed an owned Character
 presentation callback running after its screen stack had been removed.
+
+### PR G (task-31632): a shallower widget's presence does not mean the deeper ones remounted -- and the rerun set is the census, not the files you edited
+
+PR G moved the Media Retry from the pager strip into a failure callout that
+composes BEFORE the row scroll. Three tests waited for "Retry is present" and
+then immediately asserted the retained row count; after the move the wait was
+satisfied mid-recompose (callout mounted, rows not yet) and
+`test_library_media_side_by_side.py::test_compact_media_stale_and_retry_actions_remain_truthful`
+went red WHOLE-FILE on dev while passing alone (`assert 0 == 20`; a probe
+showed the canvas state holding 20 rows and the row scroll holding 0 children).
+G's own fix-round had caught and commented exactly this race at one site in
+`test_library_shell.py` -- and fixed only that site. It shipped because G's
+rerun set was the files G edited plus its neighbours; `side_by_side` was not
+in it, and the Fast Lane does not run it either. Bisected on detached
+worktrees: dev parent green, G's merge commit red.
+
+**What to do.** When a widget moves in compose order, grep EVERY test that
+waits on its selector and check what the next assertions read; the wait
+condition must cover the deepest thing they touch (the row count itself, not
+the Retry that used to imply it). And a PR's rerun set is the census of every
+file that references the ids it moves (`grep -l '<id>' Tests/UI/*.py`), run
+whole-file in separate processes -- not the files the diff touched.
+### TASK-31796: a list can render from more than one cache — patch every source
+
+The Library Notes list kept a renamed note's stale "Untitled" title until a
+filter re-query, even though the DB row and the editor were both correct.
+There was already a save-time list patch (`patch_note_records_after_save`
+inside `_patch_library_note_list_from_session`) that looked complete and
+carried a confident "one helper owns the substitution rule" comment — but it
+only patched the FLAT source records (`_local_source_records["notes"]` /
+`_library_notes_filter_records`). The Notes tree actually renders its
+placement rows from a DIFFERENT cache: the paged branch slices
+(`_library_notes_tree_branches`), and while a filter is active from the filter
+window (`_library_notes_tree_filter_state`). The save patch never touched
+those, so the visible row stayed stale; typing in the filter box was the only
+"fix" because that path re-queried the DB and rebuilt the slices from scratch.
+**What to do.** When a save-time patch updates a list "in place", first find
+EVERY cache the visible widget can render from — grep the widget's compose for
+each branch (this one had `if tree_projection is not None: ...` selecting the
+branch cache over the flat list-state) — and patch all of them, or the one you
+missed is exactly the one on screen. A comment claiming a single helper "owns"
+the update is describing intent, not coverage; verify it against the render
+paths. The durable regression test asserts the projected ROW LABEL after the
+patch (build the projection from the patched cache), not just that the flat
+record changed — the flat-record assertion was green the whole time the bug
+shipped.
+
+Verification note for this area: the Library Notes UI-mount suites carry a
+pre-existing red baseline on dev — `Tests/UI/test_library_notes_reader.py`
+(13 red) and `Tests/Widgets/Library/test_library_notes_canvas.py` (2 red),
+15 total, unchanged by this fix. Confirmed by paired arms: an origin/dev
+worktree run produced the identical 15 failures / 59 passes. Run the fast pure
+tree tests (`Tests/Library/test_library_notes_tree_*.py`) and a focused
+non-mounting wiring test instead of trusting these mounting suites' green/red.

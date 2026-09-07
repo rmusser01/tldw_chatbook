@@ -2212,3 +2212,76 @@ def test_open_tasks_provider_wiring_flows_to_dashboard_input():
     assert state.pending_eval_run_count == 2
     assert state.failed_eval_run_count == 1
     assert state.read_later_count == 7
+
+
+# ---------------------------------------------------------------------------
+# TASK-31805: the "Model:" badge derives from the send-path readiness check,
+# not the mere presence of a provider catalog. A fresh profile with a
+# populated ``providers_models`` map but NO API key overstated availability
+# ("Model: Ready") while an actual send failed with "API Key is required but
+# not found." Paired arms: no-credential reports Blocked; a resolvable
+# credential still reports Ready (no over-correction).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_home_model_badge_reports_blocked_without_credential(monkeypatch):
+    """No valid credential for the selected provider -> 'Model: Blocked'.
+
+    The old weak check ``model_ready = bool(providers_models)`` reported ready
+    off a non-empty catalog alone, regardless of whether a send could
+    authenticate. This drives the badge from the SAME readiness Console's send
+    path enforces (``get_provider_readiness`` via
+    ``build_console_settings_readiness``).
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    # Non-empty catalog: the old check said "ready" off this alone.
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = ""
+    # Pin the async content-snapshot's fresh-config read to this same no-key
+    # config so the badge stays deterministic once that worker lands.
+    monkeypatch.setattr(
+        home_screen_module, "load_settings", lambda *args, **kwargs: app.app_config
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-details-body").renderable)
+        assert "Model: Blocked" in status_text
+        assert "Model: Ready" not in status_text
+        # The honest signal also drives the next-best action guidance.
+        assert home._current_dashboard.next_action.action_id == "fix_model_setup"
+
+
+@pytest.mark.asyncio
+async def test_home_model_badge_reports_ready_with_credential(monkeypatch):
+    """Paired arm: a resolvable API key still reports 'Model: Ready'.
+
+    Guards the TASK-31805 honesty fix against over-correcting a genuinely
+    send-ready provider into a permanent 'Blocked'.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-home-ready-0123456789"
+    monkeypatch.setattr(
+        home_screen_module, "load_settings", lambda *args, **kwargs: app.app_config
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-details-body").renderable)
+        assert "Model: Ready" in status_text
+        assert "Model: Blocked" not in status_text
+        assert home._current_dashboard.next_action.action_id != "fix_model_setup"

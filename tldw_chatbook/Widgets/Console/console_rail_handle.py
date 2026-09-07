@@ -7,12 +7,17 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_COLLAPSE_LEFT,
+    GLYPH_COLLAPSE_RIGHT,
+    GLYPH_COLLAPSED,
+)
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_RAIL_CONTEXT_LABEL,
     CONSOLE_RAIL_INSPECTOR_LABEL,
 )
 from tldw_chatbook.Widgets.destination_rail import DestinationRailHandle
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 
 class ConsoleRailHandle(DestinationRailHandle):
@@ -93,14 +98,29 @@ class ConsoleRailHandle(DestinationRailHandle):
             yield child
 
     def _display_label(self) -> str:
-        """Return compact visible text while preserving full tooltips."""
+        """Return compact visible text while preserving full tooltips.
+
+        TASK-31665 AC#4: the compact forms used to spell their arrows in
+        ASCII (``Context->`` / ``<-Inspect``) while the OPEN rails' own
+        collapse controls used the glyph vocabulary (``Context ◂`` in
+        `left_rail.py`, ``▸ Inspect`` in `right_rail.py`) -- so the same
+        rail spoke two arrow languages depending on whether it was open.
+        Both now use `console_glyphs`' arrows, resolved through
+        ``resolve_glyph`` so ASCII-glyph mode still gets ``>``/``<``. The
+        arrow points the way ACTIVATING the control moves the rail, which
+        is why a collapsed rail's arrow is the mirror of its open one, not
+        a copy. Widths are unchanged (9 cells either way), so the collapsed
+        handle's fixed geometry is untouched.
+        """
         if self.vertical:
             return self._stack_vertical_label(self.label)
         if self.side == "left":
-            return (
-                "Context->" if self.label == CONSOLE_RAIL_CONTEXT_LABEL else self.label
-            )
-        return "<-Inspect" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
+            if self.label != CONSOLE_RAIL_CONTEXT_LABEL:
+                return self.label
+            return f"Context {resolve_glyph(GLYPH_COLLAPSE_RIGHT)}"
+        if self.label != CONSOLE_RAIL_INSPECTOR_LABEL:
+            return self.label
+        return f"{resolve_glyph(GLYPH_COLLAPSE_LEFT)} Inspect"
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""

@@ -301,6 +301,9 @@ class ConsoleProjectInstructionStatusRow(Widget):
         yield Button(
             f"{self._state.status} · Project",
             id="console-project-instruction-status-button",
+            # `console-rail-focus-carrier` keys the focus-edge rule
+            # (TASK-31663); see `console_inspector_section.py`'s toggle.
+            classes="console-rail-focus-carrier",
             compact=True,
         )
 
@@ -527,7 +530,9 @@ class ProjectInstructionSetupModal(
             yield Footer()
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         for button in self.query("Button.console-project-binding-option"):
             if not button.disabled:
                 button.focus()

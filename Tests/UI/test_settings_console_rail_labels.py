@@ -343,8 +343,8 @@ async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
         right = console.query_one("#console-inspector-rail-handle", ConsoleRailHandle)
         assert left.styles.width.value == 13
         assert right.styles.width.value == 11
-        assert left._display_label() == "Context->"
-        assert right._display_label() == "<-Inspect"
+        assert left._display_label() == "Context ▸"
+        assert right._display_label() == "◂ Inspect"
 
 
 @pytest.mark.asyncio

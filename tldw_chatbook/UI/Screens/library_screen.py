@@ -233,6 +233,7 @@ from ...Library.library_notes_tree_paging import (
     begin_notes_slice_load,
     empty_notes_slice,
     fail_notes_slice_load,
+    patch_notes_tree_branches_title,
 )
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Library.library_notes_session import (
@@ -454,6 +455,10 @@ from ...Widgets.Library.library_media_canvas import (
     LibraryMediaRowGeometry,
     LibraryMediaRowGeometryChanged,
     LibraryMediaRowScroll,
+)
+from ...Library.meeting_speaker_rename import (
+    _meeting_speaker_legend_rows,
+    can_rename_meeting_speakers,
 )
 from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
@@ -2995,6 +3000,11 @@ class LibraryScreen(BaseAppScreen):
             tuple[tuple[str, ...], tuple[str, ...]] | None
         ) = None
         self._library_media_analyze_reason_cache: str | None = None
+        # (fix I3) One-slot memo of "is the SELECTED item a renameable meeting
+        # recording": ``(media_id, answer)``. Same motivation as the reason
+        # cache above -- it is read on every media sync and costs a DB read
+        # plus a filesystem check, but can only change with the selection.
+        self._library_media_rename_cache: tuple[int, bool] | None = None
         # (fix round 1, I-3) Which surface an in-flight bulk-Analyze run
         # started from -- "media" (Select mode) or "import" (the Import
         # queue's "Analyze N skipped"). Read only by ``on_unmount``'s
@@ -6621,6 +6631,41 @@ class LibraryScreen(BaseAppScreen):
                 severity="warning",
             )
         self._disarm_library_list_entry_focus()
+
+    @on(LibraryMediaViewer.SpeakerRenamed)
+    def _handle_library_media_speaker_renamed(
+        self, event: LibraryMediaViewer.SpeakerRenamed
+    ) -> None:
+        """Re-read the renamed item so the memoized detail stops being stale.
+
+        TASK-31745: the reader repaints itself the moment the rename lands,
+        but this screen's viewer state is memoized by detail IDENTITY -- the
+        next sync would otherwise repaint the pre-rename transcript over the
+        new name (and re-derive the legend labels from it). Storing a NEW
+        detail dict carrying the rewritten content is what clears that memo;
+        a full ``_refresh_library_media_detail`` would re-run the reader
+        session's request/supersede machinery to change the one field the
+        rename touched.
+
+        Touches no widget, so it needs no ``is_mounted`` guard -- the DB read
+        is the only thing that can fail here, and a torn-down screen just
+        drops the assignment.
+        """
+        event.stop()
+        if event.media_id != self._library_media_selected_backing_id():
+            # The selection moved on mid-rename; the next detail load reads
+            # the renamed text from the DB anyway.
+            return
+        detail = self._library_media_detail
+        db = getattr(self.app_instance, "media_db", None)
+        if not isinstance(detail, Mapping) or db is None:
+            return
+        try:
+            row = db.get_media_by_id(event.media_id)
+        except Exception:  # noqa: BLE001 - a closed/failed DB just means no patch
+            return
+        if row is not None:
+            self._library_media_detail = {**detail, "content": row["content"] or ""}
 
     @on(LibraryMediaRowGeometryChanged)
     def _handle_library_media_row_geometry_changed(
@@ -15657,6 +15702,9 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         """Return controller-owned inputs shared by every Media canvas path."""
         controller = self._library_media_browse_controller
+        backing_id = self._library_media_selected_backing_id()
+        db = getattr(self.app_instance, "media_db", None)
+        can_rename = self._library_media_can_rename_speakers(db, backing_id)
         return {
             "pager": controller.pager,
             "type_options": self._library_media_type_options(),
@@ -15680,7 +15728,56 @@ class LibraryScreen(BaseAppScreen):
             "load_failure": controller.failure,
             "compact": False,
             "show_preview": False,
+            # Task 8 (meeting diarization spec): whether the selected item is
+            # a finished meeting recording whose speakers can still be
+            # renamed, plus what a canvas needs to actually do that (the
+            # real DB and the resolved backing id -- `media_db`/
+            # `speaker_rename_media_id` are harmless when `can_rename` is
+            # False; the canvas only uses them when it's True).
+            "can_rename_speakers": can_rename,
+            "media_db": db,
+            "speaker_rename_media_id": backing_id,
         }
+
+    def _library_media_can_rename_speakers(self, db: Any, backing_id: int | None) -> bool:
+        """Whether the selected item is a renameable meeting, memoized per id.
+
+        The presentation this feeds is rebuilt on EVERY media selection,
+        filter and page change, and the answer costs a DB read plus a
+        filesystem `exists()` on the UI thread (fix I3) -- while it can only
+        change when the selection does. One slot is enough: the cache is
+        keyed by the selected id, so a new selection replaces it.
+
+        Args:
+            db: The media database, or None when the app has none.
+            backing_id: The selected item's media id, or None.
+
+        Returns:
+            True only for a selected meeting recording whose folder survives.
+        """
+        if backing_id is None or db is None:
+            return False
+        cached = self._library_media_rename_cache
+        if cached is not None and cached[0] == backing_id:
+            return cached[1]
+        can_rename = can_rename_meeting_speakers(db, backing_id)
+        self._library_media_rename_cache = (backing_id, can_rename)
+        return can_rename
+
+    def _library_media_selected_backing_id(self) -> int | None:
+        """Resolve the selected Media list identity to its positive int id.
+
+        ``self._selected_media_id`` is the canonical ``"local:media:<id>"``
+        list identity, not a bare id -- ``_library_media_backing_id``
+        (already used by every real mutation path in this screen) does the
+        actual resolution; this just narrows its ``int | str`` result to
+        "a usable id, or None".
+        """
+        media_id = self._selected_media_id
+        if not media_id:
+            return None
+        backing_id = self._library_media_backing_id(media_id)
+        return backing_id if type(backing_id) is int and backing_id > 0 else None
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
         """Return the unfiltered sentinel plus every complete stored facet."""
@@ -20520,6 +20617,9 @@ class LibraryScreen(BaseAppScreen):
             return
         baseline = snapshot.baseline
         persisted_title = library_note_persisted_title(baseline.title)
+        # Capture the title the list caches currently show BEFORE patching, so
+        # a genuine rename (vs. a body-only autosave) can be detected below.
+        cached_title = self._cached_library_note_list_title(baseline.note_id)
         self._local_source_records["notes"] = patch_note_records_after_save(
             self._local_source_records.get("notes", ()),
             baseline.note_id,
@@ -20535,6 +20635,90 @@ class LibraryScreen(BaseAppScreen):
                     modified_at=baseline.modified_at,
                 )
             )
+        # task-31796: the Database Notes tree renders placement rows from the
+        # cached branch slices (and, while filtering, an FTS filter window) --
+        # NOT the flat records patched above. Retitle the matching placement in
+        # the branch slices AND re-sort the affected slice, because repository
+        # pages are ordered by title so a rename changes collation position
+        # (Qodo #3). Cross-page offset boundaries are reconciled on the next
+        # slice reload/visit; see patch_notes_tree_branches_title's contract.
+        self._library_notes_tree_branches, _tree_retitled = (
+            patch_notes_tree_branches_title(
+                self._library_notes_tree_branches,
+                note_id=baseline.note_id,
+                title=persisted_title,
+                modified_at=baseline.modified_at,
+            )
+        )
+        # Qodo #4: the notes filter is an FTS MATCH over title+body+keywords
+        # (and folder paths), so a rename can change filter membership in ways
+        # a client-side, title-only edit cannot compute -- an in-place retitle
+        # of the filter window would keep showing a now-nonmatching note (or a
+        # stale title) until the user reran the query. When a genuine rename
+        # touches a note the active filter is currently showing, clear the
+        # now-stale filter and drop to the unfiltered tree, exactly as the
+        # create/delete note mutations already do (see _delete_library_note_
+        # claimed). The unfiltered branch view above already carries the fresh,
+        # re-sorted title.
+        title_changed = cached_title is not None and cached_title != persisted_title
+        filter_state = self._library_notes_tree_filter_state
+        filter_active = (
+            bool(getattr(self, "_library_notes_filter", "").strip())
+            and filter_state is not None
+        )
+        if title_changed and filter_active and self._active_notes_filter_shows_note(
+            filter_state, baseline.note_id
+        ):
+            self._library_notes_filter = ""
+            self._library_notes_filter_records = None
+            self._library_notes_filter_generation = (
+                getattr(self, "_library_notes_filter_generation", 0) + 1
+            )
+            self._library_notes_tree_filter_state = None
+
+    @staticmethod
+    def _placement_note_id(placement: Any) -> str:
+        """Read a placement record's stable note id defensively."""
+        note = getattr(placement, "note", None)
+        if not isinstance(note, Mapping):
+            return ""
+        return str(note.get("id", note.get("note_id", "")) or "")
+
+    def _active_notes_filter_shows_note(
+        self, filter_state: LibraryNotesFilterState, note_id: str
+    ) -> bool:
+        """Whether the active FTS filter window currently lists ``note_id``."""
+        target = str(note_id)
+        return any(
+            self._placement_note_id(placement) == target
+            for placement in filter_state.placements
+        )
+
+    def _cached_library_note_list_title(self, note_id: str) -> str | None:
+        """The title the list caches currently show for ``note_id``, or None.
+
+        Consulted BEFORE a save patch to tell a real rename from a body-only
+        autosave. Checks the active filter window, then the branch slices,
+        then the flat list records -- the three surfaces that render a note's
+        title -- returning the first match's title.
+        """
+        target = str(note_id)
+        filter_state = getattr(self, "_library_notes_tree_filter_state", None)
+        if filter_state is not None:
+            for placement in filter_state.placements:
+                if self._placement_note_id(placement) == target:
+                    return str(placement.note.get("title", "") or "")
+        for state in getattr(self, "_library_notes_tree_branches", {}).values():
+            for item in state.items:
+                if (
+                    isinstance(item, NotePlacementRecord)
+                    and self._placement_note_id(item) == target
+                ):
+                    return str(item.note.get("title", "") or "")
+        for record in self._local_source_records.get("notes", ()):
+            if isinstance(record, Mapping) and str(record.get("id")) == target:
+                return str(record.get("title", "") or "")
+        return None
 
     def _focus_library_note_validation_field(self, field: str) -> None:
         """Restore keyboard focus to the field named by a validation veto."""
@@ -31988,19 +32172,13 @@ class LibraryScreen(BaseAppScreen):
             and (focused is find_controls or find_controls in focused.ancestors)
         ):
             self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-find"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-find")
             return
         if self._library_media_reader_session.more_open:
             self._library_media_reader_session = set_more_open(
                 self._library_media_reader_session, False
             )
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-more"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-more")
             return
         # task-31272: the Items pane's own type/sort strips open over the
         # three-pane Reader too, and this action owns Escape there (the
@@ -32057,10 +32235,7 @@ class LibraryScreen(BaseAppScreen):
         # never consumes the reader's find state.
         if find_open:
             self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            self.call_after_refresh(
-                self._focus_library_control, "#library-media-reader-find"
-            )
+            self._after_library_media_viewer_sync("#library-media-reader-find")
             return
         if layout.items_open:
             self._focus_library_media_items_pane()
@@ -34124,6 +34299,10 @@ class LibraryScreen(BaseAppScreen):
             image_preview_source=preview_source,
             review_banner=self._active_review_set_banner() or "",
             back_visible=self._library_media_reader_exit_available(),
+            # TASK-31745: what the speaker-rename legend needs to actually
+            # persist a rename (harmless when the state says it cannot).
+            media_db=getattr(self.app_instance, "media_db", None),
+            speaker_rename_media_id=self._library_media_selected_backing_id(),
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -34257,8 +34436,48 @@ class LibraryScreen(BaseAppScreen):
             )
             if force_raw:
                 state = dataclasses.replace(state, is_markdown=False)
+            state = dataclasses.replace(
+                state, **self._library_media_speaker_rename_facts(detail)
+            )
             states[key] = state
         return state
+
+    def _library_media_speaker_rename_facts(
+        self, detail: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """TASK-31745: the selected item's meeting speaker-rename facts.
+
+        Resolved on the memo MISS above (once per detail arrival x build
+        parameters), never per sync: the legend rows parse the whole
+        ``transcript.jsonl``, which is the per-interaction cost class
+        task-22208 exists to keep off this path. A rename re-fetches the
+        detail, so the memo's own invalidation keeps the labels fresh.
+
+        Args:
+            detail: The detail this state is being built for. ``None`` is the
+                EMPTY state -- nothing is on screen to rename -- and the
+                reader discards the legend for it anyway, so the whole
+                ``transcript.jsonl`` parse is skipped (final review M1).
+
+        Returns:
+            The ``can_rename_speakers``/``speaker_legend_rows`` fields, ready
+            for ``dataclasses.replace``.
+        """
+        if detail is None:
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        if self._library_media_reader_session.external_detail:
+            # A server item is being read; the local selection's id says
+            # nothing about it, and nothing local is renameable from here.
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        db = getattr(self.app_instance, "media_db", None)
+        backing_id = self._library_media_selected_backing_id()
+        if not self._library_media_can_rename_speakers(db, backing_id):
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        try:
+            rows = tuple(_meeting_speaker_legend_rows(db, backing_id))
+        except Exception:  # noqa: BLE001 - a bad read just means no legend
+            rows = ()
+        return {"can_rename_speakers": bool(rows), "speaker_legend_rows": rows}
 
     def _build_library_media_viewer_display_state(
         self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
@@ -34433,6 +34652,13 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            # TASK-31745: the backing id follows the selection like any other
+            # compose input (the state's own rename fields are in the compare
+            # above, so a stale id here could never outlive them).
+            viewer.media_db = getattr(self.app_instance, "media_db", None)
+            viewer.speaker_rename_media_id = (
+                self._library_media_selected_backing_id()
+            )
             # task-31567: this recompose replaces every child, so whatever
             # the user was standing on (the content box, the Find input, an
             # action button) is about to be removed and Textual will pick
@@ -34487,13 +34713,26 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-more")
     def handle_library_media_reader_more(self, event: Button.Pressed) -> None:
-        """Toggle the transient inline secondary-action region."""
+        """Toggle the transient inline secondary-action region.
+
+        Args:
+            event: The More button press. Stopped here so the Reader's own
+                toolbar handling never sees it.
+
+        Returns:
+            None.
+        """
         event.stop()
         session = self._library_media_reader_session
         self._library_media_reader_session = set_more_open(
             session, not session.more_open
         )
-        self._sync_library_media_viewer_or_recompose()
+        # task-31633 AC#3: the disclosure owns its own focus target -- PR F's
+        # restore seam otherwise leaves focus wherever it already was (the
+        # Items row that opened the Reader), so More could not be closed
+        # again without hunting for it. The shared seam is what orders that
+        # target against the viewer's own rebuild.
+        self._after_library_media_viewer_sync("#library-media-reader-more")
 
     @on(Button.Pressed, "#library-media-image-preview-toggle")
     def handle_library_media_image_preview_toggle(self, event: Button.Pressed) -> None:
@@ -34551,13 +34790,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
         )
-        self._sync_library_media_viewer_or_recompose()
-        if mode == "read":
-            loaded_id = self._library_media_reader_session.loaded_id
-            if loaded_id is not None:
-                self.call_after_refresh(
-                    self._restore_library_media_loaded_progress, loaded_id
-                )
+        # The one follow-up here is not a focus move -- the stored reading
+        # position is restored against the rebuilt body, and reading it from
+        # the OLD children (or after they are detached) is the same race.
+        loaded_id = self._library_media_reader_session.loaded_id
+        if mode == "read" and loaded_id is not None:
+            self._after_library_media_viewer_sync(
+                partial(self._restore_library_media_loaded_progress, loaded_id)
+            )
+        else:
+            self._sync_library_media_viewer_or_recompose()
 
     def _reset_library_media_search_on_mode_change(self, new_mode: str) -> None:
         """Drop the in-item search when the Reader actually changes tab.
@@ -34800,8 +35042,9 @@ class LibraryScreen(BaseAppScreen):
         # token below is what lets its mount take focus -- once.
         self._library_media_find_open = True
         self._library_media_find_focus_pending = True
-        self._sync_library_media_viewer_or_recompose()
-        self.call_after_refresh(self._focus_library_media_content_search_input)
+        self._after_library_media_viewer_sync(
+            self._focus_library_media_content_search_input
+        )
 
     @on(Button.Pressed, "#library-media-open-original")
     def handle_library_media_open_original(self, event: Button.Pressed) -> None:
@@ -34951,6 +35194,72 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)
+
+    def _after_library_media_viewer_sync(
+        self, follow_up: str | Callable[[], object]
+    ) -> None:
+        """Sync the media viewer, then run ``follow_up`` against its NEW children.
+
+        task-31633 / Qodo High on #2470 ("Readers lose keys after escape").
+        A viewer-scoped sync rebuilds the Reader on the VIEWER's message pump,
+        and ``screen.call_after_refresh`` queues onto the SCREEN's -- two
+        pumps with no ordering. Measured on 43b0a7440 with the screen seam:
+        Escape from inside the More disclosure focused the control the
+        recompose was about to detach, Textual re-picked focus for the pruned
+        widget, and task-31567's restore (its captured identity gone with the
+        rest of the children) fell back to the media list row -- focus out of
+        the Reader entirely, so the next Escape acted on the list.
+
+        So the follow-up rides the viewer's own post-recompose hook, and is
+        CHAINED behind whatever is already queued there rather than replacing
+        it: ``queue_after_recompose`` replaces, and the sync above just
+        queued task-31567's restore on that same one slot (that is how
+        task-31567 lost a receipt's "land on Undo"). Order inside the chain:
+        our ``_focus_library_control`` DEFERS (``Widget.focus`` goes through
+        ``app.call_later``), so when the chained restore runs, focus is still
+        wherever the recompose left it and the restore does its own landing
+        (the captured identity, else the list entry); the deferred focus then
+        lands on the target and wins. The transient is benign -- the list
+        entry is focused with ``scroll_visible=False`` and the programmatic
+        marker armed -- and when the target is not composed at all the focus
+        call no-ops and the restore's landing stands.
+
+        Args:
+            follow_up: A Library control selector to focus once the sync has
+                landed (``"#library-media-reader-more"``), or a zero-argument
+                callable to run there instead.
+
+        Returns:
+            None.
+        """
+        self._sync_library_media_viewer_or_recompose()
+        callback = (
+            partial(self._focus_library_control, follow_up)
+            if isinstance(follow_up, str)
+            else follow_up
+        )
+        viewer = self._mounted_library_media_viewer()
+        # ``refresh(recompose=True)`` arms this flag synchronously and only
+        # ``_check_recompose`` (on the viewer's pump) clears it, before
+        # awaiting ``recompose()``; read here with no await in between it is
+        # the honest
+        # answer to "did THIS sync hand the rebuild to the viewer's pump?".
+        # False covers both cases where the hook would swallow the follow-up
+        # instead of ordering it: the no-change short-circuit (nothing is
+        # rebuilt, so nothing ever fires the hook and the target is still
+        # mounted anyway) and the whole-screen fallback (the screen's pump
+        # owns the ordering, and this viewer is the one being torn down).
+        if viewer is None or not getattr(viewer, "_recompose_required", False):
+            self.call_after_refresh(callback)
+            return
+        pending = viewer._post_recompose_callback
+
+        def follow_up_then_pending() -> None:
+            callback()
+            if pending is not None:
+                pending()
+
+        viewer.queue_after_recompose(follow_up_then_pending)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""
@@ -36654,6 +36963,20 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
+            # task-31797: the ingest "Open in Library" deep-link (and the
+            # sibling Search/RAG evidence + landing-hub "Open" routes) jump
+            # straight to the media viewer but -- unlike the rail-row path in
+            # _select_library_rail_row_after_source_admission -- never asked
+            # the browse controller to load a page, leaving the middle Items
+            # pane stuck on "0 of 0 · type: None / No page loaded". Mirror the
+            # rail's browse+facets request so the list lands populated
+            # alongside the opened item. focus_identity=None keeps focus on the
+            # just-opened viewer rather than yanking it to the first list row.
+            self._request_library_media_browse(
+                self._library_media_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+            self._request_library_media_facets()
             await self._apply_library_media_active_surface()
             return None
 

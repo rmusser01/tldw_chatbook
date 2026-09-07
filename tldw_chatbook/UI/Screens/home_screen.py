@@ -577,7 +577,7 @@ class HomeScreen(BaseAppScreen):
             logger.debug(f"Home content snapshot seam call failed: {exc}")
             return None
 
-    def _home_console_provider_ready(self) -> bool:
+    def _home_console_provider_ready(self, *, allow_fresh_load: bool = True) -> bool:
         """Return Console provider readiness from the freshest config.
 
         Reuses the exact readiness seams Console uses
@@ -588,12 +588,22 @@ class HomeScreen(BaseAppScreen):
         Home. An injected hermetic test config (no disk-load marker
         sections) is honored verbatim, same as Console's
         ``_provider_readiness_app_config``.
+
+        Args:
+            allow_fresh_load: When True (the async content-snapshot path),
+                refresh from ``load_settings()`` for freshness. When False
+                (TASK-31805's synchronous compose path for the "Model:"
+                badge), skip the disk read and resolve readiness from the
+                in-memory ``app_config`` only, so first paint is honest and
+                cheap without a per-compose ``load_settings()`` disk hit.
         """
         app_config = getattr(self.app_instance, "app_config", {}) or {}
         config: Mapping[str, object] = (
             app_config if isinstance(app_config, Mapping) else {}
         )
-        if all(section in config for section in _HOME_LIVE_CONFIG_MARKER_SECTIONS):
+        if allow_fresh_load and all(
+            section in config for section in _HOME_LIVE_CONFIG_MARKER_SECTIONS
+        ):
             try:
                 fresh = load_settings()
             except Exception:
@@ -629,6 +639,22 @@ class HomeScreen(BaseAppScreen):
                 has_recent_work=has_recent_work,
             )
         )
+        # TASK-31805: the "Model: Ready" badge -- and every model-readiness
+        # -derived control (the "Set up Console model" next action, the
+        # runtime/system summaries) -- must report what an actual send would
+        # do, not the mere presence of a provider catalog. The adapter can
+        # only see ``providers_models`` (non-empty on any fresh profile, key
+        # or no key), so it necessarily reported ``bool(providers_models)``;
+        # override it here with the SAME send-path readiness Console enforces
+        # (``get_provider_readiness`` via ``build_console_settings_readiness``).
+        # Compute it synchronously from the in-memory config so first paint is
+        # honest and flicker-free (no false "Ready" flash on a no-key profile);
+        # the async content snapshot below refreshes it from freshly-loaded
+        # config, keeping the badge in lockstep with ``console_ready``.
+        dashboard_input = replace(
+            dashboard_input,
+            model_ready=self._home_console_provider_ready(allow_fresh_load=False),
+        )
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
         if callable(snapshot):
@@ -644,6 +670,13 @@ class HomeScreen(BaseAppScreen):
             # the most-recent resume candidate (see the snapshot worker).
             dashboard_input = apply_home_content_snapshot(
                 dashboard_input, content_snapshot
+            )
+            # TASK-31805: the snapshot's ``console_ready`` is the fresh-config
+            # authority for send-path readiness; keep the "Model:" badge in
+            # lockstep with it so a credential added/removed since boot is
+            # reflected once the snapshot lands.
+            dashboard_input = replace(
+                dashboard_input, model_ready=dashboard_input.console_ready
             )
         return dashboard_input
 

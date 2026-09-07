@@ -129,6 +129,66 @@ def test_settings_from_config_reads_flat_meetings_section(tmp_path):
     assert default.recordings_dir == (tmp_path / "meetings").resolve()
 
 
+def test_settings_diarize_mic_channel_round_trip(tmp_path):
+    """task 31743: the flag defaults off and round-trips through config."""
+    values = {"diarize_mic_channel": True}
+
+    def get(section, key, default):
+        assert section == "meetings"
+        return values.get(key, default)
+
+    settings = mo.MeetingSettings.from_config(get, data_dir=tmp_path)
+    assert settings.diarize_mic_channel is True
+    default = mo.MeetingSettings.from_config(lambda s, k, d: d, data_dir=tmp_path)
+    assert default.diarize_mic_channel is False
+
+
+def test_meeting_user_display_name_defaults_to_you_when_unset():
+    """No `chat_defaults.user_display_name` at all: the validated getter
+    returns the factory default it was handed, same as the real
+    `get_chat_defaults_user_display_name`."""
+    assert mo.meeting_user_display_name(get_display_name=lambda default: default) == "You"
+
+
+def test_meeting_user_display_name_defaults_to_you_for_the_factory_default():
+    """A configured value that merely ECHOES the shipped factory default
+    (task 31746) must not be mistaken for a deliberate choice -- compared
+    against `config.py`'s own shipped constant, not a literal re-typed here."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    factory_default = DEFAULT_CONFIG_FROM_TOML["chat_defaults"]["user_display_name"]
+    assert mo.meeting_user_display_name(get_display_name=lambda default: factory_default) == "You"
+
+
+def test_meeting_user_display_name_honours_a_real_override():
+    assert mo.meeting_user_display_name(get_display_name=lambda default: "Alice") == "Alice"
+
+
+def test_meeting_user_display_name_treats_whitespace_only_as_unset(tmp_path, monkeypatch):
+    """task 31746 review (Important): a whitespace-only configured name must
+    not leak through as a literal "   " display name. Reuses Console's own
+    validated getter (`get_chat_defaults_user_display_name`), which
+    normalizes it away to the neutral "User" -- exercised here against a
+    REAL config file, same pattern as
+    `test_config_console_defaults.py::test_blank_chat_display_name_falls_back_to_user`."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[chat_defaults]\nuser_display_name = '   '\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert mo.meeting_user_display_name() == "You"
+
+
+def test_meeting_user_display_name_rejects_a_control_character_name(tmp_path, monkeypatch):
+    """A hostile/control-character name is normalized/rejected the same way
+    Console does, not passed through verbatim."""
+    config_path = tmp_path / "config.toml"
+    invalid_value = "unsafe-secret\u202e"
+    config_path.write_text(
+        f'[chat_defaults]\nuser_display_name = "{invalid_value}"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert mo.meeting_user_display_name() == "You"
+
+
 def test_diarization_requirements_uses_find_spec_not_imports():
     missing = mo.diarization_requirements(find_spec=lambda name: None if name in ("torch", "speechbrain") else object())
     assert missing == ("torch", "speechbrain")
@@ -143,6 +203,87 @@ def test_prepare_reports_tap_provider_and_diarization(tmp_path, monkeypatch):
     assert prepared.provider == "faster-whisper" and prepared.model == "base.en"
     assert prepared.diarization_available is False and prepared.diarization_missing == ("torch",)
     assert owner.prepared is prepared and owner._facade.name == "facade"
+
+
+def test_build_diarizer_server_backend_returns_none_without_raising(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    settings = _settings(tmp_path, live_diarization=True, diarizer_backend="server")
+    assert mo.build_diarizer(settings) is None
+
+
+def test_build_diarizer_construction_failure_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", boom)
+    settings = _settings(tmp_path, live_diarization=True, diarizer_backend="local")
+    assert mo.build_diarizer(settings) is None
+
+
+def test_live_diarization_active_false_for_server_backend(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="server")
+    prepared = owner.prepare()
+    assert prepared.live_diarization_active is False
+
+
+def test_live_diarization_active_true_for_local_backend_with_deps(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="local")
+    prepared = owner.prepare()
+    assert prepared.live_diarization_active is True
+
+
+def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
+    owner, _, _ = _owner(tmp_path, live_diarization=False)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is None
+
+
+def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    built = {}
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings: built.setdefault("d", object()))
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is built["d"]
+
+
+def test_max_speakers_must_be_at_least_one(tmp_path):
+    """Qodo Q7: 0/negative silently disabled the Stop pass instead of failing
+    at the settings boundary like every other unusable config value."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        _settings(tmp_path, max_speakers=0)
+    with pytest.raises(pydantic.ValidationError):
+        _settings(tmp_path, max_speakers=-3)
+    assert _settings(tmp_path, max_speakers=1).max_speakers == 1
+
+
+def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkeypatch):
+    """Qodo Q12: `post_diarize` only asks Library ingest for a SECOND, offline
+    diarization of mixed.wav that knows nothing of the live ids or renames.
+    The live backend's own Stop pass is driven by the session's `_diarizer`,
+    so building one must not override an explicit `post_diarize = false`."""
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings: object())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, post_diarize=False)
+    owner.prepare()
+    session = owner.start()
+    assert owner.local_sink.post_diarize is False   # the user's setting stands
+    assert session._diarizer is not None            # ... the Stop pass still runs
+    owner.stop()
+
+
+def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is None
 
 
 def test_start_creates_folder_writers_and_session_in_room_mode_when_tap_unavailable(tmp_path, monkeypatch):
@@ -179,6 +320,39 @@ def test_start_call_mode_has_three_writers(tmp_path, monkeypatch):
     folder = session.meta.folder
     assert {p.name for p in folder.glob("*.wav")} == {"mixed.wav", "you.wav", "others.wav"}
     assert session.meta.mode == "call"
+    owner.stop()
+
+
+def test_start_stamps_the_configured_display_name_onto_meta(tmp_path, monkeypatch):
+    """task 31746: the owner stamps the SAME name the live session shows onto
+    `meta.user_display_name`, so an after-the-fact render (transcript.md, the
+    Library rename view) agrees with what the user saw while recording."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "meeting_user_display_name", lambda **kw: "Alice")
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.user_display_name == "Alice"
+    owner.stop()
+
+
+def test_start_stamps_diarize_mic_channel_onto_meta(tmp_path, monkeypatch):
+    """task 31743: the owner stamps the configured flag onto `meta` so the
+    session/render path can read a single source of truth."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path, diarize_mic_channel=True)
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.diarize_mic_channel is True
+    owner.stop()
+
+
+def test_start_leaves_diarize_mic_channel_off_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.diarize_mic_channel is False
     owner.stop()
 
 

@@ -11,8 +11,33 @@ from typing import Optional
 from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Constants import MODEL_CATALOG_REFRESH_WORKER_GROUP
+from tldw_chatbook.Utils.boot_worker_policy import BOOT_WORKER_POLICY
 
 from .base_handler import BaseWorkerHandler
+
+#: Every group in the declarative boot fleet (``scheduling``,
+#: ``ingest_restore``, the actor-pack prefetches, the FTS backfills). DERIVED
+#: from BOOT_WORKER_POLICY, not hand-listed, so a future BootWorkerSpec can
+#: never silently reintroduce the per-transition "No handler found for worker"
+#: warning these one-shots emit at boot (TASK-31806). Each is fire-and-forget:
+#: its failure is already persisted by the diagnostics hook in
+#: on_worker_state_changed before registry delegation runs.
+_BOOT_WORKER_GROUPS = frozenset(spec.group for spec in BOOT_WORKER_POLICY)
+
+#: Fire-and-forget research/library startup reconciliation sweeps spawned
+#: directly (TldwCli, not via the boot policy). Same rationale as the boot
+#: fleet: self-contained coroutines that catch-and-log their own outcome and
+#: need no per-transition handler (TASK-31806). Data-gated ones
+#: (``research_source_held_startup``) only fire on some profiles, but warn
+#: identically when they do.
+_RESEARCH_STARTUP_GROUPS = frozenset(
+    {
+        "research_source_association_startup",
+        "research_source_held_startup",
+        "research_paste_staging_startup",
+        "research-quick-notes-startup-reconciliation",
+    }
+)
 
 
 class MiscWorkerHandler(BaseWorkerHandler):
@@ -28,10 +53,8 @@ class MiscWorkerHandler(BaseWorkerHandler):
         # "No handler found" warning — one per tab switch for
         # screen-navigation (TASK-1230), several at startup for the others.
         "screen-navigation",
-        "scheduling",
         MODEL_CATALOG_REFRESH_WORKER_GROUP,
-        "subscriptions-fts-backfill",
-    }
+    } | _BOOT_WORKER_GROUPS | _RESEARCH_STARTUP_GROUPS
 
     def can_handle(self, worker_name: str, worker_group: Optional[str] = None) -> bool:
         """

@@ -487,6 +487,38 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
 
 
 @pytest.mark.asyncio
+async def test_stale_more_disclosure_paints_nothing_on_a_sourceless_detail():
+    """task-31633 AC#3: `more_open` survives the hop onto a server-only
+    detail, where every action inside the disclosure is gated off. Without a
+    guard the Reader composes an empty actions row under a "More" button that
+    is no longer there.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+        await screen._open_library_external_media_detail("7")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.external_detail,
+            message="External server detail never entered.",
+        )
+        await _wait_for_selector(screen, pilot, "#library-media-reader-identity")
+
+        # The stale flag is the point: the guard is on what it composes.
+        assert screen._library_media_reader_session.more_open is True
+        assert not screen.query("#library-media-reader-more")
+        assert not screen.query("#library-media-reader-more-actions")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("late_outcome", [None, RuntimeError("late failure")])
 async def test_late_external_a_cannot_replace_b_or_show_error(late_outcome):
     """A stale server detail cannot repaint a newer external Reader session."""
@@ -1178,6 +1210,14 @@ def _escape_fake(
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
     )
+    # PR H2: and every "sync, then focus this control" follow-up routes
+    # through ONE seam, so the fake exercises the real ordering logic. No
+    # viewer is mounted in these fakes, so it takes the screen fallback --
+    # the same ``sync`` then ``focus`` pair the branches recorded before.
+    fake._mounted_library_media_viewer = lambda: None
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
+    )
     # task-31271 seam (a): Escape and its footer label read one seam now.
     fake._library_media_find_state = MethodType(
         LibraryScreen._library_media_find_state, fake
@@ -1212,6 +1252,114 @@ def test_escape_and_its_label_read_the_same_find_state():
     LibraryScreen.action_library_media_viewer_back(fake)
     assert fake._library_media_find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
+
+
+class _RecomposeHookViewer:
+    """The one-slot post-recompose hook, with no Textual machinery."""
+
+    #: ``refresh(recompose=True)`` arms this on a real widget and the
+    #: rebuild clears it. The seam reads it to tell a sync that handed the
+    #: rebuild to this viewer's pump from one that changed nothing.
+    _recompose_required = True
+
+    def __init__(self, pending=None):
+        self._post_recompose_callback = pending
+
+    def queue_after_recompose(self, callback) -> None:
+        self._post_recompose_callback = callback
+
+
+def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
+    """task-31633 AC#3: ``queue_after_recompose`` REPLACES, and the sync this
+    handler just ran queues PR F's focus restore on that same one slot -- so
+    installing the disclosure's own target has to chain the restore behind it
+    rather than evict it (task-31567 lost a receipt's intent exactly that way).
+    """
+    calls: list = []
+    viewer = _RecomposeHookViewer(pending=lambda: calls.append("pr-f-restore"))
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _mounted_library_media_viewer=lambda: viewer,
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        call_after_refresh=lambda *args: calls.append("call_after_refresh"),
+    )
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
+    )
+
+    LibraryScreen.handle_library_media_reader_more(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_reader_session.more_open is True
+    assert calls == ["sync"]
+    # The viewer's recompose fires the one queued callback.
+    viewer._post_recompose_callback()
+    assert calls == [
+        "sync",
+        ("focus", "#library-media-reader-more"),
+        "pr-f-restore",
+    ]
+
+
+def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
+    """The whole-screen recompose leaves no viewer to hang the hook on."""
+    calls: list = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _mounted_library_media_viewer=lambda: None,
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
+    )
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
+    )
+
+    LibraryScreen.handle_library_media_reader_more(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_reader_session.more_open is True
+    assert len(calls) == 2 and calls[0] == "sync"
+    label, queued = calls[1]
+    assert label == "after"
+    queued()
+    assert calls[-1] == ("focus", "#library-media-reader-more")
+
+
+def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
+    """PR H2: the hook is used only when the VIEWER is the thing rebuilding.
+
+    ``_sync_library_media_viewer_state`` returns True for the no-change
+    short-circuit too (nothing is rebuilt, so nothing would ever fire the
+    hook), and it returns False -- whole-screen recompose -- while the OLD
+    viewer is still mounted and about to be torn down. Queuing on either
+    swallows the follow-up outright, so the seam reads the viewer's own armed
+    recompose flag rather than assuming a mounted viewer means a rebuild.
+    """
+    calls: list = []
+    viewer = _RecomposeHookViewer(pending=lambda: calls.append("pr-f-restore"))
+    viewer._recompose_required = False
+    fake = SimpleNamespace(
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _mounted_library_media_viewer=lambda: viewer,
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
+    )
+
+    LibraryScreen._after_library_media_viewer_sync(
+        fake, "#library-media-reader-more"
+    )
+
+    assert calls[0] == "sync"
+    # The follow-up went to the screen seam, and the viewer's own slot is
+    # untouched -- whatever was queued there still belongs to its owner.
+    assert calls[1][0] == "after"
+    assert viewer._post_recompose_callback is not None
+    calls[1][1]()
+    assert calls[-1] == ("focus", "#library-media-reader-more")
 
 
 def test_escape_closes_more_find_confirmation_before_leaving_reader():
@@ -1550,6 +1698,12 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
     )
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
+    )
+    # PR H2: the focus follow-up rides the shared post-sync seam; no viewer
+    # is mounted in this fake, so it takes the screen fallback.
+    fake._mounted_library_media_viewer = lambda: None
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
     )
     # Qodo on #2378: the handler refuses when the tab has nothing to search.
     fake._library_media_find_unavailable_reason = MethodType(
@@ -1957,8 +2111,15 @@ async def test_reader_recompose_returns_focus_to_the_content_not_a_grip(size):
         assert _focused_id(screen) == "library-media-viewer-content"
         assert _top_border_row(host, content).startswith("┏")
 
-        # A real in-Reader recompose (the "More" toggle rebuilds the viewer).
-        screen.query_one("#library-media-reader-more", Button).press()
+        # A real in-Reader recompose. task-31633 AC#3 re-anchored this off
+        # the "More" toggle: that control now claims focus itself (its
+        # one-row disclosure has to stay operable from the keyboard), so it
+        # can no longer stand in for a focus-NEUTRAL recompose. Arming the
+        # inline delete ("t") flips a compose input the same way and claims
+        # no focus of its own, so the seam is still the only thing that can
+        # decide where focus lands.
+        await pilot.press("t")
+        await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
         await _settle(pilot)
 
         assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
@@ -2001,7 +2162,12 @@ async def test_find_input_keeps_focus_through_a_reader_recompose(size):
 
         screen.set_focus = MethodType(counting_set_focus, screen)
         try:
-            screen.query_one("#library-media-reader-more", Button).press()
+            # task-31633 AC#3: same re-anchor as the sibling test above.
+            # The action is invoked rather than typed because the focused
+            # Find Input swallows the "t" key -- this is the exact method
+            # that binding fires.
+            screen.action_library_media_move_to_trash()
+            await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
             await _settle(pilot)
         finally:
             del screen.set_focus
@@ -2166,7 +2332,18 @@ async def test_opening_find_costs_no_extra_focus_move(size):
         original_set_focus = screen.set_focus
 
         def counting_set_focus(_self, widget, scroll_visible=True):
-            moves.append(str(getattr(widget, "id", widget)))
+            # PR H2: EFFECTIVE focus changes only. ``Widget.focus()`` always
+            # defers a ``set_focus`` call, and ``Screen.set_focus`` returns at
+            # ``widget is self.focused`` BEFORE any Blur/Focus pair -- a call
+            # naming the widget that already holds focus moves nothing and
+            # posts no ``DescendantFocus``, which is what this pin counts.
+            # Both channels that land this input now run inside the counted
+            # window (the seam's follow-up rides the viewer's post-recompose
+            # hook, the token channel rides the content widget's), so one of
+            # the two is always such an inert duplicate -- measured: the same
+            # Input object, ``widget is screen.focused`` already True.
+            if widget is not screen.focused:
+                moves.append(str(getattr(widget, "id", widget)))
             return original_set_focus(widget, scroll_visible=scroll_visible)
 
         screen.set_focus = MethodType(counting_set_focus, screen)

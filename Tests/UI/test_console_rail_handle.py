@@ -11,7 +11,11 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 import tldw_chatbook.Widgets.Console.console_rail_handle as console_rail_handle
-from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSED
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_COLLAPSE_LEFT,
+    GLYPH_COLLAPSE_RIGHT,
+    GLYPH_COLLAPSED,
+)
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_RAIL_CONTEXT_LABEL,
     CONSOLE_RAIL_INSPECTOR_LABEL,
@@ -190,8 +194,8 @@ def test_horizontal_canonical_labels_use_inward_console_button_copy() -> None:
     context = _handle(label=CONSOLE_RAIL_CONTEXT_LABEL)
     inspector = _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")
 
-    assert context._display_label() == "Context->"
-    assert inspector._display_label() == "<-Inspect"
+    assert context._display_label() == "Context ▸"
+    assert inspector._display_label() == "◂ Inspect"
 
 
 def test_horizontal_noncanonical_left_label_is_unchanged() -> None:
@@ -255,3 +259,44 @@ def test_vertical_compose_marks_handle_and_children_and_uses_content_width() -> 
     assert isinstance(badge, Static)
     assert badge.has_class("console-rail-handle-badge-vertical")
     assert badge.styles.width.value == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+
+
+# --- TASK-31665 AC#4: one arrow vocabulary, open and collapsed --------------
+
+
+def test_collapsed_handles_speak_the_same_arrow_vocabulary_as_the_open_rails():
+    """AC#4. The compact forms used to spell their arrows in ASCII
+    (`Context->` / `<-Inspect`) while the OPEN rails' own collapse controls
+    used the glyph vocabulary (`Context ◂` in left_rail, `▸ Inspect` in
+    right_rail) -- so one rail spoke two arrow languages depending on
+    whether it was open."""
+    context = _handle(label=CONSOLE_RAIL_CONTEXT_LABEL)
+    inspector = _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")
+
+    for label in (context._display_label(), inspector._display_label()):
+        assert "->" not in label and "<-" not in label, (
+            f"{label!r} still spells its arrow in ASCII"
+        )
+        assert any(glyph in label for glyph in (GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT))
+
+
+def test_collapsed_handle_arrows_survive_ascii_glyph_mode(monkeypatch) -> None:
+    """AC#4: the unification must not cost the ASCII fallback. `resolve_glyph`
+    maps ◂/▸ to </>, so the label stays nine cells wide either way -- which is
+    what the collapsed handle's fixed geometry and TASK-31663's right-edge
+    focus carrier both depend on."""
+    from tldw_chatbook.Widgets import glyph_fallback
+
+    glyph_fallback.set_ascii_glyph_mode(True)
+    try:
+        context = _handle(label=CONSOLE_RAIL_CONTEXT_LABEL)
+        inspector = _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")
+        assert context._display_label() == "Context >"
+        assert inspector._display_label() == "< Inspect"
+    finally:
+        glyph_fallback.set_ascii_glyph_mode(False)
+
+    assert cell_len(_handle(label=CONSOLE_RAIL_CONTEXT_LABEL)._display_label()) == 9
+    assert cell_len(
+        _handle(label=CONSOLE_RAIL_INSPECTOR_LABEL, side="right")._display_label()
+    ) == 9

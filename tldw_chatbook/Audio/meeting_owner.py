@@ -24,9 +24,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .meeting_session import (
+    Diarizer,
     LocalMeetingSink,
     MeetingMeta,
     MeetingResult,
@@ -64,6 +65,49 @@ def resolve_effective_config() -> "EffectiveConfig | None":
     return resolve()
 
 
+def meeting_user_display_name(get_display_name: Callable[[str], str] | None = None) -> str:
+    """The one shared display name for the mic ("you") channel (task 31746).
+
+    Deliberately NOT a bare `chat_defaults.user_display_name` read: that
+    section's own factory default ships as the literal "User" (`config.py`'s
+    `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no way to tell "never
+    touched this setting" apart from "chose User" -- returning it unconditio-
+    nally would silently turn every untouched install's "You:" rows into
+    "User:" rows. Only a value that actually DIFFERS from that shipped
+    default counts as a deliberate choice; everything else falls back to
+    Meetings' own already-shipped "You".
+
+    Reuses `config.get_chat_defaults_user_display_name` (task 31746 review)
+    rather than reading the raw config value: that getter is already the
+    validated read for this exact key, normalizing via
+    `console_roleplay_identity.normalize_chat_display_name` (strips
+    whitespace, rejects control characters, caps length) the same way
+    Console does -- so a whitespace-only or hostile configured value can
+    never leak through here as a literal display name (a raw comparison
+    used to return "   " verbatim).
+
+    Args:
+        get_display_name: `(default) -> str` validated getter, injectable
+            for tests; defaults to the real
+            `config.get_chat_defaults_user_display_name`.
+
+    Returns:
+        The configured, normalized `chat_defaults.user_display_name` when it
+        differs from the shipped factory default, else "You".
+    """
+    if get_display_name is None:
+        from tldw_chatbook.config import get_chat_defaults_user_display_name
+
+        get_display_name = get_chat_defaults_user_display_name
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    factory_default = DEFAULT_CONFIG_FROM_TOML.get("chat_defaults", {}).get("user_display_name", "User")
+    configured = get_display_name(factory_default)
+    if configured and configured != factory_default:
+        return configured
+    return "You"
+
+
 class MeetingSettings(BaseModel):
     """Validated `[meetings]` configuration for one meeting session.
 
@@ -85,6 +129,16 @@ class MeetingSettings(BaseModel):
     keep_raw_tracks: bool = True
     post_transcribe: bool = True
     post_diarize: bool = True
+    live_diarization: bool = False
+    #: Hybrid-room mic diarization (task 31743): in call mode, also diarize
+    #: the mic ("you") and overlap ("both") segments instead of leaving them
+    #: pre-named as the user. Off by default -- see `meetings.md`.
+    diarize_mic_channel: bool = False
+    diarizer_backend: str = "local"
+    #: Qodo Q7: 0 or a negative value silently disabled the Stop pass (the
+    #: clusterer can hold no clusters), so it is refused at the boundary
+    #: like every other unusable config value here.
+    max_speakers: int = Field(8, ge=1)
 
     @field_validator("recordings_dir", mode="before")
     @classmethod
@@ -136,6 +190,10 @@ class MeetingSettings(BaseModel):
             keep_raw_tracks=get_setting("meetings", "keep_raw_tracks", True),
             post_transcribe=get_setting("meetings", "post_transcribe", True),
             post_diarize=get_setting("meetings", "post_diarize", True),
+            live_diarization=get_setting("meetings", "live_diarization", False),
+            diarize_mic_channel=get_setting("meetings", "diarize_mic_channel", False),
+            diarizer_backend=get_setting("meetings", "diarizer_backend", "local") or "local",
+            max_speakers=get_setting("meetings", "max_speakers", 8),
         )
 
 
@@ -156,6 +214,17 @@ class PrepareResult:
     diarization_missing: tuple[str, ...]
     recoverable: tuple[Path, ...]
     input_devices: tuple[str, ...] = ()
+    #: Whether `start()` will actually inject a live LOCAL diarizer (spec
+    #: §3.4): `diarization_available` alone only says the offline post-meeting
+    #: pass is possible -- this also requires `settings.live_diarization` on
+    #: AND `settings.diarizer_backend == "local"`, since `build_diarizer`
+    #: always returns `None` for the unimplemented "server" backend. Computed
+    #: without constructing a diarizer (no subprocess spawn during prepare).
+    #: False here still leaves the offline pass available at Stop.
+    #: Defaulted (unlike the fields above) so existing positional/keyword
+    #: callers built before Task 6 -- notably `Tests/UI/test_meetings_screen
+    #: .py`'s `FakeOwner` -- keep constructing a `PrepareResult` unchanged.
+    live_diarization_active: bool = False
     #: Set when the mic recorder cannot be built at all (numpy missing, no
     #: audio backend). The rail shows it and keeps Start disabled instead of
     #: offering a Start that can only fail (final whole-branch review, C1).
@@ -182,6 +251,35 @@ def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, .
         if not present:
             missing.append(name)
     return tuple(missing)
+
+
+def build_diarizer(settings: MeetingSettings) -> Diarizer | None:
+    """Build the live diarizer backend named by `settings`, best-effort.
+
+    Import-graph rule (module docstring): `SpeechBrainDiarizer` is imported
+    LAZILY here, never at module scope -- this is the only place allowed to
+    know it exists, so `app.py` stays torch-free at boot.
+
+    Args:
+        settings: The validated meeting settings.
+
+    Returns:
+        The diarizer to inject into the session, or `None` when live
+        diarization is off, its modules are missing, the backend is not
+        implemented, or construction otherwise failed -- a meeting must
+        stay startable with coarse (non-diarized) labels either way.
+    """
+    if not settings.live_diarization or diarization_requirements():
+        return None
+    try:
+        if settings.diarizer_backend == "local":
+            from .diarizer_local import SpeechBrainDiarizer
+
+            return SpeechBrainDiarizer(max_speakers=settings.max_speakers)
+        raise NotImplementedError(f"diarizer backend {settings.diarizer_backend!r}")
+    except Exception as exc:  # noqa: BLE001 - best-effort, never block a meeting start
+        logger.warning("meeting: diarizer backend unavailable ({})", type(exc).__name__)
+        return None
 
 
 def scan_recoverable(meetings_dir: Path) -> list[Path]:
@@ -386,12 +484,18 @@ class MeetingSessionOwner:
             probe_recorder = self._mic_factory(use_vad=False, retain_audio=False, chunk_size=320)
             devices = tuple(str(d.get("name", "")) for d in probe_recorder.get_audio_devices() if d.get("name"))
         except Exception as exc:  # noqa: BLE001 - no backend: pickers stay empty
-            logger.info("meeting device enumeration unavailable: {}", exc)
+            # task-31748: `str(exc)` can embed a filesystem path (a missing
+            # backend module's path, say) -- redact it.
+            logger.info("meeting device enumeration unavailable: {}", redact_user_paths(str(exc)))
             capture_error = _missing_recorder_message(exc)
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
-            diarization_available=not missing, diarization_missing=missing, recoverable=recoverable,
-            input_devices=devices, capture_error=capture_error,
+            diarization_available=not missing, diarization_missing=missing,
+            live_diarization_active=(
+                self.settings.live_diarization and not missing
+                and self.settings.diarizer_backend == "local"
+            ),
+            recoverable=recoverable, input_devices=devices, capture_error=capture_error,
         )
         return self.prepared
 
@@ -462,16 +566,30 @@ class MeetingSessionOwner:
                     mic_device=self.settings.mic_device or "default",
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
+                    user_display_name=meeting_user_display_name(),
+                    diarize_mic_channel=self.settings.diarize_mic_channel,
                 )
+                # Two independent mechanisms, deliberately NOT conflated
+                # (Qodo Q12): the live backend's authoritative Stop pass is
+                # driven by `MeetingSession`'s own `_diarizer` (below), while
+                # the sink's `post_diarize` only asks the Library ingest for a
+                # SECOND, offline diarization of mixed.wav that knows nothing
+                # of the live cluster ids or the user's renames. Forcing the
+                # latter on because a live diarizer exists overrode an
+                # explicit `post_diarize = false` and could relabel the
+                # Library copy with generic ids.
+                diarizer = build_diarizer(self.settings)
                 self.local_sink = LocalMeetingSink(
                     folder, submit=self._submit_on_ui_thread,
-                    post_transcribe=self.settings.post_transcribe, post_diarize=self.settings.post_diarize,
+                    post_transcribe=self.settings.post_transcribe,
+                    post_diarize=self.settings.post_diarize,
                 )
                 facade, cfg = self._facade, self._cfg
                 session = MeetingSession(
                     meta=meta, capture=capture,
                     dictation_factory=lambda cap: self._dictation_factory(cap, facade, cfg),
                     sinks=[self.local_sink],
+                    diarizer=diarizer,
                 )
                 self.session = session
                 # A RAISING start() has to run the same cleanup as a False

@@ -451,3 +451,44 @@ def test_partial_chunks_are_carried_not_dropped(tmp_path):
     mic(b"\x00\x20" * 290)             # 580 bytes: remainder 60 + 580 = 640 -> one more slice
     assert b"".join(got) == loud[:640] + (b"\x00\x20" * 320)
     assert cap.last_speech_position_s == pytest.approx(0.04)
+
+
+@pytest.fixture
+def meeting_capture_factory(tmp_path):
+    """Zero-arg factory for a ``MeetingCapture`` wired to fake mic/tap/writers."""
+
+    def factory(**kwargs):
+        cap, _, _, _ = _capture(tmp_path, **kwargs)
+        return cap
+
+    return factory
+
+
+def test_pcm_window_returns_recent_frames(meeting_capture_factory):
+    cap = meeting_capture_factory()  # existing test factory / fake recorder
+    cap._push_pcm("others", b"\x01\x00" * 16000)  # 1s of samples at t=[0,1)
+    cap._push_pcm("others", b"\x02\x00" * 16000)  # 1s at t=[1,2)
+    win = cap.pcm_window("others", 1.0, 2.0)
+    assert len(win) == 16000 * 2 and win[:2] == b"\x02\x00"
+
+
+def test_pcm_window_empty_when_evicted(meeting_capture_factory):
+    cap = meeting_capture_factory()
+    assert cap.pcm_window("others", 10_000.0, 10_001.0) == b""
+
+
+def test_pcm_window_tracks_real_audio_clock(tmp_path):
+    """The ring's sample index must track `audio_position_s`, not drift from
+    it via a separately-counted position -- Task 4 calls `pcm_window` with
+    segment times measured against that same clock, through the real
+    `_on_mic_frame` write path (not the direct `_push_pcm` calls the other
+    two tests use).
+    """
+    cap, recorders, _, _ = _capture(tmp_path)
+    cap.start_recording(callback=lambda b: None)
+    frame1 = b"\x01\x00" * 16000  # 1s of mic samples, written at t=[0,1)
+    frame2 = b"\x02\x00" * 16000  # 1s of mic samples, written at t=[1,2)
+    recorders[0].callback(frame1)
+    recorders[0].callback(frame2)
+    assert cap.audio_position_s == pytest.approx(2.0)
+    assert cap.pcm_window("mixed", 1.0, 2.0) == frame2

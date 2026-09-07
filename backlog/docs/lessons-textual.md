@@ -303,21 +303,43 @@ exactly once. So the convention reduces to: a subclass never calls `super().on_*
 for a dispatched handler; a base that needs an explicit call exposes a plain,
 non-`on_*` method for it (as `BaseWizard` does).
 
-**The mount side still carries latent instances of this exact bug**, out of this
-`on_unmount`-scoped task: ~19 live `super().on_mount()` calls remain across the
-repo — including the two Console modals and `change_review_screen.py`, whose
-docstring even misdescribes the mechanism as "ordinary attribute lookup … so
-defining one here SHADOWS the mixin's" (it does not — Textual walks the MRO and
-dispatches both, so that `super().on_mount()` double-fires
-`SafeModalDismissMixin.on_mount`). Tracked as a fast-follow; `on_unmount` is
-fully converted here. When touching any lifecycle handler, classify the site:
-redundant (base is a dispatched handler → drop the `super()` call) vs a genuine
-run-once need (→ use the plain-method pattern, never `super()`).
+**The mount side carried the same latent bug (TASK-31822, 2026-09-06,
+converted).** All 19 live `super().on_mount()` calls found repo-wide —
+including the two Console modals and `change_review_screen.py`'s
+`ChangeGitCommitModal`/`ChangeGitPushModal`, whose docstring misdescribed the
+mechanism as "ordinary attribute lookup … so defining one here SHADOWS the
+mixin's" (it does not — Textual walks the MRO and dispatches both, so that
+`super().on_mount()` double-fired `SafeModalDismissMixin.on_mount`) —
+classified as redundant: every one resolved to a base (`SafeModalDismissMixin`
+in 18 sites, `LibraryAdaptiveReaderShell` in 1) whose `on_mount` is defined in
+its own class `__dict__` and therefore already separately MRO-dispatched.
+Zero sites needed the plain-method escape hatch; `BaseWizard._post_mount_hook`
+remains the only genuine run-once-and-callable case in the repo. One site
+(`PersonalContextReviewModal.on_mount`) had no body besides the `super()`
+call, so the override was deleted outright rather than left as a dead
+pass-through. The two misleading `change_review_screen.py` docstrings were
+corrected to describe the MRO walk instead of "shadowing."
 
-Guarded by `Tests/UI/test_on_unmount_mro_convention.py`: a runtime count test
-pins the base `on_unmount` firing exactly once under the no-super convention,
-and an AST scan fails if any screen/modal `on_unmount` re-introduces a
-`super().on_unmount()` call.
+One extra check the mount side needed that the unmount side did not:
+Textual's `_get_dispatch_methods` walks `self.__class__.__mro__` — most
+derived class first — so a subclass's own `on_mount` is dispatched *before*
+its base's separately-dispatched `on_mount`. That means removing a leading
+`super().on_mount()` does not just drop a redundant call, it also **reorders**
+the base's body to run strictly after the whole subclass method returns
+(rather than inline, before the subclass's later statements). This is safe
+only if nothing later in the subclass method reads state the base's `on_mount`
+sets. Audited every site for reads of `SafeModalDismissMixin`'s
+`_safe_cancel_pending` / `_safe_opener_focus_ref` / `_safe_opener_focus_id` /
+`_safe_mount_generation` / `_safe_backdrop_event_in_attempt` (none found) and
+the `LibraryAdaptiveReaderShell` site (base does layout sync + a deferred
+`post_message`, subclass queries a static DOM id — no overlap either) before
+converting.
+
+Guarded by `Tests/UI/test_on_unmount_mro_convention.py` (unmount) and its
+sibling `Tests/UI/test_on_mount_mro_convention.py` (mount, TASK-31822): each
+pairs a runtime count test pinning the base handler firing exactly once under
+the no-super convention with an AST scan that fails if any screen/modal/widget
+re-introduces a `super().on_*()` call to a dispatched handler.
 
 ---
 

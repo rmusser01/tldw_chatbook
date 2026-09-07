@@ -2262,6 +2262,62 @@ class ScheduledTasksDB(BaseDB):
             )
             return cursor.rowcount > 0
 
+    def _definition_id_aliases(
+        self, owner_id: str | None, definition_id: str
+    ) -> tuple[str, ...]:
+        """Resolve ``definition_id`` to every id space its definition answers to.
+
+        A definition keeps its local ``id`` for life, but may also carry a
+        ``server_id`` once ``adopt_server_definition_identity`` links it to
+        a server-transferred row (or ``upsert_automation_definitions_from_
+        server`` pulls a server-owned mirror) -- from that point on, runs
+        and results recorded before the link carry the local id while ones
+        mirrored afterward carry the server's (``upsert_automation_
+        results_from_server`` copies ``definition_id`` verbatim -- there is
+        no local row to translate it to). A history query filtered on a
+        single id therefore misses whichever half was recorded under the
+        OTHER id (task-31415).
+
+        Given EITHER id, this finds the definition row (scoped to
+        ``owner_id`` when given; ``None`` matches any owner, mirroring
+        ``list_automation_results``'s all-owners mode) and returns the
+        distinct non-``None`` ``{id, server_id}`` set. When no definition
+        row matches -- a deleted or unknown definition -- returns a
+        single-element tuple with just ``definition_id``: history for such
+        a definition must not vanish or error, it behaves exactly as a
+        plain equality filter would.
+
+        This is the query-side counterpart to ``index_definitions_by_id``
+        (``UI/Screens/scheduling/unified_rows.py``), which indexes each
+        definition row under both id spaces on the LOOKUP side.
+
+        Args:
+            owner_id: Owner to scope the definition lookup to, or ``None``
+                to match any owner.
+            definition_id: Either the definition's local ``id`` or its
+                ``server_id``.
+
+        Returns:
+            A tuple of the distinct id(s) to filter history rows on.
+        """
+        conditions = ["(id = ? OR server_id = ?)"]
+        params: list[Any] = [definition_id, definition_id]
+        if owner_id is not None:
+            conditions.insert(0, "owner_id = ?")
+            params.insert(0, owner_id)
+        with closing(self._get_connection()) as conn:
+            row = conn.execute(
+                "SELECT id, server_id FROM automation_definitions "
+                f"WHERE {' AND '.join(conditions)} LIMIT 1",
+                params,
+            ).fetchone()
+        if row is None:
+            return (definition_id,)
+        aliases = {row["id"]}
+        if row["server_id"]:
+            aliases.add(row["server_id"])
+        return tuple(aliases)
+
     def list_automation_runs(
         self,
         owner_id: str,
@@ -2271,15 +2327,20 @@ class ScheduledTasksDB(BaseDB):
     ) -> list[dict[str, Any]]:
         """List automation runs for an owner, newest first.
 
-        Optionally filtered to a single definition; paginated via
-        ``limit``/``offset``.
+        Optionally filtered to a single definition -- resolved across
+        BOTH id spaces via ``_definition_id_aliases`` (task-31415), so a
+        transferred definition's runs show up whether ``definition_id``
+        is its local id or its server id. Paginated via ``limit``/
+        ``offset``.
         """
         conditions = ["owner_id = ?"]
         params: list[Any] = [owner_id]
 
         if definition_id is not None:
-            conditions.append("definition_id = ?")
-            params.append(definition_id)
+            aliases = self._definition_id_aliases(owner_id, definition_id)
+            placeholders = ", ".join("?" for _ in aliases)
+            conditions.append(f"definition_id IN ({placeholders})")
+            params.extend(aliases)
 
         where_clause = f"WHERE {' AND '.join(conditions)}"
         params.extend([limit, offset])
@@ -2436,6 +2497,13 @@ class ScheduledTasksDB(BaseDB):
         filtered by ``review_state`` and/or ``definition_id``; paginated
         via ``limit``/``offset``.
 
+        ``definition_id`` is resolved across BOTH id spaces via
+        ``_definition_id_aliases`` (task-31415): a locally-created result
+        carries the definition's local id while one mirrored from the
+        server carries its server id, so a transferred definition's
+        results now show up under either id, not just the one the row
+        itself carries.
+
         Ordered by ``strftime('%Y-%m-%dT%H:%M:%f', created_at)`` rather
         than a raw string comparison: server-mirrored rows copy
         ``created_at`` verbatim from the server payload (see
@@ -2471,7 +2539,9 @@ class ScheduledTasksDB(BaseDB):
         Args:
             owner_id: Owner to scope to, or ``None`` for every owner.
             review_state: Optional ``review_state`` equality filter.
-            definition_id: Optional ``definition_id`` equality filter.
+            definition_id: Optional definition filter -- matched across
+                BOTH the definition's local id and its server id (see
+                ``_definition_id_aliases``), whichever one is given.
             limit: Maximum number of rows to return.
             offset: Rows to skip before collecting ``limit`` rows.
 
@@ -2491,8 +2561,10 @@ class ScheduledTasksDB(BaseDB):
             params.append(review_state)
 
         if definition_id is not None:
-            conditions.append("definition_id = ?")
-            params.append(definition_id)
+            aliases = self._definition_id_aliases(owner_id, definition_id)
+            placeholders = ", ".join("?" for _ in aliases)
+            conditions.append(f"definition_id IN ({placeholders})")
+            params.extend(aliases)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -2524,17 +2596,13 @@ class ScheduledTasksDB(BaseDB):
             owner_id: Owner to scope to, or ``None`` for every owner.
             review_state: Optional ``review_state`` equality filter --
                 ``None`` counts every state.
-            definition_id: Optional ``definition_id`` equality filter,
-                matched exactly as given -- NOT translated across id
-                spaces. A result's ``definition_id`` is whatever id the
-                side that produced it used: a locally-created result
-                carries the LOCAL definition id, while a result mirrored
-                from the server carries the SERVER's id (see
-                ``UI/Screens/scheduling/results_tab.py``'s
-                ``index_definitions_by_id`` for how a caller resolves
-                which space a given definition row lives in). Pass the
-                id in whichever space applies to the rows you expect to
-                count; ``None`` counts every space.
+            definition_id: Optional definition filter -- matched across
+                BOTH id spaces via ``_definition_id_aliases`` (task-31415):
+                a locally-created result carries the definition's LOCAL
+                id while one mirrored from the server carries its SERVER
+                id, so this counts a transferred definition's results
+                regardless of which id is given. ``None`` counts every
+                definition.
 
         Returns:
             The number of matching ``automation_results`` rows.
@@ -2548,8 +2616,10 @@ class ScheduledTasksDB(BaseDB):
             conditions.append("owner_id = ?")
             params.append(owner_id)
         if definition_id is not None:
-            conditions.append("definition_id = ?")
-            params.append(definition_id)
+            aliases = self._definition_id_aliases(owner_id, definition_id)
+            placeholders = ", ".join("?" for _ in aliases)
+            conditions.append(f"definition_id IN ({placeholders})")
+            params.extend(aliases)
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(

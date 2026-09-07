@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from rich.markup import escape as escape_markup
-from textual import events
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -15,6 +16,20 @@ from textual.message import Message
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.Audio.meeting_session import normalize_speaker_name
+# Re-exported (TASK-31745 moved these out of this module unchanged) so every
+# existing importer -- and this canvas's own hidden legend -- keeps working.
+from tldw_chatbook.Library.meeting_speaker_rename import (  # noqa: F401
+    RENAME_REFUSED_EMPTY_TRANSCRIPT,
+    RENAME_REFUSED_NOT_MEETING_CONTENT,
+    SpeakerRenameResult,
+    _meeting_speaker_legend_rows,
+    _read_meeting_transcript_segments,
+    _render_meeting_transcript,
+    _write_meeting_transcript_row,
+    can_rename_meeting_speakers,
+    rename_meeting_speaker,
+)
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_media_state import (
     LibraryMediaCanvasState,
@@ -34,6 +49,7 @@ from tldw_chatbook.Library.library_shell_state import (
     library_choice_tooltip,
     library_disabled_action_label,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -183,6 +199,22 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         width: 100%;
         height: auto;
     }
+    /* Task 8: same trap as #library-media-filter above -- Input defaults to
+     * width 100%, which inside a row Horizontal would blow the label off
+     * to the side. */
+    .library-media-speaker-row {
+        width: 100%;
+        height: auto;
+    }
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
+    Static.library-media-speaker-label {
+        width: auto;
+        min-width: 0;
+    }
+    Input.library-media-speaker-input {
+        width: 1fr;
+    }
     """
 
     def __init__(
@@ -197,6 +229,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_failure: DestinationRecoveryState | None = None,
         compact: bool = False,
         show_preview: bool = True,
+        can_rename_speakers: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -211,6 +246,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_failure = load_failure
         self.compact = compact
         self.show_preview = show_preview
+        # Task 8 (meeting diarization spec): True only when the selected
+        # item's meeting folder still holds a `meeting.json`
+        # (`can_rename_meeting_speakers`, computed by the caller). `media_db`
+        # + `speaker_rename_media_id` are the real `MediaDatabase` and the
+        # selected item's backing id -- needed here (breaking this canvas's
+        # otherwise pure-state design on purpose) so the legend below can
+        # read the meeting folder and actually call `rename_meeting_speaker`
+        # rather than just showing an inert control. Absent, not merely
+        # disabled, when False/None -- there is nothing to rename.
+        self.can_rename_speakers = can_rename_speakers
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -240,6 +287,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_failure: DestinationRecoveryState | None = None,
         compact: bool = False,
         show_preview: bool = True,
+        can_rename_speakers: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -260,7 +310,91 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_failure = load_failure
         self.compact = compact
         self.show_preview = show_preview
+        self.can_rename_speakers = can_rename_speakers
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         self.refresh(recompose=True)
+
+    # ---- Task 8 (meeting diarization spec): inline speaker rename ---------
+    _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
+
+    @on(Input.Submitted, "#library-media-speaker-legend Input")
+    def _handle_speaker_rename_submitted(self, event: Input.Submitted) -> None:
+        """Rename the submitted row's speaker and refresh the shown transcript.
+
+        Mirrors the live Meetings screen's Task 7 `_apply_rename`: the
+        rename itself is unconditional (a submit racing teardown should
+        still persist), and only the widget refresh afterwards is
+        `is_mounted`-guarded.
+        """
+        event.stop()
+        widget_id = event.input.id or ""
+        if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
+            return
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        name = normalize_speaker_name(event.value)
+        event.input.value = ""
+        if self.media_db is None or self.speaker_rename_media_id is None:
+            return
+        # Qodo Q3: the rename reads the transcript file, runs several DB
+        # writes, FTS maintenance and a post-ingest dispatch -- all of which
+        # would freeze the UI on a large transcript or a busy database.
+        self.run_worker(
+            lambda: self._rename_speaker_off_thread(cluster_id, name),
+            group="library-media-speaker-rename",
+            thread=True,
+            exit_on_error=False,
+        )
+
+    def _rename_speaker_off_thread(self, cluster_id: str, name: str) -> None:
+        """Persist one rename on a worker thread, then refresh on the UI one."""
+        try:
+            outcome = rename_meeting_speaker(
+                self.media_db, self.speaker_rename_media_id, cluster_id, name
+            )
+        except Exception as exc:  # noqa: BLE001 - a rename must not crash the canvas
+            # `rename_meeting_speaker` reads/writes `meeting.json`; a
+            # filesystem failure's `str()` embeds the meeting folder path
+            # (task-9 diagnostic inventory review) -- redact it, mirroring
+            # `meetings_screen.py`'s own rename-persist failure log.
+            logger.warning("Library media speaker rename failed: {}", redact_user_paths(str(exc)))
+            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+        self.app.call_from_thread(self._apply_speaker_rename_outcome, cluster_id, outcome)
+
+    def _apply_speaker_rename_outcome(
+        self, cluster_id: str, outcome: SpeakerRenameResult
+    ) -> None:
+        """Report a refused/failed rename, or repaint after a successful one.
+
+        Qodo Q15: a rename that changed nothing used to leave only a debug
+        log, so the user saw the old name and no explanation.
+        """
+        if not outcome.ok:
+            self.app.notify(f"Couldn't rename this speaker: {outcome.reason}.", severity="warning")
+            return
+        if not self.is_mounted:
+            return
+        self._refresh_after_speaker_rename(cluster_id)
+
+    def _refresh_after_speaker_rename(self, cluster_id: str) -> None:
+        """Re-read the rewritten `Media.content` and patch the preview text
+        plus the just-renamed row's own legend label in place."""
+        row = self.media_db.get_media_by_id(self.speaker_rename_media_id)
+        content = row["content"] if row else ""
+        try:
+            self.query_one("#library-media-preview-lines", Static).update(content)
+        except NoMatches:
+            pass
+        try:
+            speaker_rows = dict(
+                _meeting_speaker_legend_rows(self.media_db, self.speaker_rename_media_id)
+            )
+            label_widget = self.query_one(
+                f"#library-media-speaker-label-{cluster_id}", Static
+            )
+            label_widget.update(speaker_rows.get(cluster_id, cluster_id))
+        except Exception:  # noqa: BLE001 - legend label refresh is best-effort
+            pass
 
     def apply_compact_presentation(self, compact: bool) -> None:
         """Patch mounted Media density and preview participation in place."""
@@ -1298,6 +1432,48 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     open_viewer.can_focus = self.show_preview and not self.compact
                     yield self._gate_stale_action(open_viewer, "Open in viewer")
+
+                # Task 8 (meeting diarization spec): a finished meeting
+                # recording's speakers can still be renamed after the fact --
+                # one legend row per speaker (mirroring the live Meetings
+                # screen's Task 7 legend), surfaced ONLY while the caller's
+                # `can_rename_meeting_speakers` says the meeting folder is
+                # still there (absent, not disabled, otherwise: a non-meeting
+                # item has nothing to rename).
+                # ... and only while the pane is actually visible: building
+                # the rows parses the whole transcript.jsonl, which is pure
+                # waste on a hidden pane (final review, MINOR).
+                if (
+                    self.can_rename_speakers
+                    and has_preview
+                    and not self.compact
+                    and self.media_db is not None
+                    and self.speaker_rename_media_id is not None
+                ):
+                    try:
+                        speaker_rows = _meeting_speaker_legend_rows(
+                            self.media_db, self.speaker_rename_media_id
+                        )
+                    except Exception:  # noqa: BLE001 - a bad read just means no legend
+                        speaker_rows = []
+                    if speaker_rows:
+                        legend = Vertical(id="library-media-speaker-legend")
+                        with legend:
+                            for cluster_id, label in speaker_rows:
+                                yield Horizontal(
+                                    Static(
+                                        label,
+                                        id=f"library-media-speaker-label-{cluster_id}",
+                                        markup=False,
+                                        classes="library-media-speaker-label",
+                                    ),
+                                    Input(
+                                        placeholder="Rename…",
+                                        id=f"library-media-speaker-input-{cluster_id}",
+                                        classes="library-media-speaker-input",
+                                    ),
+                                    classes="library-media-speaker-row",
+                                )
 
             # task-14900: the wide split's detail half never sits blank --
             # when the preview is hidden (Select mode, or an empty list) a

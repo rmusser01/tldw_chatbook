@@ -2799,3 +2799,22 @@ async def test_shrunk_diff_save_notifies_instead_of_silent_noop(review_fixture):
         assert "not saved" in message.lower() or "no longer" in message.lower(), message
         assert notify_calls[0][1].get("severity") == "warning"
         assert not provider.notes_for_run(run2), "no note should have been persisted"
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#6: the header must pluralize the way the Inspect rail does
+# ---------------------------------------------------------------------------
+
+
+def test_file_count_noun_is_singular_for_one_file():
+    """AC#6: a one-file turn read "1 files" in the header and the turn
+    selector while the rail's own row for the same fact read "1 file". The
+    repeated-root branch already pluralized correctly; the two now agree."""
+    from tldw_chatbook.UI.Screens.change_review_screen import _file_count_noun
+
+    assert _file_count_noun(1, repeated_root=False) == "file"
+    assert _file_count_noun(0, repeated_root=False) == "files"
+    assert _file_count_noun(2, repeated_root=False) == "files"
+    # Negative control: the repeated-root wording is untouched.
+    assert _file_count_noun(1, repeated_root=True) == "file change"
+    assert _file_count_noun(2, repeated_root=True) == "file changes"

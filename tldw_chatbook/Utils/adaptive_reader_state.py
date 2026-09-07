@@ -38,7 +38,43 @@ PaneName = Literal["library", "items"]
 
 @dataclass(frozen=True)
 class AdaptiveReaderLayoutProfile:
-    """Destination-specific list and work-pane width policy."""
+    """Destination-specific list and work-pane width policy.
+
+    One frozen profile per reader destination. Every field is a width in
+    terminal cells, and the two task-31633 fields are opt-in: their defaults
+    reproduce the pre-task behaviour exactly, so a destination that does not
+    name them is unaffected.
+
+    Attributes:
+        list_min_width: Floor for the list (Items) pane. The resolver
+            collapses the pane rather than paint it narrower.
+        list_target_width: Not read by the resolver. The list's automatic
+            width comes from ``preferences.items_width`` (defaulted from
+            ``ITEMS_TARGET_WIDTH``); the field is retained only so profiles
+            can be constructed with it in tests.
+        list_comfort_width: Ceiling for ``list_grows``. Surplus width stops
+            flowing into the list here and goes to the work pane instead.
+        list_max_width: Hard ceiling for the list pane, including a width the
+            user typed.
+        work_min_width: Floor for the work (Reader) pane; below it the shell
+            drops the list pane rather than squeeze the document.
+        work_comfort_width: Not read by the resolver. The ``list_grows``
+            gate is ``max(work_min_width, READER_COMFORT_WIDTH)``; only
+            Collections sets this field (56), to no effect.
+        list_grows: When ``True``, a work pane already at
+            ``max(work_min_width, READER_COMFORT_WIDTH)`` shares half of any
+            further surplus with the list, up to ``list_comfort_width``,
+            instead of absorbing every extra cell.
+            Automatic widths only: a custom width is obeyed as typed. Default
+            ``False`` (every extra cell goes to the work pane); only Media
+            opts in today.
+        grip_width: Width of EACH of the two pane grips -- both what a grip
+            paints and what the resolver holds back for it, so the two can
+            never disagree. Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes
+            1: its two five-column grips left ten dead columns around the
+            Items pane (task-31633 AC#2). A grip narrower than four cells
+            paints the one-cell guillemet instead of the ``<---`` run.
+    """
 
     list_min_width: int = 32
     list_target_width: int = 40
@@ -46,6 +82,8 @@ class AdaptiveReaderLayoutProfile:
     list_max_width: int = 72
     work_min_width: int = 44
     work_comfort_width: int = 44
+    list_grows: bool = False
+    grip_width: int = PANE_GRIP_WIDTH
 
 
 @dataclass(frozen=True)
@@ -192,7 +230,7 @@ def resolve_adaptive_reader_layout(
         ):
             priority = inherited
 
-    grip_width = 2 * PANE_GRIP_WIDTH
+    grip_width = 2 * profile.grip_width
     work_min_width = max(profile.work_min_width, 0)
     library_open = preferences.library_open
     items_open = preferences.items_open
@@ -285,6 +323,31 @@ def resolve_adaptive_reader_layout(
             comfort_width,
             max(width - grip_width - work_min_width, items_width),
         )
+    if items_open and profile.list_grows and not preferences.custom_widths_enabled:
+        # task-31633: past this point every remaining cell used to go to the
+        # Reader, so a 235-cell terminal painted a NARROWER list than a
+        # 100-cell one. Split the Reader's surplus once it is comfortable, up
+        # to the same comfort ceiling the library-closed branch above uses.
+        #
+        # The floor is the Reader's OWN minimum, not READER_COMFORT_WIDTH: a
+        # literal 44 would leave Media's Reader on 45 cells at width 100,
+        # below the work_min_width=46 that every open/close and hysteresis
+        # decision in required_width() was computed against. It is never
+        # below READER_COMFORT_WIDTH, so the intent holds for profiles at or
+        # under 44.
+        #
+        # Custom widths are a hand-typed number in Settings: "Automatic"
+        # adapts, "Custom" obeys, so growth is off in that mode entirely.
+        reader_floor = max(work_min_width, READER_COMFORT_WIDTH)
+        surplus = width - grip_width - library_width - items_width - reader_floor
+        if surplus > 0:
+            items_width = min(
+                items_width + surplus // 2,
+                max(
+                    min(profile.list_comfort_width, profile.list_max_width),
+                    items_width,
+                ),
+            )
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,
         items_open=items_open,

@@ -35,6 +35,13 @@ a local submit control produces a virtual `submit` event while native form
 submission remains suppressed. Reset listeners run, but V1 does not emulate the
 browser's implicit form-reset algorithm.
 
+Textarea values start from their text content. Select values start from the
+selected option, or the first eligible option for an ordinary single select;
+options without a value attribute use their text. The virtual values used by
+`canvas.submit(...)` track supported user edits and option selection changes.
+Detaching and reinserting controls preserves edited values, including a
+textarea whose default text changes while detached.
+
 ## Absent capabilities
 
 Generated code has a QuickJS `globalThis`, not the worker or browser global.

@@ -124,7 +124,12 @@ class ConsoleInspectorMore(Vertical):
     def __init__(self, *children: Widget, open: bool) -> None:
         self.open = open
         toggle = ConsoleInspectorMoreButton(
-            "More", id="console-inspector-more-toggle", compact=True
+            "More",
+            id="console-inspector-more-toggle",
+            # `console-rail-focus-carrier` keys the focus-edge rule
+            # (TASK-31663); see `console_inspector_section.py`'s toggle.
+            classes="console-rail-focus-carrier",
+            compact=True,
         )
         body = Vertical(*children, id="console-inspector-more-body")
         body.display = open

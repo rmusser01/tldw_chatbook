@@ -46,7 +46,8 @@ def test_config_template_has_meetings_section():
 
     block = CONFIG_TOML_CONTENT.split("[meetings]", 1)[1].split("\n[", 1)[0]
     for key in ("provider", "model", "system_source", "mic_device", "recordings_dir",
-                "keep_raw_tracks", "post_transcribe", "post_diarize"):
+                "keep_raw_tracks", "post_transcribe", "post_diarize",
+                "live_diarization", "diarizer_backend", "max_speakers"):
         assert f"\n{key} = " in block, key
 
 
