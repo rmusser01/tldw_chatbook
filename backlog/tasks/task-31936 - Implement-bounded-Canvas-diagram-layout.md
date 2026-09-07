@@ -1,11 +1,11 @@
 ---
 id: TASK-31936
 title: Implement bounded Canvas diagram layout
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:11'
-updated_date: '2026-09-06 23:54'
+updated_date: '2026-09-07 02:55'
 labels:
   - canvas
   - v2
@@ -46,6 +46,7 @@ Reason: Direct implementation of accepted bounded layout, typography and shared 
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the ADR-124 candidate layout with Kahn ranks, bounded ordering sweeps,
 orthogonal lanes, sequence event/notes spacing, grapheme wrapping, inert scenes,
 exact output accounting and shared refusal ceilings. Conservative 16px logical
@@ -61,3 +62,6 @@ Ruff/formatter, JS syntax and diff checks pass. Existing RequestsDependencyWarni
 persists; optional V1 engine archive rebuild was not requested. Candidate remains
 non-executable/default null. In Progress pending controller independent review.
 Full evidence and qualification limitations are in the Task 3 implementation report.
+
+Independent task review and scoped fix re-review complete. Fixed the reported TD/LR branch route-label collisions with reserved outer strips and charged segment/label checks; no quotas raised. Final evidence: 36 layout tests, 2 scene browser tests, 67 profile/assets tests with twice-reproducible Mermaid build; baseline warning and optional V1 archive-cache skip remain. Actual V2 startup and release qualification remain owned by Tasks 4 and 8. ADR-124 retained.
+<!-- SECTION:NOTES:END -->
