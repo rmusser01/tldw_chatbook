@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from hypothesis import given, settings, strategies as st
+from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseScope,
@@ -837,3 +838,62 @@ def test_analyze_receipt_fields_default_zero_and_pass_through():
     assert floored.analyze_receipt_done == 0
     assert floored.analyze_receipt_failed == 0
     assert floored.analyze_choice_count == 0
+
+
+# ---------------------------------------------------------------------------
+# task-31955: the keyword match-reason suffix is cut by CELLS, not code points
+# ---------------------------------------------------------------------------
+
+
+def _keyword_reason_term(keyword: str) -> str:
+    """The term one row paints after ``· keyword: `` when ``keyword`` matched."""
+    scope = MediaBrowseScope(query="q")
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": [summary_row(id=1, media_type="article")],
+            "total": 1,
+            "limit": scope.page_size,
+            "offset": 0,
+            "match_reasons": {"local:media:1": keyword},
+        },
+    )
+    state = build_library_media_browse_state(result, type_options=("All",), now=NOW)
+    secondary = state.rows[0].secondary
+    assert " · keyword: " in secondary, secondary
+    return secondary.split(" · keyword: ", 1)[1]
+
+
+def test_keyword_reason_cut_is_cell_aware_for_wide_characters() -> None:
+    """Ten CJK characters occupy TWENTY cells, so ten of them never fit.
+
+    The cap bounds how much of the line the reason may take; counting code
+    points let a CJK keyword take twice the budget it was given.
+    """
+    term = _keyword_reason_term("会議記録一覧表示設定値二")
+
+    assert term == "会議記録一…", term
+    assert cell_len(term.removesuffix("…")) == 10, term
+
+
+def test_keyword_reason_never_splits_an_emoji_cluster() -> None:
+    """A ZWJ family emoji is ONE grapheme; the cut lands between clusters."""
+    zwj = "\u200d"
+    family = zwj.join("\U0001f468\U0001f469\U0001f467\U0001f466")
+    term = _keyword_reason_term(family * 6)
+
+    assert term == family * 5 + "\u2026", term
+    assert term.removesuffix("\u2026")[-1] != zwj, term
+
+
+def test_keyword_reason_cut_drops_a_dangling_interior_space() -> None:
+    """A cut landing on a space must not paint ``abcdefghi …``."""
+    assert _keyword_reason_term("abcdefghi jkl") == "abcdefghi…"
+
+
+def test_narrow_keyword_reason_cut_is_unchanged() -> None:
+    """The single-cell case keeps the exact ten-character line it always had."""
+    assert _keyword_reason_term("notesandmorestuff") == "notesandmo…"
+    assert _keyword_reason_term("notes") == "notes"
+
+

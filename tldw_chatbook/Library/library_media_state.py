@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence
 
+from rich.cells import chop_cells
+
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
@@ -38,13 +40,17 @@ LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP = "Trash is still loading."
 LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP = "Trash could not be loaded."
 
 LIBRARY_MEDIA_BROWSE_PAGE_SIZE = 20
-#: Characters of a match-reason keyword a row shows before eliding
+#: Terminal CELLS of a match-reason keyword a row shows before eliding
 #: (task-28008). It keeps the line SHORT; it does not make it fit
 #: everywhere. At the Items pane's 36-cell floor a keyword row still clips
 #: at the pane edge (pinned by
 #: ``test_keyword_reason_clips_at_the_36_cell_items_floor``), and an
 #: analysed + keyword row clips at the default width too.
-_KEYWORD_REASON_CHARS = 10
+#:
+#: task-31955: cells, not code points. Ten CJK characters paint TWENTY
+#: cells, so a code-point cap handed a CJK keyword twice the budget every
+#: other keyword got.
+_KEYWORD_REASON_CELLS = 10
 _SQLITE_INTEGER_MAX = 2**63 - 1
 _MEDIA_BROWSE_SORTS = frozenset(
     {
@@ -1240,8 +1246,16 @@ def _secondary_text(
     if analysed:
         text = f"{text} · analysed"
     if keyword:
-        term = keyword[:_KEYWORD_REASON_CHARS]
-        if len(keyword) > _KEYWORD_REASON_CHARS:
+        # ``chop_cells`` cuts on GRAPHEME boundaries measured in cells, so a
+        # ZWJ emoji cluster is never split mid-sequence and a wide character
+        # costs the two cells it actually paints (task-31955). Rich is
+        # already a hard dependency and ``console_prompt_queue`` uses the
+        # same module, so this adds nothing to install.
+        head = chop_cells(keyword, _KEYWORD_REASON_CELLS)[0]
+        # A cut landing on a space would paint "abcdefghi …"; the space is
+        # the cut's own artefact, not part of the term.
+        term = head.rstrip()
+        if head != keyword:
             term += "…"
         text = f"{text} · keyword: {term}"
     return text
