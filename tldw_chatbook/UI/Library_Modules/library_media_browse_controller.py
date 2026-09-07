@@ -300,6 +300,13 @@ class LibraryMediaBrowseController:
             limit=scope.page_size,
             offset=scope.offset,
             library_summary=True,
+            # Qodo on #2475: this is the ONE caller that renders task-28008's
+            # keyword-only reasons ("· matched keyword X" on a row whose title
+            # and body hold nothing the user typed), so it is the one caller
+            # that pays the probe's extra SELECT. Every other library-summary
+            # pager -- "Review these", the selection ordering pass -- discards
+            # them and now asks for nothing.
+            match_reasons=True,
             isolate_in_worker=True,
             **filters,
         )
@@ -438,6 +445,45 @@ class LibraryMediaBrowseController:
         self.page_failure = None
         self.stale_copy = stale_copy.strip()
         self.stale_reason = self.stale_copy
+
+    def note_analysis_state(self, media_id: str, *, has_analysis: bool) -> bool:
+        """Re-project one retained row's ``has_analysis`` after an analysis write.
+
+        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
+        retained row when the page applied, so an analysis saved from the
+        Reader (or by the bulk Analyze run) left its own row unmarked until
+        something re-paged the list. The caller supplies the value from that
+        same projection, re-read for this ONE id after the write
+        (``LibraryScreen._reproject_library_media_analysis_row``); nothing
+        here derives it, and nothing runs on the page path.
+
+        Freshness is deliberately untouched: this is not a page change, it
+        is the same page carrying a fact the projection has already been
+        asked about.
+
+        Args:
+            media_id: Canonical ``local:media:<id>`` row id.
+            has_analysis: Whether that item now carries analysis text.
+
+        Returns:
+            True when a retained row actually changed (so the caller can
+            skip a repaint it does not need).
+        """
+        target = str(media_id)
+        if not any(
+            str(item["id"]) == target and bool(item["has_analysis"]) != has_analysis
+            for item in self.retained_items
+        ):
+            return False
+        self.retained_items = validate_media_browse_items(
+            tuple(
+                {**item, "has_analysis": has_analysis}
+                if str(item["id"]) == target
+                else item
+                for item in self.retained_items
+            )
+        )
+        return True
 
     def begin_mutation(self) -> MediaBrowseScope:
         """Fence reads before a durable write and preserve its applied scope."""

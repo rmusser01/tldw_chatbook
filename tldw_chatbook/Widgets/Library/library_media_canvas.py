@@ -251,6 +251,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         mutation_action_reason: str = "",
         analysis_action_reason: str = "",
         load_failure: DestinationRecoveryState | None = None,
+        list_unselectable: bool = False,
         compact: bool = False,
         show_preview: bool = True,
         can_rename_speakers: bool = False,
@@ -268,6 +269,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.mutation_action_reason = mutation_action_reason
         self.analysis_action_reason = analysis_action_reason
         self.load_failure = load_failure
+        # task-31635 fix round 1: the screen's OWN "the load failed leaving
+        # nothing to select" predicate (`_library_media_list_unselectable`),
+        # not re-derived here -- a page failure that retained rows and a
+        # facet-only failure both keep `load_failure` set over rows that
+        # export fine.
+        self.list_unselectable = list_unselectable
         self.compact = compact
         self.show_preview = show_preview
         # Task 8 (meeting diarization spec): True only when the selected
@@ -309,6 +316,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         mutation_action_reason: str = "",
         analysis_action_reason: str = "",
         load_failure: DestinationRecoveryState | None = None,
+        list_unselectable: bool = False,
         compact: bool = False,
         show_preview: bool = True,
         can_rename_speakers: bool = False,
@@ -332,6 +340,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.mutation_action_reason = mutation_action_reason
         self.analysis_action_reason = analysis_action_reason
         self.load_failure = load_failure
+        self.list_unselectable = list_unselectable
         self.compact = compact
         self.show_preview = show_preview
         self.can_rename_speakers = can_rename_speakers
@@ -564,12 +573,26 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if danger:
             classes += " library-media-action-danger"
         button = Button(
-            library_disabled_action_label(base, bulk_disabled),
+            library_disabled_action_label(base, bulk_disabled, align=True),
             id=widget_id,
             classes=classes,
             compact=True,
         )
         button._library_disabled_marker_base = base
+        # task-31635 (critique #5 item 4): these four flip disabled IN PLACE
+        # (the selection count crossing 0), so they visibly jumped two cells
+        # when the marker left the label. The enabled spelling reserves the
+        # marker's width, and the in-place patcher reads this flag so the
+        # label it rebuilds holds the same column
+        # (``_patch_library_disabled_marker_label``).
+        #
+        # Scope, fix round 1: applied on the MEDIA canvas only. The
+        # Conversations and Notes canvases stash the same marker base on
+        # their own "Export selected" (`library_conversations_canvas.py`,
+        # `library_notes_canvas.py`) and `_apply_library_row_toggle` patches
+        # all three kinds, so those two still shift -- a follow-up, not a
+        # widened diff.
+        button._library_disabled_marker_align = True
         button.disabled = bulk_disabled
         # F-018: a disabled action says why.
         button.tooltip = disabled_tooltip if bulk_disabled else enabled_tooltip
@@ -625,6 +648,38 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             danger=True,
         )
 
+    def _gate_failed_action(self, button: Button, base_label: str) -> Button:
+        """Disable a list-wide action whose list failed with nothing in it.
+
+        task-31635 (critique #5 item 6): with the FIRST load failed,
+        "Export…" -- which exports the whole filtered list -- stayed live
+        and colour-normal beside the recovery callout, while "Select" had
+        already gone to its "○" marker with a reason. Fix round 1: the
+        predicate is failure AND nothing retained (the screen's
+        ``_library_media_list_unselectable``), not the callout's broader
+        one: a later-page failure keeps its rows (that retention is the
+        callout's whole point) and a facet-only failure never touches them,
+        and those rows export fine.
+
+        Applied BEFORE ``_gate_stale_action`` at each call site, so a write
+        in flight or a stale page still wins the tooltip: those are the
+        more immediate blocker, and PR E's precedence is untouched.
+
+        Args:
+            button: The list-wide action to gate.
+            base_label: The action's plain enabled label.
+
+        Returns:
+            The same button, gated when the list failed with no rows behind
+            it.
+        """
+        failure = self.load_failure
+        if failure is not None and self.list_unselectable:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = failure.disabled_tooltip
+        return button
+
     def _gate_mutation_action(self, button: Button, base_label: str) -> Button:
         """Disable even recovery controls only while a write is unsettled."""
         if self.mutation_action_reason:
@@ -660,10 +715,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # title row carries ~9 chars in a min-width-40 pane, so both widgets
         # always render at full width. Auto-width Static + fixed compact
         # Button only (task-4023's render-safe grammar: no 1fr sibling).
-        # Hidden in select mode like the other list-level actions; on the
-        # fresh-empty page it is not composed at all -- that page pins
-        # exactly ONE recovery action (and display:none still matches DOM
-        # queries).
+        # Hidden in select mode like the other list-level actions.
+        # task-31635 (critique #5 item 7): it survives the fresh-empty page
+        # too. It used to be composed under the same gate as the page's ONE
+        # recovery action, so filtering to zero rows removed the only route
+        # back to a saved review set exactly when the list had nothing else
+        # to offer -- and Sets is navigation, not a result. It is never
+        # disabled here: the picker opens over any list (it carries its own
+        # empty copy, and "Read later" needs no saved set at all). The
+        # recovery-action budget is unaffected -- that count is about the
+        # empty page's own body, and this lives on the title row.
         title_row = Horizontal(id="library-media-title-row")
         title_row.styles.height = "auto"
         with title_row:
@@ -672,16 +733,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # the whole row, pushing the button out of view (live-verified).
             title_static.styles.width = "auto"
             yield title_static
-            if not fresh_zero:
-                sets_btn = Button(
-                    "Sets",
-                    id="library-media-review-sets",
-                    classes="library-canvas-action",
-                    compact=True,
-                    tooltip="Resume, switch, or dismiss saved review sets.",
-                )
-                sets_btn.display = not select_mode
-                yield sets_btn
+            sets_btn = Button(
+                "Sets",
+                id="library-media-review-sets",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Resume, switch, or dismiss saved review sets.",
+            )
+            sets_btn.display = not select_mode
+            yield sets_btn
         filter_row = Horizontal(classes="ds-toolbar")
         filter_row.styles.height = "auto"
         with filter_row:
@@ -800,15 +860,20 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             compact=True,
         )
         export_btn.display = not select_mode
+        self._gate_failed_action(export_btn, "Export…")
         self._gate_stale_action(export_btn, "Export…")
         # task-4025: the browsable Trash surface's entry point -- a
         # plain navigation action (never a `type:` cycle value: `type:`
         # cycles CONTENT types derived from the records, and trash is a
         # STATE). Always enabled: the trash count isn't known until its
         # view fetches, and an empty Trash shows its honest empty copy
-        # rather than this button lying disabled. Hidden in select mode
-        # like "Export…" -- Select's toolbar is for acting on the
-        # selection, not navigating away from it.
+        # rather than this button lying disabled. task-31635 fix round 1
+        # keeps that even under a failed Media load -- Trash is a route into
+        # a view with its OWN fetch, callout and Retry, so disabling it
+        # would remove the only way to reach deleted items exactly when the
+        # store is unhappy. Hidden in select mode like "Export…" -- Select's
+        # toolbar is for acting on the selection, not navigating away from
+        # it.
         trash_btn = Button(
             "Trash",
             id="library-media-trash-open",

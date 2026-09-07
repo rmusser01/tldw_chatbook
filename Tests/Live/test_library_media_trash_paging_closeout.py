@@ -569,7 +569,8 @@ async def _assert_fixed_controls_painted(
     painted = _painted_text(screen)
     for copy in ("Local Trash", "Type: All", "Previous", "Next", "Restore"):
         assert copy in painted, (width, copy, painted)
-    assert "Delete permanently" in painted
+    # task-31635 item 3: the shorter destructive word (see the canvas).
+    assert "Delete forever" in painted
     return painted
 
 
