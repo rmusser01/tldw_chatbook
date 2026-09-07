@@ -328,6 +328,12 @@ class ConsoleMessageActionService:
         ("continue", "--->"),
         ("feedback", "Feedback"),
         ("delete", "🗑"),
+        # TASK-31759: More-menu note actions over the active-path span up
+        # to and including the selected message. Overflow-only (never in
+        # ``_PRIMARY_ACTION_IDS``) and dispatched by the UI router before
+        # ``dispatch()`` -- same pattern as ``save-as``.
+        ("summarize-note", "Summarize up to here as note"),
+        ("save-transcript-note", "Save transcript up to here as note"),
     )
     #: TASK-1860: reveals the FULL tool result behind a truncated marker.
     #: Offered only for a TOOL marker that actually carries more than its
@@ -776,6 +782,8 @@ class ConsoleMessageActionService:
                     )
                 )
             elif action.action_id.startswith("canvas-open"):
+                overflow.append(action)
+            elif action.action_id in {"summarize-note", "save-transcript-note"}:
                 overflow.append(action)
         return tuple(overflow)
 
