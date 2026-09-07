@@ -759,3 +759,27 @@ async def test_fork_requested_dispatches_to_the_named_session_callback_once():
         assert await screen.handle_console_message_action(event) is True
 
     request.assert_called_once_with(message.id)
+
+
+@pytest.mark.asyncio
+async def test_save_as_note_uses_configured_notes_owner():
+    """TASK-31901: save-as Note must persist under app.notes_user_id (the
+    identity local note views read), not current_user/default_user."""
+    app = _build_test_app()
+    app.notes_user_id = "notes-owner-42"
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1"})
+    )
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="saved text"
+    )
+
+    await screen._message._save_console_message_as_note(message.id)
+
+    assert (
+        app.notes_scope_service.save_note.await_args.kwargs["user_id"]
+        == "notes-owner-42"
+    )
