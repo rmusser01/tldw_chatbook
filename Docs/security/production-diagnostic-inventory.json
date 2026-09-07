@@ -162,8 +162,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "cf06a5dd5a6a78b15254",
+      "call_count": 8,
+      "diagnostic_digest": "4831705ae39dd0acb8f8",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_capture.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -11460,7 +11460,7 @@
     "owner_files": 589,
     "path_privacy_candidate_calls": 710,
     "persistent_sink_files": 12,
-    "task_31551_calls": 52,
+    "task_31551_calls": 53,
     "task_492_calls": 1347,
     "task_494_calls": 7673
   }
