@@ -4,14 +4,86 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 from threading import BoundedSemaphore
 from typing import TypeVar
 
 from .compiler import _compile_document
-from .models import CanvasCompiledPlan
-from .profiles import ProfileSnapshot
+from .limits import CanvasLimitError
+from .models import (
+    CanvasCompiledPlan,
+    CanvasRenderPlan,
+    CanvasRenderPlanV2,
+    CanvasSourceIdentity,
+)
+from .profiles import ProfileSnapshot, resolve_profile
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCanvasDocument:
+    """Internal result of owner-admitted preparation; never an archive or wire value."""
+
+    plan: CanvasCompiledPlan
+    source_identity: CanvasSourceIdentity
+    runtime_profile: str
+    parent_profile: str | None
+    snapshot: ProfileSnapshot
+
+    @classmethod
+    def capture(
+        cls,
+        plan: CanvasCompiledPlan,
+        source: str,
+        *,
+        parent_profile: str | None,
+        snapshot: ProfileSnapshot,
+    ) -> PreparedCanvasDocument:
+        """Capture selection only from a freshly computed compiler result."""
+        if not isinstance(plan, (CanvasRenderPlan, CanvasRenderPlanV2)):
+            raise CanvasLimitError("prepared-plan-profile")
+        prepared = cls(
+            plan,
+            CanvasSourceIdentity.from_source(source),
+            plan.runtime_profile,
+            parent_profile,
+            snapshot,
+        )
+        prepared.validate(source, parent_profile=parent_profile, snapshot=snapshot)
+        return prepared
+
+    def validate(
+        self,
+        source: str,
+        *,
+        parent_profile: str | None,
+        snapshot: ProfileSnapshot,
+        offered: CanvasCompiledPlan | None = None,
+    ) -> CanvasCompiledPlan:
+        """Compare offered identities against independently prepared source/selection."""
+        plan = self.plan if offered is None else offered
+        if not isinstance(plan, (CanvasRenderPlan, CanvasRenderPlanV2)):
+            raise CanvasLimitError("prepared-plan-profile")
+        if (
+            self.source_identity != CanvasSourceIdentity.from_source(source)
+            or plan.source_identity != self.source_identity
+        ):
+            raise CanvasLimitError("prepared-plan-source")
+        resolved = resolve_profile(
+            snapshot,
+            operation="load",
+            parent_profile=self.runtime_profile,
+            has_diagrams=False,
+        )
+        if (
+            snapshot is not self.snapshot
+            or parent_profile != self.parent_profile
+            or plan.runtime_profile != resolved.profile_id
+            or not resolved.executable
+        ):
+            raise CanvasLimitError("prepared-plan-profile")
+        return self.plan
 
 
 def prepare_canvas_document(

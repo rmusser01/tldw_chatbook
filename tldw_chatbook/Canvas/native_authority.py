@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from .compilation import PreparedCanvasDocument
 from .compiler import compile_canvas_document
 from .gateway import (
     BridgeConfirmationRequest,
@@ -25,17 +26,16 @@ from .gateway import (
     CanvasSourceResponse,
 )
 from .limits import (
-    SUPPORTED_CANVAS_RUNTIME_PROFILE,
     UnsupportedCanvasRuntimeProfile,
     sha256_utf8,
     validate_utf8_text,
 )
 from .models import (
     CanvasReadResult,
-    CanvasRenderPlan,
     CanvasRevisionInfo,
     CanvasScope,
 )
+from .profiles import resolve_profile
 
 
 class _TitleParser(HTMLParser):
@@ -117,13 +117,14 @@ class _ImportCapture:
     selection: tuple[str, str] | None
     owner: Any
     view_generation: int
+    parent_profile: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class _PreparedImport:
     capture: _ImportCapture
     title: str
-    plan: CanvasRenderPlan
+    plan: PreparedCanvasDocument
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,11 +446,26 @@ class NativeConsoleCanvasAuthority:
             owner = self._canvas_controller.capture_interactive_owner(
                 scope, temporary=self._is_temporary(scope)
             )
-            return _ImportCapture(scope, selection, owner, self._view_generation)
+            parent_profile = None
+            if selection is not None and not block_arguments.get("create_new", False):
+                parent_profile = self._read_exact(
+                    replace(
+                        scope,
+                        selected_canvas_id=selection[0],
+                        selected_revision_id=selection[1],
+                    ),
+                    selection[0],
+                    selection[1],
+                ).revision.runtime_profile
+            return _ImportCapture(
+                scope, selection, owner, self._view_generation, parent_profile
+            )
 
     def _prepare_import(self, capture: _ImportCapture, source: str) -> _PreparedImport:
         plan = self._canvas_controller.prepare_import(
-            source, temporary=self._is_temporary(capture.scope)
+            source,
+            temporary=self._is_temporary(capture.scope),
+            parent_profile=capture.parent_profile,
         )
         return _PreparedImport(capture, _document_title(source), plan)
 
@@ -711,10 +727,19 @@ class NativeConsoleCanvasAuthority:
             captured, temporary=self._is_temporary(captured)
         )
         read = self._read_exact(captured, scope.canvas_id, scope.revision_id)
-        if read.revision.runtime_profile != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+        snapshot = self._canvas_controller.profile_snapshot
+        resolved = resolve_profile(
+            snapshot,
+            operation="load",
+            parent_profile=read.revision.runtime_profile,
+            has_diagrams=False,
+        )
+        if not resolved.executable:
             raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
-            lambda: compile_canvas_document(read.source)
+            lambda: compile_canvas_document(
+                read.source, runtime_profile=resolved.profile_id, snapshot=snapshot
+            )
         )
         current = self._selected_scope(scope)
         if (
@@ -1098,7 +1123,7 @@ class NativeConsoleCanvasAuthority:
         *,
         origin_message_id: str,
         origin_turn_id: str,
-        prepared_plan: CanvasRenderPlan,
+        prepared_plan: PreparedCanvasDocument,
         expected_owner: Any,
     ) -> Any:
         result = self._canvas_controller.interactive_create_canvas(
@@ -1108,7 +1133,7 @@ class NativeConsoleCanvasAuthority:
             title=title,
             html=source,
             temporary=self._is_temporary(scope),
-            _prepared_plan=prepared_plan,
+            _preparation=prepared_plan,
             _expected_owner=expected_owner,
         )
         return type(
@@ -1130,7 +1155,7 @@ class NativeConsoleCanvasAuthority:
         *,
         origin_message_id: str,
         origin_turn_id: str,
-        prepared_plan: CanvasRenderPlan,
+        prepared_plan: PreparedCanvasDocument,
         expected_owner: Any,
     ):
         result = self._canvas_controller.interactive_update_canvas(
@@ -1141,7 +1166,7 @@ class NativeConsoleCanvasAuthority:
             expected_parent_revision_id=parent_id,
             html=source,
             temporary=self._is_temporary(scope),
-            _prepared_plan=prepared_plan,
+            _preparation=prepared_plan,
             _expected_owner=expected_owner,
         )
         if not hasattr(result, "revision"):

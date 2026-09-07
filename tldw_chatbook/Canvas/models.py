@@ -90,7 +90,7 @@ class CanvasListItem:
     revision_id: str
     parent_revision_id: str | None
     title: str
-    runtime_profile: RuntimeProfile
+    runtime_profile: str
     content_sha256: str
     source_bytes: int
     sequence: int
@@ -107,7 +107,7 @@ class CanvasRevisionInfo:
     revision_id: str
     parent_revision_id: str | None
     title: str
-    runtime_profile: RuntimeProfile
+    runtime_profile: str
     content_sha256: str
     source_bytes: int
     sequence: int
