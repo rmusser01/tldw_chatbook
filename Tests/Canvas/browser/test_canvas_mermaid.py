@@ -25,6 +25,142 @@ from Tests.Canvas.browser.test_canvas_zero_egress import (
 pytestmark = pytest.mark.loopback_network
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "badPlan.css_rules = null;",
+        "badPlan.css_rules = [17];",
+        "badPlan.css_rules = Array(901).fill('p {color:red;}');",
+        "badPlan.css_rules = ['@media screen {' + 'p {color:red;}'.repeat(900) + '}'];",
+        "badPlan.assets = null;",
+        "badPlan.assets = [{asset_id:'a', mime_type:'image/png', data_base64:'!'}];",
+        "badPlan.assets = [{asset_id:'a', mime_type:'text/html', data_base64:'YWJj'}];",
+        "badPlan.assets = [{asset_id:'a', mime_type:'image/png', data_base64:'YWJj', extra:true}];",
+        "badPlan.root.tag = 'script';",
+        "badPlan.root.text = 17;",
+        "badPlan.root.text = '';",
+        "badPlan.root.attributes.push(['onclick', 'alert(1)']);",
+        "badPlan.root.attributes.push(['title', 17]);",
+        "badPlan.root.children[0].tag = '#text';",
+        "badPlan.root.children[0].children.push({node_id:'bad-svg',tag:'svg',text:null,attributes:[],children:[{node_id:'bad-html',tag:'div',text:null,attributes:[],children:[]}]});",
+        "badPlan.root.children.push({node_id:'bad-img',tag:'img',text:null,attributes:[['data-canvas-asset','missing']],children:[]});",
+    ],
+)
+def test_worker_rejects_generic_record_corruption_before_prepared(
+    candidate_snapshot,
+    chromium_browser,
+    asset_server,
+    egress_server,
+    mutation,
+):
+    asset_server.v2 = True
+    original = (STATIC / "canvas_renderer_v2.js").read_text()
+    before = 'worker.postMessage({type: "prepare", plan: pendingPlan, runtime_data: pendingRuntimeData});'
+    assert before in original
+    after = (
+        "const badPlan = JSON.parse(JSON.stringify(pendingPlan));"
+        + mutation
+        + 'worker.postMessage({type: "prepare", plan: badPlan, runtime_data: pendingRuntimeData});'
+    )
+    asset_server.runtime_overrides["/static/canvas_renderer_v2.js"] = original.replace(
+        before, after
+    ).encode()
+    source = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        plan = _wire_plan(
+            source, runtime_profile="canvas-v2-mermaid-1", snapshot=candidate_snapshot
+        )
+        status = _load(page, plan, recorder, source=source)
+        assert status["state"] == "failed", status
+        assert status["code"] == "runtime-error", status
+        assert page.evaluate("window.__canvasHarness.startupApproved") is None
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+def test_authored_diagram_text_matches_native_text(
+    candidate_snapshot,
+    chromium_browser,
+    asset_server,
+    egress_server,
+):
+    asset_server.v2 = True
+    source = """<pre id="diagram" data-canvas-diagram="mermaid">flowchart TD
+A[Tea]</pre><script>
+const target = document.getElementById("diagram");
+canvas.submit({
+  target: target.textContent,
+  wrapper: target.querySelector("div").textContent,
+  svg: target.querySelector("svg").textContent,
+  label: target.querySelector("text").textContent,
+  source: target.querySelector("pre").textContent
+});
+</script>"""
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        plan = _wire_plan(
+            source, runtime_profile="canvas-v2-mermaid-1", snapshot=candidate_snapshot
+        )
+        status = _load(page, plan, recorder, source=source)
+        assert status["state"] == "ready", status
+        virtual = page.evaluate("""window.__canvasHarness.messages.find(
+            item => item.type === 'canvas:bridge-request' && item.kind === 'submit').value""")
+        target = page.frame(name="canvas-renderer").locator("#diagram")
+        native = {
+            name: locator.text_content()
+            for name, locator in {
+                "target": target,
+                "wrapper": target.locator("div"),
+                "svg": target.locator("svg"),
+                "label": target.locator("text"),
+                "source": target.locator("pre"),
+            }.items()
+        }
+        assert (
+            native["target"]
+            == "Flowchart. Diagram source follows.Teaflowchart TD\nA[Tea]"
+        )
+        assert virtual == native
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
+def test_generic_worker_admission_preserves_real_css_and_raster_assets(
+    candidate_snapshot,
+    chromium_browser,
+    asset_server,
+    egress_server,
+):
+    asset_server.v2 = True
+    from Tests.Canvas.browser.test_canvas_zero_egress import FIXTURES
+
+    source = (FIXTURES / "benign_canvas.html").read_text()
+    source = source.replace(
+        "</body>",
+        '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre></body>',
+    )
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        plan = _wire_plan(
+            source, runtime_profile="canvas-v2-mermaid-1", snapshot=candidate_snapshot
+        )
+        status = _load(page, plan, recorder, source=source)
+        assert status["state"] == "ready", status
+        frame = page.frame(name="canvas-renderer")
+        assert frame.locator("img").evaluate_all(
+            "images => images.every(image => image.complete && image.naturalWidth === 1)"
+        )
+        assert (
+            frame.locator("pre[data-canvas-diagram] svg text").text_content() == "Tea"
+        )
+        _assert_zero_generated_egress(recorder, egress_server)
+    finally:
+        context.close()
+
+
 def test_unexpected_engine_failure_is_not_reported_as_quota_success(
     candidate_snapshot,
     chromium_browser,

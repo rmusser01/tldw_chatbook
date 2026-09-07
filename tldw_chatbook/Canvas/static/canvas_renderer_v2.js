@@ -1,9 +1,9 @@
 /*
- * Chatbook Canvas V1 trusted renderer.
+ * Chatbook Canvas V2 candidate trusted renderer.
  *
- * Model-authored source never enters this realm. The renderer accepts only the
- * compiler's typed plan and the worker's typed patches, validates both again,
- * and uses DOM/CSSOM construction APIs. Keep this file external: the renderer
+ * Authored HTML and library source enter only as inert integrity-checked strings;
+ * neither is evaluated here. The renderer validates the compiler's typed plan
+ * and worker's typed patches, then uses DOM/CSSOM construction APIs. Keep this file external: the renderer
  * response's CSP deliberately permits no generated/native script text.
  */
 

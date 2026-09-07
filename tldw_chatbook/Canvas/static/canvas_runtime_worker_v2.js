@@ -143,6 +143,465 @@ async function verifiedDiagramSource(value, data) {
   return library.source;
 }
 
+// Native structural admission uses the same fixed vocabulary and bounded raster
+// metadata grammar as the renderer. It performs no DOM/CSSOM construction.
+const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const MAX = Object.freeze({
+  htmlBytes: 512 * 1024,
+  assets: 64,
+  assetBytes: 1024 * 1024,
+  aggregateAssetBytes: 4 * 1024 * 1024,
+  imageDimension: 4096,
+  imagePixels: 4 * 1024 * 1024,
+  aggregateImagePixels: 16 * 1024 * 1024,
+  imageFrames: 1,
+  domNodes: 1800,
+  cssRules: 900,
+  scriptBytes: 256 * 1024,
+});
+
+const HTML_TAGS = new Set([
+  "a", "abbr", "address", "article", "aside", "b", "bdi", "bdo",
+  "blockquote", "body", "br", "button", "caption", "cite", "code", "col",
+  "colgroup", "data", "datalist", "dd", "del", "details", "dfn", "div",
+  "dl", "dt", "em", "fieldset", "figcaption", "figure", "footer", "form",
+  "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html",
+  "i", "img", "input", "ins", "kbd", "label", "legend", "li", "main",
+  "mark", "menu", "meta", "meter", "nav", "ol", "optgroup", "option",
+  "output", "p", "pre", "progress", "q", "s", "samp", "section", "select",
+  "small", "span", "strong", "sub", "summary", "sup", "table", "tbody",
+  "td", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "u",
+  "ul", "var", "wbr",
+]);
+const SVG_TAGS = new Set([
+  "svg", "g", "circle", "ellipse", "line", "path", "polygon", "polyline",
+  "rect", "text", "tspan",
+]);
+const GLOBAL_ATTRIBUTES = new Set([
+  "class", "dir", "hidden", "id", "lang", "role", "style", "tabindex",
+  "title",
+]);
+const HTML_ATTRIBUTES = Object.freeze({
+  a: new Set(["href"]),
+  button: new Set(["disabled", "name", "type", "value"]),
+  col: new Set(["span"]),
+  colgroup: new Set(["span"]),
+  data: new Set(["value"]),
+  del: new Set(["datetime"]),
+  fieldset: new Set(["disabled", "name"]),
+  form: new Set(["name", "novalidate"]),
+  img: new Set(["alt", "decoding", "height", "loading", "width"]),
+  input: new Set([
+    "checked", "disabled", "form", "list", "max", "maxlength", "min",
+    "minlength", "multiple", "name", "pattern", "placeholder", "readonly",
+    "required", "size", "step", "type", "value",
+  ]),
+  ins: new Set(["datetime"]),
+  label: new Set(["for"]),
+  li: new Set(["value"]),
+  meta: new Set(["charset"]),
+  meter: new Set(["high", "low", "max", "min", "optimum", "value"]),
+  ol: new Set(["reversed", "start", "type"]),
+  optgroup: new Set(["disabled", "label"]),
+  option: new Set(["disabled", "label", "selected", "value"]),
+  output: new Set(["for", "form", "name"]),
+  progress: new Set(["max", "value"]),
+  select: new Set(["disabled", "form", "multiple", "name", "required", "size"]),
+  td: new Set(["colspan", "headers", "rowspan"]),
+  textarea: new Set([
+    "cols", "disabled", "form", "maxlength", "minlength", "name",
+    "placeholder", "readonly", "required", "rows", "wrap",
+  ]),
+  th: new Set(["abbr", "colspan", "headers", "rowspan", "scope"]),
+  time: new Set(["datetime"]),
+});
+const SVG_ATTRIBUTES = new Set([
+  "cx", "cy", "d", "fill", "fill-opacity", "height", "points",
+  "preserveAspectRatio", "r", "rx", "ry", "stroke", "stroke-dasharray",
+  "stroke-dashoffset", "stroke-linecap", "stroke-linejoin", "stroke-opacity",
+  "stroke-width", "text-anchor", "transform", "vector-effect", "viewBox",
+  "width", "x", "x1", "x2", "y", "y1", "y2",
+]);
+const INPUT_TYPES = new Set([
+  "button", "checkbox", "color", "date", "datetime-local", "email", "hidden",
+  "month", "number", "password", "radio", "range", "reset", "search",
+  "submit", "tel", "text", "time", "url", "week",
+]);
+const BUTTON_TYPES = new Set(["button", "reset", "submit"]);
+
+const PASSIVE_IMAGE_TYPES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
+
+function readU16BigEndian(bytes, offset) {
+  if (offset < 0 || offset + 2 > bytes.length) throw new Error("truncated image metadata");
+  return (bytes[offset] << 8) | bytes[offset + 1];
+}
+
+function readU16LittleEndian(bytes, offset) {
+  if (offset < 0 || offset + 2 > bytes.length) throw new Error("truncated image metadata");
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readU24LittleEndian(bytes, offset) {
+  if (offset < 0 || offset + 3 > bytes.length) throw new Error("truncated image metadata");
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+}
+
+function readU32BigEndian(bytes, offset) {
+  if (offset < 0 || offset + 4 > bytes.length) throw new Error("truncated image metadata");
+  return (
+    bytes[offset] * 0x1000000 +
+    (bytes[offset + 1] << 16) +
+    (bytes[offset + 2] << 8) +
+    bytes[offset + 3]
+  );
+}
+
+function readU32LittleEndian(bytes, offset) {
+  if (offset < 0 || offset + 4 > bytes.length) throw new Error("truncated image metadata");
+  return (
+    bytes[offset] +
+    (bytes[offset + 1] << 8) +
+    (bytes[offset + 2] << 16) +
+    bytes[offset + 3] * 0x1000000
+  );
+}
+
+function imageType(bytes, offset) {
+  if (offset < 0 || offset + 4 > bytes.length) throw new Error("truncated image metadata");
+  return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+}
+
+function validateRaster(width, height, frames = 1) {
+  if (
+    !Number.isSafeInteger(width) || !Number.isSafeInteger(height) ||
+    width < 1 || height < 1 ||
+    width > MAX.imageDimension || height > MAX.imageDimension ||
+    width * height > MAX.imagePixels
+  ) throw new Error("asset pixel boundary");
+  if (!Number.isSafeInteger(frames) || frames < 1 || frames > MAX.imageFrames) {
+    throw new Error("animated images are forbidden");
+  }
+  return {width, height, pixels: width * height, frames};
+}
+
+function parsePng(bytes) {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (bytes.length < 8 || !signature.every((value, index) => bytes[index] === value)) {
+    throw new Error("asset signature");
+  }
+  let offset = 8;
+  let metadata = null;
+  let ended = false;
+  while (offset + 12 <= bytes.length) {
+    const length = readU32BigEndian(bytes, offset);
+    const end = offset + 12 + length;
+    if (!Number.isSafeInteger(end) || end > bytes.length) throw new Error("truncated PNG chunk");
+    const type = imageType(bytes, offset + 4);
+    if (metadata === null && type !== "IHDR") throw new Error("PNG IHDR order");
+    if (type === "IHDR") {
+      if (metadata !== null || length !== 13) throw new Error("PNG IHDR schema");
+      metadata = validateRaster(
+        readU32BigEndian(bytes, offset + 8),
+        readU32BigEndian(bytes, offset + 12),
+      );
+    }
+    if (type === "acTL") throw new Error("animated PNG is forbidden");
+    offset = end;
+    if (type === "IEND") {
+      if (length !== 0 || metadata === null) throw new Error("PNG IEND schema");
+      ended = true;
+      break;
+    }
+  }
+  if (!ended || offset !== bytes.length || metadata === null) throw new Error("incomplete PNG");
+  return metadata;
+}
+
+function parseJpeg(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    throw new Error("asset signature");
+  }
+  const startOfFrame = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
+    0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+  ]);
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) throw new Error("JPEG marker boundary");
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) throw new Error("truncated JPEG marker");
+    const marker = bytes[offset];
+    offset += 1;
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+    const length = readU16BigEndian(bytes, offset);
+    if (length < 2 || offset + length > bytes.length) throw new Error("truncated JPEG segment");
+    if (startOfFrame.has(marker)) {
+      if (length < 7) throw new Error("JPEG frame schema");
+      return validateRaster(
+        readU16BigEndian(bytes, offset + 5),
+        readU16BigEndian(bytes, offset + 3),
+      );
+    }
+    offset += length;
+  }
+  throw new Error("JPEG frame is missing");
+}
+
+function skipGifSubBlocks(bytes, offset) {
+  while (true) {
+    if (offset >= bytes.length) throw new Error("truncated GIF sub-block");
+    const length = bytes[offset];
+    offset += 1;
+    if (length === 0) return offset;
+    if (offset + length > bytes.length) throw new Error("truncated GIF sub-block");
+    offset += length;
+  }
+}
+
+function parseGif(bytes) {
+  const header = bytes.length >= 6
+    ? String.fromCharCode(...bytes.subarray(0, 6))
+    : "";
+  if (header !== "GIF87a" && header !== "GIF89a") throw new Error("asset signature");
+  if (bytes.length < 13) throw new Error("truncated GIF header");
+  const width = readU16LittleEndian(bytes, 6);
+  const height = readU16LittleEndian(bytes, 8);
+  const packed = bytes[10];
+  let offset = 13;
+  if (packed & 0x80) offset += 3 * (2 ** ((packed & 0x07) + 1));
+  if (offset > bytes.length) throw new Error("truncated GIF color table");
+  let frames = 0;
+  while (offset < bytes.length) {
+    const block = bytes[offset];
+    offset += 1;
+    if (block === 0x3b) {
+      if (offset !== bytes.length) throw new Error("GIF trailer boundary");
+      return validateRaster(width, height, frames);
+    }
+    if (block === 0x21) {
+      if (offset >= bytes.length) throw new Error("truncated GIF extension");
+      offset += 1;
+      offset = skipGifSubBlocks(bytes, offset);
+      continue;
+    }
+    if (block === 0x2c) {
+      if (offset + 9 > bytes.length) throw new Error("truncated GIF frame");
+      const left = readU16LittleEndian(bytes, offset);
+      const top = readU16LittleEndian(bytes, offset + 2);
+      const frameWidth = readU16LittleEndian(bytes, offset + 4);
+      const frameHeight = readU16LittleEndian(bytes, offset + 6);
+      const framePacked = bytes[offset + 8];
+      validateRaster(frameWidth, frameHeight);
+      if (left + frameWidth > width || top + frameHeight > height) {
+        throw new Error("GIF frame exceeds logical screen");
+      }
+      frames += 1;
+      if (frames > MAX.imageFrames) throw new Error("animated GIF is forbidden");
+      offset += 9;
+      if (framePacked & 0x80) offset += 3 * (2 ** ((framePacked & 0x07) + 1));
+      if (offset >= bytes.length) throw new Error("truncated GIF image data");
+      offset += 1;
+      offset = skipGifSubBlocks(bytes, offset);
+      continue;
+    }
+    if (block !== 0x00) throw new Error("unknown GIF block");
+  }
+  throw new Error("GIF trailer is missing");
+}
+
+function parseWebp(bytes) {
+  if (
+    bytes.length < 12 || imageType(bytes, 0) !== "RIFF" ||
+    imageType(bytes, 8) !== "WEBP" || readU32LittleEndian(bytes, 4) + 8 !== bytes.length
+  ) throw new Error("asset signature");
+  let offset = 12;
+  let containerMetadata = null;
+  let frameMetadata = null;
+  while (offset + 8 <= bytes.length) {
+    const type = imageType(bytes, offset);
+    const length = readU32LittleEndian(bytes, offset + 4);
+    const dataOffset = offset + 8;
+    const end = dataOffset + length;
+    if (!Number.isSafeInteger(end) || end > bytes.length) throw new Error("truncated WebP chunk");
+    if (type === "ANIM" || type === "ANMF") throw new Error("animated WebP is forbidden");
+    if (type === "VP8X") {
+      if (containerMetadata !== null || length < 10 || (bytes[dataOffset] & 0x02)) {
+        throw new Error("WebP extended header schema");
+      }
+      containerMetadata = validateRaster(
+        readU24LittleEndian(bytes, dataOffset + 4) + 1,
+        readU24LittleEndian(bytes, dataOffset + 7) + 1,
+      );
+    } else if (type === "VP8 ") {
+      if (
+        frameMetadata !== null || length < 10 || bytes[dataOffset + 3] !== 0x9d ||
+        bytes[dataOffset + 4] !== 0x01 || bytes[dataOffset + 5] !== 0x2a
+      ) throw new Error("WebP lossy frame schema");
+      frameMetadata = validateRaster(
+        readU16LittleEndian(bytes, dataOffset + 6) & 0x3fff,
+        readU16LittleEndian(bytes, dataOffset + 8) & 0x3fff,
+      );
+    } else if (type === "VP8L") {
+      if (frameMetadata !== null || length < 5 || bytes[dataOffset] !== 0x2f) {
+        throw new Error("WebP lossless frame schema");
+      }
+      const bits = readU32LittleEndian(bytes, dataOffset + 1) >>> 0;
+      frameMetadata = validateRaster((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
+    }
+    offset = end + (length & 1);
+  }
+  if (offset !== bytes.length || frameMetadata === null) throw new Error("WebP frame is missing");
+  if (
+    containerMetadata !== null &&
+    (containerMetadata.width !== frameMetadata.width ||
+      containerMetadata.height !== frameMetadata.height)
+  ) throw new Error("WebP canvas/frame dimensions differ");
+  return containerMetadata ?? frameMetadata;
+}
+
+function parseRasterMetadata(mimeType, bytes) {
+  if (mimeType === "image/png") return parsePng(bytes);
+  if (mimeType === "image/jpeg") return parseJpeg(bytes);
+  if (mimeType === "image/gif") return parseGif(bytes);
+  if (mimeType === "image/webp") return parseWebp(bytes);
+  throw new Error("asset type");
+}
+
+function decodeAsset(asset, aggregateBytes) {
+  if (!ownRecord(asset, ["asset_id", "mime_type", "data_base64"])) throw new Error("asset schema");
+  if (!boundedIdentifier(asset.asset_id) || !PASSIVE_IMAGE_TYPES.has(asset.mime_type)) {
+    throw new Error("asset identity/type");
+  }
+  if (
+    !boundedString(asset.data_base64, Math.ceil(MAX.assetBytes / 3) * 4) ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.data_base64)
+  ) {
+    throw new Error("asset base64");
+  }
+  let binary;
+  try {
+    binary = atob(asset.data_base64);
+  } catch (_) {
+    throw new Error("asset base64");
+  }
+  if (binary.length > MAX.assetBytes || aggregateBytes + binary.length > MAX.aggregateAssetBytes) {
+    throw new Error("asset byte limit");
+  }
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return {bytes, size: binary.length, ...parseRasterMetadata(asset.mime_type, bytes)};
+}
+
+
+function validatePlanAttribute(tag, namespace, name, value, assetIds) {
+  if (!boundedIdentifier(name) || !boundedString(value, 16384)) throw new Error("attribute-schema");
+  if (name === "data-canvas-asset") {
+    if (tag !== "img" || !assetIds.has(value)) throw new Error("asset-reference");
+    return;
+  }
+  if (!(GLOBAL_ATTRIBUTES.has(name) || name.startsWith("aria-") || name.startsWith("data-") ||
+        (namespace === SVG_NAMESPACE ? SVG_ATTRIBUTES.has(name) : HTML_ATTRIBUTES[tag]?.has(name)))) {
+    throw new Error("attribute-name");
+  }
+  if (name.startsWith("on")) throw new Error("event-attribute");
+  if (name === "href" && !(tag === "a" && /^#[^\s]+$/.test(value))) throw new Error("navigation-attribute");
+  const normalized = value.trim().toLowerCase();
+  if (tag === "input" && name === "type" && !INPUT_TYPES.has(normalized)) throw new Error("input-type");
+  if (tag === "button" && name === "type" && !BUTTON_TYPES.has(normalized)) throw new Error("button-type");
+  if (tag === "meta" && name === "charset" && normalized !== "utf-8") throw new Error("meta-charset");
+}
+
+function countCssRules(source) {
+  // Count nested rule blocks without treating strings, comments or escaped
+  // characters as delimiters. CSSOM value/paint validation stays in the renderer.
+  let count = 0, depth = 0, quote = null;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "\\") { index += 1; continue; }
+    if (quote !== null) {
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') { quote = character; continue; }
+    if (character === "/" && source[index + 1] === "*") {
+      const end = source.indexOf("*/", index + 2);
+      if (end < 0) throw new Error("css-comment");
+      index = end + 1;
+    } else if (character === "{") {
+      count += 1; depth += 1;
+      if (count > MAX.cssRules) throw new Error("css-limit");
+    } else if (character === "}") {
+      if (--depth < 0) throw new Error("css-block");
+    }
+  }
+  if (quote !== null || depth !== 0 || count === 0) throw new Error("css-rule-schema");
+  return count;
+}
+
+function validateGenericPlan(value) {
+  if (!Array.isArray(value.assets) || value.assets.length > MAX.assets ||
+      !Array.isArray(value.css_rules) || value.css_rules.length > MAX.cssRules ||
+      !Array.isArray(value.scripts)) throw new Error("plan-collections");
+  let textBytes = 0;
+  const text = (item, ceiling) => {
+    if (!boundedString(item, ceiling)) throw new Error("plan-text-schema");
+    textBytes += encoder.encode(item).byteLength;
+    if (textBytes > MAX.htmlBytes) throw new Error("plan-text-limit");
+  };
+  let rules = 0;
+  for (const rule of value.css_rules) {
+    text(rule, 65536);
+    rules += countCssRules(rule);
+    if (rules > MAX.cssRules) throw new Error("css-limit");
+  }
+  let scriptBytes = 0;
+  for (const script of value.scripts) {
+    text(script, MAX.scriptBytes);
+    scriptBytes += encoder.encode(script).byteLength;
+    if (scriptBytes > MAX.scriptBytes) throw new Error("script-limit");
+  }
+  const assetIds = new Set();
+  let assetBytes = 0, pixels = 0;
+  for (const asset of value.assets) {
+    const decoded = decodeAsset(asset, assetBytes);
+    if (assetIds.has(asset.asset_id)) throw new Error("asset-identity");
+    assetIds.add(asset.asset_id);
+    assetBytes += decoded.size;
+    pixels += decoded.pixels;
+    if (pixels > MAX.aggregateImagePixels) throw new Error("asset-pixels");
+    text(asset.asset_id, 256); text(asset.mime_type, 256);
+  }
+  if (value.root?.tag !== "html") throw new Error("document-root");
+  const stack = [{node: value.root, namespace: HTML_NAMESPACE}], ids = new Set();
+  while (stack.length) {
+    const {node, namespace: inherited} = stack.pop();
+    if (!ownRecord(node, ["node_id", "tag", "attributes", "text", "children"]) ||
+        !boundedIdentifier(node.node_id) || ids.has(node.node_id) ||
+        !Array.isArray(node.attributes) || !Array.isArray(node.children)) throw new Error("node-schema");
+    ids.add(node.node_id);
+    if (ids.size > MAX.domNodes) throw new Error("dom-limit");
+    text(node.node_id, 256); text(node.tag, 128);
+    if (node.tag === "#text") {
+      if (node.attributes.length || node.children.length) throw new Error("text-node-schema");
+      text(node.text, MAX.htmlBytes);
+      continue;
+    }
+    const namespace = inherited === SVG_NAMESPACE || node.tag === "svg" ? SVG_NAMESPACE : HTML_NAMESPACE;
+    if (!(namespace === SVG_NAMESPACE ? SVG_TAGS : HTML_TAGS).has(node.tag) ||
+        node.text !== null) throw new Error("element-schema");
+    const names = new Set();
+    for (const pair of node.attributes) {
+      if (!Array.isArray(pair) || pair.length !== 2 || names.has(pair[0])) throw new Error("attribute-schema");
+      const [name, value] = pair;
+      validatePlanAttribute(node.tag, namespace, name, value, assetIds);
+      names.add(name);
+      text(name, 256); text(value, 16384);
+    }
+    for (const child of node.children) stack.push({node: child, namespace});
+  }
+}
+
 function validatePlan(value) {
   if (!ownRecord(value, ["runtime_profile", "source_identity", "root", "assets", "css_rules", "scripts", "diagrams", "profile_manifest_sha256"])) {
     throw new Error("render-plan-schema");
@@ -150,32 +609,8 @@ function validatePlan(value) {
   if (value.runtime_profile !== "canvas-v2-mermaid-1" || !Array.isArray(value.scripts)) {
     throw new Error("runtime-profile");
   }
+  validateGenericPlan(value);
   validateDiagramRecords(value);
-  let scriptBytes = 0;
-  for (const script of value.scripts) {
-    if (typeof script !== "string") throw new Error("script-type");
-    scriptBytes += encoder.encode(script).byteLength;
-    if (scriptBytes > LIMITS.scriptBytes) throw new Error("script-limit");
-  }
-  const stack = [value.root];
-  const identifiers = new Set();
-  let count = 0;
-  while (stack.length) {
-    const node = stack.pop();
-    if (!ownRecord(node, ["node_id", "tag", "attributes", "text", "children"])) {
-      throw new Error("node-schema");
-    }
-    if (!boundedIdentifier(node.node_id) || identifiers.has(node.node_id)) {
-      throw new Error("node-identity");
-    }
-    identifiers.add(node.node_id);
-    if (!Array.isArray(node.attributes) || !Array.isArray(node.children)) {
-      throw new Error("node-collections");
-    }
-    count += 1;
-    if (count > LIMITS.domNodes) throw new Error("dom-limit");
-    stack.push(...node.children);
-  }
 }
 
 function postFailure(code, message) {
@@ -1240,7 +1675,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     scenes.forEach((scene, index) => {
       const target = nodes.get(records[index].target_node_id);
       target.style.setProperty("overflow", "auto");
-      target.textContent = "";
+      for (const child of [...target.childNodes]) target.removeChild(child);
       target.appendChild(build(scene.root));
     });
   };
