@@ -8,8 +8,9 @@ protocol to it (spec §3.4):
                              line is immediately followed by exactly ``n``
                              bytes of raw PCM16 (the length-prefix is the
                              ``n`` field on the control line).
-    stdout (worker -> app):  one ``{"id": "S1"}`` / ``{"id": null}`` line per
-                             assign; ``{"segments": [...]}`` for a diarize.
+    stdout (worker -> app):  one ``{"id": "S1", "seq": ..., "self": ...}`` /
+                             ``{"id": null, ...}`` line per assign;
+                             ``{"segments": [...], "self": ...}`` for a diarize.
     stderr (worker -> app):  ``READY`` once, when the ECAPA model is warm.
 
 Crash rule (spec §7): a DEAD worker (exited process / broken pipe / stdout

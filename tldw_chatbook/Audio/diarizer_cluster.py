@@ -114,25 +114,26 @@ class OnlineClusterer:
         """
         return self._seconds.get(cluster_id, 0.0)
 
-    def nearest(self, vector) -> tuple[str, float] | None:
-        """The held cluster closest to `vector`, by cosine distance.
+    def distance_to(self, cluster_id: str, vector) -> float | None:
+        """Cosine distance from `cluster_id`'s own centroid to `vector`.
+
+        Takes a single cluster id rather than searching every centroid (no
+        `centroids()` deep copy, no reaching across modules for the private
+        `_cos` -- review round 1, Minor 5/10) since every caller already
+        knows which cluster it wants to compare against.
 
         Args:
-            vector: A voice embedding to compare against every centroid.
+            cluster_id: Cluster ID (e.g., "S1").
+            vector: A voice embedding to compare against that cluster's centroid.
 
         Returns:
-            ``(cluster_id, cosine_distance)`` for the nearest centroid, or
-            ``None`` when no cluster has been created yet.
+            Cosine distance (1 - similarity), or ``None`` if `cluster_id`
+            holds no centroid.
         """
-        if not self._centroids:
+        cen = self._centroids.get(cluster_id)
+        if cen is None:
             return None
-        vec = np.asarray(vector, dtype=np.float32)
-        best_id, best_dist = None, None
-        for cid, cen in self._centroids.items():
-            dist = 1.0 - _cos(vec, cen)
-            if best_dist is None or dist < best_dist:
-                best_id, best_dist = cid, dist
-        return best_id, best_dist
+        return 1.0 - _cos(np.asarray(vector, dtype=np.float32), cen)
 
     @property
     def threshold(self) -> float:

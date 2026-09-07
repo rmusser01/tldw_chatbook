@@ -420,6 +420,31 @@ def test_batch_mint_starts_past_the_post_crash_start_id():
     assert [s["speaker"] for s in out] == ["S5", "S5"]
 
 
+def test_reconcile_windows_folds_a_surplus_final_onto_one_live_id_as_a_weighted_mean():
+    """Review round 1, Important 2: `reconcile()`'s surplus rule (a leftover
+    final cluster within threshold of an ALREADY-matched live id is the batch
+    pass over-splitting one person, not a second person -- diarizer_cluster.py)
+    means two final clusters reconciling onto the same live id is the designed
+    common case, not a corner case. `out_centroids[live_id]` used to keep
+    whichever centroid came last in file order and threw the other away; it
+    must be the seconds-weighted mean of both, unit-normalised."""
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
+
+    live = {"S1": np.array([1.0, 0.0, 0.0], np.float32)}
+    embs = [np.array([1.0, 0.0, 0.0], np.float32), np.array([0.99, 0.14, 0.0], np.float32)]
+    spans = [(0.0, 1.5), (1.5, 3.0)]  # equal-length windows -> equal weight
+    out_centroids: dict = {}
+
+    _reconcile_windows(spans, embs, live, lambda x, n: np.array([0, 1]), out_centroids=out_centroids)
+
+    expected = np.array([0.995, 0.07, 0.0], np.float32)
+    expected = (expected / np.linalg.norm(expected)).tolist()
+    assert set(out_centroids) == {"S1"}
+    assert out_centroids["S1"] == pytest.approx(expected, abs=1e-3)
+
+
 def test_close_is_best_effort_and_idempotent():
     proc = FakeProc(['{"id": "S1"}\n'])
     d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
@@ -540,6 +565,66 @@ def test_self_flag_requires_threshold_and_min_seconds():
     out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0])
     assert [o["self"] for o in out] == [False, True, True]   # 1 s < 2 s, then 2 s, 3 s
 
+    # Review round 1, Important 5: the threshold arm above was never
+    # exercised (the stub returns a vector inside the gate on every call) --
+    # deleting the distance check from `serve()` would still pass it. An
+    # orthogonal embedding, well past `min_seconds`, must read False too.
+    far_lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0}),
+                 ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
+                 ctl({"cmd": "assign", "sr": 16000, "seq": 1, "n": len(pcm)}), pcm]
+    far_out = _serve_lines(far_lines, embed=lambda pcm: [0.0, 1.0, 0.0])
+    assert far_out[-1]["self"] is False   # 2 s >= min_seconds, but outside the threshold
+
+
+def test_diarize_self_matches_nearest_batch_centroid_and_export_centroid_prefers_it():
+    """Review round 1, Important 6: the whole `diarize` -> `self` path,
+    including the `(segments, {live_id: centroid})` batch contract and
+    `export_centroid`'s post-diarize preference, had no test at all."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"},
+            {"start_s": 2.0, "end_s": 5.0, "speaker": "S2"}]
+
+    def fake_batch(*_a, **_k):
+        return segs, {"S1": [1.0, 0.0, 0.0], "S2": [0.0, 1.0, 0.0]}
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 0.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
+        ctl({"cmd": "export_centroid", "id": "S1"}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+
+    assert out[0]["self"] == "S1"                                   # nearest within threshold
+    assert out[1]["centroid"] == pytest.approx([1.0, 0.0, 0.0])      # the BATCH centroid ...
+    assert out[1]["seconds"] == pytest.approx(2.0)                  # ... with seconds summed from its segments
+
+
+def test_diarize_self_is_null_when_no_batch_centroid_is_within_threshold():
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"}]
+
+    def fake_batch(*_a, **_k):
+        return segs, {"S1": [0.0, 1.0, 0.0]}   # orthogonal to the enrolled vector
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 0.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    assert out[0]["self"] is None
+
+
+def test_a_malformed_enroll_does_not_kill_the_worker():
+    """Important 4 (review round 1): every op shares one framed error path,
+    so a malformed `enroll` (e.g. from a corrupt or wrongly-decrypted
+    voiceprint file) reports `ERROR enroll <type>` on stderr and the loop
+    keeps serving -- it used to crash `serve()` unhandled (PROBE3)."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    lines = [ctl({"cmd": "enroll", "vector": "not-a-list", "threshold": 0.2}),
+             ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": 4}), b"aaaa"]
+    out = _serve_lines(lines, embed=lambda pcm: [1.0, 0.0, 0.0])
+    assert out[-1]["id"] == "S1"   # the loop survived the bad enroll and kept serving
+
 
 def test_enroll_from_pcm_returns_unit_centroid_and_export_centroid_roundtrip():
     pcm = b"\x00\x00" * 16000 * 3
@@ -550,6 +635,17 @@ def test_enroll_from_pcm_returns_unit_centroid_and_export_centroid_roundtrip():
                        embed=lambda pcm: [3.0, 4.0, 0.0])
     assert out[0]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[0]["seconds"] == pytest.approx(3.0)
     assert out[2]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[2]["seconds"] == pytest.approx(3.0)
+
+
+def test_enroll_from_pcm_reports_null_centroid_for_a_zero_magnitude_embedding():
+    """Minor 9 (review round 1): a zero embedding must not come back as a
+    live-looking centroid the owner would happily persist as a dead
+    voiceprint (`_cos` -> 0.0 similarity -> distance 1.0 against everything)."""
+    pcm = b"\x00\x00" * 16000
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm],
+                       embed=lambda pcm: [0.0, 0.0, 0.0])
+    assert out[0] == {"centroid": None}
 
 
 def test_worker_command_loop_pins_the_cluster_it_is_told_to():
