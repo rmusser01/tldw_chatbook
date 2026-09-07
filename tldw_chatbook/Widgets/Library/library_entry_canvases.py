@@ -17,7 +17,11 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
-from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+    sync_load_failure_callout,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 
 
@@ -232,39 +236,17 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         starter content, which stays. This is the same callout the returning
         (non-Get-started) landing has always painted; only the caller site
         differs per mode.
+
+        PR M carry I1: the widget itself is the shared
+        ``load_failure_callout`` -- the browse row and the Media canvas
+        paint the same one, from the same builder.
         """
-        callout = Horizontal(
+        yield load_failure_callout(
+            failure,
             id="library-hub-load-failure",
-            classes=(
-                "ds-recovery-callout is-blocked"
-                if failure.severity == "error"
-                else "ds-recovery-callout"
-            ),
+            copy_id="library-hub-load-failure-copy",
+            retry_id="library-source-retry",
         )
-        callout.styles.height = "auto"
-        with callout:
-            # The reason WRAPS, the Retry keeps its content width --
-            # left to the defaults the 1fr Static swallows the row and
-            # pushes the button outside the callout (measured on the
-            # Media callout at 235x52 and 100x30).
-            copy = Static(
-                failure.message,
-                id="library-hub-load-failure-copy",
-                markup=False,
-            )
-            copy.styles.width = "1fr"
-            copy.styles.min_width = 0
-            yield copy
-            retry = Button(
-                "Retry",
-                id=failure.retry_id or "library-source-retry",
-                classes="console-action-subdued",
-                compact=True,
-                tooltip=failure.disabled_tooltip,
-            )
-            retry.styles.width = "auto"
-            retry.styles.min_width = 0
-            yield retry
 
     def compose(self) -> ComposeResult:
         get_started = self._is_get_started(self.state)
@@ -390,11 +372,8 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
 
     def _sync_load_failure(self, failure: DestinationRecoveryState) -> None:
         """Patch the one load-failure callout's copy and tint in place."""
-        self.query_one("#library-hub-load-failure-copy", Static).update(
-            failure.message
-        )
-        self.query_one("#library-hub-load-failure").set_class(
-            failure.severity == "error", "is-blocked"
+        sync_load_failure_callout(
+            self.query_one("#library-hub-load-failure"), failure
         )
 
     def sync_state(self, state: LibraryLandingCanvasState) -> None:

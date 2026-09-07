@@ -276,9 +276,10 @@ list and dropped both while the confirmation was armed).*
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
-| "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is reduced to its type name (for example `ValueError`), so a private path never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
+| "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is named by the kind of failure it is ("the connection failed", "the database could not be read", or "an unexpected error" when it is none of those), so a private path — and the exception's own text — never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
-| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". It is never disabled by a failed Media load — it is the route to your deleted items exactly when the list is unhappy — whereas "Export…" renders as "○ Export…" with the reason on its tooltip when the list has nothing to select. |
+| "Review these" | Pins the whole filtered list as an ordered review set (see "Review sets" below). Like "Export…" — the other action that acts on the whole filtered list — it renders as "○ Review these" with the failure on its tooltip when the first load failed with nothing behind it, and stays live over rows a later failure retained. |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". It is never disabled by a failed Media load — it is the route to your deleted items exactly when the list is unhappy — whereas "Export…" and "Review these" render as "○ Export…" / "○ Review these" with the reason on their tooltip when the list has nothing to select. |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
 | "Sets" (title row) | Opens the saved-set picker (see "Review sets" below). It stays put on an empty or filtered-to-zero list — it is navigation, not a result, and it is the way back to a saved set when the list itself has nothing to offer. Hidden only in Select mode, like the other list-level actions. |
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
@@ -307,6 +308,15 @@ all stay gated with a reason — and added the failed-undo receipt
 and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
 above. Confirmed against the product code and its tests, not re-verified
 live for this doc-only pass.)*
+
+*Verified against fix/media-riders-m — 2026-09-07 (tasks 31944/31960, live
+at 235x52 on a scratch profile whose media DB path is a directory: the Media
+callout read "Couldn't load media · an unexpected error" with Retry on the
+same row and the $error border, and it kept that border across a Retry press;
+"○ Export…" and "○ Review these" stood gated together over the failed list
+while "Trash" stayed live. This SUPERSEDES the class-name disclosure recorded
+in the 2026-09-05 stamp below — a non-OS/database failure now reads as the
+kind of failure it is, never as `ValueError`.)*
 
 *Verified against fix/media-wave5-g @ c9b3f3a77 — 2026-09-05 (task-31632:
 launched with a scratch profile whose media DB path is a directory; Library ▸

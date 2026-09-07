@@ -50,7 +50,10 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
-from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+)
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -666,6 +669,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         in flight or a stale page still wins the tooltip: those are the
         more immediate blocker, and PR E's precedence is untouched.
 
+        task-31960 (J final review M1) settled the one asymmetry this gate
+        had: "Review these" pins the whole filtered list as an ordered
+        review set -- the same shape of action as "Export…" -- and it alone
+        stayed outside this gate, standing live beside a dimmed Export on a
+        failed first page. It was defensible (its worker re-fetches and
+        notifies on failure), but the asymmetry was unexplained at the
+        surface and symmetry cost one line, so both whole-list actions now
+        gate here. Still deliberately NOT gated: "Trash" (a route into a
+        view with its own fetch, callout and Retry) and the callout's own
+        Retry (``_gate_mutation_action`` only) -- both are how a reader
+        gets out of a failed list.
+
         Args:
             button: The list-wide action to gate.
             base_label: The action's plain enabled label.
@@ -894,6 +909,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tooltip="Review every item in this list, one by one.",
         )
         review_btn.display = not select_mode
+        # task-31960: "Review these" pins the WHOLE filtered list, exactly
+        # like "Export…" -- so it takes the same failed-list gate, in the
+        # same order (failed first, stale second, so a write in flight or a
+        # stale page still wins the tooltip). Before this it was the one
+        # list-wide action outside that gate and stood live and
+        # colour-normal beside a dimmed Export on a failed first page.
+        self._gate_failed_action(review_btn, "Review these")
         self._gate_stale_action(review_btn, "Review these")
         # Disable only when there's nothing to select AND we're not
         # already in select mode -- in select mode the button is "Done"
@@ -1346,38 +1368,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # later attempt) and a hard failure never paint alike.
         failure = self.load_failure
         if failure is not None:
-            classes = "ds-recovery-callout"
-            if failure.severity == "error":
-                classes += " is-blocked"
-            callout = Horizontal(
-                id="library-media-load-failure", classes=classes
+            # PR M carry I1: the widget is the shared
+            # ``load_failure_callout`` -- the landing hub and the Library
+            # browse row paint the same one, from the same builder. This
+            # canvas keeps its own action styling and its write-in-flight
+            # gate (even recovery controls wait for an unsettled write).
+            yield load_failure_callout(
+                failure,
+                id="library-media-load-failure",
+                copy_id="library-media-load-failure-copy",
+                retry_id="library-media-retry",
+                retry_classes="library-canvas-action",
+                gate=self._gate_mutation_action,
             )
-            # Bare harnesses never load the bundle, and Horizontal defaults
-            # to 1fr height -- the callout must wrap to its copy either way.
-            callout.styles.height = "auto"
-            with callout:
-                copy = Static(
-                    failure.message,
-                    id="library-media-load-failure-copy",
-                    markup=False,
-                )
-                # The reason WRAPS; the Retry keeps its content width. Left
-                # to the defaults the copy swallowed the whole row and the
-                # button rendered outside the callout, clipped (measured at
-                # 235x52 and 100x30 -- the same trap the title row above
-                # documents). Inline because no rule targets these ids.
-                copy.styles.width = "1fr"
-                copy.styles.min_width = 0
-                yield copy
-                retry = Button(
-                    "Retry",
-                    id="library-media-retry",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                retry.styles.width = "auto"
-                retry.styles.min_width = 0
-                yield self._gate_mutation_action(retry, "Retry")
 
         status_text = (
             self.pager.status_copy

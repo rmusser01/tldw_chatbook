@@ -27,6 +27,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_library_shell import (
     LibraryHarness,
+    _painted_text,
     _seed_conversations,
     _wait_for_condition,
     _wait_for_library_shell,
@@ -346,5 +347,53 @@ async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
             assert len(rows) == 3
             assert all(row.disabled is False for row in rows)
             assert screen.query_one("#library-media-retry", Button).disabled is False
+    finally:
+        db.close_connection()
+
+
+def _painted_rail_media_count(host, screen) -> str:
+    """The rail's ``Media (N)`` row exactly as the compositor paints it."""
+    row = screen.query_one("#library-row-browse-media", Button)
+    return " ".join(_painted_text(host, row.region).split())
+
+
+@pytest.mark.asyncio
+async def test_rail_media_count_returns_to_the_restored_total_after_undo(tmp_path):
+    """task-31943 AC#1/#2: the rail's painted ``Media N`` after delete + Undo.
+
+    Live (PR E Task 3, 2026-09-05) the rail kept the post-delete number
+    after Undo restored the rows. The count and the row sample are two
+    different things -- the count is the library TOTAL, the sample is a
+    bounded recent list -- and Undo derived its increment from the sample's
+    de-dup result instead of from what was actually restored.
+
+    The oracle here is the PAINTED rail row, not ``_local_source_counts``.
+    """
+    host, screen, db, db_path = _real_media_host(tmp_path, items=3)
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            await _browse_media(screen, pilot)
+            ids = screen_media_ids(screen)
+            assert len(ids) == 3
+            assert "Media (3)" in _painted_rail_media_count(host, screen)
+
+            await _run_bulk_delete(screen, ids[:2])
+            await pilot.pause()
+            assert screen._library_media_delete_receipt_ids == ids[:2]
+            assert "Media (1)" in _painted_rail_media_count(host, screen)
+
+            screen.query_one("#library-media-bulk-delete-undo", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_media_bulk_delete_in_flight,
+                message="The bulk-delete Undo never settled.",
+            )
+            await pilot.pause()
+
+            # Both restored rows are durably back...
+            for media_id in ids[:2]:
+                assert _fresh_is_trash(db_path, _backing(media_id)) == 0
+            # ...and the rail says so, without leaving the screen.
+            assert "Media (3)" in _painted_rail_media_count(host, screen)
     finally:
         db.close_connection()

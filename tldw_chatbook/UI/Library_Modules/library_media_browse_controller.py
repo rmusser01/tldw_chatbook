@@ -49,6 +49,26 @@ _RETRY_FAILED_PREFIX = "Couldn't retry · "
 # invented. (The 5 s figure belongs to the screen-level source snapshot,
 # a different path.)
 _TIMEOUT_REASON = "timed out"
+# task-31944: the reader-facing reason for the classes that actually reach
+# this mapper without a usable message of their own. Before this, they fell
+# through to ``type(exc).__name__`` and the callout read "Couldn't retry ·
+# ConnectionRefusedError" -- a name, not something to act on. Ordered
+# specific-first (``ConnectionError`` is an ``OSError``, every ``sqlite3``
+# error is a ``sqlite3.Error``); anything unmapped takes the fallback, which
+# keeps PR G's privacy rule -- an arbitrary exception's TEXT never reaches a
+# screen, only OS/SQLite messages do, path-redacted.
+_DATABASE_UNREADABLE_REASON = "the database could not be read"
+_CLASS_REASONS: tuple[tuple[type[BaseException], str], ...] = (
+    (ConnectionError, "the connection failed"),
+    # ``Client_Media_DB_v2`` wraps every sqlite3 failure in its OWN
+    # ``DatabaseError`` before it ever reaches this mapper (e.g.
+    # ``raise DatabaseError("Media search failed.") from None``), so this
+    # entry only covers a caller that talks to sqlite directly.
+    # ``DatabaseError`` is mapped separately, below, via a function-local
+    # import.
+    (sqlite3.Error, _DATABASE_UNREADABLE_REASON),
+)
+_UNMAPPED_REASON = "an unexpected error"
 # Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
 # (kept, unlike other exceptions -- see below), but that text can embed a
 # database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
@@ -94,6 +114,32 @@ def _redact_paths(text: str) -> str:
     return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
 
 
+def _mapped_failure_reason(exc: BaseException) -> str:
+    """Name a failure kind for an exception with no usable message.
+
+    Args:
+        exc: The exception the failed request raised.
+
+    Returns:
+        The mapped reason for the first ``_CLASS_REASONS`` entry the
+        exception is an instance of, else ``_UNMAPPED_REASON``.
+    """
+    for kind, reason in _CLASS_REASONS:
+        if isinstance(exc, kind):
+            return reason
+    # Function-local: this UI controller must not import a DB module at
+    # module scope (mirrors the deferred import in
+    # ``Media/local_media_reading_service.py``). ``ConflictError`` is a
+    # ``DatabaseError`` subclass but means something else -- an
+    # optimistic-lock conflict, not "could not be read" -- so it is
+    # excluded here rather than added to ``_CLASS_REASONS``.
+    from ...DB.Client_Media_DB_v2 import ConflictError, DatabaseError
+
+    if isinstance(exc, DatabaseError) and not isinstance(exc, ConflictError):
+        return _DATABASE_UNREADABLE_REASON
+    return _UNMAPPED_REASON
+
+
 def _retry_failure_reason(exc: BaseException) -> str:
     """Name a failed refresh in the reader's terms, never as a bare class.
 
@@ -115,8 +161,9 @@ def _retry_failure_reason(exc: BaseException) -> str:
         # unredacted prefix.
         raw = getattr(exc, "strerror", None) or str(exc)
         message = " ".join(_redact_paths(raw).split())[:80]
-        return message or type(exc).__name__
-    return type(exc).__name__
+        if message:
+            return message
+    return _mapped_failure_reason(exc)
 
 
 def _load_failure(
