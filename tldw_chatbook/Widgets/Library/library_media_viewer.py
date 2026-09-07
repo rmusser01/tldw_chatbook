@@ -55,10 +55,11 @@ READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
 
 #: task-31635 (critique #5 item 13): a non-Markdown text item simply dropped
 #: the Rendered|Raw strip, so nothing said whether a rendered view existed.
-#: Scoped to the text types a reader could plausibly expect one for -- a
-#: transcript that failed the Markdown sniff is already named by the copy.
+#: task-31958: the note is gated on CONTENT, not on the media type -- an
+#: allowlist of article/document left a plaintext, video or audio item that
+#: failed the Markdown sniff with the same silent blank slot, while an empty
+#: article got the note above "No stored content.", explaining nothing.
 RENDERED_VIEW_NOTE = "Rendered view is for Markdown and transcripts"
-RENDERED_VIEW_NOTE_TYPES = frozenset({"article", "document"})
 
 
 def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
@@ -552,8 +553,12 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         The toggle itself is offered only when ``self.viewer.is_markdown``
         is true -- a non-markdown item always shows the plain Raw view (no
         behavior change from before LIB-13). Since task-31635 a non-markdown
-        ``article``/``document`` gets a one-line note in the same slot
-        instead of nothing at all. Mirrors the
+        item gets a one-line note in the same slot instead of nothing at
+        all, and since task-31958 that covers any media type -- whatever
+        the item is, if there is content and it cannot render, the slot
+        says why. An item with NO stored content is the one exception: the
+        body already says "No stored content.", and there is no rendered
+        view to explain the absence of. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
@@ -563,14 +568,14 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
 
         Returns:
             ComposeResult for the toggle strip, or -- for a non-markdown
-            ``article``/``document`` -- the one-line note that names why
-            there is no toggle (task-31635).
+            item that has content -- the one-line note that names why
+            there is no toggle (task-31635, task-31958).
         """
         if not self.viewer.is_markdown:
             # task-31635 (critique #5 item 13): the slot names itself rather
             # than vanishing. Text only -- there is no rendered view to
             # offer, so a control here would be an affordance for nothing.
-            if self.viewer.media_type.strip().lower() in RENDERED_VIEW_NOTE_TYPES:
+            if self.viewer.has_content:
                 yield Static(
                     RENDERED_VIEW_NOTE,
                     id="library-media-content-mode-note",

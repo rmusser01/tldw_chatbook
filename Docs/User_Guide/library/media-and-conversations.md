@@ -338,9 +338,12 @@ still spans the pane.
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
   "Raw" to see the plain source instead. A rendered heading starts in the
-  same column as the prose beneath it. A plain `article` or `document`
-  with no markdown gets no toggle; that slot reads "Rendered view is for
-  Markdown and transcripts" instead of going silently blank. Below the toggle (or directly
+  same column as the prose beneath it. Any item with content but no
+  markdown gets no toggle, whatever its media type; that slot reads
+  "Rendered view is for Markdown and transcripts" instead of going
+  silently blank. An item with no stored content shows no such note — the
+  box already says "No stored content." and there is no rendered view to
+  explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
