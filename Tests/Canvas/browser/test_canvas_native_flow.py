@@ -404,11 +404,15 @@ async def test_restarted_native_policy_preserves_inert_source_without_worker(
 
     class CandidateAuthority(_NativeFlowAuthority):
         async def resolve_render_plan(self, scope):
+            if scope.revision_id == "revision-2":
+                return await super().resolve_render_plan(scope)
             return compile_canvas_document(
                 source, runtime_profile=profile, snapshot=candidate_snapshot
             )
 
         async def read_source(self, scope):
+            if scope.revision_id == "revision-2":
+                return await super().read_source(scope)
             return CanvasSourceResponse(source, sha256_utf8(source), profile)
 
     gateway = CanvasGateway(authority=CandidateAuthority(), profile_snapshot=snapshot)
@@ -428,6 +432,17 @@ async def test_restarted_native_policy_preserves_inert_source_without_worker(
                 == "about:blank"
             )
             assert workers == []
+            gateway.change_selection(
+                browser_session_id="browser-native-flow",
+                scope=replace(_scope("revision-2"), canvas_id="canvas-new"),
+            )
+            preview = page.frame_locator("#canvas-preview")
+            await expect(preview.locator("h1")).to_have_text("revision-2")
+            await expect(page.locator("#source-panel")).to_be_hidden()
+            await expect(page.locator("#canvas-preview")).to_be_visible()
+            assert not await page.locator("#canvas-preview").evaluate(
+                "element => Boolean(element.closest('[inert]'))"
+            )
             await browser.close()
     finally:
         await gateway.aclose()

@@ -86,6 +86,8 @@ jobs:
 
     - name: Setup test environment
       run: |
+        # Mandatory Canvas zero-egress/browser tests are collected by core shards.
+        python -m playwright install --with-deps chromium
         python -c "import nltk; nltk.download('punkt', quiet=True)"
         python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 

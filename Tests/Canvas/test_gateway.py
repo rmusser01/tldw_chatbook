@@ -1315,7 +1315,10 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transition", ["unchanged", "advanced", "unavailable"])
-async def test_failed_selected_read_only_recovers_proven_new_live_epoch(transition):
+@pytest.mark.parametrize("endpoint", ["state", "events"])
+async def test_failed_selected_read_only_recovers_proven_new_live_epoch(
+    transition, endpoint
+):
     class FailingReadAuthority(_Authority):
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -1324,6 +1327,9 @@ async def test_failed_selected_read_only_recovers_proven_new_live_epoch(transiti
             self.entered.set()
             await self.release.wait()
             raise RuntimeError("PRIVATE_SELECTED_SOURCE")
+
+        async def read_events(self, scope, *, after_event_id):
+            return await self.describe_selection(scope)
 
     authority = FailingReadAuthority([])
     gateway = CanvasGateway(authority=authority)
@@ -1339,7 +1345,9 @@ async def test_failed_selected_read_only_recovers_proven_new_live_epoch(transiti
                 origin=gateway.origin,
             )
             assert boot.status == 200
-            pending = asyncio.create_task(session.get(_launch_url(launch, "api/state")))
+            pending = asyncio.create_task(
+                session.get(_launch_url(launch, f"api/{endpoint}"))
+            )
             await authority.entered.wait()
             if transition == "advanced":
                 gateway.change_selection(

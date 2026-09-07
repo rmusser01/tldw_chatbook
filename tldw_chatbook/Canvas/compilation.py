@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from threading import BoundedSemaphore
 from typing import TypeVar
 
-from .compiler import _compile_document
 from .limits import CanvasLimitError
 from .models import (
     CanvasCompiledPlan,
@@ -94,6 +93,8 @@ def prepare_canvas_document(
     snapshot: ProfileSnapshot,
 ) -> CanvasCompiledPlan:
     """Inspect, select and compile in one parse inside the owner's admission slot."""
+    from .compiler import _compile_document
+
     return _compile_document(
         source, operation=operation, parent_profile=parent_profile, snapshot=snapshot
     )

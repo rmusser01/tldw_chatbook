@@ -12730,3 +12730,17 @@ cached Rich styles that otherwise concealed the uncached render failure. The
 test reproduced the exact CI exception before the fix and passed when panel
 removal used `app.batch_update()`. It also verifies nonce revocation and a normal
 post-close repaint, so a deferred timer alone cannot masquerade as clean teardown.
+
+## Canvas new-selection publication requires scope evidence (TASK-31941)
+
+The strengthened Mermaid revocation test stopped a separately owned served
+parent and every child with old browser loads and a pending receipt still live,
+then reopened the same durable revision under revoked test policy. A subsequent
+explicit new V1 Canvas saved successfully but its preview disconnected. Source-free
+tracing showed the parent event read stayed at epoch 0 on the old Canvas while
+the trusted child returned the new Canvas identity. This was distinct from the
+earlier selected-read race: successful reruns alone could not identify its cause.
+Guarded trusted snapshot reconciliation plus deterministic unchanged/disconnect/
+cross-session/rebind controls established the fix. Separately, a preview DOM
+assertion alone missed an old source dialog leaving the workbench inert; assert
+modal retirement and actual interaction availability after source-only recovery.

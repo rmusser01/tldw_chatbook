@@ -1,0 +1,222 @@
+# Canvas V2 Mermaid qualification — 2026-09-07
+
+Task31941, ADR124. **Release gate blocked; V2 remains disabled.** The corrected
+candidate selection passed, but the final admitted selection failed four tests.
+Admission was rolled back; no release qualification is claimed. This record supplements the historical
+[V1 verification](V1_VERIFICATION.md) and [Mermaid spike](V2_MERMAID_SPIKE.md).
+
+## Identity and environment
+
+Disabled candidate: `canvas-v2-mermaid-1`; manifest SHA-256
+`17717bcab7c7bba4a28e0069354f6ecbf895d2ca58f4b8d1c0355b7726e2f466`.
+Before first admission, the misleading `mermaid_candidate.qualification` field
+was removed: the catalog alone owns execution policy. This metadata-only change
+replaces candidate manifest `39291c03e34cd9fc9f1676dbd0a816ace68357d91b0f75a4fe958f326c762959`
+without changing executable/library bytes. Build identity is now
+`5cdfdfcf09ed257bce900fa94472cc9ff79eb58506ec86e0a55ce0cd2d7e95d8`.
+Restored disabled policy identity is
+`15430aedabd3179e8f0764611b8f6ed129f6b381a9469d5f20109f3b133d22d2`;
+V2 is non-executable and the diagram default is null, with V1 unchanged.
+The tested but withdrawn admission policy was
+`cd4f0cdd756732e686b05031ce12c6bd086473cc72ff2f9d58340d8528b40f15`.
+The V1 manifest/worker/renderer/engine remain byte-identical to the branch base.
+Python 3.12.11, Node v26.0.0, Ruff 0.16.6, Chromium 151.0.7922.34,
+Playwright 1.58.0, Textual 8.2.8, aiohttp 3.13.5;
+`macOS-26.5.2-arm64-arm-64bit`. Tests use the repository's pre-import pytest
+isolation, synthetic provider responses, owned SQLite/config, disposable TLS,
+loopback listeners and browser contexts. No user database/provider/process or
+installed user package is modified. No full repository suite is claimed.
+
+## Commands and scope
+
+All commands run in the `canvas-v1` worktree with `../../.venv/bin/python`.
+Required browser/listener runs use approved sandbox escalation, not skips.
+The final two mandatory selections are:
+
+```sh
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Canvas/browser/test_canvas_zero_egress.py Tests/Canvas/browser/test_canvas_mermaid.py Tests/Canvas/browser/test_canvas_native_flow.py Tests/Canvas/browser/test_canvas_served_flow.py Tests/Canvas/browser/test_canvas_quota_probe.py
+TLDW_CANVAS_MERMAID_INPUT_DIR=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/canvas-mermaid-inputs-4i3rl_al TLDW_CANVAS_RUNTIME_ARCHIVE_DIR=/private/tmp/canvas-runtime-task-1.3-inputs ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Canvas Tests/Chat/test_console_canvas_controller.py Tests/Agents/test_canvas_tool_provider.py Tests/Chat/test_console_message_actions.py Tests/Chatbooks/test_chatbook_canvas_round_trip.py Tests/Packaging/test_canvas_gateway_distribution.py Tests/Web_Server/test_canvas_control_spawn.py Tests/Web_Server/test_canvas_kill_switch.py
+```
+
+The browser-only command first qualifies the candidate. The broader command
+includes that entire browser selection and runs before and after admission.
+Recorded results:
+
+| Selection | Result |
+| --- | --- |
+| Complete five-file browser candidate selection | 176 passed, 2 optional skips, 390.00s |
+| Packaging + runtime assets, both offline inputs | 34 passed, 13.32s, no skips |
+| CI workflow contracts | 19 passed, 0.53s |
+| Useful eight fixtures + V1/V2/native adversarial corpus | 11 passed, 40.53s |
+| Event publication/freshness controls | 12 passed, 2.38s |
+| Source-only retirement + stale async recovery | 7 passed, 7.64s |
+| Actual-child failed preview and confirmed unsent repair | 1 passed, 18.53s |
+| Initial separate parent/all-child policy replacement | 1 passed, 50.90s; superseded by strengthened checks |
+| Metadata/policy reproduction controls | 8 passed, 3.29s |
+| First broad candidate selection | 9 failed, 1340 passed, 2 optional skips, 585.19s |
+| Inherited integration correction group | 15 passed, 4.66s |
+| Strengthened parent/all-child replacement | 1 passed, 49.38s |
+| Forced owned-process-group cleanup | 1 passed, 1.58s |
+| Complete corrected candidate selection | 1350 passed, 2 optional skips, 578.29s |
+| Full package/source closure + runtime + CI contracts | 61 passed, 16.22s, no skips |
+| Final admission assertions against disabled catalog | 2 failed, 0.57s (required RED) |
+| Same assertions after exact catalog admission | 2 passed, 0.51s |
+| Full admitted selection (admission subsequently withdrawn) | 4 failed, 1346 passed, 2 optional skips, 539.80s |
+| Exact affected browser diagnostic selection | 2 failed, 6 passed, 48 deselected, 213.84s |
+| Bounded native SQLite/faulthandler diagnostic | 1 failed, 3 passed, 52 deselected, 107.15s |
+| Restored production-off profiles + offline runtime reproduction | 77 passed, no skips, 5.85s |
+
+The final focused command was the two offline environment assignments above plus
+`../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Canvas/test_profiles.py Tests/Canvas/test_runtime_assets.py`.
+Its first un-escalated invocation passed 76 tests but could not bind the owned
+redirect-refusal loopback server; approved escalation resolved that permission
+failure. This focused GREEN does not supersede the failed release selection.
+
+The four admitted-run failures were a snapshot-mismatch fixture that no longer
+differed after admission (corrected to a fixed distinct test-only revoked policy),
+a present-but-hidden Revision 2, a held publication read returning
+`child_not_connected`, and a served adversarial navigation returning 503.
+All previously fixed deterministic publication/recovery regressions and the
+separate parent/all-child restart gate passed in that run.
+
+Subsequent bounded diagnostics captured owned Python children exiting with
+SIGBUS: macOS reported SQLite WAL recovery/frame lookup and `FS pagein error: 22
+Invalid argument`. Faulthandler then captured the crashing Python operation in
+Console trace-maintenance marking SQL, alongside concurrent workspace and
+conversation reads. This is not a proven Mermaid, transport, fixture-cleanup,
+or environment-only cause. Earlier untraced failures are not retroactively
+attributed to it. No shared storage/security fix, WAL/mmap policy change, native
+dependency change, or passing-rerun waiver was applied. A separately authorized
+causal SQLite concurrency investigation is required before admission resumes.
+
+The baseline RequestsDependencyWarning reports urllib3/chardet/charset_normalizer
+version compatibility. Initial sandbox Chromium MachPort denial and denied
+listener bind were environment failures, not product REDs or passing evidence.
+Required Chromium failure behavior remains mandatory. Firefox and WebKit each
+skip because the browser is not installed in this CI/worktree; Chromium is the
+mandatory gate. These are cross-engine coverage gaps, not missing-cache skips.
+The first broad run also emitted a fixture SyntaxWarning for an invalid escape;
+the corrected full run emitted only the RequestsDependencyWarning. Neither
+warning is represented as a failing security/resource result.
+
+## Security, budgets, and usefulness
+
+The canonical generated HTTP/WebSocket/navigation/popup/download/worker corpus
+runs in both V1 and V2 against native-realm sentinels and an independent egress
+listener, with positive benign render/interaction controls. Additional diagram
+cases refuse directives (`unsupported-syntax`), markup (`unsupported-label`),
+oversized graphemes (`label-limit`), dense DAGs (`edges-limit`), and hostile parser
+lexemes (`unsupported-syntax`). Private handle isolation, prototype attacks,
+multiple diagrams and failed startup are covered by the V2 browser tests.
+Failed startup applies no partial diagram mutations or authored script effects.
+A test-only infinite worker startup injection produces `worker-unresponsive`,
+exactly one termination, no SVG and no post-start egress; it is watchdog testing,
+not evidence that an arbitrary exception is an acceptable quota outcome.
+The unchanged renderer backstops are 750ms for worker startup and250ms for
+worker events, distinct from the guest's250ms/50ms execution interruption limits.
+
+Shared ceilings remain 512 KiB HTML, 256 KiB total evaluated scripts (including
+the library), 32 MiB guest heap, 512 KiB stack, 250ms startup, 50ms events,
+100 pending jobs, 1800 DOM nodes, 900 CSS rules and 500 patches/operation.
+Diagram/document ceilings respectively: input 8192/16384 bytes, nodes16/24,
+edges24/32, participants6/8, messages16/24, notes8/12, labels4096/8192 bytes,
+SVG elements250/400, output49152/65536 bytes, work10000/20000 units and
+area4194304/8388608. Maximum four declarations, 512 bytes per label,
+2048×4096 per diagram. No V1 cap or CSP/zero-egress restriction is raised.
+
+Full-browser fixtures include six-node branch/rejoin, three participants with
+all note placements, the two exact shipped authoring examples, four diagrams,
+mixed HTML/flow/sequence plus a working Count button, Unicode/RTL/emoji/combining
+labels, and a 16-node chain. Screenshots at 1600px and390px were inspected by
+the root reviewer. Intrinsic geometry scrolls horizontally at narrow widths;
+tests drive scrollLeft to its far edge, and scroll first/last diagrams into view.
+The four-diagram screenshot alone is not evidence that all four are shown:
+the DOM asserts four SVGs and exercises vertical reachability. Inherited40px
+serif CSS does not override explicit16px monospace defaults; explicit22px text
+restyling works without relayout. Unicode fallback glyphs/RTL wrapping were
+visible locally; cross-font or cross-platform pixel parity is not claimed.
+
+Near-limit full-browser measurement: 270 source bytes, 16 nodes/15 edges,
+152×1920 logical geometry, 63 SVG elements, 410 startup patches, 85.12ms from
+load invocation to ready in one fresh-context sample. This is not a percentile
+or hard real-time guarantee. Separately, the Node/QuickJS library+layout probe
+records 165599 evaluated library bytes, 768076 guest bytes, 54.95ms, 2318 work
+units, 9244 scene-output bytes and area291840. Component guest memory is not
+browser RSS or the complete virtual-DOM guest heap. The unchanged real-Chromium
+quota probe separately exercises accepted/rejected engine allocations, stack,
+startup/event interruption and exact500/501 patch boundary; it passed in the
+five-file browser gate.
+
+## Product path and lifetime distinctions
+
+Mounted native/served tests exercise production gateway, authority, compiler and
+browser routing in pytest. Actual TldwCli child tests additionally use real
+Console provider finalization and composer state across AppService IPC; their
+parent normally remains inside pytest. The dedicated restart gate instead runs
+a separate owned parent and two real children, retains a live old load and a
+pending receipt, stops them, checks all three old PIDs are gone, then replaces
+the parent at the same origin with a fixed test-only revoked policy. The new
+process reopens the same durable V2 revision as exact inert source/history and
+explicitly creates a separate allowed V1 Canvas without rewriting the old rows.
+Old shell/load and pending confirmation are refused. This is OS-process policy
+replacement, not installation of a new distribution; packaging evidence is separate.
+The controller creates a separate owned process session/group, verifies both
+children belong to it, and uses bounded group cleanup only on timeout after
+checking ownership. The forced-cleanup regression verifies both children and
+parent disappear while preserving timeout as failure, not passing qualification.
+Candidate/revoked wrappers exist only under Tests; no product environment or
+archive can enable a profile.
+
+The gate exposed a distinct new-Canvas event-publication race: trusted child
+selection advanced while parent epoch stayed0 on old Canvas. The correction
+reuses authoritative snapshot reconciliation only within the same captured
+child/session/live shell before and after await. Mismatched events remain
+discarded. Only proven advanced live epochs map to409; malformed, unchanged,
+sibling/session, disconnect and child-rebind cases remain fail-closed. Another
+deterministic regression verifies a valid new plan retires old source-only modal
+and inert state. Neither correction forwards browser-selected authority or adds
+generic retries. Earlier untraced failures are not retroactively explained by
+these traces, and a passing rerun is not used as remediation.
+
+The first broad candidate run also exposed stale scheduling/repository fake
+owners without captured profiles, HTML block references without language, and
+a served-startup fixture advertising obsolete protocol1. Fixtures now reflect
+the current strict interfaces; production adds no fallback. A genuine inherited
+eager compiler import in preparation was moved to first compilation, preserving
+the unchanged fresh-subprocess startup guard. The new restart test's relative
+renderer URL request was corrected to its owned origin. The focused correction
+group and complete corrected candidate run passed. The later admitted run did
+not pass and supersedes that result as the release decision.
+
+Actual-child recovery saves the failed cycle revision, opens exact source,
+explicitly views its prior revision, then confirms a source-free repair hint
+into the actual unchanged composer. A hash/byte receipt and unchanged provider
+call count prove the draft remains unsent. Native desktop application behavior
+outside the existing mounted native/Console paths is not additionally claimed.
+
+## Packaging, reproducibility, archives and CI
+
+Wheel and sdist tests verify byte-exact V1/V2 manifests, catalog, engine,
+worker/renderer, Mermaid JSON, both notice files, all authored build modules,
+input inventory and shipped authoring guide. Wheel zip-import loads the full
+verified snapshot/closure and guide without checkout package imports. Both
+vendor builders regenerate twice into independent owned directories from verified
+offline inputs, comparing every generated byte against checkout. Real browser
+execution uses those checkout bytes with no generated egress; distribution
+closure equality establishes the relationship, not a separate browser launched
+from an installed wheel. Mermaid11.17.2/Jison0.4.18 and Unicode16.0.0 notices,
+hash inventories and bounded build inputs remain verified; the full upstream
+renderer/dependency graph is not bundled or exposed.
+Rebuild policy tests retain unchanged admitted and revoked entries; changed
+manifest, library, or notice inventory disables the candidate/default. The
+builder has no runtime-enabling flag and preserves revocation rather than
+silently re-admitting an exact profile.
+
+Canvas exports use actual ChatbookCreator/ChatbookImporter format3.0 for single
+and multiple conversations, preserving source/profile/history without executable
+runtime assets or policy installation. Schema68/archive3.0 and sync exclusion
+are unchanged; no legacy text/JSON Canvas exporter is introduced.
+The existing broad non-UI core CI lane already collects Canvas browser tests;
+it now installs mandatory Chromium after Playwright dependencies and before
+pytest. Its contract test preserves collection and required-failure behavior;
+unrelated lanes/sharding remain unchanged. Hosted CI itself is not run locally.

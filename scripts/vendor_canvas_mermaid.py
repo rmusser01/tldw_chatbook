@@ -281,15 +281,22 @@ def build(input_dir: Path, output_dir: Path) -> dict:
         ),
     }
     # V2 owns its closure; the published V1 worker/renderer remain unchanged.
-    # This candidate remains deliberately non-executable until qualification.
+    # Provenance is immutable; execution admission belongs only to the catalog.
     manifest["mermaid_candidate"] = {
         "inputs_sha256": digest(inputs_bytes),
         "source_bytes": len(encoded),
         "source_sha256": digest(encoded),
-        "qualification": "not-qualified",
     }
     manifest_bytes = pretty(manifest)
     catalog = json.loads((STATIC / "profile-catalog.json").read_bytes())
+    prior = next(
+        (
+            row
+            for row in catalog["profiles"]
+            if row["profile_id"] == "canvas-v2-mermaid-1"
+        ),
+        None,
+    )
     catalog["profiles"] = [
         row for row in catalog["profiles"] if row["profile_id"] != "canvas-v2-mermaid-1"
     ]
@@ -315,13 +322,23 @@ def build(input_dir: Path, output_dir: Path) -> dict:
             },
         }
     )
-    catalog["default_diagram_profile"] = None
+    candidate = catalog["profiles"][-1]
+    if prior is not None and all(
+        prior[key] == candidate[key]
+        for key in ("manifest", "manifest_sha256", "library")
+    ):
+        # Reproduce checked-in policy, including revocation, only for exactly
+        # unchanged bytes. A build is never a new admission authority.
+        candidate["executable"] = prior["executable"]
+        candidate["reason"] = prior["reason"]
+    else:
+        catalog["default_diagram_profile"] = None
     build_projection = [
         {key: row[key] for key in ("profile_id", "manifest_sha256", "library")}
         for row in catalog["profiles"]
     ]
     policy_projection = {
-        "default_diagram_profile": None,
+        "default_diagram_profile": catalog["default_diagram_profile"],
         "profiles": [
             {key: row[key] for key in ("profile_id", "executable", "reason")}
             for row in catalog["profiles"]

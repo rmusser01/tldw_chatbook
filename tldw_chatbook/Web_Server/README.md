@@ -140,20 +140,30 @@ Browser refresh or reopening a preview does not load a new policy. The private
 parent/child protocol requires matching snapshot identities; mixed versions or
 snapshots leave Canvas unavailable while the terminal remains usable. Unknown,
 missing, and revoked profiles preserve source/history/export without substituting
-another runtime. Scripts-disabled V2 openings show inert source. The packaged V2
-candidate remains disabled pending qualification.
+another runtime. Scripts-disabled V2 openings show inert source. The packaged
+`canvas-v2-mermaid-1` remains disabled pending its final release gate; neither an
+environment variable nor a conversation archive can install or enable a profile.
+
+After revocation, preserve or export the original source/history and explicitly
+create a new Canvas under an allowed profile; never edit an old profile's pinned
+bytes to substitute a renderer. Complete process replacement invalidates old
+shell loads and pending confirmation receipts. The qualification record in
+[Canvas V2 verification](../../Docs/Canvas/V2_VERIFICATION.md) distinguishes
+separate-parent/all-child replacement tests from mounted routing and packaging
+checks; a browser refresh is not evidence of a policy update.
 
 ## Privilege boundary
 
 Served mode runs the full trusted Chatbook application with the permissions of
 its host process; it is not an OS sandbox. User-armed raw CLI and Terminal
 features retain their documented full host authority when available. The strict
-zero-egress promise applies only to generated code inside the Canvas V1 runtime:
+zero-egress promise applies only to generated code inside the bounded Canvas V1/V2 runtimes:
 that code has no network, host filesystem, cookies/storage, Chatbook API, or
 parent-DOM access. Trusted Chatbook code and user-confirmed Canvas submit or
 download actions sit outside that generated runtime. See the
 [Canvas user guide](../../Docs/User_Guide/console/canvas.md) and
-[V1 compatibility boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md).
+[V1 compatibility boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md) and
+[V2 compatibility boundary](../../Docs/Canvas/V2_RUNTIME_COMPATIBILITY.md).
 
 ## Binary Distribution
 

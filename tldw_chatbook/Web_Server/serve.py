@@ -310,6 +310,7 @@ class _ServedCanvasAuthorityProxy:
         )
 
     async def read_events(self, scope, *, after_event_id):
+        child_id = self._owner._served_browser_children.get(scope.browser_session_id)
         response = await self._request(
             scope,
             "canvas.events.request",
@@ -330,11 +331,20 @@ class _ServedCanvasAuthorityProxy:
                     revision_id=str(value["revision_id"]),
                     metadata=value["metadata"],
                 )
-                if event.canvas_id != scope.canvas_id:
-                    raise ValueError("event scope mismatch")
                 events.append(event)
         except (KeyError, TypeError, ValueError):
             raise ServedCanvasUnavailable("canvas_session_unavailable") from None
+        if any(event.canvas_id != scope.canvas_id for event in events):
+            # Publication may bind the child to a newly created Canvas before
+            # the parent's periodic snapshot observes that selection. Never
+            # deliver mismatched events: reconcile only the same live owner,
+            # then let the gateway classify its independently advanced epoch.
+            await self._owner.served_canvas_state(
+                scope.browser_session_id,
+                expected_scope=scope,
+                expected_child_id=child_id,
+            )
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
         return tuple(events)
 
     async def prepare_bridge(self, scope, request):
@@ -977,7 +987,13 @@ class ChatbookWebServerMixin:
                 browser_session_id
             )
 
-    async def served_canvas_state(self, browser_session_id: str) -> dict[str, object]:
+    async def served_canvas_state(
+        self,
+        browser_session_id: str,
+        *,
+        expected_scope: CanvasGatewayScope | None = None,
+        expected_child_id: str | None = None,
+    ) -> dict[str, object]:
         """Return only the Canvas state owned by one exact authenticated child."""
 
         if not self._canvas_enabled():
@@ -986,6 +1002,14 @@ class ChatbookWebServerMixin:
         child_id = self._served_browser_children.get(browser_session_id)
         broker = getattr(self, "_canvas_control_broker", None)
         if child_id is None or broker is None:
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        captured_launch = self._served_canvas_launches.get(browser_session_id)
+        if expected_scope is not None and (
+            child_id != expected_child_id
+            or captured_launch is None
+            or captured_launch[0] != expected_scope
+            or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
+        ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
 
         fixture_reader = getattr(broker, "browser_state", None)
@@ -1027,6 +1051,16 @@ class ChatbookWebServerMixin:
             raise ServedCanvasUnavailable("canvas_session_unavailable") from None
 
         if not isinstance(state, dict):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
+        if expected_scope is not None and (
+            self._served_browser_children.get(browser_session_id) != expected_child_id
+            or self._canvas_control_broker is not broker
+            or self._served_canvas_launches.get(browser_session_id)
+            is not captured_launch
+            or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
+            or state.get("conversation_session_id")
+            != expected_scope.conversation_session_id
+        ):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
         status = state.get("status")
         if status not in {"ready", "terminal_only", "disconnected", "reconnecting"}:

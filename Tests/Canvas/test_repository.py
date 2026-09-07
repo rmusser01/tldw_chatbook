@@ -1629,6 +1629,7 @@ async def test_import_retains_well_formed_unknown_runtime_profile_inertly(
             SimpleNamespace(
                 _served_browser_children={"profile-browser": "profile-child"},
                 _canvas_control_broker=InProcessControlBroker(),
+                _canvas_profile_snapshot=controller.profile_snapshot,
             )
         )
 

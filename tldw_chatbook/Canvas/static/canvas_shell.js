@@ -687,6 +687,11 @@
     if (scriptsDisabled) pendingPlan.scripts = [];
     ui.compatibility.hidden = issues.length === 0;
     ui.compatibilityCopy.textContent = issues.map((issue) => issue.message).join(" ");
+    // A fresh allowed selection retires source-only recovery from the old load.
+    ui.sourcePanel.hidden = true;
+    ui.sourceView.value = "";
+    for (const child of document.querySelector(".canvas-workbench").children) child.inert = false;
+    ui.source.setAttribute("aria-expanded", "false");
     ui.frame.src = frame.renderer_url;
     if (updated) showNotice("Updated · View previous", {previous: Boolean(previousRevisionId || displayedMetadata.parent_revision_id)});
     if (scriptsDisabled) showNotice("Opened with generated scripts disabled.");

@@ -1994,9 +1994,16 @@ class CanvasGateway:
                 validate_opaque_identifier(after, field_name="last event ID")
             except CanvasLimitError:
                 return _error_response("invalid_event_cursor", 400)
-        events = await _maybe_await(
-            self._authority.read_events(scope, after_event_id=after)
-        )
+        try:
+            events = await _maybe_await(
+                self._authority.read_events(scope, after_event_id=after)
+            )
+        except Exception:  # Recover only an independently reconciled live selection.
+            if session.selection_epoch != selection_epoch and self._session_is_current(
+                session, session.scope
+            ):
+                return _error_response("selection_changed", 409)
+            raise
         if session.selection_epoch != selection_epoch and self._session_is_current(
             session, session.scope, allow_unavailable=True
         ):
