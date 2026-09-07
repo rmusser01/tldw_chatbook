@@ -37,16 +37,89 @@ def _context(db, conversation_id="exact"):
 
 @pytest.fixture
 def library(tmp_path):
+    from Tests.conftest import _close_database_instance
+
     owner = _build_test_app()
     db = CharactersRAGDB(tmp_path / "inspection.sqlite", client_id="inspection")
+    owned_databases = (
+        db,
+        owner.local_library_collections_db,
+        owner.evaluation_orchestrator.db,
+        owner.local_workspace_db,
+        owner.subscriptions_db,
+    )
+    instance_lock = owner._instance_lock_status.handle
     db.add_conversation({"id": "exact", "title": "Exact local inspection"})
     owner.chachanotes_db = db
     owner.chat_conversation_scope_service = ChatConversationScopeService(
         local_service=ChatConversationService(db), server_service=None
     )
     screen = LibraryScreen(owner)
-    yield owner, screen, db
-    db.close()
+    try:
+        yield owner, screen, db
+    finally:
+        # Tests leave their run_test contexts and join held locator work before
+        # this terminal file-owner boundary. Never drain during a normal read.
+        for database in owned_databases:
+            _close_database_instance(database)
+        if instance_lock is not None:
+            instance_lock.close()
+
+
+def test_inspection_fixture_disposes_held_handles_only_after_ownership_ends(tmp_path):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    from Tests.conftest import _close_database_instance
+
+    fixture = library.__wrapped__(tmp_path)
+    owner, _, db = next(fixture)
+    collections = owner.local_library_collections_db
+    evals = owner.evaluation_orchestrator.db
+    workspaces = owner.local_workspace_db
+    subscriptions = owner.subscriptions_db
+    instance_lock = owner._instance_lock_status.handle
+    observer = CharactersRAGDB(tmp_path / "inspection.sqlite", client_id="observer")
+    handles = [
+        db.get_connection(),
+        observer.get_connection(),
+        collections._held_connection(),
+        evals.get_connection(),
+        workspaces._held_connection(),
+        subscriptions.conn,
+    ]
+    try:
+        # Worker completion is joined before ending the fixture's file lifetime.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            handles.append(executor.submit(db.get_connection).result(timeout=2))
+            executor.submit(db.get_local_authority_id).result(timeout=2)
+        for connection in handles:
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+        assert instance_lock is not None and not instance_lock.closed
+        # Stale-owner tests may replace public attributes; disposal still owns
+        # the originally created handles, never the replacements.
+        owner.chachanotes_db = object()
+        owner.local_library_collections_db = object()
+        owner.evaluation_orchestrator = None
+        owner.local_workspace_db = object()
+        owner.subscriptions_db = object()
+        owner._instance_lock_status = None
+        fixture.close()
+        for connection in handles:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+        assert db.registered_connection_count() == 0
+        assert instance_lock.closed
+    finally:
+        fixture.close()
+        _close_database_instance(db)
+        collections.close()
+        evals.close()
+        workspaces.close()
+        subscriptions.close()
+        if instance_lock is not None:
+            instance_lock.close()
+        observer.close()
 
 
 @pytest.mark.asyncio
