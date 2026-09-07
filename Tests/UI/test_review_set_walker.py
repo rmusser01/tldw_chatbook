@@ -16,6 +16,7 @@ import pytest
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.review_set_service import ReviewSetService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from Tests.UI.library_media_rows import summary_row
 
 
 def _service(tmp_path) -> ReviewSetService:
@@ -1368,3 +1369,71 @@ def test_active_review_progress_exposes_the_live_index_and_total(tmp_path):
     empty_root.mkdir()
     empty = _walker_fake(_service(empty_root))
     assert LibraryScreen._active_review_progress(empty) is None
+
+
+# ---------------------------------------------------------------------------
+# task-28009: browse rows carry the active set's reviewed marks
+# ---------------------------------------------------------------------------
+
+
+def _row(backing_id: int) -> dict:
+    """One browse row as the Media projection hands it over (reviewed=None)."""
+    return summary_row(id=backing_id)
+
+
+def test_browse_rows_carry_the_active_sets_reviewed_marks(tmp_path):
+    """In-set rows carry True/False; rows outside the set stay ``None``."""
+    service = _service(tmp_path)
+    set_id = service.create_review_set(
+        "X", origin="browse", items=[(10, "A"), (11, "B")]
+    )
+    service.mark_item_done(set_id, backing_media_id=10, done=True)
+    fake = _walker_fake(service)
+
+    rows = LibraryScreen._decorate_library_media_reviewed(
+        fake, (_row(10), _row(11), _row(12))
+    )
+
+    assert [row["reviewed"] for row in rows] == [True, False, None]
+
+
+def test_browse_rows_carry_no_marks_without_an_active_set(tmp_path):
+    """No active set means no state slot on any row."""
+    service = _service(tmp_path)
+    service.create_review_set("X", origin="browse", items=[(10, "A")])
+    service.deactivate_active()
+    fake = _walker_fake(service)
+
+    rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+
+    assert [row["reviewed"] for row in rows] == [None]
+
+
+def test_marking_the_loaded_item_done_flips_its_browse_row(tmp_path):
+    """The `m` gesture's seam re-decorates: the row flips False -> True."""
+    service = _service(tmp_path)
+    service.create_review_set("X", origin="browse", items=[(10, "A"), (11, "B")])
+    fake = _walker_fake(service, loaded=10)
+
+    before = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    assert before[0]["reviewed"] is False
+
+    fake._toggle_reviewed_unguarded(service)
+
+    after = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    assert after[0]["reviewed"] is True
+
+
+def test_decoration_fails_open_on_a_storage_error(tmp_path):
+    """A collections-DB failure leaves the rows undecorated, never raises."""
+
+    class _Boom:
+        def get_active_review_set(self):
+            raise RuntimeError("db gone")
+
+    fake = _walker_fake(_service(tmp_path))
+    fake._review_set_service = lambda: _Boom()
+
+    rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+
+    assert [row["reviewed"] for row in rows] == [None]

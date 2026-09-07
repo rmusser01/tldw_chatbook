@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta  # Use timezone-aware UTC
 from math import ceil
 from pathlib import Path
-from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Sequence, Union
 
 #
 # Third-Party Libraries (Ensure these are installed if used)
@@ -150,6 +150,32 @@ _MEDIA_POST_DELETE_CALLBACKS_LOCK = threading.Lock()
 #: while keeping the existing placeholder form (zero drift) for the common
 #: small-allowlist case.
 _MEDIA_IDS_FILTER_JSON_EACH_THRESHOLD = 500
+
+#: Whether the NEWEST LIVE document version of a media row carries analysis
+#: text (task-28008). The same rule the Reader applies in
+#: ``Library.library_media_viewer_state._latest_version_analysis_text``, which
+#: reads ``get_all_document_versions`` -- and that filters ``deleted = 0``, so
+#: BOTH legs here must too. Without the filter,
+#: ``soft_delete_document_version`` (which leaves the row with ``deleted = 1``)
+#: would let the list claim "analysed" off a version the Reader no longer
+#: shows.
+#: Projected in SQL rather than looked up per row: both legs still ride the
+#: existing ``UNIQUE (media_id, version_number)`` index, so no new index is
+#: needed. The plan is pinned in ``Tests/DB/test_client_media_pagination.py``
+#: with ``sqlite_stat1`` ABSENT -- no DB module here runs ``ANALYZE``, so
+#: that is the state every real user's database is planned in.
+_HAS_ANALYSIS_SELECT = (
+    "EXISTS ("
+    "SELECT 1 FROM DocumentVersions v"
+    " WHERE v.media_id = m.id"
+    " AND v.deleted = 0"
+    " AND v.version_number = ("
+    "SELECT MAX(version_number) FROM DocumentVersions"
+    " WHERE media_id = m.id AND deleted = 0"
+    ")"
+    " AND TRIM(COALESCE(v.analysis_content, '')) <> ''"
+    ") AS has_analysis"
+)
 
 
 def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
@@ -2549,8 +2575,10 @@ class MediaDatabase:
                 any author/type LIKE predicates continue to use ``search_query``.
             offset (Optional[int]): Exact zero-based row offset. When omitted,
                 the legacy ``page`` coordinate determines the offset.
-            library_summary (bool): Select only the four fields required by the
-                Library browse surface. Generic callers retain the broad row.
+            library_summary (bool): Select only the fields required by the
+                Library browse surface (id/title/type/last_modified plus the
+                projected ``has_analysis`` flag). Generic callers retain the
+                broad row.
             chunking_status (Optional[str]): Exact Media chunking status to include.
 
         Returns:
@@ -2644,7 +2672,7 @@ class MediaDatabase:
             "m.deleted",
         ]
         base_select_parts = (
-            ["m.id", "m.title", "m.type", "m.last_modified"]
+            ["m.id", "m.title", "m.type", "m.last_modified", _HAS_ANALYSIS_SELECT]
             if library_summary
             else broad_select_parts
         )
@@ -3111,6 +3139,87 @@ class MediaDatabase:
                 resolved_sort_by,
             )
         return results_list, total_matches
+
+    def library_browse_keyword_only_matches(
+        self, media_ids: Sequence[int], query: str
+    ) -> Dict[int, str]:
+        """Return ``{media id: keyword}`` for page rows ONLY a keyword matched.
+
+        task-28008 (critique #5 P2): the Library browse filter also searches
+        keywords (``LIBRARY_BROWSE_SEARCH_FIELDS``), so a hit whose title and
+        body hold nothing the user typed reads as a mismatch. This is the
+        evidence the row needs to explain itself -- and only for the rows
+        that need it: a row whose title or content matched already shows the
+        user why it is there.
+
+        ONE statement for the whole page, not one per row. The title and
+        content legs are spelled exactly as ``search_media_db`` spells them
+        (raw ``%query%`` with ``COLLATE NOCASE``) and the keyword leg exactly
+        as its own branch does (``_escape_library_like`` plus ``ESCAPE``).
+
+        PRECONDITION: the search being explained asked for exactly the
+        Library browse's own fields (``LIBRARY_BROWSE_SEARCH_FIELDS``).
+        ``search_media_db``'s text branch is ``FTS AND (title/content LIKE OR
+        author/type LIKE)``, so with a wider field set a row the AUTHOR leg
+        matched would look keyword-only here. The one caller enforces that
+        equality; do not call this for any other field set. Within it the
+        probe cannot disagree with the search that produced the page: it
+        ignores only the FTS half of the text branch, which is AND-ed with
+        the LIKE half, and skipping that can only yield FEWER reasons.
+
+        A failure here is not a page failure. The reason is decoration on a
+        page that has already loaded, so a database error answers "no
+        reasons" rather than taking the rows down with it.
+
+        Args:
+            media_ids: Backing media ids of the page just fetched.
+            query: The raw user search text that fetched them.
+
+        Returns:
+            Matched keyword per keyword-only row; empty when the page has
+            none, when there is no query to explain, or when the probe
+            itself failed.
+        """
+        ids = [int(media_id) for media_id in media_ids]
+        if not ids or not query:
+            return {}
+        try:
+            return self._library_browse_keyword_only_matches(ids, query)
+        except (sqlite3.Error, DatabaseError):
+            # ``DatabaseError`` is this class's own connect-failure wrapper
+            # (a bare Exception subclass, not a sqlite3.Error) -- the
+            # docstring's "not a page failure" has to hold for it too.
+            return {}
+
+    def _library_browse_keyword_only_matches(
+        self, ids: List[int], query: str
+    ) -> Dict[int, str]:
+        """Run the keyword-only match probe. See the public wrapper above."""
+        placeholders = ",".join("?" * len(ids))
+        like_pattern = f"%{query}%"
+        keyword_pattern = f"%{self._escape_library_like(query)}%"
+        sql = f"""
+            SELECT m.id AS media_id,
+                   (SELECT k.keyword
+                      FROM MediaKeywords mk
+                      JOIN Keywords k ON mk.keyword_id = k.id
+                     WHERE mk.media_id = m.id AND k.deleted = 0
+                       AND k.keyword LIKE ? ESCAPE '\\'
+                     ORDER BY LENGTH(k.keyword), k.keyword
+                     LIMIT 1) AS keyword
+              FROM Media m
+             WHERE m.id IN ({placeholders})
+               AND COALESCE(m.title, '') NOT LIKE ? COLLATE NOCASE
+               AND COALESCE(m.content, '') NOT LIKE ? COLLATE NOCASE
+        """
+        params = [keyword_pattern, *ids, like_pattern, like_pattern]
+        with self.transaction() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        return {
+            row["media_id"]: row["keyword"]
+            for row in rows
+            if row["keyword"] is not None
+        }
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---
     def add_keyword(self, keyword: str) -> Tuple[Optional[int], Optional[str]]:

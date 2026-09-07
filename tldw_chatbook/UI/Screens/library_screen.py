@@ -12427,16 +12427,27 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             return
+        self._sync_library_media_surfaces_or_recompose()
+
+    def _sync_library_media_surfaces_or_recompose(self) -> None:
+        """Patch the mounted Reader and the Items rows in place, else recompose.
+
+        The shared tail of the two Media sync seams (task-28009 review M-3).
+        A viewer-scoped sync that succeeds must repaint the Items rows beside
+        it too: the row's review-state slot moves on a done mark that loads no
+        new item (`m`, and the final `]` completion gesture). A viewer that is
+        gone, or a sync that reports nothing patched, falls back to the
+        whole-screen recompose, which rebuilds both surfaces anyway.
+        """
         viewer = self._mounted_library_media_viewer()
-        if viewer is not None and self._sync_library_media_viewer_state(viewer):
-            try:
-                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-            except (NoMatches, QueryError):
-                pass
-            else:
-                canvas.apply_reader_state(self._build_library_media_state())
+        if viewer is None or not self._sync_library_media_viewer_state(viewer):
+            self.refresh(recompose=True)
             return
-        self.refresh(recompose=True)
+        try:
+            canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.apply_reader_state(self._build_library_media_state())
 
     async def _apply_library_media_list_return(
         self,
@@ -15580,7 +15591,9 @@ class LibraryScreen(BaseAppScreen):
         state = build_library_media_browse_state(
             controller.applied_result,
             type_options=controller.type_options,
-            retained_items=controller.retained_items,
+            retained_items=self._decorate_library_media_reviewed(
+                controller.retained_items
+            ),
             selected_id=self._selected_media_id,
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
@@ -15605,6 +15618,43 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    def _decorate_library_media_reviewed(
+        self, items: Sequence[Mapping[str, Any]]
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Stamp each browse row's ``reviewed`` from the ACTIVE review set.
+
+        The Media projection cannot know this -- a review set lives in the
+        Library collections DB, not the Media DB -- so the exact browse row
+        arrives with ``reviewed=None`` and is decorated here, at the one seam
+        every Media canvas build routes through (task-28009). A row in the
+        set carries its done mark (``True``/``False``); a row outside it, or
+        every row when no set is active, keeps ``None``.
+
+        Args:
+            items: The controller's retained exact browse rows.
+
+        Returns:
+            The rows with ``reviewed`` decorated.
+
+        Note:
+            Fails OPEN on a storage error (task-30042 doctrine): an
+            unreadable collections DB costs the markers, never the list.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return tuple(items)
+        try:
+            review_set = service.get_active_review_set()
+        except Exception:
+            return tuple(items)
+        if review_set is None:
+            return tuple(items)
+        done_by_id = {item.backing_media_id: item.done for item in review_set.items}
+        return tuple(
+            {**item, "reviewed": done_by_id.get(item["backing_media_id"])}
+            for item in items
+        )
 
     def _review_dismiss_receipt_name(self) -> str:
         """Display name for the pending dismiss-undo receipt, "" when none."""
@@ -15910,7 +15960,13 @@ class LibraryScreen(BaseAppScreen):
         media_id: str,
         record: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        """Normalize one known restored row for stale retained display."""
+        """Normalize one known restored row for stale retained display.
+
+        The restore seam does not project ``has_analysis``, so the marker
+        reads as absent until the next page fetch replaces this placeholder
+        -- understating rather than inventing an analysis. ``reviewed`` is
+        decorated from the active review set, never carried here.
+        """
         backing_id = self._required_library_media_backing_id(media_id)
         return {
             "id": f"local:media:{backing_id}",
@@ -15918,6 +15974,8 @@ class LibraryScreen(BaseAppScreen):
             "title": record.get("title"),
             "media_type": record.get("media_type", record.get("type")),
             "updated_at": record.get("updated_at", record.get("last_modified")),
+            "has_analysis": bool(record.get("has_analysis")),
+            "reviewed": None,
         }
 
     @staticmethod
@@ -16283,12 +16341,11 @@ class LibraryScreen(BaseAppScreen):
         pending = self._library_media_reader_session.pending_request
         assert pending is not None
         if sync_surfaces:
-            try:
-                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-            except (NoMatches, QueryError):
+            # M-2: the row patch is the sync wrapper's own tail now
+            # (``_sync_library_media_surfaces_or_recompose``); only the
+            # no-canvas fallback is still this call site's to make.
+            if not self.query("#library-media-canvas"):
                 self._sync_library_media_browse_state(None)
-            else:
-                canvas.apply_reader_state(self._build_library_media_state())
             self._sync_library_media_viewer_or_recompose()
         if immediate:
             self._dispatch_library_media_detail_request(
@@ -35222,9 +35279,7 @@ class LibraryScreen(BaseAppScreen):
         # a recompose actually happens). The whole-screen fallback needs
         # nothing here -- ``LibraryScreen.refresh`` captures and restores
         # around every screen recompose (Qodo round).
-        viewer = self._mounted_library_media_viewer()
-        if viewer is None or not self._sync_library_media_viewer_state(viewer):
-            self.refresh(recompose=True)
+        self._sync_library_media_surfaces_or_recompose()
 
     def _after_library_media_viewer_sync(
         self, follow_up: str | Callable[[], object]

@@ -193,6 +193,7 @@ from Tests.UI.test_destination_shells import (
     _link_library_items_to_active_workspace,
 )
 from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
+from Tests.UI.library_media_rows import summary_row
 
 
 def _build_test_app(
@@ -551,21 +552,53 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         offset = kwargs["offset"]
         limit = kwargs["limit"]
         page = rows[offset : offset + limit]
-        return {
+        payload = {
             "items": [
-                {
-                    "id": f"local:media:{self._backing_id(row, index)}",
-                    "backing_media_id": self._backing_id(row, index),
-                    "title": row.get("title"),
-                    "media_type": row.get("type"),
-                    "updated_at": row.get("last_modified"),
-                }
+                summary_row(
+                    id=self._backing_id(row, index),
+                    title=row.get("title"),
+                    media_type=row.get("type"),
+                    updated_at=row.get("last_modified"),
+                    has_analysis=bool(row.get("has_analysis")),
+                )
                 for index, row in enumerate(page, start=offset)
             ],
             "total": total,
             "offset": offset,
             "limit": limit,
         }
+        reasons = self._match_reasons(page, query, offset)
+        if reasons:
+            payload["match_reasons"] = reasons
+        return payload
+
+    def _match_reasons(self, page, query, offset) -> dict[str, str]:
+        """Mirror task-28008's keyword-ONLY match reasons for the page.
+
+        Same rule the real service applies: a row whose title or content
+        holds the query already explains itself, so only a hit that lives
+        purely in a keyword earns a reason -- and the shortest matching
+        keyword is the one named.
+        """
+        reasons: dict[str, str] = {}
+        query = str(query or "").casefold()
+        if not query:
+            return reasons
+        for index, row in enumerate(page, start=offset):
+            visible = (
+                str(row.get("title") or ""),
+                str(row.get("content") or ""),
+            )
+            if any(query in text.casefold() for text in visible):
+                continue
+            matched = sorted(
+                (str(word) for word in row.get("keywords") or ()),
+                key=lambda word: (len(word), word),
+            )
+            hit = next((w for w in matched if query in w.casefold()), None)
+            if hit is not None:
+                reasons[f"local:media:{self._backing_id(row, index)}"] = hit
+        return reasons
 
     async def list_library_media_types(self, **kwargs):
         self.type_calls.append(dict(kwargs))
@@ -26133,13 +26166,12 @@ def _apply_continue_media_scope(
         scope,
         {
             "items": [
-                {
-                    "id": f"local:media:{offset + 1}",
-                    "backing_media_id": offset + 1,
-                    "title": "PRIVATE MEDIA TITLE",
-                    "media_type": scope.media_type or "audio",
-                    "updated_at": "2026-08-21T00:00:00+00:00",
-                }
+                summary_row(
+                    id=offset + 1,
+                    title="PRIVATE MEDIA TITLE",
+                    media_type=scope.media_type or "audio",
+                    updated_at="2026-08-21T00:00:00+00:00",
+                )
             ],
             "total": offset + 1,
             "limit": scope.page_size,

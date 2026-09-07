@@ -19,7 +19,9 @@ the chooser bug needs the screen's focus-on-open):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from types import SimpleNamespace
@@ -2543,6 +2545,210 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
             )
 
 
+# ---------------------------------------------------------------------------
+# task-28008 / task-28009 (render half): the row's state slot and the
+# "analysed" segment of its secondary line.
+# ---------------------------------------------------------------------------
+
+
+_ANALYSED_SECONDARY = "document · 5m · analysed"
+
+
+def _review_state_items(count: int = 4, analysed: int = 2) -> list[dict]:
+    """``count`` ``document`` items, the first ``analysed`` of them analysed.
+
+    The stamp is fixed 5m30s back so every row's age label is "5m" and the
+    secondary line is exactly the 24-cell ``document · 5m · analysed`` the
+    Items pane has to hold.
+    """
+    stamp = (
+        datetime.now(timezone.utc) - timedelta(minutes=5, seconds=30)
+    ).isoformat()
+    return [
+        {
+            "id": f"media-{index}",
+            "title": f"Doc {index}",
+            "type": "document",
+            "last_modified": stamp,
+            "content": f"Body of doc {index}.",
+            "version": 1,
+            "has_analysis": index <= analysed,
+        }
+        for index in range(1, count + 1)
+    ]
+
+
+def _review_state_host(count: int = 4, analysed: int = 2):
+    """A production-CSS Library host over :func:`_review_state_items`."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_review_state_items(count, analysed))
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
+    """Return the painted (title lines, secondary lines) of the Media list."""
+    lines = _painted_item_lines(host, screen)
+    titles = [line for line in lines if "Doc " in line]
+    secondaries = [line for line in lines if "document · " in line]
+    return titles, secondaries
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_media_rows_paint_analysed_only_for_analysed_items(size):
+    """task-28008: the row says which items already carry an analysis, in words.
+
+    What this pins about width: BOTH parametrized sizes resolve the Items
+    pane to 52 cells (the resolver's automatic width here), and the 24-cell
+    ``document · 5m · analysed`` paints whole in it, indented, with room to
+    spare. The narrower 36-cell FLOOR is pinned separately by
+    ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
+    ``>= 36`` assertion here would have claimed a floor that never ran.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+
+        _titles, secondaries = _painted_media_rows(host, screen)
+        assert len(secondaries) == 4, secondaries
+        assert [line.strip() for line in secondaries[:2]] == [
+            _ANALYSED_SECONDARY,
+            _ANALYSED_SECONDARY,
+        ], secondaries
+        assert [line.strip() for line in secondaries[2:]] == [
+            "document · 5m",
+            "document · 5m",
+        ], secondaries
+        assert _items_pane_width(screen) == 52
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_media_rows_paint_the_active_sets_review_state(size):
+    """task-28009: every row in the active set carries a state glyph -- `·`
+    until it is reviewed, `✓` after -- and rows outside it carry neither."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        service = screen._review_set_service()
+        set_id = service.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        for _ in range(3):
+            await pilot.pause()
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["·", "·", " ", " "], titles
+
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+        _sync_library_canvas(screen, "media")
+        for _ in range(3):
+            await pilot.pause()
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["✓", "·", " ", " "], titles
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_checkbox_replaces_the_review_state_slot(size):
+    """Controller ruling (4): one slot. In select mode it is the ☑/☐."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        service = screen._review_set_service()
+        service.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await _enter_media_select_mode(screen, pilot)
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["☐", "☐", "☐", "☐"], titles
+        assert "·" not in "".join(line[1] for line in titles), titles
+
+
+def _review_reader_host(count: int = 2):
+    """The same seeded rows, behind a gated detail service so the Reader can
+    be settled on a known row before the mark gestures are pressed."""
+    items = _review_state_items(count, analysed=1)
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = ControlledDetailMediaService(items)
+    app.media_reading_scope_service = service
+    return LibraryProductionCSSHarness(app), service
+
+
+def _painted_slots(host, screen) -> list[str]:
+    """The painted one-cell state slot of each Media row, in order."""
+    titles, _secondaries = _painted_media_rows(host, screen)
+    return [line[1] for line in titles]
+
+
+@pytest.mark.asyncio
+async def test_marking_reviewed_in_the_reader_repaints_the_row_slot():
+    """task-28009: `m` and the final `]` change the MARK, not the loaded item.
+
+    Both land on the viewer-scoped sync seam without loading anything, and
+    the Items list stays mounted beside the Reader -- so unless that seam
+    repaints the rows, the slot stays a gesture behind the banner that just
+    moved. Painted on the real screen, because the row markers are exactly
+    what a state-only assertion would miss.
+    """
+    host, service = _review_reader_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        review = screen._review_set_service()
+        review.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await _load_row_0(screen, service, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["·", "·"],
+            message="The active set never painted its unreviewed rows.",
+        )
+
+        await pilot.press("m")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "·"],
+            message="`m` did not repaint the loaded row's slot as reviewed.",
+        )
+
+        # ...and it is a live read, not a one-shot: un-marking flips it back.
+        await pilot.press("m")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["·", "·"],
+            message="A second `m` did not repaint the row as unreviewed.",
+        )
+
+        # Advancing marks the row it leaves (that path loads an item and
+        # repaints through the selection seam)...
+        await _walk_next(screen, service, pilot, expected_row=1)
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "·"],
+            message="] did not repaint the row it left as reviewed.",
+        )
+
+        # ...and the final ] on the last item is the completion gesture: it
+        # marks in place, loading nothing, so only this seam can repaint it.
+        await pilot.press("right_square_bracket")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "✓"],
+            message="The final ] did not repaint the last row as reviewed.",
+        )
+
+
 # --- PR H2 (Qodo on #2470): every viewer-sync follow-up rides the VIEWER ---
 #
 # ``_sync_library_media_viewer_or_recompose`` rebuilds the Reader on the
@@ -2697,6 +2903,162 @@ async def test_escape_closing_find_lands_on_the_live_find_button():
         await _wait_for_selector(
             screen, pilot, "#library-media-content-search-controls"
         )
+
+
+@pytest.mark.asyncio
+async def test_analysed_secondary_survives_the_36_cell_items_floor():
+    """M-1: the 24-cell secondary at the Items pane's 36-cell floor.
+
+    The automatic resolver gives Items 52 cells at both tested terminal
+    sizes, so the floor only runs when a custom Items width asks for it (a
+    custom width is obeyed as typed). 36 is ``list_min_width`` + Media's two
+    one-cell grips -- the narrowest the pane ever gets.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_reader_preferences = dataclasses.replace(
+            screen._library_media_reader_preferences,
+            custom_widths_enabled=True,
+            items_width=36,
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await _wait_for_condition(
+            pilot,
+            lambda: _items_pane_width(screen) == 36,
+            message="The Items pane never reached its 36-cell floor.",
+        )
+
+        # The crop at this width clips a neighbouring pane border into the
+        # right edge, so strip that too before comparing the row's own text.
+        _titles, secondaries = _painted_media_rows(host, screen)
+        assert [line.strip(" │") for line in secondaries[:2]] == [
+            _ANALYSED_SECONDARY,
+            _ANALYSED_SECONDARY,
+        ], secondaries
+        assert "…" not in "".join(secondaries), secondaries
+
+
+# ---------------------------------------------------------------------------
+# task-28008 (critique #5 P2): a keyword-only hit says which keyword matched.
+# ---------------------------------------------------------------------------
+
+
+def _match_reason_items() -> list[dict]:
+    """Three ``article`` rows, all aged "2m", for the query ``notes``.
+
+    Row 1 matches ONLY through its keyword; row 2 matches through its title
+    (so it explains itself and earns no reason); row 3 matches only through
+    a keyword too long for the Items pane's 36-cell floor.
+    """
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "id": "media-1",
+            "title": "Opening remarks",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=10)).isoformat(),
+            "keywords": ["notes"],
+            "content": "Transcript of the opening session.",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Field notes",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=20)).isoformat(),
+            "keywords": [],
+            "content": "A body about nothing in particular.",
+            "version": 1,
+        },
+        {
+            "id": "media-3",
+            "title": "Closing remarks",
+            "type": "article",
+            "last_modified": (now - timedelta(minutes=2, seconds=30)).isoformat(),
+            "keywords": ["notesandmorestuff"],
+            "content": "Transcript of the closing session.",
+            "version": 1,
+        },
+    ]
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
+    """The reason is WORDS on the secondary line, and only where it is needed.
+
+    ``Field notes`` matched the query in its own painted title, so it says
+    nothing extra; the two rows whose match lives in a keyword name it. The
+    keyword is capped at ten characters because the Items pane's floor is
+    36 cells -- ``notesandmorestuff`` would push the line past it whole.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_match_reason_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "notes")
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        secondaries = [line.strip() for line in lines if "article · " in line]
+        assert secondaries == [
+            "article · 2m · keyword: notes",
+            "article · 2m",
+            "article · 2m · keyword: notesandmo…",
+        ], secondaries
+
+
+
+@pytest.mark.asyncio
+async def test_keyword_reason_clips_at_the_36_cell_items_floor():
+    """Fix round 1 (1): what the floor actually does, pinned honestly.
+
+    The ten-character cap keeps the line SHORT; it does not make it fit
+    here. The Items pane's 36-cell floor leaves ~29 cells after the row's
+    four-cell indent, and `article · 2m · keyword: notes` needs 29 before
+    the pane's own edge -- so at the floor a keyword row clips mid-term,
+    for the short keyword as well as the long one. The neighbouring
+    `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
+    a line that DOES fit looks like there; this one is the honest contrast,
+    and it exists so nobody re-derives the false "the cap makes it fit".
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_match_reason_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "notes")
+        screen._library_media_reader_preferences = dataclasses.replace(
+            screen._library_media_reader_preferences,
+            custom_widths_enabled=True,
+            items_width=36,
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await _wait_for_condition(
+            pilot,
+            lambda: _items_pane_width(screen) == 36,
+            message="The Items pane never reached its 36-cell floor.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        # The crop at this width clips a neighbouring pane border into the
+        # right edge, so strip that before comparing the row's own text.
+        secondaries = [
+            line.strip(" │") for line in lines if "article · " in line
+        ]
+        assert secondaries == [
+            "article · 2m · keyword: not",
+            "article · 2m",
+            "article · 2m · keyword: not",
+        ], secondaries
+        # The row without a reason still paints whole -- the clipping is the
+        # suffix's own cost, not a regression in the base secondary line.
+        assert "…" not in "".join(secondaries), secondaries
 
 
 @pytest.mark.asyncio

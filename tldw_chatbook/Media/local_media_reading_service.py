@@ -460,12 +460,44 @@ class LocalMediaReadingService:
                 list(rows)[offset : offset + limit]
             )
         )
-        return {
+        payload = {
             "items": items,
             "total": total,
             "offset": offset,
             "limit": limit,
         }
+        if library_summary and query:
+            # task-28008: ONE extra SELECT for the whole page, and only for
+            # the Library browse's OWN field set. Fix round 1 (2): the
+            # probe re-evaluates the title and content legs alone, but
+            # ``search_media_db``'s text branch also ORs author/type LIKE
+            # legs when those fields are asked for -- so with any wider set
+            # a row the AUTHOR leg matched would be labelled a keyword-only
+            # hit. Exact equality, not membership: this side channel is the
+            # browse's, and any other caller gets no reasons rather than
+            # wrong ones. Absent (not empty) otherwise, so an unqueried or
+            # differently-scoped search carries no channel at all.
+            #
+            # Absolute, not relative: Tests/Media loads this module by file
+            # path (``spec_from_file_location``), where a relative import has
+            # no parent package. In-function because the scope service is
+            # the module that imports THIS one's consumers, not vice versa.
+            from tldw_chatbook.Media.media_reading_scope_service import (
+                LIBRARY_BROWSE_SEARCH_FIELDS,
+            )
+
+            # ...and only while the text branch still carries its LIKE legs:
+            # a preformatted ``fts_match_query`` makes ``search_media_db``
+            # drop the title/content LIKE legs, and the probe's
+            # "under-report, never over-report" argument rests on them.
+            if (
+                tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS
+                and not filters.get("fts_match_query")
+            ):
+                payload["match_reasons"] = db.library_browse_keyword_only_matches(
+                    [row["id"] for row in items], query
+                )
+        return payload
 
     def list_library_media_types(self) -> list[str]:
         """Return every active local Media type in database order."""
