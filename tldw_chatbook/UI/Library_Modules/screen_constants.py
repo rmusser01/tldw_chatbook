@@ -48,8 +48,9 @@ LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
 # task-31951: Conversations, Skills and Collections join Media on the
 # one-cell grip (task-31633 AC#2 shipped it for Media alone). Each surface was
 # spending ten columns on two five-column grips that paint a single arrow;
-# the resolver reserves what the grip paints, so those ten cells now go to the
-# panes -- and the rail-open threshold drops by eight (118 -> 110 here,
+# the resolver reserves what the grip paints, so eight of those ten cells now
+# go to the panes (the two the one-cell grips paint stay reserved) -- and the
+# rail-open threshold drops by the same eight (118 -> 110 here,
 # 122 -> 114 on Skills and Collections), the ordinary consequence of a
 # cheaper `required_width()`. Notes, File Notes and Prompts keep the default.
 LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile(grip_width=1)

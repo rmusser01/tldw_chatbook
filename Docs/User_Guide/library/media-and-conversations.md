@@ -54,11 +54,12 @@ collapse the pane to its left and **`›`** to expand it; Notes, File Notes and
 Prompts keep the five-column **`<---`** / **`--->`** grip. Because the screen
 holds back exactly the columns a grip paints, the narrow grip also moves the
 width at which the navigation rail joins: on Conversations it now appears at
-110 columns (was 118) and on Skills and Collections at 114 (was 122). The grips are clickable and keyboard-operable. Reader has no
-grip and never collapses. Your manual pane choices are remembered. If the
-terminal is too narrow, the screen temporarily collapses Library first and
-then Items; widening the terminal restores the remembered layout instead of
-saving the temporary responsive state.
+110 columns (was 118) and on Skills and Collections at 114 (was 122). The
+grips are clickable and keyboard-operable. Reader has no grip and never
+collapses. Your manual pane choices are remembered. If the terminal is too
+narrow, the screen temporarily collapses Library first and then Items;
+widening the terminal restores the remembered layout instead of saving the
+temporary responsive state.
 
 On Media nothing sits between the panes but those two one-cell grips, and the
 list uses the width that frees up:

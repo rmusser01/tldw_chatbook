@@ -88,15 +88,27 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         if extra_classes:
             classes = f"{classes} {extra_classes}"
         super().__init__(compact=True, flat=True, classes=classes, **kwargs)
-        self.styles.width = width
-        self.styles.min_width = width
-        self.styles.max_width = width
+        self.sync_width(width)
         self.styles.height = "100%"
         self.styles.padding = 0
         self.styles.line_pad = 0
         self.styles.border = ("none", "transparent")
         self.styles.content_align = ("center", "middle")
         self.sync_open(open)
+
+    def sync_width(self, width: int) -> None:
+        """Size the grip to the layout's reservation, in place.
+
+        Args:
+            width: The resolved layout's ``grip_width`` in cells.
+
+        Returns:
+            None.
+        """
+        self.grip_width = width
+        self.styles.width = width
+        self.styles.min_width = width
+        self.styles.max_width = width
 
     def sync_open(self, open: bool) -> None:
         """Patch arrow and action copy without changing geometry.
@@ -336,6 +348,10 @@ class LibraryAdaptiveReaderShell(Horizontal):
                     ),
                     grip,
                 )
+            if grip.grip_width != layout.grip_width:
+                # Reserve-and-paint holds for every layout the shell is given,
+                # not only the one it was built with (task-31952 AC#3).
+                grip.sync_width(layout.grip_width)
             grip.sync_open(open)
             if open and not was_open and manual_reopen == pane_name:
                 manual_reopen_pane = pane
