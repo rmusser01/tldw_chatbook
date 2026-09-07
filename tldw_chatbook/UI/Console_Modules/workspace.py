@@ -4267,7 +4267,14 @@ class ConsoleWorkspaceController:
                 controller.switch_session(session_id)
             self._set_active_workspace_for_console_session(session_id)
             session = next(item for item in store.sessions() if item.id == session_id)
-            await self._refresh_console_effective_scope_and_sync(session)
+            try:
+                await self._refresh_console_effective_scope_and_sync(session)
+            except Exception:  # noqa: BLE001 - optional display must not block activation
+                logger.opt(exception=True).warning(
+                    "Failed to refresh retrieval scope display on saved "
+                    "conversation activation: {}",
+                    session_id,
+                )
             self._sync_console_chat_core_state()
             sync_result = self._sync_native_console_chat_ui_fn()
             if inspect.isawaitable(sync_result):

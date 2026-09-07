@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-09-07 21:17'
+updated_date: '2026-09-07 21:37'
 labels:
   - console
   - switcher
@@ -55,6 +55,7 @@ and dependency references.
 - [ ] #17 Targeted activation tests release their own SQLite handles only after pending work settles; repeated terminal teardown has no cumulative database-descriptor growth.
 - [x] #18 Reopening an exact saved conversation through History reuses an existing Console session across History and Character modes, without duplicate tabs or lost authority checks.
 - [x] #19 The selected Active, History or Character mode remains unmistakable with a non-color text marker and distinct painted styling at 52x20 and 120x50, independently of keyboard focus.
+- [x] #20 Queued switcher reconciliation can be cancelled before execution without creating an unawaited coroutine, while executed work still refreshes its captured query.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -93,6 +94,14 @@ Resource correction against10c18c7c6: inspection fixture captures its original C
 Activation scoped review I1/M1 correction against cfcb79bd8: commit acknowledgement now matches the same completion-owner identity as activation admission and waits through queued admission; installed callbacks pair per-request completion/waiter even when waiter starts first. Real held ordinary-A/queued-switcher-B regression proves Escape remains effective before B commit and only B linearization freezes controls; ordinary None and precommit settlement preserved. Artifact finalization records corpus-integrity failure before JSON while retaining an earlier exception. ADR120 and AC5/15 already govern; no new ADR or authority. Valid owner RED4failed, focusedGREEN6passed, final affected three-file gate51passed38.63s/no warnings with post-teardown regular7 plateau and lsof0/empty stderr. Seven changed Python paths have no added Ruff diagnostics; five focused files lint/format clean. Existing lesson records reviewer unguarded-import incident without ambient inspection/undo. Full command/provenance receipt: packet/task-5-activation-review-fix-report.md. In Progress/unchecked; native/full UI latency, external evidence, inherited preimport501/500 and size qualifications remain open. No full sweep, timing matrix, native, rebase or remote changes.
 
 Approved native-report follow-up on dev29442a: History validates saved existence then reuses exact persisted identity through guarded warm activation; preserves authority, deletion refusal, intentional cold forks, and refreshes changed workspace scope. Mode title explicitly names Active/History/Character chats with primary text contrast and selected styling independent of focus, without layout rows or cap changes. Review identity/deletion/scope findings fixed; covering48passed1expectedCSSwarning, final color mode2passed and geometry/budget12passed1expectedwarning; boot CSS803784/804000. No added Ruff diagnostics, focused format and all preflight guards pass. Impeccable visual review caught dark border-title inheritance and prompted actual rendered contrast assertions. Existing ADR120/031/097 apply; no new ADR. Evidence/manual handoff: Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md. AC18/19 checked for scoped automated evidence; broader task remains In Progress, native/external gaps unwaived, TASK31966 separate. Original running QA checkout left unchanged.
+
+PR2487 Qodo remediation plan (2026-09-07): rebase onto fetched dev0bb00beaf; preserve existing best-effort scope-display behavior with a local Exception boundary while cancellation and genuine presentation failures still restore the prior session. Add isolated exact-ID selection/mode-state/scope-failure coverage alongside the installed UI regressions, then run targeted checks, reply to both review threads, obtain current-head review and merge after checks. Existing ADR120/031/097; no new ADR or scope expansion.
+
+PR2487 Qodo fixes: conflict-free rebase onto dev0bb00beaf; original patch range-diff equivalent. New scope exception guard preserves incumbent best-effort display semantics; cancellation and actual presentation failure retain rollback. Valid unit and installed-UI RED each failed before fix; covering60passed1expectedCSSwarning82.87s. Added11 isolated decisions and installed History outage regression, no app/DB in unit cases. Independent static review found no remaining issues. Diagnostic statement comparison verified exactly one added fixed-message warning with opaque runtime session ID and incumbent exception logging, no new sink/content/path/secret format arguments; regenerated mandatory inventory. Full evidence in QA follow-up; native/external gaps unchanged.
+
+Bounded verification follow-up: a repeated unit-plus-installed-History run showed an unawaited refresh coroutine. Tracemalloc pinned allocation to console_session_switcher_modal.py reconcile_active_results line574; queued worker cancellation can precede coroutine execution. Plan: add isolated queued-work regression, defer only this allocation through the supported callable worker seam, retain production reconciliation behavior and rerun affected tests. Existing lifecycle contracts apply; no new ADR or GC policy.
+
+Final queued-worker correction uses functools.partial of the async refresh method; Textual rejects ordinary lambdas (caught by seven actual-worker failures and reviewer before publication). Unit regression now checks deferred creation plus async-callable compatibility and captured query. Final12unit+14installed+41activity gate67passed47.28s/no warnings; descriptor plateau unchanged. All added test Ruff/format checks and whitespace pass; preflight clear and no new workspace diagnostics. Ready for remote review/check gate; no native or GC qualification waiver.
 <!-- SECTION:NOTES:END -->
 
 ### Approved native follow-up — 2026-09-07

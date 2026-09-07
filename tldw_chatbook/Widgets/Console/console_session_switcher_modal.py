@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import sha1
 from typing import Any, ClassVar
 from uuid import uuid4
@@ -571,7 +572,7 @@ class ConsoleSessionSwitcherModal(
                     else 0
                 )
         self.run_worker(
-            self._refresh_results(query),
+            partial(self._refresh_results, query),
             exclusive=True,
             group="console-session-switcher-reconcile",
         )

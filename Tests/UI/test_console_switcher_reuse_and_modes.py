@@ -248,3 +248,48 @@ async def test_history_reuse_refreshes_changed_workspace_scope(activation_librar
         assert store.active_session_id == target.id
         assert chat._console_effective_scope_cache["exact"].item_count == 2
         assert _static_plain_text(chat.query_one("#console-scope-chip")) == "Scope: 2"
+
+
+@pytest.mark.asyncio
+async def test_history_reuse_still_presents_chat_when_scope_refresh_fails(
+    activation_library,  # noqa: F811
+    monkeypatch,
+):
+    owner, _, db = activation_library
+    _seed(owner, db)
+    owner.local_chat_conversation_service = ChatConversationService(db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = host.screen
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        assert await chat._workspace._resume_console_workspace_conversation("exact")
+        warm_id = store.active_session_id
+        await chat._session._activate_native_console_session(prior)
+
+        async def fail_scope(_session):
+            raise RuntimeError("synthetic scope-display outage")
+
+        monkeypatch.setattr(
+            chat._retrieval, "_refresh_console_effective_scope_and_sync", fail_scope
+        )
+        await chat.action_open_console_session_switcher(
+            initial_mode=SwitcherMode.HISTORY
+        )
+        await _until(lambda: isinstance(host.screen, ConsoleSessionSwitcherModal))
+        modal = host.screen
+        await _until(lambda: bool(modal.query("#console-switcher-query")))
+        await pilot.pause()
+        modal.query_one("#console-switcher-query", Input).value = "Exact"
+        await pilot.pause()
+        await _until(lambda: not modal._query_pending and bool(modal._entries))
+        assert modal._entries[0].target.conversation_id == "exact"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert host.screen is chat
+        assert store.active_session_id == warm_id
+        assert (
+            len([s for s in store.sessions() if s.persisted_conversation_id == "exact"])
+            == 1
+        )
+        assert chat.focused is chat.query_one("#console-native-composer")

@@ -58,6 +58,39 @@ python -m pytest Tests/UI/test_console_character_activation_presentation.py Test
 
 ## Remaining manual handoff
 
+### PR #2487 Qodo remediation
+
+Rebased without conflicts onto dev `0bb00beaf4e324385a10878bb1ceb380ec55e3e9`;
+range-diff confirms the original patch was unchanged. Qodo's two findings were
+addressed before merge: scope-display refresh is best effort, matching native
+tab activation, and isolated unit tests supplement the installed UI coverage.
+Cancellation still restores and propagates; genuine presentation failure still
+restores the prior session. The failure was reproduced by one unit test and one
+installed History test before the exception boundary was added.
+
+The post-rebase covering run passed **60 tests in 82.87 seconds**, with only the
+expected CSS headroom warning. Eleven isolated cases cover exact saved identity,
+active-runtime preference, missing-record refusal, mode widening/selection, and
+scope-error versus cancellation/presentation outcomes. The installed regression
+also verifies reused runtime and composer focus during a scope-display outage.
+Independent static review reported no remaining findings.
+
+The diagnostic inventory was reviewed using its statement comparison before
+regeneration: one new warning in `workspace.py`, containing a fixed message and
+opaque runtime session ID, with existing exception logging semantics and no new
+sink. No conversation content, credentials, paths, or URLs were added to its
+format arguments. Native/external qualifications below remain unchanged.
+
+A smaller verification run exposed an unawaited reconciliation coroutine.
+Tracemalloc identified its allocation at the reconciliation worker handoff;
+the worker could be cancelled before starting that eagerly created coroutine.
+The handoff now uses an async `functools.partial`, so creation occurs only at
+execution. A plain lambda was rejected by Textual's actual async-worker tests;
+the final unit boundary also asserts an async-callable input. The final gate
+covering twelve isolated cases, fourteen installed switcher cases, and all
+forty-one activity-switcher cases passed **67 tests in 47.28 seconds, without
+warnings**, with the same stable descriptor plateau. No GC policy changed.
+
 The user's existing synthetic native app and its checkout were left unchanged;
 the fixes were built in a separate worktree. Headless Textual evidence is not
 new native-terminal acceptance. On a restarted fixed build, verify:
