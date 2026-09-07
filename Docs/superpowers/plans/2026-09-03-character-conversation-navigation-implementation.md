@@ -1109,6 +1109,18 @@ type/owner, remediate the observed owner, and qualify frozen source with the
 specified native and Keyword scale/latency protocols; no warning suppression or
 cap increases count as remediation.
 
+Real-owner latency verification addendum: correct the reproduced retained-modal
+activation circularity using ADR120's synchronous request-owned presentation
+completion, preserving ordinary strict visibility, single-flight ownership,
+precommit cancellation, failure rollback and successful composer focus. Regress
+cold/warm exact activation, Context continuation, refused/stale/away-and-back
+overlays and ordinary same-target callers through real installed owners. Warm
+immutable target-specific real-token estimates on the existing async resume seam
+before switching sessions, never the UI-owned cost cache; reject stale target or
+settings snapshots. Prove off-loop execution and unchanged estimates, then run
+one affected gate and the unchanged real-owner latency matrix. Historical timing
+failures remain visible; no speculative fix or exemption for unclassified gaps.
+
 At compact width, inline Active group status tokens rather than adding group
 headers. In Character chats, show character/title and recency/state on each
 two-line result; render excerpt and absolute timestamp only in the fixed

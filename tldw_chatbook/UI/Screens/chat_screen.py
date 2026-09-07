@@ -681,7 +681,10 @@ FeedbackRequested = ConsoleSelectionFeedbackRequested
 NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
-    from ...Chat.console_conversation_activation import CharacterConversationActivationRequest
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+        ConsoleConversationActivationResult,
+    )
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
@@ -5057,11 +5060,27 @@ class ChatScreen(BaseAppScreen):
 
         initial_results, _, _, _, receipt_state = active_projection_snapshot()
 
+        async def activate_character(
+            request: "CharacterConversationActivationRequest",
+            cancellation: asyncio.Event,
+        ) -> "ConsoleConversationActivationResult":
+            def complete(result: "ConsoleConversationActivationResult") -> bool:
+                return (
+                    self._workspace._character_conversation_target_ready(request)
+                    and modal.complete_character_activation(
+                        request, result, console=self
+                    )
+                )
+
+            return await self._workspace.activate_character_conversation(
+                request, cancellation, complete_presentation=complete
+            )
+
         modal = ConsoleSessionSwitcherModal(
             active_results=initial_results,
             history_loader=self._workspace.load_console_session_switcher_history,
             character_loader=self._load_console_character_switcher_page,
-            character_activate=self._workspace.activate_character_conversation,
+            character_activate=activate_character,
             character_commit_waiter=(
                 self._wait_until_character_switcher_commit_started
             ),

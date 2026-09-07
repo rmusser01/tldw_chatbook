@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-09-07 15:59'
+updated_date: '2026-09-07 17:12'
 labels:
   - console
   - switcher
@@ -50,6 +50,9 @@ and dependency references.
 - [ ] #12 Character Keyword pages preserve the repository relevance order and rejected query edits retain the prior accepted search without exposing stale actionable targets.
 - [ ] #13 A failed Library inspection transfer restores the previous retained destination without overwriting newer Library work; accepted cold and warm transfers still select the exact conversation.
 - [ ] #14 Repeated isolated inspection workflows dispose all fixture-owned SQLite handles after their workers stop, and supported qualification dependencies import without Requests compatibility warnings.
+- [ ] #15 Genuine installed switcher activation opens the exact cold or existing Console conversation, preserves composer focus, and rejects stale or unrelated overlay ownership without granting ordinary callers an underlay exception.
+- [ ] #16 Cold target token-estimate preparation runs off the UI thread before session activation, preserves real estimator values, and rejects stale target or settings snapshots.
+- [ ] #17 Targeted activation tests release their own SQLite handles only after pending work settles; repeated terminal teardown has no cumulative database-descriptor growth.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -128,6 +128,9 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             asyncio.Task[ConsoleConversationActivationResult] | None
         ) = None
         self._active_commit_event: asyncio.Event | None = None
+        self._active_presentation: (
+            Callable[[ConsoleConversationActivationResult], bool] | None
+        ) = None
         self.phase = ConsoleActivationPhase.IDLE
 
     async def activate(
@@ -135,8 +138,22 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         target: LocalCharacterConversationTarget
         | CharacterConversationActivationRequest,
         cancellation: asyncio.Event | None = None,
+        *,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None = None,
     ) -> ConsoleConversationActivationResult:
-        """Activate ``target`` or join its existing exact single-flight attempt."""
+        """Activate an exact target, joining only the same presentation owner.
+
+        Args:
+            target: Immutable local target or revision-qualified request.
+            cancellation: Cancellation allowed before commit starts.
+            complete_presentation: Optional synchronous owned-overlay completion.
+                It must admit and reveal the prepared destination before the
+                ordinary strict visibility check. False refuses completion.
+
+        Returns:
+            The canonical committed, cancelled, or rolled-back outcome.
+        """
 
         if not isinstance(
             target,
@@ -150,16 +167,23 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                     commit_event = asyncio.Event()
                     attempt = asyncio.create_task(
                         self._run_serialized_attempt(
-                            target, cancellation or asyncio.Event(), commit_event
+                            target,
+                            cancellation or asyncio.Event(),
+                            commit_event,
+                            complete_presentation,
                         )
                     )
                     self._active_request = target
                     self._active_attempt = attempt
                     self._active_commit_event = commit_event
+                    self._active_presentation = complete_presentation
                     attempt.add_done_callback(self._release)
                     join = True
                 else:
-                    join = self._active_request == target
+                    join = (
+                        self._active_request == target
+                        and self._active_presentation is complete_presentation
+                    )
             if join:
                 return await asyncio.shield(attempt)
             # A different target waits outside admission.  It may then claim
@@ -172,11 +196,15 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         | CharacterConversationActivationRequest,
         cancellation: asyncio.Event,
         commit_event: asyncio.Event,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None,
     ) -> ConsoleConversationActivationResult:
         """Hold the app-owned Console mutation lane for the whole attempt."""
 
         async with self._mutation_lock:
-            return await self._run_attempt(target, cancellation, commit_event)
+            return await self._run_attempt(
+                target, cancellation, commit_event, complete_presentation
+            )
 
     async def wait_until_commit_started(
         self,
@@ -202,6 +230,7 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             self._active_request = None
             self._active_attempt = None
             self._active_commit_event = None
+            self._active_presentation = None
 
     async def _run_attempt(
         self,
@@ -209,6 +238,8 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
         | CharacterConversationActivationRequest,
         cancellation: asyncio.Event,
         commit_event: asyncio.Event,
+        complete_presentation: Callable[[ConsoleConversationActivationResult], bool]
+        | None,
     ) -> ConsoleConversationActivationResult:
         prior_state = self._capture_state()
         self.phase = ConsoleActivationPhase.OPENING_CANCELLABLE
@@ -251,6 +282,17 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             else:
                 opened_token = opened if opened else None
                 opened_ok = bool(opened)
+            result = ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.OPENED,
+                target.target
+                if isinstance(target, CharacterConversationActivationRequest)
+                else target,
+                True,
+            )
+            if opened_ok and complete_presentation is not None:
+                # No await between the source's final readiness/visit proof,
+                # synchronous dismissal, and the Console's strict proof below.
+                opened_ok = complete_presentation(result) is True
             visible = (
                 bool(await _maybe_await(self._exact_target_visible(target)))
                 if opened_ok
@@ -258,13 +300,7 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
             )
             if opened_ok and visible:
                 self.phase = ConsoleActivationPhase.IDLE
-                return ConsoleConversationActivationResult(
-                    ConsoleActivationResultKind.OPENED,
-                    target.target
-                    if isinstance(target, CharacterConversationActivationRequest)
-                    else target,
-                    True,
-                )
+                return result
         except asyncio.CancelledError:
             if not commit_started:
                 self.phase = ConsoleActivationPhase.IDLE

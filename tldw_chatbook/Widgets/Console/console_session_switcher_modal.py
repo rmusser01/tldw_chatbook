@@ -291,6 +291,10 @@ class ConsoleSessionSwitcherModal(
         self._activation_phase = ConsoleActivationPhase.IDLE
         self._activation_cancellation: asyncio.Event | None = None
         self._activation_task: asyncio.Task[None] | None = None
+        self._activation_request: CharacterConversationActivationRequest | None = None
+        self._activation_owner: tuple[int, int, int, asyncio.Event] | None = None
+        self._activation_completion_consumed = False
+        self._screen_change_epoch = 0
         self._activation_failure_kind: ConsoleActivationResultKind | None = None
         self._committed_character_result: ConsoleSwitcherCharacterResult | None = None
         self._pointer_result_key = ""
@@ -370,6 +374,9 @@ class ConsoleSessionSwitcherModal(
         SafeModalDismissMixin.on_mount separately for this Mount event
         (TASK-31822).
         """
+        self.app.screen_change_signal.subscribe(
+            self, self._record_screen_change, immediate=True
+        )
         self.query_one(
             "#console-switcher-modal", Vertical
         ).border_title = "Switch or resume"
@@ -464,6 +471,7 @@ class ConsoleSessionSwitcherModal(
     def on_unmount(self) -> None:
         """Invalidate late work without remounting into a closed screen."""
         self._closed = True
+        self.app.screen_change_signal.unsubscribe(self)
         self._request_generation += 1
         if (
             self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE
@@ -2114,6 +2122,14 @@ class ConsoleSessionSwitcherModal(
             data_revision=self._character_data_revision,
         )
         self._activation_cancellation = asyncio.Event()
+        self._activation_request = request
+        self._activation_owner = (
+            self._safe_mount_generation,
+            self._request_generation,
+            self._screen_change_epoch,
+            self._activation_cancellation,
+        )
+        self._activation_completion_consumed = False
         self._activation_failure_kind = None
         self._activation_phase = ConsoleActivationPhase.OPENING_CANCELLABLE
         self._set_activation_controls_disabled(True)
@@ -2124,6 +2140,57 @@ class ConsoleSessionSwitcherModal(
         self._activation_task = asyncio.create_task(
             self._run_character_activation(request, self._activation_cancellation)
         )
+
+    def _record_screen_change(self, _screen: object) -> None:
+        self._screen_change_epoch += 1
+
+    def complete_character_activation(
+        self,
+        request: CharacterConversationActivationRequest,
+        result: ConsoleConversationActivationResult,
+        *,
+        console: object,
+    ) -> bool:
+        """Reveal only this live request's already-prepared Console, once.
+
+        Args:
+            request: Exact request object captured when this visit activated.
+            result: Matching committed candidate from the canonical opener.
+            console: Captured Console immediately beneath this modal.
+
+        Returns:
+            Whether this owned synchronous dismissal completed.
+        """
+        stack = self.app.screen_stack
+        if (
+            self._closed
+            or self._activation_completion_consumed
+            or request is not self._activation_request
+            or result.kind is not ConsoleActivationResultKind.OPENED
+            or result.target != request.target
+            or not result.commit_started
+            or self._mode is not SwitcherMode.CHARACTER_CHATS
+            or self._activation_owner
+            != (
+                self._safe_mount_generation,
+                self._request_generation,
+                self._screen_change_epoch,
+                self._activation_cancellation,
+            )
+            or len(stack) < 2
+            or stack[-1] is not self
+            or stack[-2] is not console
+        ):
+            return False
+        self._activation_phase = ConsoleActivationPhase.COMMITTING
+        restore_focus = self.SAFE_MODAL_RESTORE_FOCUS
+        self.SAFE_MODAL_RESTORE_FOCUS = False
+        try:
+            consumed = self.dismiss_safe_once(None)
+        finally:
+            self.SAFE_MODAL_RESTORE_FOCUS = restore_focus
+        self._activation_completion_consumed = consumed
+        return consumed
 
     async def _run_character_activation(
         self,
@@ -2168,6 +2235,8 @@ class ConsoleSessionSwitcherModal(
             if commit_waiter is not None and not commit_waiter.done():
                 commit_waiter.cancel()
 
+        if self._activation_completion_consumed:
+            return
         if (
             result.kind is ConsoleActivationResultKind.OPENED
             and result.target == request.target

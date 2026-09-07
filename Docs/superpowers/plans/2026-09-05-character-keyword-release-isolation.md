@@ -35,6 +35,13 @@ application teardown, with before/after evidence and no warning suppression or
 limit increase. The existing Keyword-only scale and native protocols still apply;
 unavailable external Windows/human checks stay explicitly open, never waived.
 
+Genuine UI qualification also reproduced retained-switcher activation circularity
+and first-use token initialization on the UI thread. Apply the amended ADR120
+owned synchronous presentation completion and immutable off-loop estimate
+preparation on the existing resume seam. Preserve exact target/focus/rollback,
+ordinary strict visibility and pricing semantics; use real-owner RED/GREEN and
+targeted verification before rerunning the unchanged latency matrix.
+
 ADR required: no new ADR.
 
 ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md

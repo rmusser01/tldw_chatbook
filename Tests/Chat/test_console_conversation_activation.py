@@ -121,6 +121,35 @@ class _Harness:
 
 
 @pytest.mark.asyncio
+async def test_equal_target_different_presentation_does_not_join_owned_completion():
+    harness = _Harness()
+    coordinator = harness.coordinator()
+    harness.commit_gate.set()
+    completions = []
+
+    def complete(result):
+        completions.append(result.target)
+        return True
+
+    owned = asyncio.create_task(
+        coordinator.activate(TARGET, complete_presentation=complete)
+    )
+    await asyncio.wait_for(coordinator.wait_until_commit_started(TARGET), 2)
+    ordinary = asyncio.create_task(coordinator.activate(TARGET))
+    try:
+        await asyncio.sleep(0)
+        assert not ordinary.done()
+    finally:
+        harness.finish_gate.set()
+    outcomes = await asyncio.wait_for(asyncio.gather(owned, ordinary), 2)
+    assert [outcome.kind for outcome in outcomes] == [
+        ConsoleActivationResultKind.OPENED
+    ] * 2
+    assert completions == [TARGET]
+    assert harness.open_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_cancel_before_commit_changes_no_console_state() -> None:
     harness = _Harness()
     coordinator = harness.coordinator()
@@ -443,7 +472,11 @@ async def test_production_workspace_reports_global_revision_staleness_as_failed(
             is None
         )
     finally:
-        db.close_connection()
+        from Tests.conftest import _close_database_instance
+
+        # All revalidation workers have returned; this test owns the entire file.
+        _close_database_instance(db)
+        assert db.registered_connection_count() == 0
 
 
 def test_production_workspace_visibility_requires_settled_transcript_owner() -> None:
@@ -687,4 +720,8 @@ async def test_committed_workspace_revalidates_after_hydration_and_rolls_back_ow
             for session in store.sessions()
         )
     finally:
-        db.close_connection()
+        from Tests.conftest import _close_database_instance
+
+        # The committed owner and its off-loop revalidation have both settled.
+        _close_database_instance(db)
+        assert db.registered_connection_count() == 0

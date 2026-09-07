@@ -97,8 +97,28 @@ opener returns exactly `OPENED`, `CANCELLED_PRECOMMIT`, `NOT_FOUND`,
 `commit_started` acknowledgement is the cancellation linearization point:
 cancellation that wins before it guarantees no Console target, tab, draft, or
 focus change; once commit starts, the caller waits for success or atomic rollback.
-Only `OPENED`, after the exact destination is current and visible, dismisses the
-calling activation surface.
+Public `OPENED` requires the exact destination to be current and visible.
+For the request-owned switcher only, the canonical mutation lane may first prove
+that exact destination ready immediately beneath the same live source overlay,
+synchronously consume its matching committed completion and dismiss it, and then
+perform the ordinary exposed-destination proof before returning `OPENED`.
+There is no await between the final owner/readiness check, dismissal, and proof.
+The source fence includes request, mount/query generation, cancellation owner,
+immediate stack position, and an epoch invalidated even by away-and-back overlays.
+Single-flight joining includes this completion owner's identity; ordinary
+Context/Roleplay callers never inherit an overlay's authorization. Successful
+dismissal preserves composer focus instead of restoring the old source control.
+Refused/stale completion retains the source and uses existing owned rollback.
+An exceptional reentrant stack change after synchronous pop can still fail the
+final proof; it does not authorize recreating a dismissed source or global stack.
+Waiting for an exposed destination before dismissing its retained modal was
+rejected because genuine-owner verification demonstrated circular failure.
+
+Resume prepares cold real-token estimates off the UI thread before switching the
+target session, using immutable rows and target-specific provider/model settings.
+It reuses the estimator's existing cache, not the UI-owned cost-chip cache, and
+rejects stale target/settings preparation. No approximate pricing, startup eager
+warmup, or changed token semantics are introduced.
 
 Roleplay deep links pass through an app-owned navigation coordinator before
 selection changes. The coordinator snapshots all incumbent Roleplay draft and

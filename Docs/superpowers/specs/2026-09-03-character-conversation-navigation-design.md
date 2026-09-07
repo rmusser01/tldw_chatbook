@@ -604,6 +604,17 @@ returns `OPENED` after the exact destination is current and visible or rolls
 back to the unchanged prior Console state and returns `FAILED`; partial target
 changes are not an outcome.
 
+For a retained switcher, ADR-120 defines a request-owned presentation completion:
+the canonical mutation lane proves the exact prepared Console immediately under
+that same live overlay, synchronously consumes/dismisses its matching committed
+completion, and then checks the ordinary exposed destination before returning
+public `OPENED`. No await separates those checks and dismissal. Request, mount,
+query, cancellation, stack position and screen-change epoch fence this exception;
+ordinary callers remain strict. Successful dismissal leaves composer focus and
+cannot restore the old Context opener. Refusal before pop preserves the modal;
+exceptional post-pop stack changes use owned rollback without recreating source
+overlays. This removes the circular exposed-before-dismiss requirement.
+
 The total transition/recovery contract is:
 
 | State/event | Opener result | Next presentation | Focus/action |
@@ -1331,8 +1342,9 @@ The programme is complete when:
 11. A painted result list never reorders silently. Meaning may become the first
     paint; later results require the visible apply action and preserve stable
     selection.
-12. The switcher stays mounted through typed cancellable activation and closes
-    only after the exact destination is current and visible.
+12. The switcher stays mounted through typed cancellable activation; ADR-120's
+    synchronous owned presentation completion reveals the exact prepared target,
+    and public `OPENED` follows strict exposed-destination proof.
 13. Partial or stale index generations never affect ranking, and authoritative
     deletion or identity invalidation takes effect before asynchronous cleanup.
 14. The specified first-use, identity, race, scale, latency, memory, keyboard,
