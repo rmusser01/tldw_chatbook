@@ -1034,6 +1034,15 @@ class LibraryScreen(BaseAppScreen):
         # the current item's done mark (the manual counterpart to ]'s auto-mark).
         Binding("R", "library_media_exit_review", "Exit review", show=False),
         Binding("m", "library_media_toggle_reviewed", "Toggle reviewed", show=False),
+        # task-31635 (critique #5 item 3): the Trash view's two row actions
+        # were mouse-or-six-Tabs only. Both gate on the SAME predicate the
+        # buttons do (``_library_media_trash_actions_live``), so a key can
+        # never fire where its button is disabled, and the footer chips
+        # below appear and disappear with them. "r" is also the Ingest
+        # canvas's "Retry this batch" -- disjoint contexts, and Textual
+        # tries each binding for a key until one's ``check_action`` passes.
+        Binding("r", "library_media_trash_restore", "Restore", show=False),
+        Binding("x", "library_media_trash_delete", "Delete forever", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -3901,6 +3910,26 @@ class LibraryScreen(BaseAppScreen):
                 if escape_label:
                     shortcuts.append(("esc", escape_label))
                 return tuple(shortcuts)
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "trash"
+            ):
+                # task-31635 item 3: the Trash view's own two keys, gated
+                # through the same ``check_action`` the bindings use, so a
+                # stale page or an armed confirmation drops both chips
+                # instead of teaching a key that no-ops (task-28005's rule).
+                trash_shortcuts: list[tuple[str, str]] = [
+                    ("/", "focus search"),
+                    ("F6", "next pane"),
+                ]
+                for key, gated_action, label in (
+                    ("r", "library_media_trash_restore", "restore"),
+                    ("x", "library_media_trash_delete", "delete"),
+                ):
+                    if self.check_action(gated_action, ()):
+                        trash_shortcuts.append((key, label))
+                trash_shortcuts.append(("esc", "back to list"))
+                return tuple(trash_shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -16523,6 +16552,45 @@ class LibraryScreen(BaseAppScreen):
             )
         return presentation
 
+    def _library_media_trash_action_disabled_reason(self) -> str:
+        """Why the Trash row actions cannot run right now, or "".
+
+        One predicate, read by the Restore / Delete-forever buttons' F-018
+        tooltips, by the ``r``/``x`` bindings' ``check_action`` gate, and
+        by the footer chips that advertise them (task-31635 item 3) -- so a
+        key can never fire where its button is disabled, and the footer can
+        never advertise a key that would no-op.
+
+        Returns:
+            The blocking reason in user language, or "" when both actions
+            are genuinely pressable.
+        """
+        state = self._library_media_trash_browse_controller.state
+        if (
+            state.loading
+            or state.mutation_pending
+            or self._library_media_bulk_delete_in_flight
+        ):
+            return "Trash is refreshing."
+        if state.freshness != "fresh":
+            return "Refresh Trash before changing this item."
+        if not state.selected_id:
+            return "Select a Trash item first."
+        return ""
+
+    def _library_media_trash_actions_live(self) -> bool:
+        """Whether the Trash view's row actions are on screen and pressable."""
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+            or getattr(self, "_library_media_view", _MEDIA_VIEW_LIST) != "trash"
+        ):
+            return False
+        # The confirmation replaces the whole action row with Cancel /
+        # Delete permanently, so neither key has a control to stand for.
+        if self._library_media_trash_browse_controller.state.confirmation_target:
+            return False
+        return not self._library_media_trash_action_disabled_reason()
+
     def _library_media_trash_canvas_presentation(self) -> dict[str, Any]:
         """Return screen-owned Trash controls without re-deriving page authority."""
         controller = self._library_media_trash_browse_controller
@@ -16538,14 +16606,7 @@ class LibraryScreen(BaseAppScreen):
         mutation_in_flight = bool(
             state.mutation_pending or self._library_media_bulk_delete_in_flight
         )
-        if state.loading or mutation_in_flight:
-            action_disabled_reason = "Trash is refreshing."
-        elif state.freshness != "fresh":
-            action_disabled_reason = "Refresh Trash before changing this item."
-        elif not state.selected_id:
-            action_disabled_reason = "Select a Trash item first."
-        else:
-            action_disabled_reason = ""
+        action_disabled_reason = self._library_media_trash_action_disabled_reason()
         return {
             "pager": controller.pager,
             "types": state.types,
@@ -24602,6 +24663,30 @@ class LibraryScreen(BaseAppScreen):
         """Compatibility callback for restore paths; resolve semantic intent."""
         self._focus_library_media_trash_intent()
 
+    def _press_library_media_trash_action(self, selector: str) -> None:
+        """Route a Trash accelerator through its own button (task-31635).
+
+        Pressing the control rather than re-entering its handler keeps one
+        implementation of each action -- including ``Button.press``'s own
+        refusal to fire while the button is disabled, which is the second
+        guard behind ``check_action``.
+
+        Args:
+            selector: Id selector of the Trash action button to press.
+        """
+        try:
+            self.query_one(selector, Button).press()
+        except (NoMatches, QueryError):
+            return
+
+    def action_library_media_trash_restore(self) -> None:
+        """Keyboard "r": restore the selected Trash item (task-31635 item 3)."""
+        self._press_library_media_trash_action("#library-media-trash-restore")
+
+    def action_library_media_trash_delete(self) -> None:
+        """Keyboard "x": arm the permanent-delete confirmation (task-31635)."""
+        self._press_library_media_trash_action("#library-media-trash-delete")
+
     @on(Button.Pressed, "#library-media-trash-delete")
     def handle_library_media_trash_delete(self, event: Button.Pressed) -> None:
         """Open inline confirmation for one captured fresh Trash identity."""
@@ -26250,6 +26335,13 @@ class LibraryScreen(BaseAppScreen):
                 and getattr(self, "_library_media_view", "list") == "trash"
                 and not bool(getattr(trash_state, "mutation_pending", False))
             )
+        if action in {
+            "library_media_trash_restore",
+            "library_media_trash_delete",
+        }:
+            # task-31635 item 3: exactly when the buttons these keys stand
+            # for are pressable -- see ``_library_media_trash_actions_live``.
+            return self._library_media_trash_actions_live()
         if action == "library_note_editor_back":
             return (
                 self._library_note_editor_active()

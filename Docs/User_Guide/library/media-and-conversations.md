@@ -221,17 +221,23 @@ a status line says "showing X of N" honestly. Entering Trash clears any
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
 restored.
-A selected row offers two actions and no others: **"Restore"**, and
-**"Delete permanently"**, which arms an inline "Cancel | Delete
+A selected row offers two actions and no others: **"Restore"** (key `r`),
+and **"Delete forever"** (key `x`), which arms an inline "Cancel | Delete
 permanently" confirmation and, once confirmed, removes that one item for
-good — there is no undo and no receipt afterwards. There is no
-empty-trash or bulk permanent delete; each item is deleted on its own.
+good — there is no undo and no receipt afterwards. The two sit two cells
+apart, the destructive one set apart in the quiet danger styling the
+select-mode "Delete" uses; both keys are advertised in the footer, and
+only while the actions they stand for are genuinely pressable. The
+confirmation names the item, its type and when it was trashed in the same
+words the row does ("trashed 6h"), with the exact timestamp on the
+tooltip. There is no empty-trash or bulk permanent delete; each item is
+deleted on its own.
 Whichever Trash action you take, "‹ Media" returns you to a
 current list: the app refreshes the page it fenced for its own write, so it
 never asks you to press "Retry" for a change you just made here.
 
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
-and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
+and Trash ▸ "Delete forever", each followed by "‹ Media", live in tmux
 235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
 2" range, no stale banner and no "Retry").*
 
@@ -245,7 +251,7 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
 | "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is reduced to its type name (for example `ValueError`), so a private path never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
-| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…"; both render disabled with the reason on the tooltip while the list's own load has failed. |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
 

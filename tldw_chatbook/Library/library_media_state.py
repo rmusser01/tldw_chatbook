@@ -892,6 +892,27 @@ class LibraryMediaTrashState:
     notice: str = ""
 
 
+def media_trash_age_copy(trash_date: str | None, *, now: datetime | None = None) -> str:
+    """Render one trash timestamp the way the Trash list renders it.
+
+    task-31635 (critique #5 item 2): the rows say ``trashed 6h`` and the
+    permanent-delete confirmation said ``2026-08-11T11:00:00+00:00``, so
+    one screen named the same instant two ways and neither matched the
+    other. Both now read this.
+
+    Args:
+        trash_date: ISO-8601-ish deletion timestamp, or ``None``.
+        now: Reference time; defaults to the current UTC time.
+
+    Returns:
+        ``"trashed <age>"``, or ``""`` when the value is absent or
+        unparseable (the caller decides what to say instead).
+    """
+    reference = now if now is not None else datetime.now(timezone.utc)
+    age = format_console_relative_age(str(trash_date or ""), now=reference)
+    return f"trashed {age}" if age else ""
+
+
 def build_library_media_trash_state(
     records: Sequence[Any] | None,
     *,
@@ -950,11 +971,10 @@ def build_library_media_trash_state(
 
     rows = []
     for media_id, title, media_type, trash_date in entries:
-        age = format_console_relative_age(trash_date, now=reference_now)
         # The list's own secondary vocabulary ("{type} · {age}" / "{type}"
         # / "media"), with the age labelled for what it is here: when the
         # item was trashed, not when it was updated.
-        trashed_age = f"trashed {age}" if age else ""
+        trashed_age = media_trash_age_copy(trash_date, now=reference_now)
         rows.append(
             LibraryMediaTrashRow(
                 media_id=media_id,

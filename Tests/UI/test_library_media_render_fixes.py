@@ -3236,3 +3236,45 @@ async def test_rendered_markdown_h1_starts_in_the_body_column():
             body.region,
             _painted(host, heading.region),
         )
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 item 6): with the list's load failed, the two
+# list-level actions ("Export…" over the whole filtered list, "Trash" over
+# the same store) stayed live and colour-normal beside the failure callout,
+# while "Select" beside them already rendered its "○" marker and said why.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_failed_list_load_gates_export_and_trash_with_reasons(size):
+    """A failed load disables Export… and Trash, each naming the failure."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_with_a_failed_first_page(
+            host, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        export = screen.query_one("#library-media-export", Button)
+        trash = screen.query_one("#library-media-trash-open", Button)
+        reason = "Couldn't load media · database is locked."
+        for button, label in ((export, "○ Export…"), (trash, "○ Trash")):
+            assert button.disabled, button.id
+            assert str(button.label) == label, (button.id, str(button.label))
+            assert str(button.tooltip) == reason, (button.id, button.tooltip)
+            assert "○" in _painted(host, button.region), _painted(host, button.region)
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_list_leaves_export_and_trash_live():
+    """The negative control: no failure, no gate (task-31635 item 6)."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        export = screen.query_one("#library-media-export", Button)
+        trash = screen.query_one("#library-media-trash-open", Button)
+        assert not export.disabled
+        assert not trash.disabled
+        assert str(export.label) == "Export…"
+        assert str(trash.label) == "Trash"

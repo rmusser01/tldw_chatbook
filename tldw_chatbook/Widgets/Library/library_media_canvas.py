@@ -564,12 +564,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if danger:
             classes += " library-media-action-danger"
         button = Button(
-            library_disabled_action_label(base, bulk_disabled),
+            library_disabled_action_label(base, bulk_disabled, align=True),
             id=widget_id,
             classes=classes,
             compact=True,
         )
         button._library_disabled_marker_base = base
+        # task-31635 (critique #5 item 4): these four are the Library's only
+        # actions that flip disabled IN PLACE (the selection count crossing
+        # 0), so they are the ones that visibly jumped when the marker left
+        # the label. The enabled spelling reserves the marker's width, and
+        # the in-place patcher reads this flag so the label it rebuilds
+        # holds the same column (``_patch_library_disabled_marker_label``).
+        button._library_disabled_marker_align = True
         button.disabled = bulk_disabled
         # F-018: a disabled action says why.
         button.tooltip = disabled_tooltip if bulk_disabled else enabled_tooltip
@@ -624,6 +631,34 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             LIBRARY_DELETE_SELECTED_TOOLTIP,
             danger=True,
         )
+
+    def _gate_failed_action(self, button: Button, base_label: str) -> Button:
+        """Disable a LIST-level action whose list failed to load.
+
+        task-31635 (critique #5 item 6): with the recovery callout up,
+        "Export…" (which exports the whole filtered list) and "Trash"
+        (which browses the same store that just refused a read) stayed live
+        and colour-normal, while "Select" beside them already carried its
+        "○" marker and said why. The predicate is the callout's own -- if
+        the canvas is painting a failure, these two name it.
+
+        Applied BEFORE ``_gate_stale_action`` at each call site, so a write
+        in flight or a stale page still wins the tooltip: those are the
+        more immediate blocker, and PR E's precedence is untouched.
+
+        Args:
+            button: The list-level action to gate.
+            base_label: The action's plain enabled label.
+
+        Returns:
+            The same button, gated when a load failure is current.
+        """
+        failure = self.load_failure
+        if failure is not None:
+            button.label = library_disabled_action_label(base_label, True)
+            button.disabled = True
+            button.tooltip = failure.disabled_tooltip
+        return button
 
     def _gate_mutation_action(self, button: Button, base_label: str) -> Button:
         """Disable even recovery controls only while a write is unsettled."""
@@ -800,15 +835,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             compact=True,
         )
         export_btn.display = not select_mode
+        self._gate_failed_action(export_btn, "Export…")
         self._gate_stale_action(export_btn, "Export…")
         # task-4025: the browsable Trash surface's entry point -- a
         # plain navigation action (never a `type:` cycle value: `type:`
         # cycles CONTENT types derived from the records, and trash is a
-        # STATE). Always enabled: the trash count isn't known until its
-        # view fetches, and an empty Trash shows its honest empty copy
-        # rather than this button lying disabled. Hidden in select mode
-        # like "Export…" -- Select's toolbar is for acting on the
-        # selection, not navigating away from it.
+        # STATE). Enabled on COUNT alone: the trash count isn't known until
+        # its view fetches, and an empty Trash shows its honest empty copy
+        # rather than this button lying disabled. task-31635 item 6 adds the
+        # one exception -- a FAILED read of this very store, where the Trash
+        # view's own fetch has no better prospects than the one that just
+        # failed. Hidden in select mode like "Export…" -- Select's toolbar
+        # is for acting on the selection, not navigating away from it.
         trash_btn = Button(
             "Trash",
             id="library-media-trash-open",
@@ -817,6 +855,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tooltip="Browse and restore deleted media.",
         )
         trash_btn.display = not select_mode
+        self._gate_failed_action(trash_btn, "Trash")
         # task-28242: "Review these" pins the WHOLE filtered result as an
         # ordered review set and walks it in the Reader. A list-level
         # action, hidden in select mode like Export/Trash.
