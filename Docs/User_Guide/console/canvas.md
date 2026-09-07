@@ -34,7 +34,8 @@ create** is enabled. Updates hot-reload an already-open preview but do not force
 a closed preview to open.
 
 The revision selector and transcript Canvas cards open exact immutable
-revisions. **Pin revision** stops following newer changes; **Follow latest**
+revisions. **Pin revision** stops following newer changes and starts a fresh
+authorized preview, resetting page-local interaction state. **Follow latest**
 returns to the branch-resolved head. Choosing an older revision changes the base
 for the next edit: that edit creates a new branch instead of rewriting history.
 

@@ -1799,7 +1799,17 @@ class CanvasGateway:
             return _error_response("session_refused", 401)
         scope = session.scope
         selection_epoch = session.selection_epoch
-        projection = await _maybe_await(self._authority.describe_selection(scope))
+        try:
+            projection = await _maybe_await(self._authority.describe_selection(scope))
+        except Exception:  # Classify freshness without exposing authority errors.
+            # A child may reject the old selected read after publication has
+            # already advanced this live session. Classify that race exactly as
+            # a stale successful read; genuine/current-scope failures still close.
+            if session.selection_epoch != selection_epoch and self._session_is_current(
+                session, session.scope
+            ):
+                return _error_response("selection_changed", 409)
+            raise
         if session.selection_epoch != selection_epoch and self._session_is_current(
             session, session.scope
         ):

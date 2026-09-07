@@ -838,7 +838,8 @@
   });
 
   ui.selector.addEventListener("change", () => navigate("select", {canvas_id: ui.selector.value}));
-  ui.pin.addEventListener("click", () => navigate("pin", {}, {reload: false}));
+  // Explicit Pin revokes the server's load authority, even at this revision.
+  ui.pin.addEventListener("click", () => navigate("pin"));
   ui.follow.addEventListener("click", async () => { dismissNotice(); await navigate("follow", {}, {updated: displayedRevisionId !== latestRevisionId}); });
   ui.noticeFollow.addEventListener("click", () => ui.follow.click());
   ui.noticePrevious.addEventListener("click", async () => { dismissNotice(); await navigate("previous"); });

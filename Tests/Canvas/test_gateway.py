@@ -1314,6 +1314,54 @@ async def test_boot_frame_plan_assets_events_source_and_bridge_are_exactly_scope
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["unchanged", "advanced", "unavailable"])
+async def test_failed_selected_read_only_recovers_proven_new_live_epoch(transition):
+    class FailingReadAuthority(_Authority):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def describe_selection(self, scope):
+            self.entered.set()
+            await self.release.wait()
+            raise RuntimeError("PRIVATE_SELECTED_SOURCE")
+
+    authority = FailingReadAuthority([])
+    gateway = CanvasGateway(authority=authority)
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as session:
+            boot = await _post_json(
+                session,
+                _launch_url(launch, "api/boot"),
+                {"bootstrap": launch.browser_url.split("#boot=", 1)[1]},
+                origin=gateway.origin,
+            )
+            assert boot.status == 200
+            pending = asyncio.create_task(session.get(_launch_url(launch, "api/state")))
+            await authority.entered.wait()
+            if transition == "advanced":
+                gateway.change_selection(
+                    browser_session_id="browser-a",
+                    scope=_scope(revision_id="revision-new"),
+                )
+            elif transition == "unavailable":
+                gateway.mark_browser_session_unavailable("browser-a")
+            authority.release.set()
+            response = await pending
+            assert response.status == (409 if transition == "advanced" else 503)
+            assert await response.json() == {
+                "error": "selection_changed"
+                if transition == "advanced"
+                else "gateway_unavailable"
+            }
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 async def test_events_deliver_exact_external_selection_without_publication() -> None:
     class QuietAuthority(_Authority):
         blocked = False
