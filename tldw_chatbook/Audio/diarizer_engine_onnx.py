@@ -65,6 +65,7 @@ SEGMENTATION_INT8 = ModelAsset(
     sha256="d582f4b4c6b48205de7e0643c57df0df5615a3c176189be3fc461e9d18827b5d",
     size=1_540_506,
     licence="MIT (pyannote/segmentation-3.0)",
+    download_size=6_958_444,  # the same tarball as SEGMENTATION
 )
 
 #: Bake-off candidate embedders (spec §3/§7). Each is used for BOTH the live
