@@ -15691,13 +15691,34 @@ class LibraryScreen(BaseAppScreen):
         service = self._review_set_service()
         if service is None:
             return tuple(items)
-        try:
-            review_set = service.get_active_review_set()
-        except Exception:
+        # task-31956: ``get_active_review_set`` loads the set HEADER AND
+        # every pinned item row (``REVIEW_SET_CAP`` = 500 of them), and this
+        # runs at every one of the ~30 viewer-flip sync sites -- a whole-set
+        # load to stamp at most a page. The map is memoised against the
+        # service's write ``revision``, which every mutating method bumps
+        # through its one transaction helper, so a done mark, a set
+        # create/activate/deactivate and a dismiss all invalidate it
+        # without a per-gesture invalidation call a new writer could forget.
+        cached = getattr(self, "_review_done_map_cache", None)
+        if cached is not None and cached[0] == service.revision:
+            done_by_id = cached[1]
+        else:
+            try:
+                review_set = service.get_active_review_set()
+            except Exception:
+                # Deliberately NOT cached: one transient read error would
+                # otherwise cost the markers until the next write.
+                return tuple(items)
+            done_by_id = (
+                None
+                if review_set is None
+                else {
+                    item.backing_media_id: item.done for item in review_set.items
+                }
+            )
+            self._review_done_map_cache = (service.revision, done_by_id)
+        if done_by_id is None:
             return tuple(items)
-        if review_set is None:
-            return tuple(items)
-        done_by_id = {item.backing_media_id: item.done for item in review_set.items}
         return tuple(
             {**item, "reviewed": done_by_id.get(item["backing_media_id"])}
             for item in items

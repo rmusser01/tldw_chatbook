@@ -3605,3 +3605,175 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
         assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
         painted = _painted(host, grid.region)
         assert "Open manager" in painted, painted
+
+
+# ---------------------------------------------------------------------------
+# task-31956: the reviewed decoration costs O(visible rows), not O(active set)
+# ---------------------------------------------------------------------------
+
+
+def _count_set_loads(service) -> list[str]:
+    """Count whole-set loads through ``service``, returning the tally list."""
+    loads: list[str] = []
+    inner = service.get_active_review_set
+
+    def counted():
+        review_set = inner()
+        loads.append("" if review_set is None else review_set.set_id)
+        return review_set
+
+    service.get_active_review_set = counted
+    return loads
+
+
+async def _decoration_fixture(host, pilot):
+    """A settled Media list with a two-item active set over four rows.
+
+    The load tally starts counting BEFORE the canvas build that follows the
+    create, so it covers the first real decoration rather than a cache the
+    fixture already warmed.
+    """
+    screen = await _open_media_list(host, pilot)
+    service = screen._review_set_service()
+    set_id = service.create_review_set(
+        "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+    )
+    loads = _count_set_loads(service)
+    _sync_library_canvas(screen, "media")
+    for _ in range(3):
+        await pilot.pause()
+    items = screen._library_media_browse_controller.retained_items
+    assert len(items) == 4, items
+    return screen, service, set_id, items, loads
+
+
+def _reviewed(rows) -> list[bool | None]:
+    return [row["reviewed"] for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
+    """task-31956 AC#1: an unchanged set is read once, not per canvas build.
+
+    ``get_active_review_set`` loads the header AND every pinned item row (up
+    to ``REVIEW_SET_CAP`` = 500) and the decoration ran it at every one of
+    the ~30 viewer-flip sync sites, to stamp at most a page of rows. The
+    map is now cached against the service's write revision, so repeated
+    builds cost the rows they decorate and nothing else.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, _service, _set_id, items, loads = await _decoration_fixture(
+            host, pilot
+        )
+        # The canvas build inside the fixture already decorated this page.
+        assert len(loads) == 1, loads
+
+        first = screen._decorate_library_media_reviewed(items)
+        for _ in range(20):
+            screen._decorate_library_media_reviewed(items)
+
+        assert len(loads) == 1, loads
+        assert _reviewed(first) == [False, False, None, None], first
+
+
+@pytest.mark.asyncio
+async def test_marking_an_item_done_invalidates_the_decoration_cache():
+    """task-31956 AC#2: the mark seam is a write, so the next page is right.
+
+    Every write goes through the service's one transaction helper, which is
+    what the cache keys off -- so this holds for the ``m`` gesture, the
+    walker's auto-mark, and a direct service call alike.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, loads = await _decoration_fixture(
+            host, pilot
+        )
+        assert len(loads) == 1, loads
+
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            False,
+            False,
+            None,
+            None,
+        ]
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+        marked = screen._decorate_library_media_reviewed(items)
+
+        assert _reviewed(marked) == [True, False, None, None], marked
+        assert len(loads) == 2, loads
+
+
+@pytest.mark.asyncio
+async def test_leaving_and_re_entering_review_invalidates_the_decoration_cache():
+    """task-31956 AC#2: activation is a write too -- the markers follow it."""
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+
+        service.deactivate_active()
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+
+        service.activate(set_id)
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            False,
+            False,
+            None,
+            None,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_storage_error_is_never_cached_as_no_active_set():
+    """task-30042 doctrine survives the cache: it fails OPEN, and forgets.
+
+    A cached failure would cost the markers for the rest of the session on
+    one transient read error, so the failure is what is NOT remembered --
+    every build retries while the cache is invalid, and the markers return
+    with the storage.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+        # A write invalidates the cache, so the next decoration must read.
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+
+        attempts: list[str] = []
+        healthy = service.get_active_review_set
+
+        def boom():
+            attempts.append("read")
+            raise sqlite3.OperationalError("database is locked")
+
+        service.get_active_review_set = boom
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+        assert len(attempts) == 2, attempts
+
+        service.get_active_review_set = healthy
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            True,
+            False,
+            None,
+            None,
+        ]
