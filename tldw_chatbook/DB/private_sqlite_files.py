@@ -515,6 +515,8 @@ def prepare_batch(request: PrepareRequest) -> PrepareResult:
             before = artifact.lstat()
         except FileNotFoundError:
             before = None
+        except OSError as exc:
+            raise _path_error_from_oserror(artifact, exc) from None
         exists = _prepare_artifact(
             artifact,
             writable=request.writable,
