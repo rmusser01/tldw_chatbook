@@ -172,9 +172,89 @@ def _scope(revision_id: str) -> CanvasGatewayScope:
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_mermaid_failure_is_identified_and_offers_explicit_repair(candidate_snapshot):
-    source = ('<pre data-canvas-diagram="mermaid">sequenceDiagram\n'
-              'SECRET_SOURCE_SENTINEL->>B: Secret label</pre>')
+@pytest.mark.parametrize(
+    "revision,state", [("revision-1", "ready"), ("runtime-failure", "failed")]
+)
+async def test_pin_replaces_revoked_pending_renderer(revision, state):
+    gateway = CanvasGateway(authority=_NativeFlowAuthority())
+    try:
+        launch = await gateway.open_shell(_scope(revision))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium)
+            )
+            page = await browser.new_page()
+            await page.add_init_script("""(() => {
+              const Original = MessageChannel;
+              window.__heldStatuses = [];
+              window.__oldBridgeRequests = [];
+              window.__actionRequests = 0;
+              const originalFetch = fetch;
+              window.fetch = (...args) => {
+                if (String(args[0]).endsWith('/api/actions')) window.__actionRequests++;
+                return originalFetch(...args);
+              };
+              window.MessageChannel = class extends Original {
+                constructor() { super(); const port = this.port1;
+                  Object.defineProperty(port, 'onmessage', {set(handler) {
+                    port.addEventListener('message', event => {
+                      if (event.data?.type === 'canvas:status') {
+                        window.__heldStatuses.push(() => handler(event));
+                        window.__oldBridgeRequests.push(() => handler({data: {
+                          type: 'canvas:bridge-request', nonce: event.data.nonce,
+                          request_id: 'old-request', kind: 'submit', value: 'old draft'
+                        }}));
+                      } else handler(event);
+                    });
+                  }});
+                }
+              };
+            })();""")
+            await page.goto(launch.browser_url)
+            await page.wait_for_function("() => window.__heldStatuses.length === 1")
+            await expect(page.locator("#preview-state")).to_have_text("Preview pending")
+            navigation_pending = asyncio.Event()
+            release_navigation = asyncio.Event()
+
+            async def hold_pin_response(route):
+                response = await route.fetch()
+                navigation_pending.set()
+                await release_navigation.wait()
+                await route.fulfill(response=response)
+
+            await page.route("**/api/navigate", hold_pin_response)
+            await page.locator("#pin-button").click()
+            await asyncio.wait_for(navigation_pending.wait(), 5)
+            await page.evaluate("window.__heldStatuses[0]()")
+            await page.evaluate("window.__oldBridgeRequests[0]()")
+            await expect(page.locator("#preview-state")).to_have_text("Preview pending")
+            release_navigation.set()
+            await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
+            await page.wait_for_function(
+                "() => window.__heldStatuses.length === 2", timeout=5000
+            )
+            await page.evaluate("window.__heldStatuses[0]()")
+            await page.evaluate("window.__oldBridgeRequests[0]()")
+            await expect(page.locator("#preview-state")).to_have_text("Preview pending")
+            assert await page.evaluate("window.__actionRequests") == 0
+            await page.evaluate("window.__heldStatuses[1]()")
+            await expect(page.locator("#preview-state")).to_have_text(
+                f"Preview {state}"
+            )
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_mermaid_failure_is_identified_and_offers_explicit_repair(
+    candidate_snapshot,
+):
+    source = (
+        '<pre data-canvas-diagram="mermaid">sequenceDiagram\n'
+        "SECRET_SOURCE_SENTINEL->>B: Secret label</pre>"
+    )
 
     class CandidateAuthority(_NativeFlowAuthority):
         async def resolve_render_plan(self, scope):
@@ -1520,6 +1600,9 @@ async def test_bridge_confirmation_submits_exact_draft_and_downloads_passive_blo
         )
         await page.goto(launch.browser_url)
         frame = page.frame_locator("#canvas-preview")
+        await expect(page.locator("#preview-state")).to_have_text("Preview ready")
+        await page.locator("#pin-button").click()
+        await expect(page.get_by_text("Pinned", exact=True)).to_be_visible()
         await frame.get_by_role("button", name="Submit text").click()
         dialog = page.get_by_role("dialog", name="Send result to chat")
         await dialog.wait_for()

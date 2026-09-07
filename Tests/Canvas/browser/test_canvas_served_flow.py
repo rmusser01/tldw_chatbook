@@ -622,8 +622,9 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
 
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("diagrams", [False, True])
+@pytest.mark.parametrize("interleaving", [False, True], ids=["normal", "read-publication"])
 async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
-    tmp_path: Path, monkeypatch, candidate_snapshot, diagrams
+    tmp_path: Path, monkeypatch, candidate_snapshot, diagrams, interleaving
 ) -> None:
     """Run deterministic provider tool cycles through an actual TldwCli child."""
 
@@ -642,6 +643,12 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
     original_request = stack.server._canvas_control_broker.request
 
     async def observed_request(child_id, message_type, payload, *, timeout):
+        nonlocal hold_read, raced_read_code
+        raced = hold_read and message_type == "canvas.read.request"
+        if raced:
+            hold_read = False
+            read_pending.set()
+            await release_read.wait()
         started = asyncio.get_running_loop().time()
         outcome = "ok"
         code = None
@@ -652,6 +659,8 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
         except Exception as error:  # Test diagnostic never records error text.
             outcome = type(error).__name__[:64]
             candidate = getattr(error, "code", None)
+            if raced:
+                raced_read_code = candidate
             code = (
                 candidate
                 if candidate
@@ -662,6 +671,9 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                     "operation_failed",
                     "selection_refused",
                     "connection_closed",
+                    "canvas_scope_unavailable",
+                    "scope_unavailable",
+                    "canvas_unavailable",
                 }
                 else "other"
             )
@@ -684,6 +696,39 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
 
     monkeypatch.setattr(
         stack.server._canvas_control_broker, "request", observed_request
+    )
+    proxy_events = []
+    read_pending = asyncio.Event()
+    release_read = asyncio.Event()
+    hold_read = False
+    raced_read_code = None
+    original_proxy_request = serve._ServedCanvasAuthorityProxy._request
+
+    async def observed_proxy_request(proxy, scope, message_type, payload):
+        response = await original_proxy_request(proxy, scope, message_type, payload)
+        if message_type == "canvas.read.request" and len(proxy_events) < 80:
+            body = response.payload
+            metadata = body.get("render_metadata")
+            proxy_events.append(
+                {
+                    "canvas_matches": body.get("canvas_id") == scope.canvas_id,
+                    "revision_matches": body.get("revision_id") == scope.revision_id,
+                    "metadata_present": isinstance(metadata, dict),
+                    "source_present": isinstance(metadata, dict)
+                    and isinstance(metadata.get("source"), str),
+                    "scope_generation_present": scope.selection_generation is not None,
+                    "generation_matches": isinstance(metadata, dict)
+                    and metadata.get("selection_generation")
+                    == scope.selection_generation,
+                }
+            )
+            (tmp_path / "proxy-diagnostics.json").write_text(
+                json.dumps(proxy_events), encoding="utf-8"
+            )
+        return response
+
+    monkeypatch.setattr(
+        serve._ServedCanvasAuthorityProxy, "_request", observed_proxy_request
     )
 
     async def assert_persisted_complete(marker):
@@ -769,6 +814,15 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
 
             await page.wait_for_timeout(1_000)
             await page.context.tracing.start(screenshots=True, snapshots=True)
+            if interleaving:
+                # A real same-selection change makes the shell refresh state.
+                # Hold its selected read across the next genuine tool publication.
+                existing = next(iter(stack.server._served_canvas_launches.values()))[0]
+                hold_read = True
+                stack.server._served_canvas_gateway.change_selection(
+                    browser_session_id=existing.browser_session_id, scope=existing
+                )
+                await asyncio.wait_for(read_pending.wait(), 5)
             await _send_console_prompt(page, "Revise the active Canvas", focus_ack)
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 3
@@ -783,6 +837,14 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 encoding="ascii"
             ) == "canvas_create,staged"
             await assert_persisted_complete("CHATBOOK_CANVAS_UPDATED")
+            if interleaving:
+                await page.request.get(f"{stack.origin}/canvas/api/session")
+                release_read.set()
+                for _ in range(100):
+                    if raced_read_code is not None:
+                        break
+                    await asyncio.sleep(0.01)
+                assert raced_read_code == "canvas_unavailable"
             try:
                 await expect(preview.locator("#chatbook-app-revision")).to_have_text(
                     "v2", timeout=15_000
@@ -924,6 +986,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             assert (await page.request.get(f"{stack.origin}{old_url}")).status == 404
             await browser.close()
     finally:
+        release_read.set()
         await stack.aclose()
     assert all(not path.exists() for path in stack.owned_paths)
     assert not stack.runner.sites
@@ -1961,6 +2024,8 @@ async def test_mounted_production_authority_renders_and_settles_submit(
                 await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
                 if diagrams:
                     await expect(preview.locator("svg")).to_be_visible()
+                await canvas_shell.locator("#pin-button").click()
+                await expect(canvas_shell.get_by_text("Pinned", exact=True)).to_be_visible()
                 await preview.get_by_role("button", name="Send result").click()
             await expect(page.locator("#terminal-region")).to_be_visible()
 
