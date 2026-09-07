@@ -363,10 +363,22 @@ def serve(stdin, stdout, live, embed, batch) -> int:
                 sid = live.assign(embed(pcm), seconds=seconds)
                 is_self = False
                 if enrolled is not None and sid is not None:
-                    evec, ethresh, emin_s = enrolled
-                    dist = live.distance_to(sid, evec)
-                    if dist is not None:
-                        is_self = dist <= ethresh and live.seconds(sid) >= emin_s
+                    # Scoped to the SELF comparison (final review I2): an
+                    # enrolled vector of the wrong dimension makes
+                    # `distance_to` raise, and out here that framed the whole
+                    # assign as failed -- `{"id": null}` for every window, so
+                    # a voiceprint problem silently killed live speaker
+                    # labels. A bad vector turns MATCHING off for this
+                    # process (spec §6) and assignment carries on.
+                    try:
+                        evec, ethresh, emin_s = enrolled
+                        dist = live.distance_to(sid, evec)
+                        if dist is not None:
+                            is_self = dist <= ethresh and live.seconds(sid) >= emin_s
+                    except Exception as exc:  # noqa: BLE001 - type only, once
+                        sys.stderr.write(f"ERROR enroll {type(exc).__name__}\n")
+                        sys.stderr.flush()
+                        enrolled = None
                 _write(stdout, {"id": sid, "seq": cmd.get("seq"), "self": is_self})
             elif op == "diarize":
                 segs, final_centroids = batch(cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)))

@@ -281,6 +281,17 @@ class VoiceprintStore:
 
         w = min(weight, self._per_meeting_cap)
         sample = unit_normalise(centroid)
+        if len(sample) != len(current.centroid):
+            # `zip` below truncates silently, and the short vector it produced
+            # was saved, reloaded and handed to the diarizer worker -- where
+            # every comparison against a full-length embedding raised and took
+            # live speaker labels down with it (final review I2). Same model
+            # id, different dimension IS a model mismatch: the screen already
+            # renders that as "Different model -- choose Replace".
+            raise ModelMismatch(
+                f"stored voiceprint has {len(current.centroid)} dimensions, "
+                f"the sample has {len(sample)}"
+            )
         n = current.sample_count
         total = n + w
         merged = unit_normalise(

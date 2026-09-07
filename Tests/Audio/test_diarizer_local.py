@@ -897,6 +897,30 @@ def test_self_flag_requires_threshold_and_min_seconds():
     assert far_out[-1]["self"] is False   # 2 s >= min_seconds, but outside the threshold
 
 
+def test_a_wrong_dimension_voiceprint_turns_matching_off_not_assignment(capsys):
+    """Final review I2: a voiceprint whose length differs from the encoder's
+    embeddings made `live.distance_to` raise (`np.dot`, shapes not aligned),
+    which fell into the framed-error handler and replied `{"id": null}` --
+    so a VOICEPRINT problem silently took down live speaker labels for the
+    whole meeting. Matching must degrade, assignment must not."""
+    pcm = b"\x00\x00" * 16000  # 1 s
+
+    def ctl(d):
+        return (json.dumps(d) + "\n").encode()
+
+    lines = [ctl({"cmd": "enroll", "vector": [1.0, 0.0], "threshold": 0.2, "min_seconds": 0.0})]
+    for seq in range(3):
+        lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
+    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0, 0.0])  # 4-d vs a 2-d print
+
+    assert [o["id"] for o in out] == ["S1", "S1", "S1"]   # ids keep flowing
+    assert [o["self"] for o in out] == [False, False, False]
+    # One framed line for the first failure, then matching is simply off --
+    # never a traceback, never the vector, and never once per window.
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
+    assert len(errors) == 1 and errors[0].startswith("ERROR enroll ")
+
+
 def test_diarize_self_matches_nearest_batch_centroid_and_export_centroid_prefers_it():
     """Review round 1, Important 6: the whole `diarize` -> `self` path,
     including the `(segments, {live_id: centroid})` batch contract and

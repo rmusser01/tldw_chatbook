@@ -61,6 +61,30 @@ def test_keyfile_provider_refuses_broad_permissions(tmp_path):
     p = tmp_path / "voiceprint.key"; p.write_text("k" * 32); p.chmod(0o644)
     assert vp.KeyfileKeyProvider(p).get(timeout_s=0.1) is None
 
+def test_merge_refuses_a_centroid_of_a_different_length(tmp_path):
+    """Final review I2: `zip` truncated silently, so a same-model import with
+    a short vector was stored -- and every later meeting handed the worker a
+    vector its embeddings could not be compared against."""
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    store.save(_rec((1.0, 0.0, 0.0)))
+    with pytest.raises(vp.ModelMismatch):
+        store.merge_sample((1.0, 0.0), weight=1.0, model_id="ecapa@rev1")
+    assert store.load().voiceprint.centroid == [1.0, 0.0, 0.0]      # untouched
+
+def test_import_merge_refuses_a_file_whose_centroid_is_a_different_length(tmp_path):
+    """The user-facing half of the same hole: the passphrase proves who wrote
+    the file, never that its vector has the right shape."""
+    donor = vp.VoiceprintStore(tmp_path / "d" / "voiceprint.json", FakeKeys(key="j" * 32))
+    donor.save(_rec((1.0, 0.0), model="ecapa@rev1"))
+    out = tmp_path / "donor.json"
+    donor.export(out, "correct horse")
+
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    store.save(_rec((1.0, 0.0, 0.0), model="ecapa@rev1"))
+    with pytest.raises(vp.ModelMismatch):
+        store.import_(out, "correct horse", replace=False)
+    assert store.load().voiceprint.centroid == [1.0, 0.0, 0.0]
+
 def test_delete_removes_file_only(tmp_path):
     keys = FakeKeys(); store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys); store.save(_rec())
     assert store.delete() is True and not (tmp_path / "voiceprint.json").exists() and keys.key
