@@ -18,11 +18,14 @@ from loguru import logger as loguru_logger
 from tldw_chatbook.Audio import diarizer_local
 from tldw_chatbook.Audio.diarizer_local import (
     COARSE_CRASHED,
+    COARSE_MODELS_UNAVAILABLE,
     COARSE_UNAVAILABLE,
     DIARIZE_BUDGET_CEILING_S,
     DIARIZE_BUDGET_FLOOR_S,
+    LocalDiarizer,
     SpeechBrainDiarizer,
     diarize_budget_s,
+    model_id_for,
 )
 
 
@@ -1186,3 +1189,125 @@ def test_stop_pass_self_needs_min_seconds_as_well_as_the_threshold():
 
     assert out[0]["self"] is None      # 1 s of audio, well inside the threshold
     assert out[1]["self"] == "S1"      # 5 s -- matched
+
+
+# --- Task 4 (31827): engine flag, warm-up fetch, model id, status ----------
+
+def test_local_diarizer_onnx_downloads_then_spawns_and_reports_status():
+    calls = []
+    gate = threading.Event()
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        progress("downloading 1 / 35 MB"); calls.append(embedder); gate.wait(2.0); return (Path("s"), Path("e"))
+
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+    spawned = []
+    d = LocalDiarizer(engine="onnx", spawn=lambda cmd, **k: (spawned.append(cmd), proc)[1], ensure_models=ensure)
+    assert d.warmup_status.startswith("downloading")      # constructor returned immediately
+    assert spawned == []                                    # not spawned until the fetch finishes
+    gate.set()
+    assert d.wait_ready(2.0) is True and d.warmup_status == "ready"
+    assert "--engine" in spawned[0] and spawned[0][spawned[0].index("--engine") + 1] == "onnx"
+
+
+def test_local_diarizer_onnx_download_failure_marks_coarse_without_spawning():
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable
+
+    def ensure(*a, **k): raise ModelsUnavailable("download failed")
+
+    spawned = []
+    d = LocalDiarizer(engine="onnx", spawn=lambda cmd, **k: spawned.append(cmd), ensure_models=ensure)
+    assert d.wait_ready(2.0) is False and spawned == []
+    assert d.coarse_reason == COARSE_MODELS_UNAVAILABLE and d.warmup_status == "unavailable"
+    assert d.assign(_PCM, 16000, 0) is None
+
+
+def test_speechbrain_engine_path_is_unchanged():
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.assign(_PCM, 16000, 0) == "S1"
+
+
+def test_model_id_for_each_engine():
+    assert model_id_for("speechbrain") == "speechbrain/spkrec-ecapa-voxceleb@unpinned"
+    assert model_id_for("onnx").startswith("sherpa-onnx/nemo_en_titanet_small.onnx@")
+    assert model_id_for("onnx", "wespeaker_resnet34").startswith("sherpa-onnx/wespeaker_en_voxceleb_resnet34.onnx@")
+
+
+def test_model_id_for_rejects_an_unknown_engine():
+    with pytest.raises(ValueError):
+        model_id_for("bogus")
+
+
+def test_onnx_engine_env_vars_reach_the_spawn():
+    """Ruling 2: the worker learns the embedder key and the models dir
+    override the app used to fetch the files, via env vars on the spawn."""
+    captured = {}
+
+    def _spawn(cmd, **k):
+        captured["env"] = k.get("env")
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        return (Path("s"), Path("e"))
+
+    override = Path("/tmp/onnx-models-override")
+    d = LocalDiarizer(
+        engine="onnx",
+        embedder="wespeaker_resnet34",
+        models_dir_override=override,
+        spawn=_spawn,
+        ensure_models=ensure,
+    )
+    assert d.wait_ready(2.0) is True
+    assert captured["env"]["TLDW_DIARIZER_EMBEDDER"] == "wespeaker_resnet34"
+    assert captured["env"]["TLDW_DIARIZER_MODELS_DIR"] == str(override)
+
+
+def test_speechbrain_env_has_no_onnx_vars_when_unconfigured():
+    captured = {}
+
+    def _spawn(cmd, **k):
+        captured["env"] = k.get("env")
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn))
+    assert "TLDW_DIARIZER_EMBEDDER" not in captured["env"]
+    assert "TLDW_DIARIZER_MODELS_DIR" not in captured["env"]
+
+
+def test_speechbrain_warmup_status_transitions_to_ready():
+    gate = threading.Event()
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+    proc.stderr = _GatedStderr(gate)
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    assert d.warmup_status == "warming up"
+    gate.set()
+    assert d.wait_ready(2.0) is True
+    assert d.warmup_status == "ready"
+
+
+def test_onnx_restart_after_crash_does_not_refetch_models():
+    """Ruling 7: the restart re-uses `_start()` directly -- the models are
+    already on disk, so `ensure_models` must not run a second time."""
+    calls = []
+
+    def ensure(embedder, *, models_dir_override, progress, budget_s):
+        calls.append(embedder)
+        return (Path("s"), Path("e"))
+
+    procs = iter([FakeProc([]), FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])])
+    made: list[FakeProc] = []
+
+    def _spawn(cmd, **k):
+        p = next(procs)
+        made.append(p)
+        return p
+
+    d = LocalDiarizer(engine="onnx", spawn=_spawn, ensure_models=ensure)
+    assert d.wait_ready(2.0) is True
+    made[0]._alive = False
+    assert d.assign(_PCM, 16000, 0) is None   # detects the dead worker, restarts
+    assert len(made) == 2                     # exactly one restart, no re-fetch gate
+    assert d.wait_ready(2.0) is True
+    assert len(calls) == 1

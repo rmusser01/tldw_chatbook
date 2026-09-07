@@ -631,8 +631,11 @@ def load(
         live: The `OnlineClusterer` held for the whole meeting -- `batch`
             reads its centroids/threshold/max_id for reconciliation.
         max_speakers: The Stop pass's speaker-count ceiling.
-        embedder: One of `EMBEDDERS`' keys; `DEFAULT_EMBEDDER` if omitted.
-        models_dir_override: Test/air-gapped seam for `models_dir()`.
+        embedder: One of `EMBEDDERS`' keys; `DEFAULT_EMBEDDER` if omitted and
+            `TLDW_DIARIZER_EMBEDDER` is unset (task 4, 31827: the worker
+            process has no other way to learn which embedder the app fetched).
+        models_dir_override: Test/air-gapped seam for `models_dir()`; falls
+            back to `TLDW_DIARIZER_MODELS_DIR` when omitted (same reason).
         verify_hashes: When true (the default), a SHA-256 mismatch against
             the manifest raises before any model is constructed.
 
@@ -648,6 +651,13 @@ def load(
     import sherpa_onnx
 
     from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
+
+    if embedder is None:
+        embedder = os.environ.get("TLDW_DIARIZER_EMBEDDER")
+    if models_dir_override is None:
+        env_dir = os.environ.get("TLDW_DIARIZER_MODELS_DIR")
+        if env_dir:
+            models_dir_override = Path(env_dir)
 
     key = embedder or DEFAULT_EMBEDDER
     if key not in EMBEDDERS:

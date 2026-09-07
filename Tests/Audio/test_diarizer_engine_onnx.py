@@ -146,6 +146,35 @@ def test_load_verifies_hashes_by_default_and_can_skip_the_check(fake_sherpa, tmp
     assert loaded.model_id.startswith("sherpa-onnx/")
 
 
+def test_load_reads_embedder_and_models_dir_from_env_when_kwargs_are_none(fake_sherpa, tmp_path, monkeypatch):
+    """Task 4 (31827) ruling 2: the worker learns which files the app fetched
+    through env vars, not argv -- `load()` must fall back to them only when
+    its own kwargs are omitted."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    (tmp_path / eng.SEGMENTATION.file_name).write_bytes(b"x")
+    (tmp_path / eng.EMBEDDERS["wespeaker_resnet34"].file_name).write_bytes(b"x")
+    monkeypatch.setenv("TLDW_DIARIZER_EMBEDDER", "wespeaker_resnet34")
+    monkeypatch.setenv("TLDW_DIARIZER_MODELS_DIR", str(tmp_path))
+
+    loaded = eng.load(OnlineClusterer(), 8, verify_hashes=False)
+    assert loaded.model_id == eng.model_id_for_embedder("wespeaker_resnet34")
+
+
+def test_load_prefers_explicit_kwargs_over_env(fake_sherpa, tmp_path, monkeypatch):
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    (tmp_path / eng.SEGMENTATION.file_name).write_bytes(b"x")
+    (tmp_path / eng.EMBEDDERS["titanet_small"].file_name).write_bytes(b"x")
+    monkeypatch.setenv("TLDW_DIARIZER_EMBEDDER", "wespeaker_resnet34")
+    monkeypatch.setenv("TLDW_DIARIZER_MODELS_DIR", "/nonexistent/path")
+
+    loaded = eng.load(OnlineClusterer(), 8, embedder="titanet_small", models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.model_id == eng.model_id_for_embedder("titanet_small")
+
+
 # --- Task 3: ensure_models (downloader) -------------------------------------
 
 class _StubHandler(http.server.BaseHTTPRequestHandler):

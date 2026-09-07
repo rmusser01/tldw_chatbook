@@ -87,6 +87,20 @@ CENTROID_BUDGET_S = 10.0
 #: (spec §7). Never a path, a name, or transcript text.
 COARSE_UNAVAILABLE = "backend unavailable"
 COARSE_CRASHED = "backend crashed"
+#: The ONNX engine's model fetch failed (spec §3/§8) -- distinct from
+#: `COARSE_UNAVAILABLE` (a worker that spawned but never warmed up) so the
+#: footer can tell "no models" from "worker trouble" apart.
+COARSE_MODELS_UNAVAILABLE = "models unavailable"
+#: Wall-clock ceiling for the ONNX engine's model fetch (spec §3), separate
+#: from `READY_TIMEOUT_S` -- the fetch has its own budget and the READY
+#: timeout only starts once the worker is actually spawned (task 4: 31827).
+MODELS_DOWNLOAD_BUDGET_S = 600.0
+
+#: Import-free alias of the SpeechBrain model id (spec §6), mirroring
+#: `diarizer_worker.MODEL_ID` -- `model_id_for` must not import
+#: `diarizer_engine_speechbrain` (or pull the ONNX module for a speechbrain
+#: lookup) just to read one static string.
+_SPEECHBRAIN_MODEL_ID = "speechbrain/spkrec-ecapa-voxceleb@unpinned"
 
 _SENTINEL = object()  # placed on the reply queue when the worker's stdout EOFs
 
@@ -109,11 +123,17 @@ def diarize_budget_s(duration_s: float) -> float:
     return min(DIARIZE_BUDGET_CEILING_S, max(DIARIZE_BUDGET_FLOOR_S, wanted))
 
 
-class SpeechBrainDiarizer:
-    """Talks to the SpeechBrain worker subprocess; degrades to coarse on failure."""
+class LocalDiarizer:
+    """Talks to the diarizer worker subprocess; degrades to coarse on failure.
+
+    `engine` selects which worker module does the embedding (spec §2): the
+    default `"speechbrain"` starts the worker synchronously, exactly as
+    before; `"onnx"` first fetches its ONNX models on a daemon warm-up
+    thread (task 4: 31827) so construction still never blocks (spec §7)."""
 
     def __init__(
         self,
+        engine: str = "speechbrain",
         max_speakers: int = 8,
         *,
         spawn: Callable[..., Any] = subprocess.Popen,
@@ -121,7 +141,14 @@ class SpeechBrainDiarizer:
         voiceprint: Sequence[float] | None = None,
         match_threshold: float = 0.2,
         match_min_seconds: float = 4.0,
+        embedder: str | None = None,
+        models_dir_override: Path | None = None,
+        ensure_models: Callable[..., Any] | None = None,
     ) -> None:
+        self._engine = engine
+        self._embedder = embedder
+        self._models_dir_override = models_dir_override
+        self._ensure_models = ensure_models
         self._max = max_speakers
         self._spawn = spawn
         self._budget = assign_budget_s
@@ -175,11 +202,39 @@ class SpeechBrainDiarizer:
         #: Static reason the meeting is on coarse labels, for the footer.
         self.coarse_reason: str | None = None
         self._lock = threading.Lock()
+        #: What the rail shows for this backend's warm-up (task 4: 31827) --
+        #: one of "downloading <a> / <b> MB", "warming up", "ready",
+        #: "unavailable". Read via the `warmup_status` property.
+        self._status = "warming up"
+        if self._engine == "onnx":
+            # Deviation from the brief's step 3 (see task-4-report.md): the
+            # brief has the daemon thread itself set the initial "downloading
+            # 0 / N MB" status as its first action. Measured: a freshly
+            # started thread is NOT guaranteed to run even that far before
+            # `Thread.start()` returns to this constructor, so a caller that
+            # checks `warmup_status` right after construction can race an
+            # empty thread and still see "warming up". Computed here instead,
+            # synchronously, before the thread (which only runs the fetch
+            # itself) is started -- `diarizer_engine_onnx` is still imported
+            # lazily (a local import, not at module scope), just one call
+            # frame earlier than the brief described.
+            from tldw_chatbook.Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, EMBEDDERS, SEGMENTATION
+
+            self._embedder = self._embedder or DEFAULT_EMBEDDER
+            total_mb = ((SEGMENTATION.download_size or SEGMENTATION.size) + EMBEDDERS[self._embedder].size) // (
+                1 << 20
+            )
+            self._status = f"downloading 0 / {total_mb} MB"
+            # The model fetch (spec §3) is the first step of warm-up, ahead
+            # of the spawn -- run it on its own daemon thread so construction
+            # still returns at once (fix C1 extended to the ONNX engine).
+            threading.Thread(target=self._warmup, daemon=True, name="diarizer-warmup").start()
         # Spawn and return: the READY handshake runs on its own thread so
         # Start is never held behind a cold model download (fix C1).
-        if not self._start():
+        elif not self._start():
             self._degraded = True
             self._mark_coarse(COARSE_UNAVAILABLE)
+            self._status = "unavailable"
 
     @property
     def voiceprint(self) -> list[float] | None:
@@ -200,6 +255,13 @@ class SpeechBrainDiarizer:
         cluster or not -- diagnostic only."""
         return self._self_candidates_seen
 
+    @property
+    def warmup_status(self) -> str:
+        """What the rail shows for this backend's warm-up (spec §3/§7):
+        one of ``"downloading <a> / <b> MB"``, ``"warming up"``, ``"ready"``,
+        ``"unavailable"``."""
+        return self._status
+
     # ---- process lifecycle ------------------------------------------------
     def _command(self) -> list[str]:
         """The worker argv. Isolated here so the frozen-app case has one seam.
@@ -213,7 +275,7 @@ class SpeechBrainDiarizer:
         """
         if getattr(sys, "frozen", False):
             logger.warning("diarizer: live diarization unsupported in frozen build; coarse labels only")
-        cmd = [sys.executable, "-m", WORKER_MODULE]
+        cmd = [sys.executable, "-m", WORKER_MODULE, "--engine", self._engine]
         if self.max_id_seen:
             # A restart (31749): the replacement's clusterer numbers from here,
             # so it can never re-mint an id the dead worker already gave out
@@ -231,6 +293,14 @@ class SpeechBrainDiarizer:
         """Spawn the worker; READY is awaited on a thread. False -> degrade."""
         try:
             env = {**os.environ, "TLDW_DIARIZER_MAX_SPEAKERS": str(self._max)}
+            # The ONNX worker has no other way to learn which embedder (and,
+            # for an override/air-gapped install, which directory) the app
+            # already fetched the models into (task 4: 31827, ruling 2) --
+            # harmless to set for the speechbrain engine, which ignores them.
+            if self._embedder:
+                env["TLDW_DIARIZER_EMBEDDER"] = self._embedder
+            if self._models_dir_override is not None:
+                env["TLDW_DIARIZER_MODELS_DIR"] = str(self._models_dir_override)
             self._proc = self._spawn(
                 self._command(),
                 stdin=subprocess.PIPE,
@@ -248,10 +318,18 @@ class SpeechBrainDiarizer:
             return False
         # Fresh reply queue and READY gate per worker session: a previous
         # (dead) worker's EOF sentinel must never be read as this worker's
-        # crash, nor its handshake as this worker's readiness.
-        self._q = queue.Queue()
-        self._ready = threading.Event()
+        # crash, nor its handshake as this worker's readiness. The ONNX
+        # engine's first `_start()` call runs on the warm-up thread (task 4:
+        # 31827), asynchronously with respect to `__init__`'s caller -- a
+        # `wait_ready` already blocked on the Event `__init__` created must
+        # not be orphaned on a freshly-minted, never-to-be-set replacement,
+        # so an event that is not yet set (never handshaked) is reused as-is;
+        # only a set one (a previous worker's completed handshake) is
+        # discarded.
+        if self._ready.is_set():
+            self._ready = threading.Event()
         self._ready_ok = False
+        self._q = queue.Queue()
         threading.Thread(target=self._read_stdout, args=(proc, self._q), daemon=True, name="diarizer-stdout").start()
         threading.Thread(
             target=self._watch_stderr, args=(proc, self._ready), daemon=True, name="diarizer-stderr"
@@ -278,12 +356,14 @@ class SpeechBrainDiarizer:
                     self._ready_ok = True
                     self._send_enroll(proc)
                     ready.set()
+                    self._status = "ready"
         except Exception:  # noqa: BLE001
             pass
         finally:
             if not ready.is_set():
                 logger.warning("diarizer: worker never reported READY")
                 self._mark_coarse(COARSE_UNAVAILABLE)
+                self._status = "unavailable"
             ready.set()  # unblock `wait_ready` -- `_ready_ok` says whether it worked
 
     def _send_enroll(self, proc: Any) -> None:
@@ -332,6 +412,49 @@ class SpeechBrainDiarizer:
             True when the worker reported READY within `timeout`.
         """
         return self._ready.wait(timeout) and self._ready_ok
+
+    def _warmup(self) -> None:
+        """`engine == "onnx"` only: fetch the models, then spawn (spec §3).
+
+        Runs entirely on its own daemon thread, started by `__init__` (which
+        returns immediately, same as the speechbrain path -- fix C1 extended
+        to the model fetch). Touches only `_status`, `_degraded`,
+        `coarse_reason` and `_ready` directly -- `_lock` is never acquired
+        here (ruling 8), so a slow or wedged download can never block
+        `assign`/`pin`, which check readiness without waiting. The READY
+        timeout itself only starts once `_start()` actually spawns -- the
+        fetch has its own separate `MODELS_DOWNLOAD_BUDGET_S` budget.
+
+        `self._embedder` is already resolved (never None) by the time this
+        runs -- `__init__` settles it, synchronously, before starting this
+        thread (see the constructor's comment).
+        """
+        try:
+            ensure = self._ensure_models
+            if ensure is None:
+                from tldw_chatbook.Audio.diarizer_engine_onnx import ensure_models as ensure
+            ensure(
+                self._embedder,
+                models_dir_override=self._models_dir_override,
+                progress=self._set_status,
+                budget_s=MODELS_DOWNLOAD_BUDGET_S,
+            )
+        except Exception as exc:  # noqa: BLE001 - a daemon thread must never raise
+            logger.warning("diarizer: models unavailable ({})", type(exc).__name__)
+            self._mark_coarse(COARSE_MODELS_UNAVAILABLE)
+            self._degraded = True
+            self._status = "unavailable"
+            self._ready.set()  # unblock `wait_ready` -- no worker will ever spawn
+            return
+        self._status = "warming up"
+        if not self._start():
+            self._degraded = True
+            self._mark_coarse(COARSE_UNAVAILABLE)
+            self._status = "unavailable"
+
+    def _set_status(self, status: str) -> None:
+        """`ensure_models`'s `progress` callback -- integers only (spec §8)."""
+        self._status = status
 
     def _read_stdout(self, proc: Any, q: "queue.Queue[Any]") -> None:
         try:
@@ -387,11 +510,13 @@ class SpeechBrainDiarizer:
             self._kill(proc)
         if self._restarted:
             self._degraded = True
+            self._status = "unavailable"
             return
         self._restarted = True
         logger.warning("diarizer: worker lost; restarting once, live labels stay coarse")
         if not self._start():
             self._degraded = True
+            self._status = "unavailable"
 
     # ---- Diarizer protocol ------------------------------------------------
     def assign(self, pcm: bytes, sample_rate: int, seq: int) -> str | None:
@@ -701,3 +826,44 @@ class SpeechBrainDiarizer:
         if pcm:
             proc.stdin.write(pcm)
         proc.stdin.flush()
+
+
+class SpeechBrainDiarizer(LocalDiarizer):
+    """`LocalDiarizer` pinned to the SpeechBrain engine (spec §2).
+
+    Kept as a real subclass -- not a `functools.partial` -- so
+    `isinstance(x, SpeechBrainDiarizer)` and every existing import keep
+    working unchanged; its `__init__` simply forces `engine="speechbrain"`
+    and forwards everything else."""
+
+    def __init__(self, max_speakers: int = 8, **kwargs: Any) -> None:
+        kwargs.pop("engine", None)
+        super().__init__("speechbrain", max_speakers, **kwargs)
+
+
+def model_id_for(engine: str, embedder: str | None = None) -> str:
+    """The voiceprint model id for `engine` (spec §6): stable across a run,
+    changing only if the underlying model file or its manifest hash does.
+    The owner reads this BEFORE any worker exists (a Start-time
+    re-enrollment check), so it must work without spawning anything.
+
+    Args:
+        engine: `"speechbrain"` or `"onnx"`.
+        embedder: For `"onnx"`, one of the manifest's embedder keys;
+            `DEFAULT_EMBEDDER` when omitted. Ignored for `"speechbrain"`.
+
+    Returns:
+        `"speechbrain/spkrec-ecapa-voxceleb@unpinned"` for `"speechbrain"`;
+        `"sherpa-onnx/<embedder file name>@<first 12 hex of its sha256>"`
+        for `"onnx"`.
+
+    Raises:
+        ValueError: `engine` is neither known engine name.
+    """
+    if engine == "speechbrain":
+        return _SPEECHBRAIN_MODEL_ID
+    if engine == "onnx":
+        from tldw_chatbook.Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, model_id_for_embedder
+
+        return model_id_for_embedder(embedder or DEFAULT_EMBEDDER)
+    raise ValueError(f"unknown engine: {engine}")

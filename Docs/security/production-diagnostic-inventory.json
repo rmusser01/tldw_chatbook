@@ -134,8 +134,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "0960d88a0f5ed949e1e5",
+      "call_count": 13,
+      "diagnostic_digest": "8d33bdb97618c9727f63",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Audio/diarizer_local.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11462,6 +11462,6 @@
     "persistent_sink_files": 12,
     "task_31551_calls": 53,
     "task_492_calls": 1347,
-    "task_494_calls": 7673
+    "task_494_calls": 7674
   }
 }
