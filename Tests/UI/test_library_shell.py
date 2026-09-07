@@ -34974,3 +34974,64 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
             "Conversations list with no focused widget"
         )
         assert focused.is_attached, focused
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_restores_focus_on_a_filtered_empty_media_list():
+    """Qodo #2483: the Media channel stands down when it cannot land.
+
+    A filter MISS is the one empty Media page with no recovery action at
+    all -- the canvas returns right after its query-echoing status line,
+    so NONE of the four controls ``_focus_library_list_entry`` falls back
+    to is composed. The armed channel therefore lands nothing, and
+    standing the screen-level seam down for it left a background
+    recompose inside the settle window with a dead keyboard.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+
+        screen._request_library_media_filter("no-such-media-anywhere")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query(".library-media-row")
+            and not any(
+                screen.query(selector)
+                for selector in (
+                    "#library-media-type-filter",
+                    "#library-media-empty-clear-type",
+                    "#library-media-empty-import",
+                    "#library-media-retry",
+                )
+            ),
+            message="the filter miss never reached a recovery-less empty page",
+        )
+
+        filter_input = screen.query_one("#library-media-filter", Input)
+        screen.set_focus(filter_input)
+        await pilot.pause()
+        assert screen.focused is filter_input
+
+        # Inside the armed settle window, on a page the channel cannot serve.
+        screen._arm_library_list_entry_focus()
+        assert screen._library_pending_list_entry_focus is True
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a background recompose inside the armed window left the "
+            "recovery-less empty Media list with no focused widget"
+        )
+        assert focused.is_attached, focused
+        content = screen.query_one("#screen-content")
+        assert content in focused.ancestors, focused.id

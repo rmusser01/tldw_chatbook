@@ -9228,7 +9228,9 @@ class LibraryScreen(BaseAppScreen):
 
         (The third case, a row class whose list is EMPTY, is closed at
         the channel itself: notes now falls back to its filter input the
-        way prompts and skills already did.)
+        way prompts and skills already did. Media's empty page has no
+        unconditional control to fall back to, so it is closed in the
+        predicate instead -- it stands down when nothing is there.)
         """
         if self._library_focus_channel_owns_this_window():
             return
@@ -9243,11 +9245,14 @@ class LibraryScreen(BaseAppScreen):
         ``_focus_library_list_entry`` -- deliberately those two and no
         more, so this predicate stays a statement about which route/stage
         the channel serves and never a second copy of its row-picking
-        logic. Two no-landing cases are knowingly left inside "owns":
-        a pending Find focus whose input never mounts, and an empty
-        Media list whose four fallback controls are all absent or
-        disabled -- both narrow, both end at ``None`` rather than at a
-        wrong widget.
+        logic. The one exception is Media's EMPTY page (Qodo #2483): its
+        recovery controls are conditional, and a filter MISS composes none
+        of them, so the channel lands nothing there -- the shared
+        ``_library_media_empty_list_fallback_target`` answers that for
+        both this predicate and the channel itself rather than being
+        re-derived here. One no-landing case is still knowingly left
+        inside "owns": a pending Find focus whose input never mounts --
+        narrow, and it ends at ``None`` rather than at a wrong widget.
         """
         if self._library_media_find_focus_pending:
             return True
@@ -9255,10 +9260,18 @@ class LibraryScreen(BaseAppScreen):
             return False
         if self._library_emergency_stage == "rail-only":
             return False
-        return (
-            _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
-            is not None
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
+            self._library_selected_row_id
         )
+        if row_class is None:
+            return False
+        if (
+            row_class == "library-media-row"
+            and not self.query(f".{row_class}")
+            and self._library_media_empty_list_fallback_target() is None
+        ):
+            return False
+        return True
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -11185,6 +11198,36 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._focus_library_list_entry()
 
+    def _library_media_empty_list_fallback_target(self) -> Widget | None:
+        """The control an EMPTY Media list can hand keyboard focus to.
+
+        The first of Media's four recovery controls that is both present
+        and enabled, or ``None`` when the page offers none. One owner for
+        both readers: ``_focus_library_list_entry`` lands on it, and
+        ``_library_focus_channel_owns_this_window`` asks whether there is
+        anything to land on at all -- a filter MISS composes none of these
+        four (the canvas returns right after its query-echoing status
+        line), so the answer has to be the same in both places or the seam
+        stands down for a channel that never arrives. The miss page's own
+        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
+        with nothing here the shared seam restores the filter ``Input``
+        (the right place to retype), and listing Clear would put the
+        predicate back into "owns" and re-open the gap.
+        """
+        for selector in (
+            "#library-media-type-filter",
+            "#library-media-empty-clear-type",
+            "#library-media-empty-import",
+            "#library-media-retry",
+        ):
+            try:
+                control = self.query_one(selector, Widget)
+            except (NoMatches, QueryError):
+                continue
+            if not getattr(control, "disabled", False):
+                return control
+        return None
+
     def _focus_library_list_entry(self) -> None:
         """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
 
@@ -11233,20 +11276,11 @@ class LibraryScreen(BaseAppScreen):
                     self.set_focus(control)
                     return
             if row_class == "library-media-row":
-                for selector in (
-                    "#library-media-type-filter",
-                    "#library-media-empty-clear-type",
-                    "#library-media-empty-import",
-                    "#library-media-retry",
-                ):
-                    try:
-                        control = self.query_one(selector, Widget)
-                    except (NoMatches, QueryError):
-                        continue
-                    if not getattr(control, "disabled", False):
-                        self._library_notes_programmatic_focus_target = control
-                        self.set_focus(control)
-                        return
+                control = self._library_media_empty_list_fallback_target()
+                if control is not None:
+                    self._library_notes_programmatic_focus_target = control
+                    self.set_focus(control)
+                    return
             return
         if (
             row_class == "library-media-row"

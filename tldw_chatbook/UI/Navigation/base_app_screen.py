@@ -15,6 +15,7 @@ from .main_navigation import MainNavigationBar
 
 if TYPE_CHECKING:
     from textual.widget import Widget
+
     from tldw_chatbook.app import TldwCli
 
 
