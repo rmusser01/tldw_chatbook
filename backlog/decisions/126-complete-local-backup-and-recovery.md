@@ -3,6 +3,8 @@
 Status: Proposed — conversational decisions approved; written specification awaiting review
 Date: 2026-09-07
 
+Revision: 2 — incorporates the second user-requested design review.
+
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
 Design: [Complete local backup and restore](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
@@ -47,16 +49,27 @@ new filesystem or execution authority when imported.
    unavailable required data blocks a complete result. Partial archives are labeled
    partial and cannot perform installation replacement in v1. Server data is excluded.
 
-3. Coordinate supported persistence participants through enforced maintenance
-   admission over verified shared storage identities. Drain writers to safe boundaries,
-   snapshot through checked SQLite/file owners, then resume before packaging. Refuse
-   unverified exclusivity. External folders receive an explicit per-file consistency
-   label rather than a whole-folder point-in-time guarantee.
+3. Coordinate protocol-aware persistence participants through enforced maintenance
+   admission over stable logical namespaces outside replaced data. Verified file/path
+   identity establishes shared-store aliases; replacement of an inode does not create
+   a new unlocked namespace. Reserve both namespaces during remapping, acquire locks
+   deterministically, and drain without circular waits. For ordinary backup, resume
+   after coherent capture, before packaging. Replacement/later rollback remains fenced
+   through encrypted rollback verification, publication, and installed validation.
+   Known incompatible activity blocks maintenance. Arbitrary legacy/external processes
+   do not honor the protocol and are outside its exclusion guarantee; PID scans are
+   not proof of their absence. Native safety qualification remains required. External
+   folders receive per-file consistency, not a whole-folder point-in-time guarantee.
 
 4. Use a ZIP64 container with a manifest, dependency groups, schema versions, sizes,
-   digests, coverage, and relocation metadata. Validate pinned archive bytes and
-   enforce extraction/crypto budgets. Application-owned adapters validate and migrate
-   staged candidates; imported schema code, executables, or scripts never run.
+   digests, coverage, and relocation metadata. Inspect/execute only a completed private
+   source copy or qualified immutable snapshot bound to the preview by digest; a
+   pinned handle alone does not prevent in-place modification. Enforce source-copy,
+   decrypted-container, header, extraction, and crypto budgets before/during streaming.
+   Authenticated bytes remain untrusted application input. Owner-specific schema
+   allowlists, trusted_schema=OFF, restricted functions/authorizers, and SQL execution
+   budgets apply before and during staged migration. Installed migration SQL must
+   not activate unvalidated imported schema; no unrestricted-connection fallback.
 
 5. Exclude managed credentials by default using typed owner adapters on staged
    copies, including qualified treatment of SQLite secret remnants. Explicit export
@@ -69,21 +82,35 @@ new filesystem or execution authority when imported.
    cryptographic format or repurpose config-value encryption for large files. Secrets
    pass through anonymous pipes, never command arguments/environment or persistent
    request files. Qualify streaming, resource limits, packaging, interoperability,
-   dependency licensing, and every advertised platform before shipping. There is
-   no plaintext fallback when encryption is requested or required.
+   dependency licensing, and every advertised platform as an early delivery gate.
+   Define the helper protocol, integrity/version checks, release/update ownership,
+   and wheel/source/editable install behavior before dependent feature implementation.
+   Release installs must not unexpectedly need Go or download/resolve a helper at
+   backup time. Missing/unqualified helpers fail capability preflight before passwords
+   or maintenance; change the ADR if the selected integration cannot qualify. There
+   is no plaintext fallback when encryption is requested or required.
 
 7. Restore through private staging, immutable target mappings, qualified publication
    primitives, and a durable operation journal outside replacement targets. Check
    pending recovery before ordinary configuration fallback, migrations, cleanup, or
-   service composition. Ambiguous interruption blocks normal boot and preserves both
-   generations for recovery. Cross-volume replacement is recoverable, not described
-   as globally atomic, and is enabled only on qualified platforms/filesystems.
+   service composition. Durable associations in a fixed bootstrap admission directory
+   make custom control roots discoverable by every supported launch route, independent
+   of the convenience catalog and restored config. Register before publication and
+   clear only after a durable verified outcome. Ambiguous interruption blocks affected
+   storage and preserves both generations. Other profiles may launch only if intact
+   evidence proves their namespaces disjoint. Cross-volume replacement is recoverable,
+   not globally atomic, and is enabled only on qualified platforms/filesystems.
 
 8. Replacement first creates and verifies an encrypted exact local rollback archive.
    The user supplies a rollback password before any live mutation. Portable export
    redaction does not apply to this artifact. Never overwrite shared keyring entries.
    Retain recovery copies until explicit deletion; protect unresolved evidence. A
    later rollback preserves intervening changes with another verified recovery copy.
+   Replacement previews restore, retire into rollback storage, and preserve-outside-
+   scope sets. Archive absence alone cannot authorize deletion; unknown files or
+   unsupported old-owner mappings block publication until reviewed. Owners retire
+   obsolete managed objects only after verified rollback, and final inventory checks
+   reject accidentally active newer objects/sidecars outside the desired generation.
 
 9. Isolated restoration uses a new data namespace, dedicated config, explicit fresh
    process launch, owner-aware path remapping, and new device/credential scopes. A
@@ -94,7 +121,12 @@ new filesystem or execution authority when imported.
 
 10. Restore external folders only to newly created destinations in v1. Original
     overwrite is deferred. Retain included temporary media under a durable recovered
-    asset owner. Store models inertly; restoration does not launch/download them.
+    asset owner with stable catalog/reference identity and transcript resolution.
+    Recovered assets enter baseline subsequent backups even when temporary-media
+    capture is off. Explicit deletion/cleanup rechecks references and recovery holds;
+    missing bytes render a missing-media state instead of resolving a different file.
+    Temporary-store TTL/startup sweeps cannot remove committed recovered assets.
+    Store models inertly; restoration does not launch/download them.
 
 11. Restore operational definitions and history without restoring active authority.
     Schedules, queues, agents, model processes, network activity, tool permissions,
@@ -107,6 +139,14 @@ new filesystem or execution authority when imported.
     Needs setup. Release requires real data round trips, both destinations, startup
     independence, process/crash fault injection, credential isolation, and a first
     open with no unintended execution or network activity.
+
+Second-review evidence additionally covers lock continuity across inode changes,
+known incompatible participants, restore/retire/preserve reconciliation, in-place
+archive mutation, resource failure before manifest parsing, schema-trigger attacks
+during installed migrations, custom-root discovery through normal launchers, scoped
+startup blocking, separate maintenance intervals, packaged helper availability, and
+recovered-media deletion/re-backup. These extend the existing release gate rather
+than claiming those runtime checks have already been performed.
 
 ## Alternatives considered
 
@@ -125,8 +165,10 @@ new filesystem or execution authority when imported.
 
 This is a new recovery subsystem, not an extension of legacy Settings handlers.
 It introduces storage-owner capture/relocation declarations, maintenance admission,
-a recovery catalog/journal, an encryption helper packaging dependency, and a
-pre-bootstrap recovery path. New schemas follow normal migration/version rules.
+a recovery catalog/journal plus independent bootstrap admission records, an encryption
+helper packaging dependency, a recovered-media owner, and a pre-bootstrap recovery
+path. New schemas follow normal migration/version rules. Helper delivery and the
+maintenance/bootstrap protocol must be qualified before dependent feature slices.
 
 The main UI remains usable for inspection/progress, but coherent capture can pause
 writes for the duration of snapshot work. Space is required for staging, encrypted
