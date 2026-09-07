@@ -4819,12 +4819,36 @@ class LocalMediaReadingService:
         analysis_content: str,
         prompt: Optional[str] = None,
     ) -> Any:
-        return self._require_db().create_document_version(
-            self._coerce_media_id(media_id),
-            content=content,
-            prompt=prompt,
-            analysis_content=analysis_content,
-        )
+        """Persist an analysis as a new ``DocumentVersions`` row, and commit it.
+
+        ``create_document_version`` documents that it assumes an already-open
+        transaction (its DB-internal callers -- ``add_media_with_keywords``,
+        ``rollback_to_version`` -- all supply one) and never commits. Called
+        bare from here the INSERT sat on the app's thread-local connection,
+        left it ``in_transaction``, and was lost on exit: the Reader's Save
+        and the bulk Analyze run both persisted nothing (TASK-31942). The
+        leak also poisoned the next write on that connection --
+        ``soft_delete_document_version``'s own ``transaction()`` merely
+        joined the open one, so deletes stopped committing too. Owning the
+        transaction here also makes a mid-write failure roll back whole.
+
+        Args:
+            media_id: Parent Media row id.
+            content: Document content stored alongside the analysis.
+            analysis_content: The analysis text to persist.
+            prompt: Prompt that produced the analysis, if any.
+
+        Returns:
+            The new version's descriptor from ``create_document_version``.
+        """
+        db = self._require_db()
+        with db.transaction():
+            return db.create_document_version(
+                self._coerce_media_id(media_id),
+                content=content,
+                prompt=prompt,
+                analysis_content=analysis_content,
+            )
 
     def overwrite_analysis_version(
         self,
