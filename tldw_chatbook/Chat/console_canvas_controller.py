@@ -341,11 +341,16 @@ class ConsoleCanvasController:
         repository_limits: CanvasRepositoryLimits | None = None,
         profile_snapshot: ProfileSnapshot | None = None,
     ) -> None:
+        service_snapshot = getattr(durable_service, "profile_snapshot", None)
+        if (
+            profile_snapshot is not None
+            and service_snapshot is not None
+            and profile_snapshot is not service_snapshot
+        ):
+            raise ValueError("canvas_profile_snapshot_mismatch")
         self._durable_service = durable_service
         self.profile_snapshot = (
-            profile_snapshot
-            or getattr(durable_service, "profile_snapshot", None)
-            or load_profile_snapshot()
+            profile_snapshot or service_snapshot or load_profile_snapshot()
         )
         self._repository_limits = repository_limits or CanvasRepositoryLimits()
         self._runs: dict[str, _RunStage] = {}

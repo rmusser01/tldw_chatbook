@@ -146,6 +146,58 @@ def test_controller_import_preparation_sanitizes_service_compiler_failure(db):
     assert service.list_canvases(_scope(conversation, message)) == ()
 
 
+@pytest.mark.parametrize("different_policy", [False, True])
+def test_controller_rejects_distinct_service_snapshot_at_construction(
+    db, candidate_snapshot, different_policy
+):
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+
+    other = replace(
+        candidate_snapshot,
+        **({"policy_id": "0" * 64} if different_policy else {}),
+    )
+    assert other is not candidate_snapshot
+    assert (other != candidate_snapshot) == different_policy
+    service = CanvasService(db, profile_snapshot=candidate_snapshot)
+    with pytest.raises(ValueError, match="canvas_profile_snapshot_mismatch"):
+        ConsoleCanvasController(durable_service=service, profile_snapshot=other)
+    assert service.profile_snapshot is candidate_snapshot
+
+
+def test_controller_shared_explicit_snapshot_supports_durable_import_handoff(
+    db, candidate_snapshot
+):
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+
+    service = CanvasService(db, profile_snapshot=candidate_snapshot)
+    controller = ConsoleCanvasController(
+        durable_service=service, profile_snapshot=candidate_snapshot
+    )
+    conversation = _conversation(db)
+    message = _message(db, conversation, "owner")
+    scope = _scope(conversation, message)
+    created = controller.interactive_create_canvas(
+        scope,
+        origin_message_id=message,
+        title="Shared snapshot",
+        html='<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>',
+        temporary=False,
+    )
+    changed = controller.interactive_update_canvas(
+        scope,
+        origin_message_id=message,
+        canvas_id=created.revision.canvas_id,
+        expected_parent_revision_id=created.revision.revision_id,
+        html="<p>Removed</p>",
+        temporary=False,
+    )
+    assert changed.revision.runtime_profile == "canvas-v2-mermaid-1"
+    assert (
+        service.read_canvas(scope, changed.revision.canvas_id).source
+        == "<p>Removed</p>"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "profile", ["canvas-v1", "canvas-v2-mermaid-1", "canvas-v2-mermaid-2", "canvas-v99"]

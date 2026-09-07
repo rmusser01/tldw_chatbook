@@ -79,3 +79,9 @@ fences, archive inertness, transaction identity and source-free failures.
 ADR: existing ADR-124 (extends ADR-121), direct implementation; schema68,
 archive3.0, frozen runtime assets and sync exclusion are unchanged. Candidate
 admission remains disabled. Status remains In Progress for independent review.
+
+Review fix round1: controller construction now rejects a distinct explicit snapshot
+when its durable service already owns one, including value-equal distinct objects.
+Tests cover immediate rejection for equal/different-policy snapshots and actual
+durable V2 import/update with one shared explicit snapshot. Prepared-plan identity
+checks and dependency snapshots are unchanged. Existing ADR-124 applies.
