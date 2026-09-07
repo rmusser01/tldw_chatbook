@@ -495,7 +495,14 @@ class SpeechBrainDiarizer:
             # that ran entirely on coarse labels (re-review, item 1).
             self._mark_coarse(COARSE_UNAVAILABLE)
             return []
-        with self._lock:
+        # Bounded, like `assign`'s (final review Minor 8): `_centroid_op` can
+        # hold this same lock for CENTROID_BUDGET_S, and a blocking acquire
+        # let the Stop pass wait that out ON TOP OF its own budget. Giving up
+        # keeps the near-live labels, which is what every other failure here
+        # does too.
+        if not self._lock.acquire(timeout=budget):
+            return []
+        try:
             if self._degraded:
                 return []
             proc = self._proc
@@ -507,6 +514,8 @@ class SpeechBrainDiarizer:
                 self._fail()
                 return []
             segs = self._await_segments(budget)
+        finally:
+            self._lock.release()
         try:
             return [SpeakerSegment(start_s=s["start_s"], end_s=s["end_s"], speaker=s["speaker"]) for s in segs]
         except Exception:  # noqa: BLE001

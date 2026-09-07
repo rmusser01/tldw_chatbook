@@ -805,6 +805,41 @@ def test_assign_does_not_block_behind_an_in_flight_centroid_op():
     op_thread.join(3.0)
 
 
+def test_diarize_gives_up_on_the_lock_within_its_budget(monkeypatch):
+    """Final review Minor 8: `assign` was converted to a bounded acquire
+    exactly because `_centroid_op` can hold the backend lock for
+    CENTROID_BUDGET_S; `diarize` kept a blocking `with self._lock`, so the
+    Stop pass could wait out an export ON TOP OF its own budget. The two
+    acquires should match."""
+    monkeypatch.setattr(diarizer_local, "DIARIZE_BUDGET_FLOOR_S", 0.2)
+    monkeypatch.setattr(diarizer_local, "DIARIZE_BUDGET_CEILING_S", 0.2)
+    release = threading.Event()
+
+    class _NeverAnswers:
+        def readline(self) -> bytes:
+            release.wait(5.0)
+            return b""
+
+    proc = FakeProc([_SEGMENTS_REPLY])
+    proc.stdout = _NeverAnswers()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+
+    op_thread = threading.Thread(target=d.export_centroid, args=("S1",), daemon=True)
+    op_thread.start()
+    deadline = time.monotonic() + 2.0
+    while not d._lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert d._lock.locked(), "the centroid op under test never took the backend lock"
+
+    started = time.monotonic()
+    assert d.diarize(Path("mixed.wav"), 0.0, 3.0) == []
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.0, f"diarize blocked on the lock for {elapsed:.2f}s"
+
+    release.set()
+    op_thread.join(3.0)
+
+
 def test_centroid_op_is_ready_gated_without_taking_the_lock():
     """Ruling 2 (closes review finding I1): a pre-READY centroid op must
     never take `self._lock` -- that lock is also what `_send_enroll` takes,

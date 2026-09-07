@@ -766,20 +766,27 @@ def test_start_waits_for_an_in_flight_stop(tmp_path, monkeypatch):
     owner.prepare()
     first = owner.start()
     gate = threading.Event()
+    inside = threading.Event()
     real_stop = first.stop
 
     def slow_stop(reason="user"):
+        inside.set()
         gate.wait(2.0)
         return real_stop(reason=reason)
 
     first.stop = slow_stop
     stopper = threading.Thread(target=owner.stop)
     stopper.start()
-    time.sleep(0.05)                      # stop() is now blocked inside session.stop under _stop_lock
+    # An Event, not a sleep (final review Minor 10): this is the ORDERING the
+    # test is about -- stop() has to be inside session.stop, holding
+    # _stop_lock, before the Start below can mean anything.
+    assert inside.wait(2.0)
     started: list = []
     starter = threading.Thread(target=lambda: started.append(owner.start()))
     starter.start()
-    time.sleep(0.1)
+    # The one wait that stays: proving a thread has NOT proceeded needs a
+    # window, not an event. It is only ever a false PASS if it is too short.
+    starter.join(0.1)
     assert started == []                  # start() is waiting on _stop_lock
     gate.set()
     stopper.join(2.0); starter.join(2.0)
@@ -1117,6 +1124,29 @@ def test_a_locked_keyring_is_retried_by_the_next_start(tmp_path, monkeypatch):
     owner.stop()
 
 
+def test_invalidate_voiceprint_never_waits_for_an_in_flight_load(tmp_path, monkeypatch):
+    """Final review Minor 7: `_voice_load` is read and written from five
+    threads. It is guarded now -- but only for the POINTER SWAP: hold the lock
+    across the (bounded, 1.5 s) read and a Delete or Import on the UI thread
+    stalls behind a meeting Start."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    keys = FakeKeys(delay=5.0)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, keys=keys),
+    )
+    reads_after_save = keys.reads
+    loader = threading.Thread(target=owner._load_voiceprint, daemon=True)
+    loader.start()
+    while keys.reads == reads_after_save:          # the store read is in flight
+        time.sleep(0.005)
+
+    started = time.monotonic()
+    owner.invalidate_voiceprint()
+    # Generous: the read this is racing is pinned at 1.5 s by the join above.
+    assert time.monotonic() - started < 0.5
+    loader.join(5.0)
+
+
 def test_a_terminal_verdict_is_not_retried_every_start(tmp_path, monkeypatch):
     """... but a record that simply is not there stays cached: no repeated
     reads, and `invalidate_voiceprint` is the escape."""
@@ -1371,6 +1401,27 @@ def test_accepting_an_offer_without_a_progress_callback_still_works(tmp_path, mo
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
     offer = owner.learning_offer(result)
     assert owner.accept_learning(offer) is True
+
+
+def test_a_raising_session_stop_still_releases_the_meetings_worker(tmp_path, monkeypatch):
+    """Final review Minor 5: `_settle_offer` ran after `session.stop()`, so a
+    raise there orphaned the live worker for the app's lifetime -- nothing
+    else clears `_session_diarizer`, and the next `start()` just overwrote
+    the pointer."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner.prepare()
+    session = owner.start()
+    real_stop = session.stop
+    session.stop = lambda reason="user": (_ for _ in ()).throw(RuntimeError("sink exploded"))
+
+    with pytest.raises(RuntimeError, match="sink exploded"):
+        owner.stop()
+    assert backend.closed == 1 and owner._session_diarizer is None
+
+    session.stop = real_stop
+    owner.stop()
 
 
 def test_decline_and_dismiss_release_the_worker(tmp_path, monkeypatch):

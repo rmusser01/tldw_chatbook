@@ -591,8 +591,14 @@ class MeetingSessionOwner:
         # between the two deadlocked the app.
         self._offer_lock = threading.Lock()
         #: Self-voiceprint state (TASK-31826). `_voice_load` caches the ONE
-        #: store read (vector + rail state) until something changes it.
+        #: store read (vector + rail state) until something changes it. It is
+        #: read and written from five threads (prepare, start, stop/offer,
+        #: learn, enroll, and `invalidate_voiceprint` from the UI thread), so
+        #: it goes through `_voice_lock` -- held for the POINTER SWAP only,
+        #: never across the up-to-1.5 s read, or a Delete on the UI thread
+        #: would stall behind a Start (final review Minor 7).
         self.voice_match = VoiceMatchState("off", None)
+        self._voice_lock = threading.Lock()
         self._voice_load: tuple[list[float] | None, VoiceMatchState] | None = None
         # TWO diarizer slots, deliberately never one (review C1): the LIVE
         # meeting's worker (only when the owner, not the session, closes it)
@@ -621,8 +627,19 @@ class MeetingSessionOwner:
         return default_store()
 
     def invalidate_voiceprint(self) -> None:
-        """Forget the cached load (Settings deleted, imported or replaced one)."""
-        self._voice_load = None
+        """Forget the cached load (Settings deleted, imported or replaced one).
+
+        Called from the UI thread; takes only `_voice_lock` (see its comment).
+        """
+        self._cache_voice_load(None)
+
+    def _cached_voice_load(self) -> tuple[list[float] | None, VoiceMatchState] | None:
+        with self._voice_lock:
+            return self._voice_load
+
+    def _cache_voice_load(self, loaded: tuple[list[float] | None, VoiceMatchState] | None) -> None:
+        with self._voice_lock:
+            self._voice_load = loaded
 
     def _load_voiceprint(self) -> tuple[list[float] | None, VoiceMatchState]:
         """The stored voiceprint and the rail's match state, read once.
@@ -640,8 +657,9 @@ class MeetingSessionOwner:
             an enrollment, import or delete; otherwise the next app run
             re-reads it.
         """
-        if self._voice_load is not None:
-            return self._voice_load
+        cached = self._cached_voice_load()
+        if cached is not None:
+            return cached
         outcome: list[Any] = [None]
         # An Event, not `thread.is_alive()` (review M1): a read that finished
         # in the window between the join returning and the liveness check was
@@ -675,7 +693,7 @@ class MeetingSessionOwner:
             loaded = (None, VoiceMatchState("off", result.reason or "no_voiceprint"))
         else:
             loaded = (list(result.voiceprint.centroid), VoiceMatchState("on", None))
-        self._voice_load = loaded
+        self._cache_voice_load(loaded)
         return loaded
 
     def _voice_match_off_for(self, mode: str) -> VoiceMatchState | None:
@@ -725,8 +743,9 @@ class MeetingSessionOwner:
         off = self._voice_match_off_for(mode)
         if off is not None:
             return off
-        if self._voice_load is not None:
-            return self._voice_load[1]      # already verified this run: say so
+        cached = self._cached_voice_load()
+        if cached is not None:
+            return cached[1]                # already verified this run: say so
         try:
             present = bool(self._voiceprint_store().exists())
         except Exception as exc:  # noqa: BLE001 - types only, never a path
@@ -752,8 +771,9 @@ class MeetingSessionOwner:
         off = self._voice_match_off_for(mode)
         if off is not None:
             return None, off
-        if self._voice_load is not None and self._voice_load[1].reason == "keyring_locked":
-            self._voice_load = None
+        cached = self._cached_voice_load()
+        if cached is not None and cached[1].reason == "keyring_locked":
+            self._cache_voice_load(None)
         return self._load_voiceprint()
 
     # ---- prepare ----------------------------------------------------------
@@ -951,7 +971,11 @@ class MeetingSessionOwner:
             # to destroy the offer on its way out (re-review N3). It runs
             # under `_stop_lock` only: the close() inside can take seconds
             # and must not hold `_lock` against enroll_from_mic's checks
-            # (re-review 2).
+            # (re-review 2). Worst case is ~12 s -- close() waits on the
+            # backend's own lock, which a `_centroid_op` may hold for
+            # CENTROID_BUDGET_S, plus `proc.wait(timeout=2.0)` (final review
+            # Minor 9). That is bounded, and it is spent on the
+            # `meetings-start` worker thread, never the UI thread.
             self._clear_offer()
             return session
 
@@ -1002,15 +1026,24 @@ class MeetingSessionOwner:
         with self._stop_lock:
             self._watchdog_stop.set()
             previous = self.last_result
-            result = session.stop(reason=reason)  # idempotent for sequential callers
-            if result is not None:
-                self.last_result = result
-            # One offer decision per MEETING: a second sequential stop() hands
-            # back the same cached result and must not resurrect an offer the
-            # user already answered. A None result (a genuinely concurrent
-            # second caller) still has to release the worker (review M4).
-            if result is None or result is not previous:
-                self._settle_offer(result)
+            result = None
+            try:
+                result = session.stop(reason=reason)  # idempotent for sequential callers
+                if result is not None:
+                    self.last_result = result
+            finally:
+                # In a `finally` (final review Minor 5): a raise out of
+                # session.stop() left the worker in `_session_diarizer`
+                # forever -- nothing else clears that slot, and the next
+                # start() overwrote the pointer, leaking the subprocess.
+                #
+                # One offer decision per MEETING: a second sequential stop()
+                # hands back the same cached result and must not resurrect an
+                # offer the user already answered. A None result (a genuinely
+                # concurrent second caller, or the raise above) still has to
+                # release the worker (review M4).
+                if result is None or result is not previous:
+                    self._settle_offer(result)
             self._watch_ingest_job()
             return result if result is not None else self.last_result
 
@@ -1035,7 +1068,7 @@ class MeetingSessionOwner:
         An unattempted load (plain call mode, matching off) reads as "maybe":
         the offer path loads for itself when it gets there.
         """
-        loaded = self._voice_load
+        loaded = self._cached_voice_load()
         return loaded is None or loaded[1].reason not in (
             "cannot_decrypt", "keyring_locked", "store_unavailable",
         )
@@ -1193,7 +1226,7 @@ class MeetingSessionOwner:
             from .diarizer_worker import MODEL_ID
 
             self._voiceprint_store().merge_sample(centroid, weight=seconds, model_id=MODEL_ID)
-            self._voice_load = None      # the vector moved; the next meeting re-reads it
+            self._cache_voice_load(None)  # the vector moved; the next meeting re-reads it
             return True
         except Exception as exc:  # noqa: BLE001 - the offer reports failure (spec §6)
             logger.warning("meeting: voiceprint learning failed ({})", type(exc).__name__)
@@ -1410,7 +1443,7 @@ class MeetingSessionOwner:
             except Exception as exc:  # noqa: BLE001 - types only, never the vector
                 logger.warning("meeting: voiceprint save failed ({})", type(exc).__name__)
                 return EnrollResult(ok=False, reason="store_unavailable")
-            self._voice_load = None      # the next meeting reads the new print
+            self._cache_voice_load(None)  # the next meeting reads the new print
             return EnrollResult(ok=True, seconds=float(embedded_s))
         finally:
             # Only a worker THIS call spawned: a borrowed one belongs to a
