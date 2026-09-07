@@ -2,6 +2,8 @@
 
 Date: 2026-09-07
 
+Revision: 2 — second design-review corrections incorporated.
+
 Status: Draft for written user review. Conversational scope and review corrections
 approved; implementation and implementation planning have not started.
 
@@ -39,6 +41,10 @@ Approved decisions:
   temporary-media handling, and observable restoration evidence.
 - External-folder overwrite is deferred. External content restores into newly
   created directories without replacing existing files.
+- The second review tightens maintenance protocol boundaries, replacement retirement,
+  immutable archive input, SQLite schema validation, custom-root startup discovery,
+  and distinct backup/replacement downtime. Encryption packaging is an early gate;
+  recovered media has a complete persistence and deletion lifecycle.
 
 The remaining implementation choices below are concrete proposals for this written
 review, particularly the encryption helper, recovery catalog, and verification
@@ -156,6 +162,12 @@ separate profile requires a new display name and private destination. Replacemen
 requires explicit confirmation naming affected data and the rollback location.
 External additions always go to new directories in either mode.
 
+Replacement preview separately lists Restore, Retire into rollback storage, and
+Preserve outside this replacement, including intentional exclusions. It explains
+that maintenance lasts through encrypted rollback preparation, publication, and
+installed-state validation. The shorter ordinary-backup pause is not advertised
+for replacement or later rollback.
+
 The persistent result distinguishes Archive verified, Restoration validated,
 Opened successfully, and Needs setup. The report links missing assets/models,
 credentials to re-enter, quarantined work, external folder remapping, and rollback.
@@ -173,6 +185,7 @@ recovery operation; it never abandons an in-progress replacement silently.
 | Inventory and profile catalog | Discover declared storage, classify contents, track explicitly registered recovered profiles, and produce immutable coverage models. Reads configuration without booting services. |
 | Maintenance coordinator | Establish exclusive access across affected persistence namespaces and drain participating writers to safe boundaries. Depends on lifecycle participants, not widgets. |
 | Capture service | Snapshot SQLite through checked helpers and copy qualified files into private immutable staging. Reports dependency and consistency evidence. |
+| Recovered-media owner | Retain explicitly included temporary media with stable transcript lookup, deletion, subsequent backup, and orphan handling. It is independent of temporary-media expiry. |
 | Archive codec | Encode/decode the versioned container and encryption envelope; enforce resource limits and content integrity. Has no application-service or network dependency. |
 | Restore planner and executor | Build immutable mappings, validate staged candidates, preserve rollback, journal publication, and recover interruption. Never invokes ordinary startup as a validation shortcut. |
 | Minimal recovery launcher | Read control state before normal config/bootstrap/migrations/cleanup and run the same recovery services. Launch a fresh app only after successful recovery. |
@@ -190,6 +203,30 @@ or content. Atomic writes and cross-process coordination protect it. Explicit
 control-root selection is available to the recovery launcher for portable/custom
 installations; it is never accepted from an imported archive as authority.
 
+The catalog is a convenience index, not the only startup fence. A fixed bootstrap
+admission directory in that default app config namespace holds durable per-operation
+records associating affected logical storage namespaces/config selectors with their
+control roots and operation IDs. Custom control roots must register here before
+publication can begin. Registration is local authority, never restored from a
+portable archive. Records remain discoverable when the selected config is corrupt,
+has been replaced, or cannot yet resolve its custom data paths.
+
+Every supported launch route, including console scripts, python -m, headless workers,
+and Open profile, consults bootstrap admission before opening affected owners. A
+custom-root launch option cannot disable this check. An interrupted registration
+is conservatively pending until reconciled against the operation journal; commit
+or verified rollback is recorded durably before its admission fence is cleared.
+The settings catalog may be rebuilt from intact admission records without guessing
+whether a missing catalog means no operation. An unreachable custom control root
+keeps its affected namespaces blocked and provides explicit-path recovery.
+
+Fence only affected storage. Another profile may launch when intact admission
+evidence and its storage mapping positively establish disjointness, including shared
+config/databases. Corruption that makes scope unknowable blocks the uncertain scope;
+do not promise unrelated-profile availability without that proof. Unknown or damaged
+admission records cannot be silently deleted by startup cleanup. Legacy launchers
+that do not implement this protocol are outside the coordination guarantee below.
+
 Control journals, temporary working storage, and retained rollback archives are
 distinct. Their parent roots are verified non-overlapping with all replacement
 targets. Sensitive local locators may appear in private control records and explicit
@@ -197,14 +234,34 @@ Details views, but not routine diagnostic logs or unencrypted portable manifests
 
 ## 6. Capture consistency and availability
 
-Maintenance access is enforced, not inferred from the advisory instance lock.
-Every supported Chatbook persistence participant, including headless workers and
-new processes, honors shared normal-operation and exclusive maintenance admission
-for its verified storage namespaces. Shared databases/configuration acquire the
-same locks even when reached through different profiles. Locks use deterministic
-ordering. An incompatible or uncooperative process means access is unverified and
-capture/replacement is refused with close-other-instances guidance; PID detection
-alone is not proof of exclusive access.
+Maintenance access is enforced among protocol-aware Chatbook participants, not
+inferred from the advisory instance lock. Each participant takes normal-operation
+admission before opening an owner; maintenance closes admission, drains writers,
+releases their normal-operation holds, and acquires exclusive admission before
+capture. New processes must participate before config writers or database owners
+open. Failed or timed-out acquisition publishes nothing and leaves an actionable
+waiting/refused result. Lock acquisition uses deterministic ordering and never waits
+while retaining a lock that a draining participant needs to finish.
+
+Locks are keyed by stable logical storage namespaces recorded outside replaceable
+data, not only by the inode/file identity being replaced. Verified path/file
+identities establish aliases and shared ownership during admission; the namespace
+and its lock survive replacement. Shared configuration or a database reached through
+two profiles has one maintenance namespace. Path remapping reserves both old and
+new namespaces, and registry changes participate in the same admission protocol.
+Startup checks pending generation evidence before resolving a new inode as a new,
+unlocked store. Lock files are not removed/recreated during publication.
+
+The coordination guarantee covers declared owners and protocol-aware entry points.
+Older clients and external editors do not honor it. Known incompatible activity
+blocks the operation with close-other-clients guidance; users must keep those
+clients closed during maintenance. PID scans cannot prove all writers are absent.
+Qualified native database/filesystem checks supplement coordination, but arbitrary
+out-of-protocol modification by another same-user process is outside the guarantee,
+not claimed detectable or preventable. Observed out-of-protocol changes abort
+capture or enter recovery before further publication. If required native safety
+checks or participating-owner coverage are unavailable, complete capture/replacement
+is unavailable rather than silently falling back to advisory locks.
 
 Close admission to new mutations, then drain existing transactions and cross-store
 operations to completed or durable recoverable boundaries. Unresolved operations
@@ -215,9 +272,18 @@ ask the user to save/discard a draft through its existing flow before maintenanc
 Use DB/private_sqlite.py for each SQLite snapshot, including committed WAL content.
 Do not copy live .db/-wal/-shm files as independent assets. Required databases and
 their referenced file assets share the same capture boundary. Capture from pinned,
-verified regular-file handles into staging; never hold writers paused for later
-compression, encryption, or output-device transfer. The pause is proportional to
-required snapshot work, not guaranteed to be brief. Show that before confirmation.
+verified regular-file handles into private immutable staging while participating
+mutations are fenced. For an ordinary backup, resume writers after coherent capture;
+packaging, encryption, final verification, and output-device transfer follow without
+the maintenance hold. Its pause is proportional to snapshot work, not guaranteed
+to be brief. Show that before confirmation.
+
+Replacement and later rollback have a different downtime contract. Once current
+state is captured for exact rollback, admission stays closed through rollback
+encryption/verification, publication, and installed-state validation. Releasing it
+between these stages would make the safety copy stale. Their preview and progress
+show the entire maintenance interval; estimates include rollback size, encryption,
+verification, target-volume performance, and retained recovery capacity.
 
 External editors and independent servers are outside this coordinator. v1 external
 capture is verified per file, with before/after identity/change checks and a bounded
@@ -259,13 +325,30 @@ The [age format](https://age-encryption.org/v1) supplies streaming authenticated
 encryption; the [official implementation](https://github.com/FiloSottile/age) is the
 upstream implementation dependency.
 
+Qualify helper delivery before any encrypted-backup or replacement implementation
+depends on it. Publish the exact supported OS/architecture/package matrix, pinned
+helper/library versions, byte-stream protocol version, helper integrity verification,
+and update ownership. Prove normal wheel installation and documented source/editable
+installation paths in isolated environments. Release installs must not unexpectedly
+require Go, fetch an executable at backup time, or substitute an arbitrary PATH tool.
+Contributor source builds may explicitly require Go; an unbuilt source checkout must
+report the unavailable capability before collecting passwords or entering maintenance.
+
+The packaged helper is updated through the application's dependency/release process;
+interoperability fixtures protect archives across helper upgrades. Qualify anonymous
+pipe handling, cancellation/child cleanup, large streaming I/O, and supported Python
+versions on each advertised platform. If this integration cannot be qualified,
+revise this ADR and the dependency choice before implementation proceeds; do not
+quietly ship a different encryption format or weaken encrypted rollback requirements.
+
 No plugin recipient, shell extension, public-key recipient, or externally supplied
 helper is activated by an imported file. Use only the standard single-passphrase
 recipient mode; bound password derivation to 256 MiB working memory, one active
 derivation, and a cancellable helper. Reject larger work factors before derivation;
 do not choose a writer work factor exceeding the reader's limit. Reject unsupported
 envelopes. Decrypt into owner-private staging and verify the complete
-authenticated stream before parsing ZIP or treating metadata as trusted. Plaintext
+authenticated stream before parsing ZIP. Authenticated metadata remains untrusted
+application input and passes all schema, path, and resource checks. Plaintext
 checksums detect corruption, not authorship; password authentication also does not
 identify the creator as a trusted application operator.
 
@@ -300,8 +383,14 @@ against providers automatically.
 
 ### Resource and archive safety
 
-Inspect from pinned source bytes or an immutable private source copy; selection
-followed by reopening a changed archive invalidates the plan. Reject duplicate
+Before inspection, make a completed owner-private source copy or use a platform-
+qualified immutable source snapshot. An open/pinned file handle alone does not stop
+in-place writes and is insufficient. Check source stability during copying, close
+the staged writer, hash the completed artifact, and use only that sealed artifact
+for inspection and execution. Bind the preview and restore plan to its digest and
+validated manifest version. Reopening the original selected pathname or modifying
+the staged artifact invalidates the plan. This does not authenticate the author.
+Reject duplicate
 entries, normalization/case collisions, absolute paths, traversal, links, devices,
 unsupported compression, overlapping ZIP structures, and unexplained entries.
 Never use extractall against a live destination or execute supplied schema scripts.
@@ -315,13 +404,44 @@ enforced. Locally increasing a size/count budget requires a renewed space previe
 an archive cannot raise its own limits. Writer preflight uses the same limits and
 never produces a backup its configured reader cannot inspect.
 
-Treat SQLite as untrusted data: use restricted inspection connections with extension
-loading disabled and no application startup hooks. Validate owner/schema identity,
-integrity, foreign keys where applicable, domain constraints, and referenced assets.
+Resource admission precedes source copying and decryption, not just manifest parsing.
+Default encrypted/plain input-container and decrypted-container budgets are each
+2 TiB, independently enforced as actual bytes stream; expanded payload remains
+limited to 1 TiB by default. The extra container allowance covers ZIP metadata and
+encryption overhead without trusting archive declarations. Budget storage for both
+input and decrypted staging; refuse insufficient capacity before starting and stop
+on any runtime limit/space failure. A user-raised budget requires renewed preflight
+before retry. Bound outer-header parsing to 64 KiB and the permitted single-passphrase
+recipient before KDF work. Invalid, truncated, cancelled, or oversized intermediate
+streams cannot be inspected as archives or published as completed artifacts.
+
+Treat SQLite as untrusted data throughout inspection and staged migration. Disable
+extension loading, use trusted_schema=OFF, and register no side-effecting application
+functions or unnecessary virtual-table modules. Bound SQL execution with progress/
+interrupt handlers and owner-appropriate memory/SQL limits. Use read-only inspection
+connections and authorizer rules that deny attachment, unauthorized writes, and
+unapproved operations. An ordinary repository constructor with startup hooks is not
+a safe inspection connection.
+
+Validate the actual schema against the installed owner's allowlisted supported
+tables, columns, indexes, triggers, views, and virtual-table definitions before
+running migrations. A matching schema-version number is insufficient. Preserve
+recognized FTS and required triggers through a qualified owner-specific policy;
+do not disable features globally and then claim domain validation succeeded.
+Unexpected executable schema blocks normal restoration. Offer isolated inert
+extraction for manual recovery, without loading the schema through app services.
+
 Migrations come only from the installed application and run on disposable staged
-candidates. An unsupported newer schema blocks that dependency group. Older data
-needs an explicitly supported migration chain; do not promise arbitrary backwards
-compatibility or downgrade.
+candidates under the same restricted connection policy, with narrowly admitted
+writes for that owner's known migration. Installed migration SQL must not activate
+unvalidated imported triggers or functions. Revalidate schema, integrity, foreign
+keys where applicable, domain constraints, and asset references after migration.
+Unsupported security primitives/SQLite capabilities block the affected operation;
+never retry using unrestricted application connections. See SQLite's
+[untrusted-database guidance](https://www.sqlite.org/security.html).
+An unsupported newer schema blocks that dependency group. Older data needs an
+explicitly supported migration chain; do not promise arbitrary backwards compatibility
+or downgrade.
 
 Space admission accounts separately for immutable capture, output, decrypted input,
 staged/migrated candidates, retained rollback, journals, and filesystem overhead on
@@ -364,6 +484,29 @@ and shared settings are affected; other profiles remain untouched. If a selected
 shared item cannot be replaced without affecting an unselected profile, require an
 explicitly expanded selection or refuse that replacement. Do not silently leave a
 mixture of old records and restored records masquerading as total replacement.
+
+Resolve the target inventory into three explicit sets before confirmation:
+
+- Restore: archive objects and supported empty/default state that the selected
+  generation requires, including records and referenced assets as dependency groups.
+- Retire into rollback storage: current managed objects in the selected replacement
+  scope that must no longer be live in that generation. Merely overwriting matching
+  files is not a replacement. Preserve these objects in verified rollback before
+  retiring them through their owner; never recursively delete a target directory.
+- Preserve outside this replacement: unselected profiles, external source folders,
+  declared optional exclusions, shared items outside the approved scope, and recovery
+  control/artifacts. Show intentional preservation in the result.
+
+Absence from the archive alone does not authorize retirement: distinguish explicit
+producer inventory/omissions, optional exclusions, and an owner introduced after
+that backup version. Unknown current files or unsupported older-owner mappings
+block publication until classified and reviewed; no inferred garbage deletion.
+Require explicit selection changes when shared dependencies cross the scope.
+Checked SQLite owners handle old sidecars only after connections close and the
+rollback snapshot includes committed WAL state. Journal every restore, retire,
+and preserve decision, and validate the final live owner inventory
+against the approved plan. A stale database or attachment absent from the desired
+generation cannot survive as an accidentally active store.
 
 Stop affected services and prevent new participants from opening their storage.
 Produce and verify an encrypted exact local rollback archive before the first live
@@ -448,7 +591,44 @@ Owner-specific recovery bytes remain inspectable/exportable. File Notes pairing 
 Notes sync recovery are validated through their owners; old filesystem intents do
 not run against relocated paths. A restore report explains inactive managed folder
 memberships rather than silently converting or deleting them. Retained temporary
-media uses a durable recovered-asset owner that normal startup cleanup cannot erase.
+media uses the durable owner defined below, which normal startup cleanup cannot erase.
+
+### Recovered-media lifecycle
+
+A profile-scoped recovered-media catalog owns a stable asset ID, verified payload
+size/digest/type, recovery provenance, and explicit message-to-asset references.
+Its physical files have generated private names; no imported locator chooses a
+destination. Catalog schema changes use the normal database migration rules. The
+owner publishes verified bytes before finalizing references, with operation-journal
+recovery for an interrupted file/catalog update.
+
+Transcript media resolution consults the recovered reference for a restored message
+and original media key before the temporary-store resolver. Mapping uses source
+profile/message identity and the original slug/type, not display name alone. A
+known recovered reference with missing bytes renders Missing recovered media rather
+than falling through to an unrelated same-named temporary file. Persist mappings
+across restart and re-backup; restore collisions require matching identity/content
+or explicit remapping, never silent reassignment. No media is decoded or executed
+merely to register it during archive validation.
+
+Once recovered, these assets are durable app-owned content and join the baseline of
+every subsequent full backup, independent of the temporary-media option. Include
+catalog, references, and referenced payloads in one capture dependency group. Restore
+and relocation use this same owner and keep logical asset IDs stable. Existing
+live-generated media retains its original session/TTL policy unless explicitly
+captured and restored through this feature.
+
+Expose recovered assets and sizes in storage/recovery details with explicit deletion.
+Deleting a message releases its reference through the owner; it does not immediately
+erase a payload still referenced elsewhere or retained for recovery. Deleting a
+recovered asset previews affected messages, leaves explicit missing-media references,
+and removes bytes through the checked owner lifecycle. Unreferenced durable payloads
+are listed as cleanup candidates and removed only by an explicit user cleanup action
+after rechecking references and active recovery holds. Automatic cleanup is limited
+to provably operation-owned unpublished staging. It cannot sweep unknown files,
+retained rollback, or committed assets based on age, filenames, or temporary-store TTL.
+
+### External content and startup recovery
 
 Selected external folders restore only into newly created directories whose parent
 the user chooses. Preserve supported bytes and metadata, detect case/Unicode/path
@@ -466,7 +646,10 @@ Recovery startup is a dependency-light path before config fallback, ordinary DB
 migrations, ephemeral cleanup, profile seeding, and app composition. It can read an
 explicit operation directory if the catalog is unreadable. If journal/target evidence
 cannot be validated, offer safe report/export actions and preserve both generations;
-do not treat corrupt control state as no pending recovery and continue normal boot.
+do not treat corrupt control state as no pending recovery and boot affected storage.
+Bootstrap admission from section 5 applies even when the user omitted the custom
+control-root option on restart. Unaffected profiles can open only after proving
+their namespaces disjoint from every pending or uncertain recovery scope.
 
 ## 10. Verification and release evidence
 
@@ -480,8 +663,11 @@ Implementation release evidence must include:
   shared stores, and deliberately missing data. New persistence owners cannot ship
   without a classification/capture declaration or explicit justified exclusion.
 - Real SQLite/WAL data and real filesystem assets captured under concurrent writes
-  from separate processes. Prove writers drain together and another process cannot
-  enter during capture/publication; legacy/unverified access must fail admission.
+  from separate processes. Prove participating writers drain together and another
+  protocol-aware process cannot enter during capture/publication. Cover shared-store
+  aliases, replacement changing an inode, old/new path reservations, timeout, and
+  drain-order deadlocks. Known incompatible activity must refuse maintenance; tests
+  must not imply advisory locks exclude arbitrary legacy or external processes.
 - Round-trip comparisons of records, relationships, soft-deleted data, retained
   recovery bytes, asset digests, settings, and indexes in a fresh isolated home/config
   environment with no accidental access to developer data or ambient credentials.
@@ -489,13 +675,30 @@ Implementation release evidence must include:
   device identities, unsupported newer schemas, staged migration failures, missing
   optional engines, and malformed current config. Prove original isolated-profile
   sources remain unchanged and restored profiles can be reopened later.
+- Target-inventory reconciliation with newer managed files absent from an older
+  backup, declared optional exclusions, unknown files, shared stores, and old SQLite
+  sidecars. Assert restore/retire/preserve sets, rollback recovery of retired objects,
+  and no active stale objects or unreviewed deletion after publication.
 - Failure injection before/after every durable journal/publication boundary,
   including process termination, out-of-space, target changes, disconnected volumes,
   unavailable rollback password, corrupt control state, and interrupted rollback.
   Check recovered filesystem state, not just an exception or status message.
+- Custom control roots reached by every normal/headless launch route without an
+  explicit recovery option, corrupt catalog/config, unavailable control storage,
+  interrupted admission registration/clearing, and profiles with disjoint versus
+  shared namespaces. Assert affected startup is fenced and provably unrelated
+  profiles remain usable.
 - Archive attacks and resource limits: traversal, aliases, duplicates, conflicting
   names, malicious SQLite schema, truncation, changed selected source, unsupported
   encryption, huge KDF work, oversized payloads, and misleading compression metadata.
+- In-place modification of the original archive after preview, mutation of staged
+  input, and overflow during source copy/decryption before a manifest is available.
+  Assert execution uses the exact previewed artifact or invalidates the plan, and
+  incomplete intermediate bytes never become inspectable/publishable archives.
+- Supported SQLite schemas with malicious extra triggers/views/virtual tables or a
+  correct version number but altered definitions. Prove installed migration SQL
+  cannot activate them, missing security primitives fail closed, SQL budgets cancel
+  excessive work, and legitimate FTS/migrations still work under owner-specific rules.
 - Credential fixtures spanning config history, supported DB locations, encrypted
   values, references, keyring scopes, and SQLite unused pages. Search emitted plaintext
   artifacts for known managed-secret sentinels; do not rely only on JSON field checks.
@@ -503,9 +706,20 @@ Implementation release evidence must include:
   memory on large archives, packaging on each advertised platform, wrong-password
   behavior, and truncated final-stream detection. Verify secrets never enter process
   arguments/environment, logs, persistent control requests, or helper diagnostics.
+- Early helper packaging qualification in installed wheels and documented source/
+  editable builds, helper version/integrity mismatch, missing helpers, and upgrade
+  interoperability. Capability failures appear before password entry/maintenance;
+  no implicit download, PATH substitution, or end-user build-tool requirement.
 - Product-level tests entering F9 Settings and first-run/recovery entry points,
   exercising actual create/inspect/restore/rollback services. Include progress,
   cancellation, separate-profile reopening, and retained temporary media after startup.
+- Recovered-media transcript lookup, duplicate slugs across source profiles, missing
+  bytes, reference deletion, shared references, explicit orphan cleanup, interrupted
+  catalog/file publication, and a second backup/restore with temporary-media capture
+  disabled. Durable recovered content must remain covered and resolvable.
+- Separate timing/lifecycle assertions: normal-backup writers resume before packaging,
+  while replacement/rollback remains fenced through encrypted safety-copy verification
+  and installed validation. Progress and cancellation describe the actual interval.
 - A first-open test with network/process-spawn sentinels and restored queued work,
   proving no remote contact, code execution, synchronization, or schedule catch-up
   occurs before explicit activation.
@@ -519,8 +733,9 @@ provide automatic remote storage.
 ## 11. Delivery boundaries and accepted review changes
 
 This is one product design but more than one implementation PR. After written
-approval, planning should separate storage inventory/profile admission, maintenance
-coordination, archive/encryption qualification, isolated restore, replacement and
+approval, planning should first qualify encryption-helper delivery and the maintenance/
+bootstrap protocol, then separate storage inventory/profile admission, maintenance
+coordination, archive qualification, recovered-media ownership, isolated restore, replacement and
 rollback/recovery startup, and final Settings/first-run integration with end-to-end
 evidence. These are planning boundaries, not undeclared future task dependencies.
 Do not expose Complete backup or destructive replacement before its full contract
@@ -528,7 +743,7 @@ is qualified. Existing selective exports remain available during development.
 
 | Review issue | Incorporated resolution |
 | --- | --- |
-| Advisory instance locking | Enforced participant admission plus refusal of unverified exclusive access. |
+| Advisory instance locking | Stable namespace admission for protocol-aware participants, native qualification, and an explicit legacy/external-writer boundary. |
 | Folder-only profile isolation | Dedicated launch config, owner-aware relocation, fresh scopes, alias checks, and reopenable catalog. |
 | Recovery depends on working app | Minimal pre-bootstrap recovery path with independent journal and explicit-path recovery. |
 | Rollback versus portable export | Exact encrypted local rollback, no export redaction, explicit password and later-change preservation. |
@@ -536,6 +751,14 @@ is qualified. Existing selective exports remain available during development.
 | Ephemeral content disappears after restore | Explicit optional capture and retained recovered assets outside cleanup namespaces. |
 | External consistency and overwrite | Honest per-file capture, newly created destinations only, original overwrite deferred. |
 | Overstated completeness | Explicit profile inventory, partial labeling, dependency validation, and separate verification/open statuses. |
+| Locks split after replacement or overpromise legacy exclusion | Stable logical namespace locks survive inode/path publication; shared aliases and the supported participant boundary are explicit. |
+| Newer files survive a replacement accidentally | Previewed restore/retire/preserve sets, owner-controlled retirement into rollback, and final inventory reconciliation. |
+| Pinned handles mistaken for immutable input | Completed private source copies or qualified snapshots, digest-bound previews, and byte limits before copying/decryption. |
+| Imported SQLite schema activates during migrations | Actual schema allowlists, restricted inspection/migration connections, execution budgets, and authenticated-but-untrusted metadata. |
+| Custom control roots bypass normal startup checks | Fixed bootstrap admission associations consulted by every supported launch route, with scope-aware blocking. |
+| Backup pause promise applied to replacement | Separate downtime contracts; replacement keeps admission closed through verified encrypted rollback and publication. |
+| Encryption helper selected before packaging proof | Early platform/package/protocol qualification with no runtime download or silent implementation substitution. |
+| Recovered media has no complete ownership lifecycle | Stable references, transcript lookup, baseline re-backup, explicit deletion, and guarded orphan cleanup. |
 
 ## 12. Written review boundary
 

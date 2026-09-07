@@ -52,6 +52,16 @@ isolated launch configuration, encrypted exact rollback, preserved temporary-med
 options, and product-level recovery evidence. The written draft also proposes a standard
 age encryption helper and a small reopenable recovery-profile catalog for user review.
 
+Revision 2 incorporates the second user-requested review and the explicit instruction
+to apply all findings. The spec and ADR now define stable logical maintenance locks
+and the legacy/external-writer boundary; restore/retire/preserve target sets; immutable
+digest-bound archive input and limits before decryption/manifest parsing; restricted
+SQLite schema validation/migrations; fixed bootstrap admission for custom recovery
+roots with scope-aware blocking; and separate backup versus replacement downtime.
+They also require early helper packaging qualification and a complete recovered-media
+reference, deletion, cleanup, and subsequent-backup lifecycle. Corresponding release
+evidence was added for every correction. The amendments remain documentation-only.
+
 Self-review checked coverage, activation boundaries, profile/credential isolation,
 rollback versus portable redaction, cancellation, compatibility, resource limits,
 interruption outcomes, and the accepted-review mapping. Local Markdown links and
