@@ -16176,9 +16176,7 @@ class LibraryScreen(BaseAppScreen):
         # document because the list beside it failed.
         viewer = self._mounted_library_media_viewer()
         if viewer is not None:
-            viewer.sync_list_failed(
-                self._library_media_browse_controller.failure is not None
-            )
+            viewer.sync_list_failed(self._library_media_list_unselectable())
         _sync_library_canvas(self, "media", then=then)
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
@@ -34252,6 +34250,24 @@ class LibraryScreen(BaseAppScreen):
             id="library-media-canvas",
         )
 
+    def _library_media_list_unselectable(self) -> bool:
+        """Whether the Media list load failed leaving NOTHING to select.
+
+        task-31635 (critique #5 item 12), fix round 1: ``controller.failure``
+        alone is too broad. A page failure RETAINS the rows it already
+        applied (``retained_items``) and a facet-only failure never touches
+        them at all -- in both states the rows stay painted, enabled, and
+        pressable, so telling the reader nothing could be loaded is simply
+        wrong. The critique's case is the first load failing with an empty
+        list behind it.
+
+        Returns:
+            True when the browse controller carries a failure AND no rows
+            survive to be selected.
+        """
+        controller = self._library_media_browse_controller
+        return controller.failure is not None and not controller.retained_items
+
     def _build_library_media_reader(self) -> LibraryMediaViewer:
         """Build the permanent Reader from loaded detail or its empty state."""
         detail = (
@@ -34313,7 +34329,7 @@ class LibraryScreen(BaseAppScreen):
             back_visible=self._library_media_reader_exit_available(),
             # task-31635 (critique #5 item 12): only the EMPTY Reader reads
             # this -- with the list load failed there is nothing to select.
-            list_failed=self._library_media_browse_controller.failure is not None,
+            list_failed=self._library_media_list_unselectable(),
             # TASK-31745: what the speaker-rename legend needs to actually
             # persist a rename (harmless when the state says it cannot).
             media_db=getattr(self.app_instance, "media_db", None),

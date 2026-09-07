@@ -44,9 +44,12 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 )
 
 
-#: task-31635 (critique #5 item 12): with the Media list load failed there
-#: is nothing to select, so the invitation to select something was the one
-#: line on screen contradicting the recovery callout beside it.
+#: task-31635 (critique #5 item 12): when the Media list load failed and
+#: left NO rows behind (see ``_library_media_list_unselectable``), there is
+#: nothing to select, so the invitation to select something was the one line
+#: on screen contradicting the recovery callout beside it. A failure that
+#: retained rows, or one that only hit the type facets, keeps the ordinary
+#: copy -- those rows are still painted and still pressable.
 READER_EMPTY_COPY = "Select a media item to read it here."
 READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
 
@@ -526,11 +529,13 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
-        """Render the Rendered|Raw content-view toggle for markdown-typed media.
+        """Render the Rendered|Raw toggle, or the note that replaces it.
 
-        Only rendered when ``self.viewer.is_markdown`` is true -- a
-        non-markdown item never offers a toggle and always shows the plain
-        Raw view (no behavior change from before LIB-13). Mirrors the
+        The toggle itself is offered only when ``self.viewer.is_markdown``
+        is true -- a non-markdown item always shows the plain Raw view (no
+        behavior change from before LIB-13). Since task-31635 a non-markdown
+        ``article``/``document`` gets a one-line note in the same slot
+        instead of nothing at all. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"

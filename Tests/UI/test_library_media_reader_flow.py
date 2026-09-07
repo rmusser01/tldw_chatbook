@@ -2680,6 +2680,48 @@ async def test_find_prev_next_are_disabled_and_marked_with_no_matches():
 
 
 @pytest.mark.asyncio
+async def test_gating_a_focused_next_hands_focus_to_the_search_box():
+    """task-31635 fix round 1: gating Prev/Next never strands screen focus.
+
+    Textual BLURS a focused widget when it is disabled, so disabling Next
+    while the user stands on it leaves ``screen.focused`` on NOTHING -- the
+    task-28002 keyboard deadlock, where every Escape gate reads
+    ``self.focused``.
+
+    Driven through the widget's own in-place seam (``sync_query_state``)
+    rather than through a submit: every screen path that reaches a zero-match
+    state today focuses the Input on its way (typing into it, or a traversal
+    that recomposes the whole viewer), so a submit-driven test passes with or
+    without the guard and pins nothing. The invariant belongs to the widget
+    -- it must not disable a focused control and leave focus nowhere,
+    whichever caller drives it.
+    """
+    host = _article_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_article_reader(host, pilot)
+        await _submit_content_search_query(screen, pilot, "budget")
+
+        controls = screen.query_one("#library-media-content-search-controls")
+        following = screen.query_one("#library-media-content-search-next", Button)
+        following.focus()
+        await pilot.pause()
+        assert screen.focused is following
+
+        controls.sync_query_state(
+            is_markdown=False,
+            query="nothing-here-at-all",
+            matches=(),
+            match_index=0,
+        )
+        await pilot.pause()
+
+        assert (str(following.label), following.disabled) == ("○ Next", True)
+        assert screen.focused is screen.query_one(
+            "#library-media-content-search", Input
+        ), screen.focused
+
+
+@pytest.mark.asyncio
 async def test_non_markdown_article_says_why_the_rendered_toggle_is_absent():
     """task-31635 (critique #5 item 13): the empty toggle slot names itself.
 

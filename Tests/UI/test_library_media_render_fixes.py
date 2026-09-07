@@ -38,9 +38,11 @@ from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
 )
 
 from Tests.UI.test_library_media_side_by_side import (
+    _active_library_screen,
     _build_media_test_app,
     _open_media_list,
     _two_media_items,
+    _wait_for_library_shell,
 )
 from Tests.UI.test_library_media_reader_flow import (
     ControlledDetailMediaService,
@@ -2746,13 +2748,66 @@ def _first_glyph_column(host, widget) -> int:
     raise AssertionError(f"Nothing painted inside {widget!r} at {region}.")
 
 
+async def _open_media_with_a_failed_first_page(host, pilot, exc: BaseException):
+    """Open Media with its FIRST page failing, so no rows are ever retained.
+
+    ``_force_media_page_failure`` fails a page that already applied, which
+    keeps ``retained_items`` -- the state where rows stay painted and
+    pressable. This is the other one: nothing was ever applied, so there is
+    genuinely nothing to select.
+    """
+
+    async def _fails(**_kwargs):
+        raise exc
+
+    host.app_instance.media_reading_scope_service.search_media = _fails
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    screen.query_one("#library-row-browse-media").press()
+    controller = screen._library_media_browse_controller
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            controller.failure is not None
+            and not controller.loading
+            and not controller.retained_items
+            and bool(screen.query("#library-media-load-failure-copy"))
+        ),
+        message="The first-page Media failure never settled.",
+    )
+    await pilot.pause()
+    return screen
+
+
 @pytest.mark.asyncio
 async def test_empty_reader_placeholder_names_a_failed_list():
     """task-31635 (critique #5 item 12): "Select a media item" was a lie.
 
-    With the list load failed, there was nothing to select, and the empty
-    Reader still invited the user to select something -- the only screen
-    saying so while the callout beside it said the load had failed.
+    With the FIRST list load failed there is nothing to select, and the
+    empty Reader still invited the user to select something -- the only
+    line on screen saying so while the callout beside it said the load
+    had failed.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_with_a_failed_first_page(
+            host, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        assert not screen.query(".library-media-row")
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Nothing loaded — the list could not be loaded."
+        assert "Nothing loaded" in _painted(host, empty.region)
+
+
+@pytest.mark.asyncio
+async def test_page_failure_that_retains_rows_keeps_the_select_invitation():
+    """task-31635 fix round 1: retained rows ARE selectable, so say so.
+
+    A page-1 failure after page 1 applied keeps every row painted, enabled
+    and pressable (the recovery callout's whole point). Telling the reader
+    "the list could not be loaded" there contradicts the two rows it can
+    still open.
     """
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -2764,9 +2819,12 @@ async def test_empty_reader_placeholder_names_a_failed_list():
             host, screen, pilot, sqlite3.OperationalError("database is locked")
         )
 
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
+        assert not any(row.disabled for row in rows)
         empty = screen.query_one("#library-media-reader-empty", Static)
-        assert str(empty.content) == "Nothing loaded — the list could not be loaded."
-        assert "Nothing loaded" in _painted(host, empty.region)
+        assert str(empty.content) == "Select a media item to read it here."
+        assert "Select a media item to read it here." in _painted(host, empty.region)
 
 
 def _h1_markdown_host() -> LibraryProductionCSSHarness:
