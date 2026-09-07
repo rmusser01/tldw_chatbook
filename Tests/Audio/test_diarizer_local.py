@@ -1127,3 +1127,62 @@ def test_worker_command_loop_ignores_a_garbled_line_and_an_unknown_command():
         live,
     )
     assert replies == [{"id": "S1", "seq": 7, "self": False}]
+
+
+# --- Qodo review (PR #2479) ------------------------------------------------
+
+def test_malformed_pcm_framing_is_refused_without_reading_the_payload(capsys):
+    """Qodo 2: `n`/`sr` arrive on a JSON line the worker does not own. A
+    negative `n` embedded an empty buffer, a huge one parked `_read_exactly`
+    on a pipe that would never deliver it -- and every later command (the
+    Stop-pass `diarize` included) waited behind it forever."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    embedded: list[bytes] = []
+
+    def embed(pcm):
+        embedded.append(pcm)
+        return [1.0, 0.0, 0.0]
+
+    pcm = b"\x00\x01" * 8
+    out = _serve_lines(
+        [
+            ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": -4}),
+            ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": 10 ** 9, "op_id": 3}),
+            ctl({"cmd": "assign", "sr": 0, "seq": 1, "n": len(pcm)}),
+            ctl({"cmd": "assign", "sr": 16000, "seq": 2, "n": 5}),      # odd byte count
+            ctl({"cmd": "assign", "sr": 16000, "seq": 3, "n": len(pcm)}), pcm,   # still serving
+        ],
+        embed=embed,
+    )
+
+    assert out[0] == {"id": None, "seq": 0, "self": False}
+    assert out[1] == {"centroid": None, "op_id": 3}
+    assert out[2] == {"id": None, "seq": 1, "self": False}
+    assert out[3] == {"id": None, "seq": 2, "self": False}
+    assert out[4]["id"] == "S1"                       # the loop kept serving
+    assert embedded == [pcm]                          # nothing else was ever embedded
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
+    assert len(errors) == 4 and all(e.endswith("ValueError") for e in errors)
+
+
+def test_stop_pass_self_needs_min_seconds_as_well_as_the_threshold():
+    """Qodo 8 (High): the Stop pass matched on distance alone, so a one-second
+    noisy cluster could be named as the user -- and carry a learning offer --
+    where live matching would have refused it."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    short = [{"start_s": 0.0, "end_s": 1.0, "speaker": "S1"}]
+    long_ = [{"start_s": 0.0, "end_s": 5.0, "speaker": "S1"}]
+    batches = [(short, {"S1": [1.0, 0.0, 0.0]}), (long_, {"S1": [1.0, 0.0, 0.0]})]
+
+    def fake_batch(*_a, **_k):
+        return batches.pop(0)
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 4.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 1.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+
+    assert out[0]["self"] is None      # 1 s of audio, well inside the threshold
+    assert out[1]["self"] == "S1"      # 5 s -- matched

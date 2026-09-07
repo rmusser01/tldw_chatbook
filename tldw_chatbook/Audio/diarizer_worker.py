@@ -47,6 +47,13 @@ MODEL = "speechbrain/spkrec-ecapa-voxceleb"
 # No loader-exposed revision today; a real pin is TODO once one exists.
 MODEL_ID = f"{MODEL}@unpinned"
 WINDOW_S = 1.5  # batch clustering window over the recording
+#: Largest PCM payload any command may declare: 10 minutes of 16 kHz mono
+#: PCM16 (16000 * 2 bytes * 600 s). The app sends at most one `assign`
+#: window (a few seconds) or one enrollment sample (30 s), so this is a
+#: sanity ceiling, not a working limit.
+MAX_PCM_BYTES = 19_200_000
+MIN_SAMPLE_RATE = 8000
+MAX_SAMPLE_RATE = 192000
 
 
 def _read_exactly(stream, n: int) -> bytes:
@@ -58,6 +65,33 @@ def _read_exactly(stream, n: int) -> bytes:
             break
         buf.extend(chunk)
     return bytes(buf)
+
+
+def _framing(cmd) -> tuple[int, int]:
+    """Validate a PCM command's ``n``/``sr`` BEFORE a byte is read (Qodo 2).
+
+    Args:
+        cmd: The parsed control line of an ``assign``/``enroll_from_pcm``.
+
+    Returns:
+        ``(n, sr)`` -- the payload length in bytes and the sample rate.
+
+    Raises:
+        ValueError: ``n`` is not an even integer in ``[0, MAX_PCM_BYTES]``, or
+            ``sr`` is not an integer in ``[MIN_SAMPLE_RATE, MAX_SAMPLE_RATE]``
+            (``int()`` raises the same type for a non-numeric field). The
+            caller's framed-error path answers the command and moves on
+            WITHOUT reading the payload: an over-long ``n`` parked
+            `_read_exactly` on bytes that never arrive, and every later
+            command -- the Stop-pass `diarize` included -- queued behind it.
+    """
+    n = int(cmd.get("n", 0))
+    sr = int(cmd.get("sr", 16000))
+    if not (MIN_SAMPLE_RATE <= sr <= MAX_SAMPLE_RATE):
+        raise ValueError("sample rate out of range")
+    if not (0 <= n <= MAX_PCM_BYTES) or n % 2:
+        raise ValueError("payload length out of range")
+    return n, sr
 
 
 def _unit(v) -> list[float] | None:
@@ -357,13 +391,13 @@ def serve(stdin, stdout, live, embed, batch) -> int:
         # Review round 1, Important 4: one framed error path for every op --
         # a malformed `enroll`/`export_centroid` used to raise straight out of
         # `serve()` (unhandled, a traceback on stderr, the worker dead for the
-        # rest of the meeting). `assign`/`diarize`/`enroll_from_pcm` still read
-        # their PCM unconditionally first, so a bad `n`/`sr` doesn't desync
-        # the pipe for whatever comes after it consumes.
+        # rest of the meeting). `assign`/`enroll_from_pcm` validate their
+        # framing FIRST (`_framing`, Qodo 2) and answer a bad `n`/`sr` through
+        # that same path without reading a payload whose declared length is
+        # exactly the thing not to be trusted.
         try:
             if op == "assign":
-                n = int(cmd.get("n", 0))
-                sr = int(cmd.get("sr", 16000)) or 16000
+                n, sr = _framing(cmd)
                 pcm = _read_exactly(stdin, n)
                 seconds = len(pcm) / (2 * sr)  # Minor 2: bytes actually read, not the declared n
                 sid = live.assign(embed(pcm), seconds=seconds)
@@ -401,10 +435,16 @@ def serve(stdin, stdout, live, embed, batch) -> int:
                     # wrong-dimension voiceprint turns MATCHING off for this
                     # process; the segments themselves are never affected.
                     try:
-                        evec, ethresh = enrolled[0], enrolled[1]
+                        evec, ethresh, emin_s = enrolled
                         dists = [(cid, _cos_dist(cen, evec)) for cid, cen in final_centroids.items()]
                         best_id, best_dist = min(dists, key=lambda t: t[1])
-                        if best_dist <= ethresh:
+                        # BOTH gates, exactly as `assign` applies them (Qodo 8):
+                        # `MeetingSession.stop()` takes this verdict as its
+                        # fallback and NAMES that cluster, so a one-second noisy
+                        # cluster that happens to sit inside the threshold would
+                        # be auto-named as the user -- and carry a learning offer
+                        # that then merges a stranger into their voiceprint.
+                        if best_dist <= ethresh and last_batch_seconds.get(best_id, 0.0) >= emin_s:
                             self_id = best_id
                     except Exception as exc:  # noqa: BLE001 - type only, once
                         sys.stderr.write(f"ERROR enroll {type(exc).__name__}\n")
@@ -438,8 +478,7 @@ def serve(stdin, stdout, live, embed, batch) -> int:
                 _write(stdout, reply)
             elif op == "enroll_from_pcm":
                 op_id = cmd.get("op_id")
-                n = int(cmd.get("n", 0))
-                sr = int(cmd.get("sr", 16000)) or 16000
+                n, sr = _framing(cmd)
                 pcm = _read_exactly(stdin, n)
                 unit = _unit(embed(pcm))
                 seconds = len(pcm) / (2 * sr)  # Minor 2
