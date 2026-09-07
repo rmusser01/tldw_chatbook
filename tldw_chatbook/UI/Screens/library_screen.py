@@ -16167,6 +16167,18 @@ class LibraryScreen(BaseAppScreen):
             # Treat that automatic fallback as part of this guarded restore;
             # keyboard and mouse input disarm the generation before callback.
             self._library_notes_restoring_focus = True
+        # task-31635 (critique #5 item 12): the EMPTY Reader's placeholder is
+        # derived from this controller's failure state, and the canvas sync
+        # below only rebuilds the Items pane -- so without this a failed page
+        # left "Select a media item to read it here." standing beside the
+        # recovery callout that says nothing could be loaded. Patched in
+        # place (never a recompose): a loaded Reader must not re-parse its
+        # document because the list beside it failed.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None:
+            viewer.sync_list_failed(
+                self._library_media_browse_controller.failure is not None
+            )
         _sync_library_canvas(self, "media", then=then)
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
@@ -34299,6 +34311,9 @@ class LibraryScreen(BaseAppScreen):
             image_preview_source=preview_source,
             review_banner=self._active_review_set_banner() or "",
             back_visible=self._library_media_reader_exit_available(),
+            # task-31635 (critique #5 item 12): only the EMPTY Reader reads
+            # this -- with the list load failed there is nothing to select.
+            list_failed=self._library_media_browse_controller.failure is not None,
             # TASK-31745: what the speaker-rename legend needs to actually
             # persist a rename (harmless when the state says it cannot).
             media_db=getattr(self.app_instance, "media_db", None),

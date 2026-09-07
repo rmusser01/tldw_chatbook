@@ -2727,3 +2727,92 @@ async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone(
             "An absent follow-up target",
         )
         assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 items 12, 14): the empty Reader under a failed list,
+# and the rendered Markdown H1's alignment against the reading column.
+# ---------------------------------------------------------------------------
+
+
+def _first_glyph_column(host, widget) -> int:
+    """Absolute column of the first painted glyph inside ``widget``."""
+    region = widget.region
+    strips = list(host.screen._compositor.render_strips())
+    for y in range(region.y, min(region.bottom, len(strips))):
+        row = strips[y].crop(region.x, region.right).text
+        if row.strip():
+            return region.x + len(row) - len(row.lstrip())
+    raise AssertionError(f"Nothing painted inside {widget!r} at {region}.")
+
+
+@pytest.mark.asyncio
+async def test_empty_reader_placeholder_names_a_failed_list():
+    """task-31635 (critique #5 item 12): "Select a media item" was a lie.
+
+    With the list load failed, there was nothing to select, and the empty
+    Reader still invited the user to select something -- the only screen
+    saying so while the callout beside it said the load had failed.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Select a media item to read it here."
+
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Nothing loaded — the list could not be loaded."
+        assert "Nothing loaded" in _painted(host, empty.region)
+
+
+def _h1_markdown_host() -> LibraryProductionCSSHarness:
+    """Two Markdown items whose first line is an H1 heading."""
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Quarterly notes {index}",
+            "type": "markdown",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "content": (
+                "# Quarterly budget\n\n"
+                "The reading column starts at the left edge of the box.\n"
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_rendered_markdown_h1_starts_in_the_body_column():
+    """task-31635 (critique #5 item 14): the H1 aligns with the prose.
+
+    Textual's ``MarkdownH1`` default is ``content-align: center middle``,
+    so a document title floated to the middle of the 92-cell reading
+    measure while every other line began at its left edge -- the heading
+    read as a banner detached from the text it introduces.
+    """
+    from textual.widgets._markdown import MarkdownH1, MarkdownParagraph
+
+    host = _h1_markdown_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        markdown = screen.query_one("#library-media-viewer-content-markdown")
+        heading = markdown.query_one(MarkdownH1)
+        body = markdown.query_one(MarkdownParagraph)
+
+        assert "Quarterly budget" in _painted(host, heading.region)
+        assert _first_glyph_column(host, heading) == _first_glyph_column(host, body), (
+            heading.region,
+            body.region,
+            _painted(host, heading.region),
+        )

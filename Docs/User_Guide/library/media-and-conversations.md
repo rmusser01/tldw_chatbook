@@ -279,13 +279,18 @@ still spans the pane.
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
-  "Raw" to see the plain source instead. Below the toggle (or directly
+  "Raw" to see the plain source instead. A rendered heading starts in the
+  same column as the prose beneath it. A plain `article` or `document`
+  with no markdown gets no toggle; that slot reads "Rendered view is for
+  Markdown and transcripts" instead of going silently blank. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
-  which view is showing. Typing a query shows "Match 1 of 4 matches" (or
+  which view is showing. Typing a query shows "Match 1 of 4" (or
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
-  and wraps at either end — in both views. Only the visual highlighting of
+  and wraps at either end — in both views. With no matches both controls
+  are disabled and read "○ Prev" / "○ Next", the same marker the Media
+  pager uses, so there is nothing live to press. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
   no on-screen mark. The search bar stays exactly where Find opened it,
   directly under the Read/Analysis/Highlights/Info row: submitting a query
@@ -324,6 +329,16 @@ still spans the pane.
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+*Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
+14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.
+The rendered H1 "Quarterly budget review", the body line, and the H2 all begin
+at painted column 98. Find on the Markdown item shows "No matches" with
+"○ Prev" / "○ Next" for a query with no hits, and "Match 1 of 4" with
+"◀ Prev" / "Next ▶" for one with hits. The `article` paints "Rendered view is
+for Markdown and transcripts" in the row the Rendered|Raw strip occupies for a
+Markdown item. The failed-list placeholder (item 12) is pinned by test, not
+live: forcing it needs the Media page load to fail.)*
 
 *Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
 AC#3: More opened live at 235x52 and at 100x30 over a seeded document.

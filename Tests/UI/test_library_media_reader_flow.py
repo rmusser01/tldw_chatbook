@@ -20,6 +20,7 @@ from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _open_media_find,
     _painted_cells,
+    _submit_content_search_query,
     _row_is_painted_focused,
     _top_border_row,
     StaticLibraryMediaScopeService,
@@ -2572,3 +2573,131 @@ async def test_screen_refresh_without_recompose_moves_no_focus():
         assert _focused_id(screen) == "library-media-row-1", screen.focused
         for media_id in tuple(service.detail_release):
             service.release(media_id)
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 items 1, 5, 13): Find copy, Find control gating, and
+# the reason the Rendered|Raw toggle is absent on a non-Markdown text item.
+# ---------------------------------------------------------------------------
+
+_FIND_COPY_CONTENT = (
+    "budget line one\n"
+    "ordinary text\n"
+    "budget line two\n"
+    "more text\n"
+    "budget line three\n"
+)
+
+
+def _article_host():
+    """Two plain ``article`` items (no Markdown syntax) with 3 match lines."""
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Budget review {index}",
+            "type": "article",
+            "last_modified": f"2026-07-0{index}T10:00:00Z",
+            "content": _FIND_COPY_CONTENT,
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+async def _open_article_reader(host, pilot):
+    """Open the first article row's Reader and wait for its detail to settle."""
+    screen = await _open_media_list(host, pilot)
+    screen.query_one("#library-media-row-0", Button).press()
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_media_reader_session.pending_request is None
+            and screen._library_media_reader_session.loaded_id is not None
+        ),
+        message="Reader detail never settled.",
+    )
+    await pilot.pause()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_find_counter_reads_match_n_of_m_without_the_trailing_noun():
+    """task-31635 (critique #5 item 1): "Match 1 of 3", not "of 3 matches".
+
+    The old copy said "matches" twice over -- "Match 1 of 3 matches" -- and
+    the redundant noun is what pushed the count off the narrow Find row.
+    """
+    host = _article_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_article_reader(host, pilot)
+        await _submit_content_search_query(screen, pilot, "budget")
+
+        status = screen.query_one("#library-media-content-search-status", Static)
+        assert str(status.content) == "Match 1 of 3", status.content
+
+        screen.query_one("#library-media-content-search-next", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        status = screen.query_one("#library-media-content-search-status", Static)
+        assert str(status.content) == "Match 2 of 3", status.content
+
+
+@pytest.mark.asyncio
+async def test_find_prev_next_are_disabled_and_marked_with_no_matches():
+    """task-31635 (critique #5 item 5): 0 matches gates Prev/Next.
+
+    Both controls used to stay live and arrowed on a query with nothing to
+    walk, so pressing them was a silent no-op. They now carry the Library's
+    non-colour disabled marker ("○ Prev" / "○ Next") and are disabled --
+    the same convention the Media pager's "○ Previous" / "○ Next" uses.
+    """
+    host = _article_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_article_reader(host, pilot)
+        await _submit_content_search_query(screen, pilot, "budget")
+
+        previous = screen.query_one("#library-media-content-search-prev", Button)
+        following = screen.query_one("#library-media-content-search-next", Button)
+        assert (str(previous.label), previous.disabled) == ("◀ Prev", False)
+        assert (str(following.label), following.disabled) == ("Next ▶", False)
+
+        await _submit_content_search_query(screen, pilot, "nothing-here-at-all")
+        previous = screen.query_one("#library-media-content-search-prev", Button)
+        following = screen.query_one("#library-media-content-search-next", Button)
+        assert (str(previous.label), previous.disabled) == ("○ Prev", True)
+        assert (str(following.label), following.disabled) == ("○ Next", True)
+
+        # And back again -- the gate follows the live match count, so a
+        # second query with matches restores both controls.
+        await _submit_content_search_query(screen, pilot, "budget")
+        previous = screen.query_one("#library-media-content-search-prev", Button)
+        following = screen.query_one("#library-media-content-search-next", Button)
+        assert (str(previous.label), previous.disabled) == ("◀ Prev", False)
+        assert (str(following.label), following.disabled) == ("Next ▶", False)
+
+
+@pytest.mark.asyncio
+async def test_non_markdown_article_says_why_the_rendered_toggle_is_absent():
+    """task-31635 (critique #5 item 13): the empty toggle slot names itself.
+
+    A non-Markdown ``article``/``document`` simply dropped the
+    Rendered|Raw strip, so the reader of a plain article had no way to
+    know whether a rendered view existed at all. The slot now carries a
+    one-line note instead of nothing -- text only, no control.
+    """
+    host = _article_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_article_reader(host, pilot)
+
+        viewer = screen.query_one("#library-media-viewer")
+        assert viewer.viewer.media_type == "article"
+        assert not viewer.viewer.is_markdown
+
+        note = screen.query_one("#library-media-content-mode-note", Static)
+        assert str(note.content) == "Rendered view is for Markdown and transcripts"
+        # Text only: the slot gains no control.
+        assert not screen.query("#library-media-content-mode-rendered")
+        assert not screen.query("#library-media-content-mode-raw")
