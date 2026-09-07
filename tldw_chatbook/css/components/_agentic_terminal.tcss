@@ -7633,6 +7633,29 @@ ChatScreen.-focus #console-workbench-header {
 }
 
 
+/* Meetings rail: the voice rows (TASK-31826). Class-keyed on purpose -- an
+   `#id Button` rule would be an ancestor-scoped bare-type subject, which the
+   Perf Guard CSS ratchet counts.
+
+   A Textual container defaults to `height: 1fr`, so these blocks split the
+   rail's leftover rows between them and collapsed to one row (the offer's
+   three answer buttons were clipped out of the compositor entirely at
+   100x30 -- review C1). Sizing them to their content instead lets the rail's
+   VerticalScroll do the work. */
+.meetings-rail-block,
+.meetings-rail-actions {
+    height: auto;
+}
+
+/* Same treatment `.console-retrieval-scope-action` needed (TASK-24607):
+   `width: auto` alone does not shrink a Button, its DEFAULT_CSS carries
+   `min-width: 16`. Four 16-column buttons need 65 columns; the rail is half
+   a workbench, so "Import…" was clipped to one column at 100 (review I4). */
+.meetings-rail-button {
+    width: auto;
+    min-width: 0;
+}
+
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
