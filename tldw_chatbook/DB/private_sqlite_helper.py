@@ -120,6 +120,8 @@ class _PrivatePipe:
     def __init__(self) -> None:
         self.parent_pid = os.getppid()
         self.deadline: float | None = None
+        os.set_blocking(0, False)
+        os.set_blocking(1, False)
 
     def _wait(self, fd: int, *, writable: bool = False) -> None:
         while True:
@@ -137,17 +139,24 @@ class _PrivatePipe:
                 return
 
     def read(self, count: int) -> bytes:
-        self._wait(0)
-        value = os.read(0, count)
-        if value and self.deadline is None:
-            self.deadline = time.monotonic() + ROUND_TRIP_SECONDS
-        return value
+        while True:
+            self._wait(0)
+            try:
+                value = os.read(0, count)
+            except BlockingIOError:
+                continue
+            if value and self.deadline is None:
+                self.deadline = time.monotonic() + ROUND_TRIP_SECONDS
+            return value
 
     def write(self, frame: bytes) -> None:
         offset = 0
         while offset < len(frame):
             self._wait(1, writable=True)
-            offset += os.write(1, frame[offset:])
+            try:
+                offset += os.write(1, frame[offset:])
+            except BlockingIOError:
+                continue
 
 
 def run() -> int:
