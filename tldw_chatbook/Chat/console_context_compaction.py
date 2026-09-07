@@ -2398,6 +2398,43 @@ class ConsoleCompactionService:
                 memory=record,
             )
 
+    async def summarize_span_to_text(
+        self,
+        *,
+        resolution: ConsoleProviderResolution,
+        messages: tuple[Mapping[str, Any], ...],
+        max_output_tokens: int,
+    ) -> str:
+        """One stateless summary completion; no attempt ledger, no commit.
+
+        Serves user-facing "summarize into a note" actions that must not
+        touch compaction state: no auxiliary-attempt rows, no branch-memory
+        admission, no context-summary boundary move.
+
+        Args:
+            resolution: The provider resolution to summarize with (an
+                auxiliary-model routing decision already applied by the
+                caller).
+            messages: The full provider message array (system prompt plus
+                transcript span) as immutable mappings.
+            max_output_tokens: Output cap for the completion.
+
+        Returns:
+            The stripped completion text.
+
+        Raises:
+            TimeoutError: The bounded auxiliary call exceeded
+                ``auxiliary_timeout_seconds``.
+            Exception: Whatever the provider gateway raises, so the caller
+                can surface a user-visible failure.
+        """
+        completion, _engine = await self._summary_completion(
+            resolution=resolution,
+            messages=messages,
+            max_output_tokens=max_output_tokens,
+        )
+        return completion.text.strip()
+
     async def _summary_completion(
         self,
         *,
