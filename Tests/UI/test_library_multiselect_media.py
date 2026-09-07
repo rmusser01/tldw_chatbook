@@ -2150,8 +2150,8 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
 # ---------------------------------------------------------------------------
 # task-14901 (ADR-055): single media delete is one-item bulk. It adopts the
 # SAME receipt/Undo seam as "Delete selected" -- the shared
-# ``_library_media_bulk_delete_in_flight`` flag, the shared exclusive worker
-# group, ``_library_media_delete_receipt_ids``, and
+# ``_media_state.bulk_delete_in_flight`` flag, the shared exclusive worker
+# group, ``_media_state.delete_receipt_ids``, and
 # ``_undo_library_media_bulk_delete`` -- instead of confirm-then-silence.
 # No second undo path is forked.
 # ---------------------------------------------------------------------------

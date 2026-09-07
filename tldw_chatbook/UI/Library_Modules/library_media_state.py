@@ -388,8 +388,9 @@ class LibraryMediaState:
     #
     # Placeholder default only -- see the module docstring's
     # constructor-argument paragraph: `__init__` passes
-    # `_ANALYZE_ORIGIN_MEDIA`, which stays a `library_screen` module
-    # constant so its own "named once, cannot drift" comment holds.
+    # `_ANALYZE_ORIGIN_MEDIA`, whose DEFINITION task 2 relocated to
+    # `screen_constants.py` (`library_screen` imports it back, so the
+    # module-path attribute still resolves) -- one source, cannot drift.
     analyze_origin: str = ""
 
     # task-4025: "list" | "viewer" | "trash" -- the Trash view is the

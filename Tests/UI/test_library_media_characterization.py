@@ -13,7 +13,7 @@ of which **76 carry a string selector** and 3 are Message-typed
 (``PaneToggleRequested``/``MediaShellResized``/
 ``LibraryMediaRowGeometryChanged``; all three are exercised at the message
 level in ``test_library_adaptive_reader_shell.py`` and
-``test_library_media_return_settlement.py``, so none is a gap) -- against ~20
+``test_library_media_return_settlement.py``, so none is a gap) -- against 16
 dedicated ``Tests/UI/test_library_media_*.py`` files plus
 ``test_library_shell.py``, ``test_library_multiselect_media.py``,
 ``test_review_set_walker.py`` and the canvas suites. The census ran every

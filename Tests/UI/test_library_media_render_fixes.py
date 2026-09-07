@@ -1146,7 +1146,7 @@ async def test_escape_closes_the_more_menu_from_any_reader_focus():
 
     Critique #4 (B cap_106): the footer promised "close more" and Escape
     did nothing. Traced to the stale view flag -- "‹ Back" (and the rail's
-    Escape) set ``_library_media_view = "list"`` while the three-pane
+    Escape) set ``_media_state.view = "list"`` while the three-pane
     Reader kept painting the document, and every Reader binding is gated
     on that flag, so Escape/]/[ died on identical pixels.
     """

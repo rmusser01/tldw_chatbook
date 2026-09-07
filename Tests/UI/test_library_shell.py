@@ -9135,7 +9135,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
 @pytest.mark.asyncio
 async def test_library_shell_media_row_switches_selection():
-    """Selecting a different media row updates ``_selected_media_id``.
+    """Selecting a different media row updates ``_media_state.selected_media_id``.
 
     Re-anchored for the in-canvas viewer rebuild: pressing a media row now
     replaces the list with the full ``LibraryMediaViewer`` (no more inline

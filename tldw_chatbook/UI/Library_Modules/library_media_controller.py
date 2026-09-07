@@ -157,20 +157,20 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
    its ``inspect.getsource`` spelling.
    ``test_library_multiselect_media.py::test_every_media_mutation_claims_
    the_interlock_at_one_audited_seam`` asserts
-   ``"_library_media_bulk_delete_in_flight = True" in inspect.getsource(
+   ``"self._media_state.bulk_delete_in_flight = True" in inspect.getsource(
    LibraryScreen._claim_library_media_mutation)`` AND, for each of SIX named
    handlers, ``"_claim_library_media_mutation" in inspect.getsource(handler)``
    -- assertions a one-line delegator's source empties. It also asserts that
    ``inspect.getsource(library_screen_module)`` contains EXACTLY ONE
-   ``_library_media_bulk_delete_in_flight = True`` and EXACTLY ONE
-   ``group="library_media_bulk_delete"``; both literals live inside
-   ``_claim_library_media_mutation`` (``library_screen.py:15501`` and
-   ``:15505`` at this commit), which this exclusion keeps in place, so both
-   module-level counts stay at 1. ``test_review_set_walker.py:1284``
-   (``inspect.getsource(LibraryScreen.handle_library_media_row)``) is the
-   eighth. Five of the eight are independently excluded as unbound-fake-self
-   anyway; ``handle_library_media_edit_save`` is excluded by this class
-   alone.
+   whitespace-tolerant regex match for ``_media_state.bulk_delete_in_flight
+   = True``, and one for the shared worker-group literal; both sites live
+   inside ``_claim_library_media_mutation`` (``library_screen.py:15062``/
+   ``:15066`` at this wave's tip; task 3 retargeted seam and guard together),
+   which this exclusion keeps in place, so both counts stay at 1.
+   ``test_review_set_walker.py:1292`` (``inspect.getsource(
+   LibraryScreen.handle_library_media_row)``) is the eighth. Five of the
+   eight are independently excluded as unbound-fake-self anyway;
+   ``handle_library_media_edit_save`` is excluded by this class alone.
 
 4. **4 module-globals-coupling exclusions** (recipe §3's oldest shape,
    restated as the eighth numbered shape's mechanical census). The census ran
@@ -446,8 +446,8 @@ This subsystem's OWN state (every flat media field name the moved bodies
 reference -- all 82, across TWO prefix families, resolved by task 1's
 single-source ``media_state_shim_attr()``) is exposed through a generated
 property loop reading ``self._media_state_accessor().<field>`` -- the same
-generator shape task 1 installed on ``LibraryScreen`` (deleted at cleanup,
-task 3, once this controller's own copy makes the screen's copy dead).
+generator shape task 1 installed on ``LibraryScreen`` (task 3 deleted that
+screen block once this controller's own copy made it dead).
 """
 from __future__ import annotations
 
@@ -549,9 +549,9 @@ class LibraryMediaController:
     ``LibraryMediaState`` (via the injected accessor) and the shared
     shell/framework/wiring bindings below. ``LibraryScreen`` constructs
     exactly one of these, in ``__init__`` right after
-    ``self._prompts_controller``, and keeps a one-line delegator for every
-    one of the 140 original names this cluster moved (this series' own
-    cleanup PR, media series 3/3, prunes the ones nothing external reaches).
+    ``self._prompts_controller``, and keeps a one-line delegator for 118 of
+    the 140 original names this cluster moved -- task 3 (the cleanup PR,
+    media series 3/3) pruned the 22 nothing external reaches.
     """
 
     def __init__(

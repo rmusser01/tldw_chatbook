@@ -3806,6 +3806,15 @@ async def test_action_library_skill_back_honors_dirty_guard():
             # supplied here explicitly -- this one was missing, raising
             # ``AttributeError`` instead of exercising the guard.
             _library_list_entry_focus_timer=None,
+            # wave-7 (media series): the same seam now writes
+            # ``self._media_state.successful_focus_ownership``, so this
+            # bypassed-construction fake needs the nested state object to
+            # EXIST. Before the media state PR that write landed as a plain
+            # attribute creation on this ``SimpleNamespace`` and passed
+            # silently -- the recipe's seventh bypass shape, reaching a fake
+            # that names no media field at all because a SHARED shell seam
+            # reads one.
+            _media_state=SimpleNamespace(successful_focus_ownership=None),
         )
     )
     timer_calls: list[object] = []
