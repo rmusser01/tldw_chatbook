@@ -1,11 +1,11 @@
 ---
 id: TASK-31938
 title: Preserve Canvas V2 profiles across revision lifecycles
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:13'
-updated_date: '2026-09-07 03:34'
+updated_date: '2026-09-07 06:10'
 labels:
   - canvas
   - v2
@@ -47,6 +47,7 @@ Reason: Direct implementation of approved profile ownership and archive contract
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented exact-profile preparation and metadata through Console, durable and
 temporary ownership, provider result projection and native stored reads. Internal
 preparation binds independently computed selection to source/parent/snapshot;
@@ -85,3 +86,6 @@ when its durable service already owns one, including value-equal distinct object
 Tests cover immediate rejection for equal/different-policy snapshots and actual
 durable V2 import/update with one shared explicit snapshot. Prepared-plan identity
 checks and dependency snapshots are unchanged. Existing ADR-124 applies.
+
+Independent review and scoped round1 re-review passed. Controller/service snapshot mismatch corrected with immediate constructor identity validation; 52 focused checks passed with no skips. Existing ADR-124 and internal preparation/format3.0 archive contracts retained. No unresolved Critical/Important findings; baseline lint/format/warning documented with base proof. Live delivery and release qualification remain assigned follow-on tasks.
+<!-- SECTION:NOTES:END -->
