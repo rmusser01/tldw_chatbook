@@ -818,6 +818,10 @@ def test_centroid_op_is_ready_gated_without_taking_the_lock():
     assert d.wait_ready(0.05) is False           # confirm: genuinely not ready yet
     assert d.export_centroid("S1") is None       # must return at once, not hang
     assert not d._lock.locked()                  # ... and never touched the lock
+    # Re-review: without the gate the op still takes the lock, writes the
+    # command and burns the restart budget while the assertions above hold.
+    assert not proc.stdin.chunks                 # nothing was sent to the worker
+    assert d.coarse_reason is None               # ... and no failure was charged
 
     gate.set()  # let the watcher (and its pending `_send_enroll`) proceed
 
