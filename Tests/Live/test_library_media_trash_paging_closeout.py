@@ -37,7 +37,6 @@ from tldw_chatbook.Library.library_media_state import (
 )
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Utils.adaptive_reader_state import PANE_GRIP_WIDTH
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_config_path, get_cli_log_file_path, get_user_data_dir
 
@@ -263,7 +262,7 @@ def _assert_reader_width_contract(
         layout.library_width
         + layout.items_width
         + layout.reader_width
-        + (2 * PANE_GRIP_WIDTH)
+        + (2 * layout.grip_width)
         == shell_content_width
     )
     assert library_region_width == layout.library_width
@@ -343,6 +342,7 @@ def test_reader_width_contract_rejects_one_column_mutation() -> None:
         library_width=0,
         items_width=56,
         reader_width=50,
+        grip_width=1,  # the Media profile's one-cell grip (PR H)
     )
     with pytest.raises(AssertionError):
         _assert_reader_width_contract(

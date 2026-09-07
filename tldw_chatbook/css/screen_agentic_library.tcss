@@ -173,15 +173,12 @@ $ds-library-source-browser-width: 31;
     min-width: 0;
 }
 
-/* The three width declarations are a fallback only: every mounted grip sets
-   its width as an INLINE style from its destination profile's `grip_width`
-   (task-31633 AC#2), and an inline style outranks this rule -- so for Media,
-   whose grips are one cell, these three lines are dead. Keep them in step
-   with `PANE_GRIP_WIDTH` (the shared default every other reader uses). */
+/* No width here (task-31952 AC#1). Every mounted grip sets its width as an
+   INLINE style from the resolved layout's `grip_width` -- the same number the
+   resolver held back for it -- and an inline style outranks this rule, so the
+   `width/min-width/max-width: 5` fallback that used to sit here was dead for
+   every destination and a second, stale answer for the four on one cell. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {
-    width: 5;
-    min-width: 5;
-    max-width: 5;
     height: 100%;
     min-height: 0;
     margin: 0;
@@ -200,7 +197,8 @@ $ds-library-source-browser-width: 31;
 }
 
 /* task-31276: no focus outline here. The grip is as TALL AS THE SHELL (5
-   columns wide then, one for Media since task-31633 AC#2), so an outline can
+   columns wide then, one on the four readers that opted in since task-31633
+   AC#2 and task-31951), so an outline can
    only ever paint its top and bottom rows -- and the top row sits on the
    Reader's identity line, where such a rule reads as a rendering artifact at
    the pane join, not as focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
