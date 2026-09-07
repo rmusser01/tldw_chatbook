@@ -58,6 +58,18 @@ class MeetingMeta:
     #: `meeting.json` files that predate this field.
     diarize_mic_channel: bool = False
     speaker_names: dict = field(default_factory=dict)
+    #: Self-voiceprint match (TASK-31826, spec §3.4): the ONE cluster id the
+    #: worker flagged as the local user, applied once per meeting and then
+    #: fixed. None when nothing matched (no voiceprint, matching off, plain
+    #: call mode, or simply no match).
+    matched_self: str | None = None
+    #: True once the user renamed the matched cluster to something other than
+    #: their own display name -- the match is theirs to overrule, and an
+    #: overridden meeting never produces a learning offer.
+    matched_self_overridden: bool = False
+    #: Diagnostic: how many `assign` replies the backend saw flagged `self`
+    #: (only the first is ever applied). Stamped from the backend at Stop.
+    self_candidates_seen: int = 0
     format_version: int = 2
 
     def to_json(self) -> dict:
@@ -162,6 +174,12 @@ class Diarizer(Protocol):
     The session never calls `reconcile` and never touches centroids -- every
     id `assign`/`diarize` hands back is already the reconciled live cluster
     id.
+
+    Two OPTIONAL attributes (TASK-31826, spec §3.3/§3.4) are read with
+    `getattr`, never declared here, so a backend without self-voiceprint
+    matching keeps satisfying this protocol unchanged: `self_cluster_id`
+    (the first live cluster the worker flagged as the user) and `stop_self`
+    (the same verdict from the batch `diarize` reply).
     """
 
     def diarize(self, wav_path: Path, start_s: float, end_s: float) -> list[SpeakerSegment]: ...
@@ -215,6 +233,10 @@ def read_meeting_json(folder: Path) -> dict:
     # Back-fill pre-task-31743 recordings: mic-channel diarization did not
     # exist yet, so those meetings never diarized "you"/"both" segments.
     payload.setdefault("diarize_mic_channel", False)
+    # Back-fill pre-TASK-31826 recordings: self-voiceprint matching did not
+    # exist, so no meeting before it ever matched a cluster to the user.
+    payload.setdefault("matched_self", None)
+    payload.setdefault("matched_self_overridden", False)
     return payload
 
 
@@ -381,13 +403,25 @@ class MeetingSession:
         sinks: Sequence[MeetingSink],
         clock: Callable[[], float] = time.time,
         diarizer: Diarizer | None = None,
+        close_diarizer_on_stop: bool = True,
     ) -> None:
+        """Build one meeting session.
+
+        Args:
+            close_diarizer_on_stop: Whether `stop()` closes the diarizer.
+                False when the OWNER claims the close (TASK-31826): the
+                post-meeting learning offer needs a live worker to export the
+                matched cluster's centroid, which `stop()` would otherwise
+                have torn down (`MeetingSessionOwner` then closes it on
+                accept/decline/lapse -- see its `_clear_offer`).
+        """
         self.meta = meta
         self.capture = capture
         self._dictation_factory = dictation_factory
         self._sinks = list(sinks)
         self._clock = clock
         self._diarizer = diarizer
+        self._close_diarizer_on_stop = bool(close_diarizer_on_stop)
         self.service: Any | None = None
         self.state = "idle"
         self.segments: list[MeetingSegment] = []
@@ -499,6 +533,120 @@ class MeetingSession:
         self.capture.resume()
         self._set_state("recording")
 
+    # ---- speakers ---------------------------------------------------------
+    def _persist_speakers(self) -> None:
+        """Write the speaker map and the self-match bookkeeping to disk.
+
+        Best-effort: a rename or a match must never fail a running meeting.
+        Logs the exception TYPE only -- the message would carry the meeting
+        folder's path (task-31748).
+        """
+        try:
+            with self._lock:
+                fields = dict(
+                    speaker_names=dict(self.meta.speaker_names),
+                    matched_self=self.meta.matched_self,
+                    matched_self_overridden=self.meta.matched_self_overridden,
+                )
+            update_meeting_json(self.meta.folder, **fields)
+        except Exception as exc:  # noqa: BLE001 - never breaks the meeting
+            logger.warning("meeting: speaker map persist failed ({})", type(exc).__name__)
+
+    def rename_speaker(self, cluster_id: str, name: str) -> str:
+        """Apply the user's name for `cluster_id`; blank removes it.
+
+        The ONE live-rename path (the Meetings screen calls it): normalises
+        the typed name, pins the cluster with the backend, persists, and
+        re-emits a speaker update. Renaming the MATCHED cluster (spec §3.4)
+        overrides the self-voiceprint match -- unless the name chosen is the
+        user's own display name, which is what the match already meant.
+
+        Args:
+            cluster_id: The live cluster id being renamed.
+            name: The raw, user-typed name; `""` removes the mapping.
+
+        Returns:
+            The normalised name actually stored (`""` when removed).
+        """
+        name = normalize_speaker_name(name)
+        with self._lock:
+            if name:
+                self.meta.speaker_names[cluster_id] = name
+            else:
+                self.meta.speaker_names.pop(cluster_id, None)
+            if cluster_id and cluster_id == self.meta.matched_self:
+                self.meta.matched_self_overridden = name != self.meta.user_display_name
+            names = dict(self.meta.speaker_names)
+        diarizer = self._diarizer
+        if diarizer is not None and hasattr(diarizer, "pin"):
+            try:
+                diarizer.pin(cluster_id)   # OFF the lock: a pin can block
+            except Exception as exc:  # noqa: BLE001 - best-effort
+                logger.warning("meeting: diarizer pin failed ({})", type(exc).__name__)
+        self._persist_speakers()
+        self._emit("speakers", names)
+        return name
+
+    def _remap_matched_self(self, transitions: list[tuple[str | None, str]], whole_recording: bool) -> None:
+        """Follow the matched cluster through the Stop pass's merges.
+
+        The batch pass can fold the matched cluster into a survivor id, just
+        as it does for named clusters (`merged_speaker_names`). Left stale,
+        `matched_self` would name a cluster the worker no longer has, and the
+        learning offer's `export_centroid` would come back empty with nothing
+        to tell the user (review M3).
+
+        Args:
+            transitions: The pass's `(old_id, new_id)` pairs.
+            whole_recording: False after a crash, where the pass covers only
+                the post-crash span -- a matched cluster it never saw is not
+                gone, it is simply outside the pass, and must be left alone.
+        """
+        with self._lock:
+            matched = self.meta.matched_self
+            if matched is None or not transitions:
+                return
+            moved = {old: new for old, new in transitions if old is not None}.get(matched)
+            if moved is not None:
+                self.meta.matched_self = moved
+            elif whole_recording:
+                # A full-recording pass that never saw the id means it no
+                # longer exists: drop the match rather than offer to learn
+                # from a cluster that cannot be exported.
+                self.meta.matched_self = None
+                self.meta.matched_self_overridden = False
+            else:
+                return
+            changed = self.meta.matched_self != matched
+        if changed:
+            self._persist_speakers()
+
+    def _apply_self_match(self, cluster_id: str | None) -> None:
+        """Name `cluster_id` as the user, at most once per meeting (spec §3.4).
+
+        The backend fixes WHICH cluster is the user (stable first match); the
+        session applies it once and never moves it. A cluster the user has
+        already named keeps that name -- the match is recorded as overridden
+        rather than overwriting what they typed.
+
+        Args:
+            cluster_id: The backend's self verdict, or None (a no-op).
+        """
+        if not cluster_id:
+            return
+        with self._lock:
+            if self.meta.matched_self is not None or self.meta.matched_self_overridden:
+                return
+            existing = self.meta.speaker_names.get(cluster_id)
+            if existing and existing != self.meta.user_display_name:
+                self.meta.matched_self_overridden = True
+            else:
+                self.meta.speaker_names[cluster_id] = self.meta.user_display_name
+            self.meta.matched_self = cluster_id
+            names = dict(self.meta.speaker_names)
+        self._persist_speakers()
+        self._emit("speakers", names)
+
     def stop(self, reason: str = "user") -> MeetingResult:
         with self._lock:
             if self._result is not None:
@@ -603,22 +751,39 @@ class MeetingSession:
                     if merged_names:
                         with self._lock:
                             self.meta.speaker_names.update(merged_names)
+                    self._remap_matched_self(transitions, whole_recording=crash_seq is None)
                     # Persist the authoritative labels (idempotent by seq, I1):
                     # off `_lock` -- the sinks marshal onto the app thread.
                     for seg in changed:
                         self._each_sink("on_segment", seg)
                         self._emit("segment", seg)
+                    # Stop-pass self match (spec §3.4): the batch reply's
+                    # verdict is the fallback for a meeting whose worker never
+                    # warmed up live -- applied ONLY when nothing matched live.
+                    if self.meta.matched_self is None:
+                        self._apply_self_match(getattr(self._diarizer, "stop_self", None))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("meeting: diarizer stop pass failed ({})", type(exc).__name__)
             finally:
+                # Diagnostic only (never acted on): how many windows the
+                # backend saw flagged `self`. A junk value from a foreign
+                # backend must not break finalising the meeting.
+                try:
+                    self.meta.self_candidates_seen = int(getattr(self._diarizer, "self_candidates_seen", 0) or 0)
+                except (TypeError, ValueError):
+                    pass
                 # Read BEFORE close(): the footer needs to say why the meeting
                 # ran on coarse labels (spec §7), and close() tears the
                 # backend down. Static string only -- never a path or a name.
                 speaker_labels_reason = getattr(self._diarizer, "coarse_reason", None)
-                try:
-                    self._diarizer.close()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("meeting: diarizer close failed ({})", type(exc).__name__)
+                # ... unless the owner claimed the close (TASK-31826): the
+                # learning offer still needs this worker alive to export the
+                # matched cluster's centroid.
+                if self._close_diarizer_on_stop:
+                    try:
+                        self._diarizer.close()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("meeting: diarizer close failed ({})", type(exc).__name__)
         result = MeetingResult(
             meta=self.meta,
             ended_at=datetime.now().isoformat(timespec="seconds"),
@@ -724,6 +889,11 @@ class MeetingSession:
                     segment.speaker_id = sid
                 self._emit("segment", segment)
                 self._each_sink("on_segment", segment)
+            # Self-voiceprint match (spec §3.4): the backend fixed the first
+            # cluster the worker flagged as the user; read it after every
+            # assign and apply it once. A backend without the attribute (the
+            # `Diarizer` protocol's optional half) is simply never a match.
+            self._apply_self_match(getattr(self._diarizer, "self_cluster_id", None))
 
     def _on_final_for_test(self, text: str, *, label: str | None = None) -> None:
         """Test-only: drive `_on_final`, optionally forcing its label.

@@ -10,15 +10,40 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Iterator, List
+
+import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Audio import diarizer_local
 from tldw_chatbook.Audio.diarizer_local import (
+    COARSE_CRASHED,
     COARSE_UNAVAILABLE,
     DIARIZE_BUDGET_CEILING_S,
     DIARIZE_BUDGET_FLOOR_S,
     SpeechBrainDiarizer,
     diarize_budget_s,
 )
+
+
+@pytest.fixture
+def captured_lines() -> Iterator[List[str]]:
+    """Collect every loguru message emitted during the test.
+
+    `caplog` does not see loguru's own sink -- mirrors the fixture of the
+    same name in `test_meeting_diarization_session.py`.
+    """
+    lines: List[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="TRACE",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        yield lines
+    finally:
+        loguru_logger.remove(sink_id)
 
 _PCM = b"\x00\x00" * 1600
 _SEGMENTS_REPLY = json.dumps({"segments": [{"start_s": 0.0, "end_s": 1.5, "speaker": "S1"}]}) + "\n"
@@ -418,6 +443,31 @@ def test_batch_mint_starts_past_the_post_crash_start_id():
     assert [s["speaker"] for s in out] == ["S5", "S5"]
 
 
+def test_reconcile_windows_folds_a_surplus_final_onto_one_live_id_as_a_weighted_mean():
+    """Review round 1, Important 2: `reconcile()`'s surplus rule (a leftover
+    final cluster within threshold of an ALREADY-matched live id is the batch
+    pass over-splitting one person, not a second person -- diarizer_cluster.py)
+    means two final clusters reconciling onto the same live id is the designed
+    common case, not a corner case. `out_centroids[live_id]` used to keep
+    whichever centroid came last in file order and threw the other away; it
+    must be the seconds-weighted mean of both, unit-normalised."""
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
+
+    live = {"S1": np.array([1.0, 0.0, 0.0], np.float32)}
+    embs = [np.array([1.0, 0.0, 0.0], np.float32), np.array([0.99, 0.14, 0.0], np.float32)]
+    spans = [(0.0, 1.5), (1.5, 3.0)]  # equal-length windows -> equal weight
+    out_centroids: dict = {}
+
+    _reconcile_windows(spans, embs, live, lambda x, n: np.array([0, 1]), out_centroids=out_centroids)
+
+    expected = np.array([0.995, 0.07, 0.0], np.float32)
+    expected = (expected / np.linalg.norm(expected)).tolist()
+    assert set(out_centroids) == {"S1"}
+    assert out_centroids["S1"] == pytest.approx(expected, abs=1e-3)
+
+
 def test_close_is_best_effort_and_idempotent():
     proc = FakeProc(['{"id": "S1"}\n'])
     d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
@@ -478,6 +528,339 @@ def test_pin_is_a_noop_when_coarse_only():
     assert not any(b'"cmd": "pin"' in c for c in proc.stdin.chunks)
 
 
+# --- 31826 task 3: backend enrolls after READY, fixes the first self match --
+
+def test_enroll_is_sent_after_ready_and_after_restart():
+    """Controller ruling 1 / fix-round-1 ruling 5: pin the ORDERING at the
+    wire level, not just "the bytes eventually showed up". The stdin double
+    records `wait_ready(0)` at the instant it sees the enroll line -- a
+    mutation that sent enroll AFTER `ready.set()` (the exact ruling-1
+    violation, review finding I4) makes this False -> True and fails."""
+    made: list[FakeProc] = []
+    order: list[bool] = []
+    holder: dict = {}
+
+    class _OrderingPipe(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data:
+                order.append(holder["d"].wait_ready(0))
+            return super().write(data)
+
+    gates = [threading.Event(), threading.Event()]
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        p.stdin = _OrderingPipe()
+        p.stderr = _GatedStderr(gates[len(made)])
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0], match_threshold=0.2)
+    holder["d"] = d
+    gates[0].set()                                       # let the first worker report READY
+    assert d.wait_ready(2.0) is True
+
+    assert d.assign(_PCM, 16000, 0) == "S1"
+    made[0]._alive = False                               # worker dies
+    assert d.assign(_PCM, 16000, 1) is None              # detected -> restart
+    assert len(made) == 2
+    gates[1].set()                                       # let the restarted worker report READY
+    assert d.wait_ready(2.0) is True
+
+    assert order == [False, False]                       # enrolled BEFORE the gate opened, both workers
+
+
+def test_failed_enroll_send_goes_through_the_existing_failure_path():
+    """Fix-round-1 ruling 6 (overrides the review's `enroll_ok` attribute
+    suggestion): a broken pipe on the enroll send is a worker failure, not a
+    silently-ignored one. It must mark coarse and spend the one restart
+    budget, same as any other dead-worker detection -- never leave a "ready
+    but self-matching is silently off" state."""
+    made: list[FakeProc] = []
+
+    class _RaisingPipe(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data:
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc([])
+        p.stdin = _RaisingPipe()
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+    # Poll for the terminal state directly rather than through `wait_ready`:
+    # the restart reassigns `self._ready` to a fresh Event mid-flight (on the
+    # first watcher thread, inside its own `_send_enroll`/`_fail` call), so
+    # which generation's Event `wait_ready` happens to observe is a race --
+    # it must not gate this assertion.
+    deadline = time.monotonic() + 2.0
+    while d._degraded is False and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    assert d.coarse_reason == COARSE_CRASHED  # the failure was recorded
+    assert len(made) == 2                     # exactly one restart was spent
+    assert d._degraded is True                # the second worker's enroll also failed (same pipe)
+
+
+def test_first_self_flag_is_fixed_and_later_ones_counted():
+    proc = FakeProc(['{"id": "S1", "seq": 0, "self": true}\n', '{"id": "S2", "seq": 1, "self": true}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc, voiceprint=[1.0, 0.0]))
+    d.assign(_PCM, 16000, 0)
+    d.assign(_PCM, 16000, 1)
+    assert d.self_cluster_id == "S1" and d.self_candidates_seen == 2
+
+
+def test_self_candidates_seen_and_cluster_id_default_to_none_and_zero():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])))
+    d.assign(_PCM, 16000, 0)
+    assert d.self_cluster_id is None and d.self_candidates_seen == 0
+
+
+def test_voiceprint_property_returns_a_copy_or_none():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([]), voiceprint=[1.0, 0.0]))
+    vp = d.voiceprint
+    assert vp == [1.0, 0.0]
+    vp.append(9.0)
+    assert d.voiceprint == [1.0, 0.0]  # mutating the returned list must not leak back
+
+    d2 = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([])))
+    assert d2.voiceprint is None
+
+
+def test_vector_never_reaches_logs(captured_lines):
+    """Must actually REACH `_send_enroll`'s except branch -- the only log
+    statement in the file that touches the vector (review finding I4's test
+    quality note): the old version never made the enroll write fail, so it
+    stayed green even if that line interpolated the vector itself."""
+    class _RaisingPipe(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data:
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    proc = FakeProc([])
+    proc.stdin = _RaisingPipe()
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc, voiceprint=[0.123456, 0.654321])
+    assert d.wait_ready(2.0) is True
+    joined = "\n".join(captured_lines)
+    assert any("enroll send failed" in line for line in captured_lines)  # the log line ran
+    assert "0.123456" not in joined
+    assert "0.654321" not in joined
+
+
+# --- 31826 task 3: stop_self from the diarize reply -------------------------
+
+def test_stop_self_is_set_from_a_diarize_reply():
+    reply = json.dumps({"segments": [], "self": "S1"}) + "\n"
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([reply])))
+    d.diarize(Path("mixed.wav"), 0.0, 3.0)
+    assert d.stop_self == "S1"
+
+
+def test_stop_self_defaults_to_none_and_stays_none_when_reply_lacks_it():
+    reply = json.dumps({"segments": []}) + "\n"
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([reply])))
+    assert d.stop_self is None
+    d.diarize(Path("mixed.wav"), 0.0, 3.0)
+    assert d.stop_self is None
+
+
+# --- 31826 task 3: export_centroid / enroll_from_pcm -------------------------
+# Every canned reply below carries the "op_id" the backend will actually
+# send (1 for the first centroid op on a fresh instance, 2 for the second,
+# ...) -- fix-round-1 Critical 1's request correlation, verified rather than
+# bypassed: a reply missing/mismatching op_id is now dropped as stale, so a
+# reply without one would time the call out instead of answering it.
+
+def test_export_centroid_returns_the_tuple_on_a_good_reply():
+    proc = FakeProc(['{"centroid": [0.6, 0.8], "seconds": 12.5, "op_id": 1}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.export_centroid("S1") == ([0.6, 0.8], 12.5)
+    sent = b"".join(proc.stdin.chunks)
+    assert b'"cmd": "export_centroid"' in sent and b'"S1"' in sent
+
+
+def test_export_centroid_returns_none_on_a_null_centroid():
+    proc = FakeProc(['{"centroid": null, "op_id": 1}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.export_centroid("S1") is None
+
+
+def test_export_centroid_returns_none_on_timeout(monkeypatch):
+    """Fix-round-1 ruling 4 (closes review finding I3): the double must
+    never EOF, or the call returns None via the crash path (`_fail`) rather
+    than the budget -- vacuous against a dropped deadline. Release the
+    reader at teardown (Minor 8) so no thread is left sleeping."""
+    monkeypatch.setattr(diarizer_local, "CENTROID_BUDGET_S", 0.1)
+    release = threading.Event()
+
+    class _NeverAnswers:
+        def readline(self) -> bytes:
+            release.wait(5.0)
+            return b""
+
+    proc = FakeProc([])
+    proc.stdout = _NeverAnswers()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+
+    t0 = time.monotonic()
+    assert d.export_centroid("S1") is None
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 1.0                                     # bounded by the budget, not a sentinel
+    assert d._degraded is False and d._coarse_only is False   # backpressure, not a crash
+    release.set()
+
+
+def test_export_centroid_is_none_when_degraded_or_coarse_only():
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([])))
+    d._mark_coarse("backend crashed")
+    assert d.export_centroid("S1") is None
+
+
+def test_enroll_from_pcm_sends_n_prefixed_control_then_pcm_and_parses_reply():
+    proc = FakeProc(['{"centroid": [1.0, 0.0], "seconds": 3.0, "op_id": 1}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    pcm = b"\x00\x00" * 1600
+
+    assert d.enroll_from_pcm(pcm, 16000) == ([1.0, 0.0], 3.0)
+
+    control = json.loads(proc.stdin.chunks[-2])
+    assert control == {"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm), "op_id": 1}
+    assert proc.stdin.chunks[-1] == pcm
+
+
+def test_enroll_from_pcm_returns_none_on_null_centroid():
+    proc = FakeProc(['{"centroid": null, "op_id": 1}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.enroll_from_pcm(b"\x00\x00" * 1600, 16000) is None
+
+
+def test_a_timed_out_export_centroid_does_not_leak_into_the_next_centroid_op(monkeypatch):
+    """Critical 1, reproducing the review's PROBE E: a late reply for an
+    abandoned op must not be delivered as the answer to the NEXT, unrelated
+    centroid op -- in §3.4's flows that would persist another speaker's
+    voice as the user's."""
+    monkeypatch.setattr(diarizer_local, "CENTROID_BUDGET_S", 0.15)
+    release = threading.Event()
+
+    class _SlowThenAnswers:
+        def __init__(self) -> None:
+            self._i = 0
+
+        def readline(self) -> bytes:
+            self._i += 1
+            if self._i == 1:
+                release.wait(5.0)
+                # The late reply for the FIRST (abandoned) op -- tagged with
+                # its own op_id, which is no longer the one anyone is
+                # waiting for by the time it arrives.
+                return b'{"centroid": [1.0, 0.0], "seconds": 111.0, "op_id": 1}\n'
+            if self._i == 2:
+                return b'{"centroid": [0.0, 1.0], "seconds": 5.0, "op_id": 2}\n'
+            return b""
+
+    proc = FakeProc([])
+    proc.stdout = _SlowThenAnswers()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+
+    assert d.export_centroid("S1") is None      # times out at 0.15s; op_id 1 abandoned
+    release.set()                                # now the stale op_id=1 reply lands on the queue
+    # NOT S1's stale centroid -- the correct, correlated reply for THIS call.
+    assert d.enroll_from_pcm(b"\x00\x00" * 1600, 16000) == ([0.0, 1.0], 5.0)
+
+
+def test_assign_does_not_block_behind_an_in_flight_centroid_op():
+    """Important 2 (I2): `_centroid_op` can hold the single backend lock for
+    up to CENTROID_BUDGET_S (5x assign's own budget); assign must not block
+    behind it -- a busy backend is backpressure (coarse window), not a hang
+    on the transcript thread. Mirrors `test_pin_never_waits_for_an_in_flight_assign`."""
+    release = threading.Event()
+
+    class _NeverAnswers:
+        def readline(self) -> bytes:
+            release.wait(5.0)
+            return b""
+
+    proc = FakeProc([])
+    proc.stdout = _NeverAnswers()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc, assign_budget_s=0.1))
+
+    op_thread = threading.Thread(target=d.export_centroid, args=("S1",), daemon=True)
+    op_thread.start()
+    deadline = time.monotonic() + 2.0
+    while not d._lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert d._lock.locked(), "the centroid op under test never took the backend lock"
+
+    t0 = time.monotonic()
+    assert d.assign(_PCM, 16000, 0) is None
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.5, f"assign blocked the transcript thread for {elapsed:.2f}s"
+
+    release.set()
+    op_thread.join(3.0)
+
+
+def test_diarize_gives_up_on_the_lock_within_its_budget(monkeypatch):
+    """Final review Minor 8: `assign` was converted to a bounded acquire
+    exactly because `_centroid_op` can hold the backend lock for
+    CENTROID_BUDGET_S; `diarize` kept a blocking `with self._lock`, so the
+    Stop pass could wait out an export ON TOP OF its own budget. The two
+    acquires should match."""
+    monkeypatch.setattr(diarizer_local, "DIARIZE_BUDGET_FLOOR_S", 0.2)
+    monkeypatch.setattr(diarizer_local, "DIARIZE_BUDGET_CEILING_S", 0.2)
+    release = threading.Event()
+
+    class _NeverAnswers:
+        def readline(self) -> bytes:
+            release.wait(5.0)
+            return b""
+
+    proc = FakeProc([_SEGMENTS_REPLY])
+    proc.stdout = _NeverAnswers()
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+
+    op_thread = threading.Thread(target=d.export_centroid, args=("S1",), daemon=True)
+    op_thread.start()
+    deadline = time.monotonic() + 2.0
+    while not d._lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert d._lock.locked(), "the centroid op under test never took the backend lock"
+
+    started = time.monotonic()
+    assert d.diarize(Path("mixed.wav"), 0.0, 3.0) == []
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.0, f"diarize blocked on the lock for {elapsed:.2f}s"
+
+    release.set()
+    op_thread.join(3.0)
+
+
+def test_centroid_op_is_ready_gated_without_taking_the_lock():
+    """Ruling 2 (closes review finding I1): a pre-READY centroid op must
+    never take `self._lock` -- that lock is also what `_send_enroll` takes,
+    so a pre-READY caller blocking on it would delay `ready.set()` behind an
+    unrelated op (up to CENTROID_BUDGET_S)."""
+    gate = threading.Event()
+    proc = FakeProc([])
+    proc.stderr = _GatedStderr(gate)  # never reports READY during this test
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc, voiceprint=[1.0, 0.0])
+
+    assert d.wait_ready(0.05) is False           # confirm: genuinely not ready yet
+    assert d.export_centroid("S1") is None       # must return at once, not hang
+    assert not d._lock.locked()                  # ... and never touched the lock
+    # Re-review: without the gate the op still takes the lock, writes the
+    # command and burns the restart budget while the assertions above hold.
+    assert not proc.stdin.chunks                 # nothing was sent to the worker
+    assert d.coarse_reason is None               # ... and no failure was charged
+
+    gate.set()  # let the watcher (and its pending `_send_enroll`) proceed
+
+
 # --- Qodo Q2: the WORKER's own command loop, torch-free --------------------
 # The tests above prove the app side puts a `pin` line on the pipe. Nothing
 # proved the worker on the other end acts on it: the dispatch used to sit
@@ -513,8 +896,194 @@ def _drive_worker(script, live):
         return vectors[min(len(handed), len(vectors)) - 1]
 
     stdout = io.BytesIO()
-    assert serve(script, stdout, live, fake_embed, lambda *a: []) == 0
+    assert serve(script, stdout, live, fake_embed, lambda *a, **k: ([], {})) == 0
     return [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()], handed
+
+
+def _serve_lines(lines, embed, batch=None):
+    """Drive `serve()` over raw wire lines; return the parsed JSON replies."""
+    import io
+
+    from tldw_chatbook.Audio.diarizer_worker import serve
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    stdin = io.BytesIO(b"".join(lines)); stdout = io.BytesIO()
+    serve(stdin, stdout, OnlineClusterer(max_speakers=8), embed, batch or (lambda *a, **k: ([], {})))
+    return [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+
+
+def test_self_flag_requires_threshold_and_min_seconds():
+    pcm = b"\x00\x00" * 16000  # 1 s
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0})]
+    for seq in range(3):
+        lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
+    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0])
+    assert [o["self"] for o in out] == [False, True, True]   # 1 s < 2 s, then 2 s, 3 s
+
+    # Review round 1, Important 5: the threshold arm above was never
+    # exercised (the stub returns a vector inside the gate on every call) --
+    # deleting the distance check from `serve()` would still pass it. An
+    # orthogonal embedding, well past `min_seconds`, must read False too.
+    far_lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0}),
+                 ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
+                 ctl({"cmd": "assign", "sr": 16000, "seq": 1, "n": len(pcm)}), pcm]
+    far_out = _serve_lines(far_lines, embed=lambda pcm: [0.0, 1.0, 0.0])
+    assert far_out[-1]["self"] is False   # 2 s >= min_seconds, but outside the threshold
+
+
+def test_a_wrong_dimension_voiceprint_turns_matching_off_not_assignment(capsys):
+    """Final review I2: a voiceprint whose length differs from the encoder's
+    embeddings made `live.distance_to` raise (`np.dot`, shapes not aligned),
+    which fell into the framed-error handler and replied `{"id": null}` --
+    so a VOICEPRINT problem silently took down live speaker labels for the
+    whole meeting. Matching must degrade, assignment must not."""
+    pcm = b"\x00\x00" * 16000  # 1 s
+
+    def ctl(d):
+        return (json.dumps(d) + "\n").encode()
+
+    lines = [ctl({"cmd": "enroll", "vector": [1.0, 0.0], "threshold": 0.2, "min_seconds": 0.0})]
+    for seq in range(3):
+        lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
+    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0, 0.0])  # 4-d vs a 2-d print
+
+    assert [o["id"] for o in out] == ["S1", "S1", "S1"]   # ids keep flowing
+    assert [o["self"] for o in out] == [False, False, False]
+    # One framed line for the first failure, then matching is simply off --
+    # never a traceback, never the vector, and never once per window.
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
+    assert len(errors) == 1 and errors[0].startswith("ERROR enroll ")
+
+
+def test_diarize_self_matches_nearest_batch_centroid_and_export_centroid_prefers_it():
+    """Review round 1, Important 6: the whole `diarize` -> `self` path,
+    including the `(segments, {live_id: centroid})` batch contract and
+    `export_centroid`'s post-diarize preference, had no test at all."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"},
+            {"start_s": 2.0, "end_s": 5.0, "speaker": "S2"}]
+
+    def fake_batch(*_a, **_k):
+        return segs, {"S1": [1.0, 0.0, 0.0], "S2": [0.0, 1.0, 0.0]}
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 0.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
+        ctl({"cmd": "export_centroid", "id": "S1"}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+
+    assert out[0]["self"] == "S1"                                   # nearest within threshold
+    assert out[1]["centroid"] == pytest.approx([1.0, 0.0, 0.0])      # the BATCH centroid ...
+    assert out[1]["seconds"] == pytest.approx(2.0)                  # ... with seconds summed from its segments
+
+
+def test_a_wrong_dimension_voiceprint_never_matches_on_the_stop_pass(capsys):
+    """Final re-review: the `diarize` branch compared through a `zip`-truncating
+    cosine, so a 2-d voiceprint against 4-d batch centroids "matched" on the
+    first two dims -- a stranger marked as the user, plus a learning offer on
+    them -- and it is reachable on a cold first run (no `assign` reaches the
+    worker while the model downloads; `wait_ready` then succeeds at Stop).
+    The Stop pass must degrade exactly like `assign`: one framed line,
+    matching off, segments untouched."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"}]
+
+    def fake_batch(*_a, **_k):
+        return segs, {"S1": [0.99, 0.01, 0.0, 0.0]}   # 4-d centroid vs a 2-d print
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1.0, 0.0], "threshold": 0.2, "min_seconds": 0.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0, 0.0], batch=fake_batch)
+    assert [o["self"] for o in out] == [None, None]
+    assert [o["segments"] for o in out] == [segs, segs]          # diarization itself unaffected
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
+    assert len(errors) == 1 and errors[0].startswith("ERROR enroll ")   # once, then matching is off
+
+
+def test_diarize_self_is_null_when_no_batch_centroid_is_within_threshold():
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"}]
+
+    def fake_batch(*_a, **_k):
+        return segs, {"S1": [0.0, 1.0, 0.0]}   # orthogonal to the enrolled vector
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 0.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+    assert out[0]["self"] is None
+
+
+def test_a_malformed_enroll_does_not_kill_the_worker():
+    """Important 4 (review round 1): every op shares one framed error path,
+    so a malformed `enroll` (e.g. from a corrupt or wrongly-decrypted
+    voiceprint file) reports `ERROR enroll <type>` on stderr and the loop
+    keeps serving -- it used to crash `serve()` unhandled (PROBE3)."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    lines = [ctl({"cmd": "enroll", "vector": "not-a-list", "threshold": 0.2}),
+             ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": 4}), b"aaaa"]
+    out = _serve_lines(lines, embed=lambda pcm: [1.0, 0.0, 0.0])
+    assert out[-1]["id"] == "S1"   # the loop survived the bad enroll and kept serving
+
+
+def test_enroll_from_pcm_returns_unit_centroid_and_export_centroid_roundtrip():
+    pcm = b"\x00\x00" * 16000 * 3
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm,
+                        ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
+                        ctl({"cmd": "export_centroid", "id": "S1"})],
+                       embed=lambda pcm: [3.0, 4.0, 0.0])
+    assert out[0]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[0]["seconds"] == pytest.approx(3.0)
+    assert out[2]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[2]["seconds"] == pytest.approx(3.0)
+
+
+def test_worker_echoes_op_id_on_both_centroid_ops_including_the_error_fallback():
+    """Fix-round-1 Critical 1: the worker must echo `op_id` on the success
+    reply AND the framed-error fallback for both `export_centroid` and
+    `enroll_from_pcm` -- the backend's request correlation depends on it
+    being present on every reply shape, not just the happy path."""
+    pcm = b"\x00\x00" * 1600
+
+    def ctl(d):
+        return (json.dumps(d) + "\n").encode()
+
+    # Happy path: both ops echo the op_id they were sent.
+    out = _serve_lines(
+        [
+            ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm), "op_id": 7}), pcm,
+            ctl({"cmd": "export_centroid", "id": "S1", "op_id": 8}),
+        ],
+        embed=lambda pcm: [1.0, 0.0, 0.0],
+    )
+    assert out[0]["op_id"] == 7
+    assert out[1]["op_id"] == 8
+
+    # Framed-error fallback: a malformed export_centroid still echoes op_id.
+    def _raising_embed(pcm):
+        raise RuntimeError("boom")
+
+    err_out = _serve_lines(
+        [ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm), "op_id": 9}), pcm],
+        embed=_raising_embed,
+    )
+    assert err_out[0] == {"centroid": None, "op_id": 9}
+
+
+def test_enroll_from_pcm_reports_null_centroid_for_a_zero_magnitude_embedding():
+    """Minor 9 (review round 1): a zero embedding must not come back as a
+    live-looking centroid the owner would happily persist as a dead
+    voiceprint (`_cos` -> 0.0 similarity -> distance 1.0 against everything)."""
+    pcm = b"\x00\x00" * 16000
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm],
+                       embed=lambda pcm: [0.0, 0.0, 0.0])
+    assert out[0] == {"centroid": None, "op_id": None}  # op_id echoed even when absent from the control line
 
 
 def test_worker_command_loop_pins_the_cluster_it_is_told_to():
@@ -534,7 +1103,7 @@ def test_worker_command_loop_pins_the_cluster_it_is_told_to():
 
     # The reply framing is unchanged: one line per assign, `seq` echoed, and
     # `pin` answers nothing at all (three commands in, two replies out).
-    assert replies == [{"id": "S1", "seq": 0}, {"id": "S1", "seq": 1}]
+    assert replies == [{"id": "S1", "seq": 0, "self": False}, {"id": "S1", "seq": 1, "self": False}]
     assert handed == [b"aaaa", b"bbbb"]      # PCM read by the control line's `n`
     assert list(pinned.centroids()["S1"]) == [1.0, 0.0]
 
@@ -557,4 +1126,63 @@ def test_worker_command_loop_ignores_a_garbled_line_and_an_unknown_command():
         ),
         live,
     )
-    assert replies == [{"id": "S1", "seq": 7}]
+    assert replies == [{"id": "S1", "seq": 7, "self": False}]
+
+
+# --- Qodo review (PR #2479) ------------------------------------------------
+
+def test_malformed_pcm_framing_is_refused_without_reading_the_payload(capsys):
+    """Qodo 2: `n`/`sr` arrive on a JSON line the worker does not own. A
+    negative `n` embedded an empty buffer, a huge one parked `_read_exactly`
+    on a pipe that would never deliver it -- and every later command (the
+    Stop-pass `diarize` included) waited behind it forever."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    embedded: list[bytes] = []
+
+    def embed(pcm):
+        embedded.append(pcm)
+        return [1.0, 0.0, 0.0]
+
+    pcm = b"\x00\x01" * 8
+    out = _serve_lines(
+        [
+            ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": -4}),
+            ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": 10 ** 9, "op_id": 3}),
+            ctl({"cmd": "assign", "sr": 0, "seq": 1, "n": len(pcm)}),
+            ctl({"cmd": "assign", "sr": 16000, "seq": 2, "n": 5}),      # odd byte count
+            ctl({"cmd": "assign", "sr": 16000, "seq": 3, "n": len(pcm)}), pcm,   # still serving
+        ],
+        embed=embed,
+    )
+
+    assert out[0] == {"id": None, "seq": 0, "self": False}
+    assert out[1] == {"centroid": None, "op_id": 3}
+    assert out[2] == {"id": None, "seq": 1, "self": False}
+    assert out[3] == {"id": None, "seq": 2, "self": False}
+    assert out[4]["id"] == "S1"                       # the loop kept serving
+    assert embedded == [pcm]                          # nothing else was ever embedded
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
+    assert len(errors) == 4 and all(e.endswith("ValueError") for e in errors)
+
+
+def test_stop_pass_self_needs_min_seconds_as_well_as_the_threshold():
+    """Qodo 8 (High): the Stop pass matched on distance alone, so a one-second
+    noisy cluster could be named as the user -- and carry a learning offer --
+    where live matching would have refused it."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    short = [{"start_s": 0.0, "end_s": 1.0, "speaker": "S1"}]
+    long_ = [{"start_s": 0.0, "end_s": 5.0, "speaker": "S1"}]
+    batches = [(short, {"S1": [1.0, 0.0, 0.0]}), (long_, {"S1": [1.0, 0.0, 0.0]})]
+
+    def fake_batch(*_a, **_k):
+        return batches.pop(0)
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 4.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 1.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 5.0}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0], batch=fake_batch)
+
+    assert out[0]["self"] is None      # 1 s of audio, well inside the threshold
+    assert out[1]["self"] == "S1"      # 5 s -- matched
