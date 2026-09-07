@@ -52,6 +52,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
@@ -996,7 +997,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     artifact_summary,
                     secondary,
                 )
-                button = Button(
+                # task-31945: shared row press behaviour (no 0.2s flash
+                # swallowing the next click on the same row).
+                button = library_row_button(
                     library_disabled_action_label(
                         "\n".join(part for part in label_parts if part),
                         page_actions_disabled,

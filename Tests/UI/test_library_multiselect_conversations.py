@@ -516,3 +516,58 @@ async def test_library_conversation_stale_state_disables_actions_but_allows_reco
         )
         LibraryScreen.handle_library_conversation_row(screen, event)
         assert screen._selected_conversation_id == selected_before
+
+
+# ---------------------------------------------------------------------------
+# task-31945 AC#1/#3: a sibling canvas's row survives a fast second click.
+#
+# Textual's ``Button._on_click`` DROPS any click landing while the previous
+# press's 0.2s ``-active`` flash is still on the widget (``if not
+# self.has_class("-active"): self.press()``). PR F cleared that flash on the
+# MEDIA rows only; the conversations/notes/prompts rows kept the default, so
+# clicking ☐ and then the same row's title -- what a reviewer does -- lost
+# the second click and the row read as a one-cell target.
+#
+# Driven with REAL mouse events: a ``Button.press()`` call bypasses
+# ``_on_click`` entirely and can never see this bug.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_click_on_a_conversation_row_toggles_it_in_select_mode():
+    """task-31945: marker cell and title cells are the same target."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._conversations_state.select_mode,
+            message="Conversations select mode did not open.",
+        )
+
+        row = screen.query_one("#library-conversation-row-0", Button)
+        marker_x = row.region.x
+        # Past the marker cell and its padding: inside the title text.
+        title_x = row.region.x + 6
+        row_y = row.region.y
+        assert title_x < row.region.right, row.region
+
+        await pilot.click(offset=(marker_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._conversations_state.row_selection.count == 1, "marker click"
+
+        # The title, immediately after -- the click the flash swallowed.
+        await pilot.click(offset=(title_x, row_y))
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._conversations_state.row_selection.count == 0, (
+            "a title click right after a marker click did not toggle the row"
+        )
