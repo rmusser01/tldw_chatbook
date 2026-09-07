@@ -2284,3 +2284,15 @@ target, schedule it through that widget's post-recompose hook, never through a
 screen-level `call_after_refresh`. Any focus pin must assert `screen.focused` is a MOUNTED
 widget (`focused.is_attached` / present in the DOM), otherwise an orphan with focus passes
 the assertion while the app is effectively dead to the keyboard.
+
+## A shipped scratch config can still point at the REAL user database (media riders PR M, 2026-09-07)
+
+**Incident.** PR M's batch-2 live pass launched the app on a scratch profile (`TLDW_CONFIG_PATH`) whose `media_db_path` was deliberately broken to provoke the load-failure callout. The scratch config had been copied from the shipped template, and its `chachanotes_db_path` still pointed at `~/.local/share/tldw_cli/default_user/…` — the real database, which three other sessions' app instances also held open. The first launch hung on `Upgrading database (schema v65 -> v68)` against that file. The real DB was not written (mtime unchanged), but only because the upgrade blocked on the other holders.
+
+**Rule.** Before launching on a scratch profile, grep the config for every `*_db_path` and confirm each one resolves under the scratch directory: `grep -n "_db_path" <scratch>/config.toml`. A profile that breaks ONE path on purpose is exactly the profile most likely to have the others still pointing home. A stray launch on a branch with a newer schema migrates the real DB, and older branches cannot open it afterwards (see the `TLDW_CONFIG_PATH` scratch-profile note above).
+
+## Redirecting the app's stderr swallows the whole TUI (media riders PR M, 2026-09-07)
+
+**Incident.** Driving the app under tmux with `python -m tldw_chatbook.app 2>log` to catch tracebacks left a blank pane with a live process: Textual renders to stderr here, so the redirect took the UI with it. The pass cost a full relaunch.
+
+**Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.
