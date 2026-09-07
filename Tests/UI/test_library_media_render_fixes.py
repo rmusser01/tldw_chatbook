@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from types import SimpleNamespace
@@ -2902,6 +2904,147 @@ async def test_escape_closing_find_lands_on_the_live_find_button():
         await pilot.press("enter")
         await _wait_for_selector(
             screen, pilot, "#library-media-content-search-controls"
+        )
+
+
+# --- PR L (task-31950 / task-31954): the LAST screen-pump follow-ups ---
+#
+# Two siblings of the Escape defect above survived PR H2, both queued from
+# ``_sync_library_media_viewer_state``'s own tail: the edit-Save mutation
+# gate and the reading-progress restore. Neither is a focus move, so the
+# race shows up as a LOST follow-up rather than a stranded focus -- the
+# screen callback flushes while the viewer's new children are not mounted,
+# ``query_one`` raises ``NoMatches``, and the gate silently no-ops.
+
+
+_VIEWER_RECOMPOSE_ANCHOR = re.compile(
+    r"_sync_library_media_viewer_or_recompose\(\)|viewer\.refresh\(recompose=True\)"
+)
+
+
+def _screen_pump_follow_ups_after_a_viewer_recompose(
+    window: int = 14,
+) -> list[tuple[int, str]]:
+    """The task-31950 census: a viewer recompose, then ``screen.call_after_refresh``.
+
+    The brief's ``awk`` rule, in Python so it can fail a test: any
+    ``self.call_after_refresh(`` within ``window`` lines after a line that
+    hands the rebuild to the VIEWER's message pump. Those two pumps have no
+    ordering, so a follow-up queued that way runs against whichever tree it
+    happens to find.
+    """
+    source = Path(library_screen_module.__file__).read_text(encoding="utf-8")
+    anchor: int | None = None
+    hits: list[tuple[int, str]] = []
+    for number, line in enumerate(source.splitlines(), start=1):
+        if _VIEWER_RECOMPOSE_ANCHOR.search(line):
+            anchor = number
+            continue
+        if anchor is None or number - anchor > window:
+            continue
+        if "self.call_after_refresh(" in line:
+            hits.append((number, line.strip()))
+    return hits
+
+
+def test_no_viewer_recompose_follow_up_rides_the_screen_pump():
+    """task-31950 AC#2: every one of them goes through the viewer seam.
+
+    On the merge-base this returns the two ``_sync_library_media_viewer_
+    state`` tail sites (the mutation gate and the progress restore).
+    """
+    hits = _screen_pump_follow_ups_after_a_viewer_recompose()
+    assert hits == [], (
+        "These follow-ups still ride the screen's pump after a viewer "
+        f"recompose; route them through the viewer seam: {hits}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_save_mounts_already_gated_while_a_media_write_is_in_flight():
+    """task-31950: the mutation gate has to see the RECOMPOSED Save button.
+
+    Opening the edit form while a Media write holds the interlock is the
+    one gesture that mounts a Save the gate has not already been applied
+    to. The gate was queued with ``screen.call_after_refresh`` from the
+    sync's tail, so it ran while the viewer's new children were not mounted
+    yet -- ``query_one`` raised ``NoMatches``, the gate returned, and the
+    form came up with a live Save on top of an unsettled write.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _open_reader_more(screen, pilot)
+
+        # The shared write interlock, taken exactly as
+        # ``_run_library_media_mutation`` takes it.
+        screen._library_media_bulk_delete_in_flight = True
+        screen.query_one("#library-media-edit", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-save")
+        # Let both pumps drain: the gate is a one-shot, so a settle window
+        # is the honest wait (a poll would pass the moment it happened to
+        # land and hide the ordering this pins).
+        for _ in range(4):
+            await pilot.pause()
+
+        save = screen.query_one("#library-media-edit-save", Button)
+        assert save.is_attached
+        assert save.disabled, (
+            "The edit form mounted a live Save while a Media write was in "
+            f"flight (label={save.label!r})."
+        )
+
+
+@pytest.mark.asyncio
+async def test_returning_to_read_restores_the_reading_position_once():
+    """task-31954 AC#2: ONE owner schedules the restore for a mode change.
+
+    ``handle_library_media_reader_mode`` schedules it through the viewer
+    seam AND used to re-arm ``_sync_library_media_viewer_state``'s own
+    arm-once guard by nulling ``_library_media_progress_restored_id``, so a
+    single Analysis -> Read press restored twice. Idempotent today only
+    because the restore is a ``scroll_to``.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        loaded_id = screen._library_media_reader_session.loaded_id
+        assert loaded_id is not None
+        screen._library_media_read_scroll_by_id[loaded_id] = (0, 3)
+
+        restores: list[str] = []
+        real_restore = screen._restore_library_media_loaded_progress
+
+        def counting_restore(expected_id: str) -> None:
+            restores.append(expected_id)
+            real_restore(expected_id)
+
+        screen._restore_library_media_loaded_progress = counting_restore
+
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.mode == "analysis",
+            message="The Reader never switched to Analysis.",
+        )
+        for _ in range(4):
+            await pilot.pause()
+        restores.clear()
+
+        screen.query_one("#library-media-reader-select-read", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: restores,
+            message="Returning to Read never restored the reading position.",
+        )
+        for _ in range(4):
+            await pilot.pause()
+
+        assert restores == [loaded_id], (
+            f"one Analysis -> Read press scheduled {len(restores)} restores: "
+            f"{restores}"
         )
 
 

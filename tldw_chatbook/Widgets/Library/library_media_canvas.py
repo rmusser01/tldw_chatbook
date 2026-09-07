@@ -57,6 +57,7 @@ from tldw_chatbook.UI.destination_recovery import (
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -1459,7 +1460,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             loading=row.loading,
                             loaded=row.loaded,
                         )
-                        button = Button(
+                        # task-31631 AC#2 / task-31945: the whole row is
+                        # the toggle target, and the shared helper drops
+                        # Textual's 0.2s press flash so a second click on
+                        # the same row (☐ then its title -- what critique
+                        # #5 did) is not swallowed by ``Button._on_click``.
+                        # Browse mode wants it too: it stops a fast
+                        # double-click on a browse row being lost, and the
+                        # feedback there is the item loading into the
+                        # Reader, not the flash.
+                        button = library_row_button(
                             f"{marker}{label_rest}",
                             id=f"library-media-row-{index}",
                             classes="library-media-row",
@@ -1475,21 +1485,6 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_loaded = row.loaded
                         button._library_media_reviewed = row.reviewed
                         button.tooltip = escape_markup(row.title)
-                        # task-31631 AC#2: the whole row is the toggle
-                        # target. It already was one full-width Button
-                        # ("☐ <title>"), but Textual's ``Button._on_click``
-                        # DROPS any click landing while the previous press's
-                        # 0.2s ``-active`` flash is still on the widget --
-                        # so clicking ☐ and then the same row's title (what
-                        # critique #5 did) lost the second click, and the row
-                        # read as a one-cell target. A list row has no use
-                        # for a press flash; the marker flip is the feedback.
-                        # This applies in browse mode too (not just select
-                        # mode): dropping the flash there also stops a fast
-                        # double-click on a browse row from being swallowed,
-                        # and browse-mode feedback is the item loading into
-                        # the Reader, not the flash.
-                        button.active_effect_duration = 0
                         button.set_class(
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",

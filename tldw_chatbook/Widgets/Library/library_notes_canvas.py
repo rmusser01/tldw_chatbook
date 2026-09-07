@@ -32,7 +32,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
-from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+    library_row_button,
+)
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
@@ -917,7 +920,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 else:
                     label_rest = f"{title}\n{row.age_label}" if row.age_label else title
                     label = label_rest
-                button = Button(
+                # task-31945: shared row press behaviour (no 0.2s flash
+                # swallowing the next click on the same row).
+                button = library_row_button(
                     label,
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row",
@@ -976,7 +981,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
                         classes += " library-notes-tree-needs-attention"
-                    button = Button(
+                    button = library_row_button(
                         label,
                         id=f"library-notes-tree-folder-{index}",
                         classes=classes,
@@ -1007,7 +1012,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes += " library-notes-tree-connected"
                 elif row.semantic_status == "needs_attention":
                     classes += " library-notes-tree-needs-attention"
-                button = Button(
+                button = library_row_button(
                     label,
                     id=f"library-notes-tree-note-{index}",
                     classes=classes,

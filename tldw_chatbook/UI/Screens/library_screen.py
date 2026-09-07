@@ -9146,27 +9146,22 @@ class LibraryScreen(BaseAppScreen):
         end in, and what ``_sync_library_canvas`` falls back to after
         CLEARING the follow-up it had queued -- bypassed both and left
         ``screen.focused`` at ``None`` (reproduced at 235x52 and 100x30).
-        This is the narrowest hook the screen already owns, so every such
-        call site is covered at once.
 
-        Gated on ``recompose`` (a plain repaint is the hot path and must
-        not capture, restore or queue anything) and on Media being the
-        active destination, so the other canvases are untouched. The
-        restore is queued with ``call_after_refresh`` -- correct for a
-        WHOLE-screen recompose, where ``Screen._on_timer_update`` runs the
-        recompose before ``_invoke_and_clear_callbacks``; a widget-scoped
-        recompose has no such ordering and keeps riding
-        ``queue_after_recompose`` instead. Explicit targets still win
-        exactly as ``_restore_library_media_focus`` already decides.
+        task-31946 moved the capture/restore PAIR itself down to
+        ``BaseAppScreen`` -- one seam for every screen and every route, not
+        a Media-only patch on this override -- and this screen composes its
+        Media rules into it through ``_focus_identity_for_recompose`` /
+        ``restore_focus_after_recompose`` below. There is therefore exactly
+        one restore callback queued per whole-screen recompose; nothing
+        here queues a second one.
+
+        What stays here is the NOTES recompose state, which is a rehydrate
+        (widget values, stage visibility, footer context), not a focus
+        restore. Gated on ``recompose``: a plain repaint is the hot path
+        and must not capture or queue anything.
         """
         if recompose:
             self._commit_library_note_widgets_before_recompose()
-        media_focus = (
-            self._capture_library_media_focus_identity()
-            if recompose
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            else None
-        )
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
             self._library_notes_recompose_generation += 1
@@ -9188,9 +9183,81 @@ class LibraryScreen(BaseAppScreen):
         elif recompose:
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
-        if media_focus is not None:
-            self.call_after_refresh(self._restore_library_media_focus, media_focus)
         return result
+
+    def _focus_identity_for_recompose(self) -> str | None:
+        """Media's capture rules; the base rule everywhere else (task-31946).
+
+        The Media route refuses to record a reader pane GRIP -- Textual
+        dumps focus there by accident on exactly this recompose, so
+        restoring it would perpetuate the bug PR F fixed rather than undo
+        it. Every other route has no such trap and uses the base's plain
+        "the focused widget's id" rule.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            return self._capture_library_media_focus_identity()
+        return super()._focus_identity_for_recompose()
+
+    def restore_focus_after_recompose(self, previous: str | None) -> None:
+        """One owner per recompose window (task-31946 AC#2).
+
+        The shared seam schedules this ONCE per whole-screen recompose, so
+        the Media restore and the generic one cannot double-fire: they are
+        two statements of the same callback, and the generic tail is a
+        no-op the moment ``_restore_library_media_focus`` has focused
+        something real (it only acts when focus is still ``None``). The
+        tail is the only restore on the other three routes.
+
+        A one-shot focus CHANNEL stands the whole seam down, not just the
+        Media half: it lands its focus in a LATER callback, and ANY
+        foreign ``set_focus`` inside its window disarms it outright
+        (``on_descendant_focus`` revokes the pending receipt for anything
+        that is not the armed list's own row class) -- the generic tail
+        would do exactly that.
+
+        But it only stands down when the channel will actually LAND
+        something (PR L review item 2). ``_focus_library_list_entry``
+        returns without focusing anything in two cases, and in both the
+        seam is the only thing left between the user and a dead keyboard:
+
+        * the ``rail-only`` emergency stage, and
+        * a route with no row class at all -- Conversations is absent
+          from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed channel
+          is a no-op there by design.
+
+        (The third case, a row class whose list is EMPTY, is closed at
+        the channel itself: notes now falls back to its filter input the
+        way prompts and skills already did.)
+        """
+        if self._library_focus_channel_owns_this_window():
+            return
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            self._restore_library_media_focus(previous)
+        super().restore_focus_after_recompose(previous)
+
+    def _library_focus_channel_owns_this_window(self) -> bool:
+        """Whether an armed one-shot channel will land focus itself.
+
+        The two ``return``s below mirror the two at the TOP of
+        ``_focus_library_list_entry`` -- deliberately those two and no
+        more, so this predicate stays a statement about which route/stage
+        the channel serves and never a second copy of its row-picking
+        logic. Two no-landing cases are knowingly left inside "owns":
+        a pending Find focus whose input never mounts, and an empty
+        Media list whose four fallback controls are all absent or
+        disabled -- both narrow, both end at ``None`` rather than at a
+        wrong widget.
+        """
+        if self._library_media_find_focus_pending:
+            return True
+        if not self._library_pending_list_entry_focus:
+            return False
+        if self._library_emergency_stage == "rail-only":
+            return False
+        return (
+            _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
+            is not None
+        )
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -11148,6 +11215,13 @@ class LibraryScreen(BaseAppScreen):
             fallback_selector = {
                 "library-prompt-row": "#library-prompts-filter",
                 "library-skill-row": f"#{LIBRARY_SKILLS_FILTER_ID}",
+                # task-31946 (PR L review item 2): an empty NOTES list left
+                # this a no-op, so a background recompose inside the armed
+                # settle window -- which stands the screen-level focus seam
+                # down, precisely because this channel owns the window --
+                # ended with nothing focused at all. Same filter-input
+                # answer the two rows above already give.
+                "library-notes-row": "#library-notes-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -35067,15 +35141,24 @@ class LibraryScreen(BaseAppScreen):
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
-        self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
+        # task-31950: both tail follow-ups read the viewer's children (the
+        # edit Save, the content body's scroller) and the rebuild above runs
+        # on the VIEWER's pump, so they ride the viewer's hook rather than
+        # the screen's -- the same ordering PR H2 gave the focus follow-ups.
+        # On the no-change path nothing was rebuilt and the seam falls back
+        # to ``call_after_refresh``, exactly as before.
+        self._queue_after_library_media_viewer_recompose(
+            self._sync_library_media_viewer_mutation_gate, viewer
+        )
         loaded_id = self._library_media_reader_session.loaded_id
         if (
             loaded_id is not None
             and self._library_media_progress_restored_id != loaded_id
         ):
             self._library_media_progress_restored_id = loaded_id
-            self.call_after_refresh(
-                self._restore_library_media_loaded_progress, loaded_id
+            self._queue_after_library_media_viewer_recompose(
+                partial(self._restore_library_media_loaded_progress, loaded_id),
+                viewer,
             )
         return True
 
@@ -35164,8 +35247,6 @@ class LibraryScreen(BaseAppScreen):
             return
         mode = button_id.removeprefix(prefix)
         self._capture_library_media_loaded_progress()
-        if mode == "read":
-            self._library_media_progress_restored_id = None
         self._reset_library_media_search_on_mode_change(mode)
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
@@ -35176,6 +35257,14 @@ class LibraryScreen(BaseAppScreen):
         # the OLD children (or after they are detached) is the same race.
         loaded_id = self._library_media_reader_session.loaded_id
         if mode == "read" and loaded_id is not None:
+            # task-31954: ONE owner. This used to re-arm the sync tail's
+            # arm-once guard (``_library_media_progress_restored_id = None``)
+            # as well, so a single Analysis -> Read press restored twice --
+            # harmless only while the restore stays an idempotent
+            # ``scroll_to``. Claiming the id here instead keeps the tail
+            # quiet for this sync and leaves it owning the LOAD path, where
+            # the id genuinely changes.
+            self._library_media_progress_restored_id = loaded_id
             self._after_library_media_viewer_sync(
                 partial(self._restore_library_media_loaded_progress, loaded_id)
             )
@@ -35478,11 +35567,14 @@ class LibraryScreen(BaseAppScreen):
         Three choke points reach here, covering every media recompose: the
         ``kind == "media"`` branch of ``_sync_library_canvas`` and
         ``_sync_library_media_viewer_state`` (both canvas-scoped, via
-        ``queue_after_recompose``), and ``LibraryScreen.refresh`` for any
-        WHOLE-screen ``refresh(recompose=True)``. The last was added in the
-        Qodo round: background workers and ``_sync_library_canvas``'s own
-        failure fallback both take that bare path -- the fallback after
-        CLEARING the follow-up it had queued -- and left focus at ``None``.
+        ``queue_after_recompose``), and -- for any WHOLE-screen
+        ``refresh(recompose=True)`` -- ``restore_focus_after_recompose``,
+        the shared ``BaseAppScreen`` seam this screen overrides (task-31946
+        moved that hop off ``LibraryScreen.refresh`` itself). The last was
+        added in the Qodo round: background workers and
+        ``_sync_library_canvas``'s own failure fallback both take that bare
+        path -- the fallback after CLEARING the follow-up it had queued --
+        and left focus at ``None``.
 
         Args:
             previous: Identity captured by
@@ -35612,12 +35704,38 @@ class LibraryScreen(BaseAppScreen):
             None.
         """
         self._sync_library_media_viewer_or_recompose()
-        callback = (
+        self._queue_after_library_media_viewer_recompose(
             partial(self._focus_library_control, follow_up)
             if isinstance(follow_up, str)
             else follow_up
         )
-        viewer = self._mounted_library_media_viewer()
+
+    def _queue_after_library_media_viewer_recompose(
+        self,
+        callback: Callable[[], object],
+        viewer: LibraryMediaViewer | None = None,
+    ) -> None:
+        """Run ``callback`` against the viewer's NEW children.
+
+        Split out of ``_after_library_media_viewer_sync`` for task-31950:
+        ``_sync_library_media_viewer_state``'s own tail queues follow-ups
+        too -- the edit-Save mutation gate and the load path's progress
+        restore -- and both read children the rebuild it just asked for is
+        about to replace. On the screen's pump they took the same race,
+        only quieter: measured, the gate flushed before the recomposed Save
+        mounted, returned on ``NoMatches``, and the edit form came up with
+        a live Save on top of an unsettled write.
+
+        Args:
+            callback: Zero-argument follow-up to run once the rebuild lands.
+            viewer: The viewer being synced, when the caller already holds
+                it (the sync's tail does); looked up otherwise.
+
+        Returns:
+            None.
+        """
+        if viewer is None:
+            viewer = self._mounted_library_media_viewer()
         # ``refresh(recompose=True)`` arms this flag synchronously and only
         # ``_check_recompose`` (on the viewer's pump) clears it, before
         # awaiting ``recompose()``; read here with no await in between it is
@@ -35633,7 +35751,7 @@ class LibraryScreen(BaseAppScreen):
             return
         pending = viewer._post_recompose_callback
 
-        def follow_up_then_pending() -> None:
+        def callback_then_pending() -> None:
             # Qodo on #2473: ``finally``, not a bare sequence. A raising
             # follow-up (the scroll-progress restore is one) used to take
             # task-31567's focus restore down with it and strand focus on a
@@ -35648,7 +35766,7 @@ class LibraryScreen(BaseAppScreen):
                 if pending is not None:
                     pending()
 
-        viewer.queue_after_recompose(follow_up_then_pending)
+        viewer.queue_after_recompose(callback_then_pending)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""
