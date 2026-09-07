@@ -62,5 +62,9 @@ uncollectable). Its stylesheet rebuild and individual registration timings were
 small; the collected objects' owners are not identified. Observer allocations
 can shift GC timing, and capped detail records were dropped, so this is neither
 a baseline Textual performance comparison nor proof of a retained-object leak.
-No production GC/cache policy was changed. The corrected full-owner matrix and
-remaining native workflow still require fresh qualification.
+No production GC/cache policy was changed. On 2026-09-07 the user moved the broader
+lifecycle/GC investigation and its latency requalification to the separate
+[TASK-31966 follow-up](../../../backlog/tasks/task-31966%20-%20Investigate-and-reduce-Console-activation-GC-pauses.md).
+The measurements above remain failures, not retroactive passes. This scope decision
+does not waive the remaining native workflow, Windows or participant checks, and
+does not by itself establish release acceptance.
