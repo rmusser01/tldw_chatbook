@@ -13480,9 +13480,10 @@ class LibraryScreen(BaseAppScreen):
             _log_source_snapshot_failure()
             # ``_retry_failure_reason`` is the shared leak rule the Media
             # callout already applies: an OS/SQLite message is the reader's
-            # own words, anything else is reduced to its class name so an
-            # arbitrary exception's text (which can carry a private path)
-            # never reaches the screen.
+            # own words, anything else is reduced to its KIND of failure
+            # (task-31944's map, or "an unexpected error") so an arbitrary
+            # exception's text -- which can carry a private path -- never
+            # reaches the screen.
             failure_state = load_failure_recovery_state(
                 what=LIBRARY_SERVICE_ERROR_COPY,
                 reason=_retry_failure_reason(exc),

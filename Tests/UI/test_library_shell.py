@@ -12947,7 +12947,11 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 # task-31220: the post-mutation refresh failed, and the copy
                 # says so instead of repainting the unchanged "Media changed"
                 # line that made recovery read as inert. Rows stay openable.
-                assert controller.stale_copy == "Couldn't retry · RuntimeError"
+                # task-31944: the mapped fallback reason, not the
+                # exception class name the reader could not act on.
+                assert controller.stale_copy == (
+                    "Couldn't retry · an unexpected error"
+                )
                 assert not screen.query_one(
                     "#library-media-row-0", Button
                 ).disabled
@@ -16175,10 +16179,14 @@ async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
 
 
 @pytest.mark.asyncio
-async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_class():
-    """task-31632 AC#2/#3: a hard failure is tinted as an error and names the
-    exception CLASS as its reason -- never the exception text, which can carry
-    a private path (the ``private-media-failure`` rule).
+async def test_source_snapshot_hard_failure_paints_an_error_callout_with_a_reason():
+    """task-31632 AC#2/#3: a hard failure is tinted as an error and carries a
+    reason -- never the exception text, which can carry a private path (the
+    ``private-media-failure`` rule).
+
+    task-31944: that reason was the exception CLASS name ("RuntimeError"),
+    which told the reader nothing they could act on; the shared mapper now
+    gives an unmapped class the same fallback the Media callout uses.
     """
     app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
     host = LibraryHarness(app)
@@ -16192,7 +16200,8 @@ async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_cla
         )
         state = screen._library_lookup_recovery_state
         assert state.severity == "error"
-        assert state.why == "RuntimeError"
+        assert state.why == "an unexpected error"
+        assert "private-snapshot-failure" not in _visible_text(screen)
         assert state.unavailable_what == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
         assert state.retry_id == "library-source-retry"
 

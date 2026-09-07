@@ -49,6 +49,19 @@ _RETRY_FAILED_PREFIX = "Couldn't retry · "
 # invented. (The 5 s figure belongs to the screen-level source snapshot,
 # a different path.)
 _TIMEOUT_REASON = "timed out"
+# task-31944: the reader-facing reason for the classes that actually reach
+# this mapper without a usable message of their own. Before this, they fell
+# through to ``type(exc).__name__`` and the callout read "Couldn't retry ·
+# ConnectionRefusedError" -- a name, not something to act on. Ordered
+# specific-first (``ConnectionError`` is an ``OSError``, every ``sqlite3``
+# error is a ``sqlite3.Error``); anything unmapped takes the fallback, which
+# keeps PR G's privacy rule -- an arbitrary exception's TEXT never reaches a
+# screen, only OS/SQLite messages do, path-redacted.
+_CLASS_REASONS: tuple[tuple[type[BaseException], str], ...] = (
+    (ConnectionError, "the connection failed"),
+    (sqlite3.Error, "the database could not be read"),
+)
+_UNMAPPED_REASON = "an unexpected error"
 # Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
 # (kept, unlike other exceptions -- see below), but that text can embed a
 # database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
@@ -94,6 +107,22 @@ def _redact_paths(text: str) -> str:
     return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
 
 
+def _mapped_failure_reason(exc: BaseException) -> str:
+    """Name a failure kind for an exception with no usable message.
+
+    Args:
+        exc: The exception the failed request raised.
+
+    Returns:
+        The mapped reason for the first ``_CLASS_REASONS`` entry the
+        exception is an instance of, else ``_UNMAPPED_REASON``.
+    """
+    for kind, reason in _CLASS_REASONS:
+        if isinstance(exc, kind):
+            return reason
+    return _UNMAPPED_REASON
+
+
 def _retry_failure_reason(exc: BaseException) -> str:
     """Name a failed refresh in the reader's terms, never as a bare class.
 
@@ -115,8 +144,9 @@ def _retry_failure_reason(exc: BaseException) -> str:
         # unredacted prefix.
         raw = getattr(exc, "strerror", None) or str(exc)
         message = " ".join(_redact_paths(raw).split())[:80]
-        return message or type(exc).__name__
-    return type(exc).__name__
+        if message:
+            return message
+    return _mapped_failure_reason(exc)
 
 
 def _load_failure(
