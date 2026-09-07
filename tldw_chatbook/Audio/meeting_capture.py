@@ -184,7 +184,12 @@ def select_mic_device(recorder: Any, name: str) -> bool:
         name: The configured microphone's device name.
 
     Returns:
-        True when the device was found and selected.
+        True when the device was found AND the recorder accepted it. A
+        recorder that answers `False` (`AudioRecordingService.set_device`
+        validates the id against its own live enumeration, and refuses while
+        recording) is refused here too, rather than reported as selected and
+        left to fail in the recording thread -- or, worse, to record the
+        default input for a whole meeting (Qodo review 6).
     """
     try:
         devices = list(recorder.get_audio_devices())
@@ -197,8 +202,13 @@ def select_mic_device(recorder: Any, name: str) -> bool:
         devices = []
     for device in devices:
         if str(device.get("name", "")) == name:
-            recorder.set_device(device.get("id", device.get("index")))
-            return True
+            # `is not False`, not truthiness: a recorder that returns nothing
+            # has no verdict to honour, and every fake in the tree predates
+            # this contract. Only an explicit refusal refuses.
+            if recorder.set_device(device.get("id", device.get("index"))) is not False:
+                return True
+            logger.warning("the configured meeting microphone was rejected by the recorder")
+            return False
     # The device NAME stays out of the log: audio devices are routinely
     # named after their owner ("<Name>'s AirPods"), and the user picked it.
     logger.warning("the configured meeting microphone was not found; not falling back to the default input")

@@ -1619,6 +1619,33 @@ def test_enroll_from_mic_refuses_when_the_configured_microphone_is_gone(tmp_path
     assert store.load().voiceprint is None
 
 
+def test_enroll_from_mic_refuses_when_the_recorder_rejects_the_microphone(tmp_path, monkeypatch):
+    """Qodo 6, the enrollment half: a device that enumerates but is rejected
+    by `set_device` used to enroll from whatever the backend fell back to --
+    a voiceprint built from a different input channel than the meetings it is
+    matched against, silently and permanently."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+
+    class RejectingRecorder(PcmRecorder):
+        def get_audio_devices(self):
+            return [{"id": 7, "name": "Shure MV7"}]
+
+        def set_device(self, device_id):
+            return False
+
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(tmp_path, mic_device="Shure MV7", voiceprint_store=store)
+    owner._mic_factory = RejectingRecorder
+    owner._sleep = lambda seconds: None
+
+    res = owner.enroll_from_mic(seconds=1)
+    assert res.ok is False and res.reason == "mic_device_not_found"
+    assert store.load().voiceprint is None
+
+
 def test_enroll_from_mic_can_be_cancelled_mid_recording(tmp_path, monkeypatch):
     """Spec §3.4: the user must be able to abort the sample, not be held for
     the full 30 s (review I7)."""
