@@ -22,6 +22,26 @@
 - Preserve the full source branch and unrelated critique/main-checkout edits; no push, PR, merge or destructive cleanup.
 - Targeted tests only. Native/platform/human evidence is not replaced with Pilot or mocks.
 
+### User-authorized release repair (2026-09-07)
+
+The user explicitly requested fixing the remaining Library transfer bug and the
+resource warnings, and completing native/scale verification. This supersedes the
+earlier pending deferral questions. The dependency freeze permits only a bounded
+compatibility correction for the demonstrated Requests/chardet mismatch; no
+unrelated dependency upgrade or shared-environment mutation is authorized.
+Destination-only rollback follows the amended ADR-120 and original Task-5 plan.
+Resource repair must distinguish operation-owned SQLite handles from fixture-owned
+application teardown, with before/after evidence and no warning suppression or
+limit increase. The existing Keyword-only scale and native protocols still apply;
+unavailable external Windows/human checks stay explicitly open, never waived.
+
+Genuine UI qualification also reproduced retained-switcher activation circularity
+and first-use token initialization on the UI thread. Apply the amended ADR120
+owned synchronous presentation completion and immutable off-loop estimate
+preparation on the existing resume seam. Preserve exact target/focus/rollback,
+ordinary strict visibility and pricing semantics; use real-owner RED/GREEN and
+targeted verification before rerunning the unchanged latency matrix.
+
 ADR required: no new ADR.
 
 ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md

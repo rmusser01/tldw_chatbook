@@ -155,6 +155,19 @@ A per-trajectory-marker close was removed because it split the real worker
 lifetime and added unnecessary checkpoint work. Broader older fixtures still
 retain handles, so this scoped result is not a claim of repository-wide cleanup.
 
+**TASK-31245, Library inspection qualification, 2026-09-07.** Closing the
+inspection fixture's SQLite registry, collections and evaluation owners removed
+the warning but still left seven regular descriptors per mounted case. A full
+post-teardown `fstat` census plus basename-only Darwin `F_GETPATH` and successful
+`lsof` identified the never-run app's workspace/subscriptions SQLite handles and
+profile lock. Capturing those exact constructor owners and disposing them only
+after harness/worker completion made the 103-case affected gate plateau at seven
+regular descriptors (logs/capture files), without changing production pooling or
+GC. An empty filtered basename report had initially missed those resource names.
+Measure all resource types after teardown, record diagnostic exit/stderr, and
+distinguish fixture lifetime from ordinary production reads; falling below the
+warning threshold is not evidence of a plateau.
+
 ## Capture queued UI ownership in the row, not only in the event
 
 **PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
@@ -11829,6 +11842,15 @@ of all subsequent pytest execution while the worker was limited to static edits.
 When a procedural warning demonstrably fails, narrow the execution workflow
 instead of repeating the warning and treating intent as isolation evidence.
 
+Follow-up incident (TASK-31245 activation review, 2026-09-07): a coordinator-only
+stdin diagnostic imported `Chat.__init__` → server/runtime-policy bootstrap →
+config before establishing a disposable profile. Logs showed ambient config
+loading and chat_dicts ensure; no prior metadata established whether directory
+creation or permission hardening occurred. No real-profile inspection/undo was
+attempted. The regression belongs in repository pytest's pre-import disposable
+bootstrap (with compatible qualification dependencies), not a raw import probe;
+an apparently pure coordinator module does not bypass its package initializer.
+
 ## Parameter IDs can accidentally activate keyword-based test gates
 
 Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium
@@ -12004,3 +12026,26 @@ hunk belongs to ONE side, not both: after resolving, run
 `python -c "import ast; ast.parse(open(f).read())"`, `pytest <file> --collect-only -q`,
 and an `awk` census of `async def test_` lines whose previous line is not a
 marker/parametrize — and gate the commit on all three with `&&`, never `;`.
+
+### TASK-31826: every Meetings UI pilot ran at 160x45 -- seven new rail rows shipped clipped out of the compositor
+
+Task 5 of the voiceprint program added seven rows to the Meetings rail (a plain `Vertical`) and its
+tests all passed: every pilot in `Tests/UI/test_meetings_screen.py` used `size=(160, 45)`. The
+task reviewer re-ran the screen at 100x30 and 80x24 and found the learning-offer buttons and the
+whole Voice row outside the compositor -- the offer was unanswerable on a normal laptop terminal.
+Rule: a change that adds rows to a rail gets a pilot at 100x30 and 80x24 that asserts the new
+widgets' `region` is non-zero after `scroll_end()` (a `VerticalScroll` rail) and that the primary
+control stays reachable.
+
+Second half of the same incident: the reviewer's "regression" baseline was measured in a harness
+WITHOUT the app stylesheet (see lessons-textual.md, "A geometry or `.display` test without
+`CSS_PATH = BUNDLED_STYLESHEET` measures nothing"): with the bundle loaded the parent commit
+already had Start below the fold at <=120x32. Measure layout baselines with the real bundle, on
+both commits, before calling something a regression.
+
+### TASK-31826: a controller-applied fix runs preflight like any implementer's commit
+
+The SDD controller applied a three-line round-2 fix by hand (a `logger.debug` in `on_unmount`)
+and committed without `./scripts/preflight.sh`; the next task's implementer hit the diagnostic
+inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
+`logger.*` change -> read the rows, `--write`") binds the controller too.

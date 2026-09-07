@@ -14,7 +14,7 @@
 ################################################################################
 
 # Base/Core Dependencies (always installed)
-chardet
+chardet>=3.0.2,<6
 toml
 tomli
 rich

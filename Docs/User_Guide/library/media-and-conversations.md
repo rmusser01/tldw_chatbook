@@ -35,8 +35,8 @@ Narrow (Media)
 ```
 
 Media's two grips are one column each — the `‹` (open pane) and `›`
-(collapsed pane) above. Conversations and
-the other Library destinations keep the wider `+--->+` grip.
+(collapsed pane) above. Conversations, Skills and Collections use the same
+one-column grips; Notes, File Notes and Prompts keep the wider `+--->+` grip.
 
 Media has three stable roles:
 
@@ -48,14 +48,18 @@ Media has three stable roles:
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
 
-Library and Items each have a full-height grip. On Media the grip is **one
-column** and paints **`‹`** to collapse the pane to its left and **`›`** to
-expand it; every other Library destination keeps the five-column **`<---`** /
-**`--->`** grip. The grips are clickable and keyboard-operable. Reader has no
-grip and never collapses. Your manual pane choices are remembered. If the
-terminal is too narrow, the screen temporarily collapses Library first and
-then Items; widening the terminal restores the remembered layout instead of
-saving the temporary responsive state.
+Library and Items each have a full-height grip. On Media, Conversations,
+Skills and Collections the grip is **one column** and paints **`‹`** to
+collapse the pane to its left and **`›`** to expand it; Notes, File Notes and
+Prompts keep the five-column **`<---`** / **`--->`** grip. Because the screen
+holds back exactly the columns a grip paints, the narrow grip also moves the
+width at which the navigation rail joins: on Conversations it now appears at
+110 columns (was 118) and on Skills and Collections at 114 (was 122). The
+grips are clickable and keyboard-operable. Reader has no grip and never
+collapses. Your manual pane choices are remembered. If the terminal is too
+narrow, the screen temporarily collapses Library first and then Items;
+widening the terminal restores the remembered layout instead of saving the
+temporary responsive state.
 
 On Media nothing sits between the panes but those two one-cell grips, and the
 list uses the width that frees up:
@@ -103,6 +107,16 @@ extra. Long tags are cut to ten characters (`keyword: quokkasand…`) to keep
 the line short. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
 both analysed and a keyword hit can clip at the default width too.
+
+*Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
+Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
+— the Library grip at columns 37 on two rows, the Items grip at column 78 on
+one — and no `<---`/`--->` run appeared anywhere on the three surfaces.
+Collapsing the Collections Library pane repainted its grip as a one-cell `›`
+at column 3, and expanding it restored the `‹`. The rail-open thresholds these
+grips move (110 on Conversations, 114 on Skills and Collections, from 118 and
+122) are the resolver's own answers, pinned at both edges of each moved band
+in `Tests/Library/test_library_adaptive_reader_state.py`.)*
 
 *Verified against fix/media-wave5-i @ c9838b5e4 — 2026-09-06 (tasks 28008/28009: four
 seeded `document` items, two of them analysed, live at 235x52 and 100x30.

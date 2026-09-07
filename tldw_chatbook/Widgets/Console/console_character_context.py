@@ -30,6 +30,7 @@ from ...UI.Console_Modules.character_context import (
     ConsoleCharacterOperationPhase,
     console_character_unavailable_reason_copy,
 )
+from ...Utils.input_validation import CONSOLE_SWITCHER_QUERY_MAX_LENGTH
 from ...Workspaces.conversation_browser_state import format_console_relative_age
 
 CONSOLE_CHARACTER_CONTEXT_ID = "console-character-context"
@@ -444,6 +445,7 @@ class ConsoleCharacterContext(Vertical):
             placeholder="Search chats",
             name="Global Keyword search over local character chats",
             id=CONSOLE_CHARACTER_SEARCH_ID,
+            max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
         )
         search.character_focus_identity = ConsoleCharacterFocusIdentity("search")
         search.tooltip = "Global Keyword search over local character chats"
@@ -474,6 +476,7 @@ class ConsoleCharacterContext(Vertical):
                     "Continue search in Character chats",
                     id="console-character-query-handoff",
                     compact=True,
+                    tooltip="Continue this exact local Keyword query in Ctrl+K",
                 )
             return
         if not self._state.groups:

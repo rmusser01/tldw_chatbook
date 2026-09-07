@@ -7,10 +7,11 @@ from textual import on
 from textual.widgets import Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_COLLECTIONS_READER_PROFILE,
+)
 from tldw_chatbook.Utils.adaptive_reader_state import (
-    PANE_GRIP_WIDTH,
     AdaptiveReaderLayoutPreferences,
-    AdaptiveReaderLayoutProfile,
     resolve_adaptive_reader_layout,
 )
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -19,17 +20,24 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
 )
 
 
-PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48, work_comfort_width=56)
+# task-31951: the profile the Collections route actually mounts, not a local
+# copy of its widths -- a copy kept passing while the shipped profile moved to
+# the one-cell grip.
+PROFILE = LIBRARY_COLLECTIONS_READER_PROFILE
 PREFERENCES = AdaptiveReaderLayoutPreferences()
 
 
 @pytest.mark.parametrize(
     ("width", "expected"),
     (
-        (160, (30, 40, 80)),
-        (120, (0, 56, 54)),
-        (100, (0, 42, 48)),
-        (80, (0, 0, 70)),
+        # task-31951 re-anchored these to the one-cell grip: each row gained
+        # the eight cells the two five-cell grips used to hold back, and the
+        # rail now opens at 114 instead of 122 -- which is why 120 flipped
+        # from a library-closed 56-cell list to the rail beside a 40-cell one.
+        (160, (30, 40, 88)),  # was (30, 40, 80)
+        (120, (24, 40, 54)),  # was (0, 56, 54)
+        (100, (0, 50, 48)),  # was (0, 42, 48)
+        (80, (0, 0, 78)),  # was (0, 0, 70)
     ),
 )
 def test_collections_profile_has_pinned_pure_geometry(width, expected) -> None:
@@ -82,7 +90,9 @@ async def test_mounted_collections_geometry_matches_one_settled_resolution(size)
         assert shell.library.region.width == expected.library_width
         assert shell.items.region.width == expected.items_width
         assert shell.work.region.width == expected.reader_width
-        assert shell.library_grip.region.width == PANE_GRIP_WIDTH
-        assert shell.items_grip.region.width == PANE_GRIP_WIDTH
+        # task-31951/31952: painted width IS the resolver's reservation.
+        assert shell.library_grip.region.width == 1
+        assert shell.items_grip.region.width == 1
+        assert expected.grip_width == 1
         assert shell.work.is_mounted and shell.work.display
         assert sum(child.region.width for child in shell.children) == measured_width

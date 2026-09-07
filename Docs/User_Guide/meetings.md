@@ -51,6 +51,126 @@ The screen is a two-pane workbench under a one-line purpose banner:
 | Footer line (after Stop) | What was saved and where it went: segment count and duration, any dropped/failed segments, the folder, and the Library ingest job id (or why none was queued). It also reports "Speaker labels unavailable (…)" when live labelling was wanted but the backend never started or crashed mid-meeting (the recording, transcript and ingest are unaffected — the meeting simply stays on "You"/"Others"), and "Speaker merge to resolve: Alice / Bob" when the final pass decided two speakers you had named separately are one person; both names are kept on the survivor for you to fix. |
 | **Open in Library** | Enabled once a meeting has been queued for ingest (by Stop or Recover); switches to Library's Import view with the ingest queue in view. |
 
+### Remember my voice
+
+The rail's **Your voice** section (below Recover; scroll down on a small
+terminal — see "The rail scrolls" below) lets you enroll your own voice once
+so later meetings tag your speech with your display name automatically,
+including room mode and hybrid rooms where the mic channel isn't a clean
+"you". There is no Settings › Meetings page for this yet — every control
+lives here, on the Meetings rail, and the two on/off choices below are
+config keys, not switches on this screen.
+
+- **Enroll my voice.** Records about 30 seconds from your microphone
+  (countdown shown, with a **Cancel** button) and turns it into one voice
+  embedding. Refused with "The microphone is busy — stop the meeting
+  first." while a meeting is running, and **Start** is refused in turn while
+  an enrollment is in progress. The sample audio itself is never written to
+  disk — only the resulting embedding is saved.
+- **Voice match: …** rail line, under the other status lines and just above
+  the Start/Pause/Stop row, reports whether this
+  meeting can tag you by voice and why not: `on`, or `off` with one of
+  `disabled` (the `voice_match` setting), `plain call mode` (see below),
+  `no voiceprint`, `needs re-enrollment` (the voiceprint was made with a
+  different embedding model), `live speaker labels off` (see below),
+  `store unreadable`, `keyring locked`, or
+  `store unavailable`. Before Start this line is provisional — it only
+  checked that a record exists, not that it can be decrypted — so re-check
+  it once the meeting is recording.
+- **The matched speaker gets a small marker** (` ·`) next to their name, in
+  both the Speakers legend and the transcript rows, so you can tell an
+  automatic match from a name you typed yourself. Renaming that speaker to
+  anything other than your display name is treated as an override and
+  clears the marker; renaming it back to your display name is not an
+  override.
+- **Voice match needs live speaker labels on.** Matching compares the live
+  speaker clusters against your voiceprint, and those only exist when a live
+  diarizer is running — so with `[meetings] live_diarization = false` (the
+  default) the rail reads "Voice match: off (live speaker labels off)" and
+  nothing is ever tagged. Set `live_diarization = true` (and keep the
+  diarization extra installed) to turn matching on.
+- **Plain call mode never matches.** In a call with `diarize_mic_channel`
+  off (the default), the mic channel is already assumed to be you, so voice
+  matching never runs there — there's nothing to disambiguate. It runs in
+  room mode always, and in call mode only when `diarize_mic_channel` is on
+  (see "Hybrid rooms" above).
+- **Learning offer.** After a meeting that matched you by voice — or after a
+  plain call-mode meeting (`diarize_mic_channel` off) that kept its
+  `you.wav` track, where the mic channel is assumed to be you — a rail
+  prompt appears — never a popup, nothing
+  blocks — asking "Remember this voice as yours for future meetings?" (or,
+  when the sample came from the plain mic channel, "Was it only you on the
+  mic?"). **Accept** blends that meeting's sample — the matched cluster, or
+  in plain call mode the first minute of the meeting's own `you.wav` — into
+  your stored
+  voiceprint; **Not now** keeps nothing and asks again next time; **Don't
+  ask again** keeps nothing and turns the `voice_learn_offer` setting off
+  for good. At most one offer appears per meeting, and an offer you never
+  answer — because you switched tabs or started another meeting — is
+  dropped rather than left pending indefinitely. An offer only ever appears
+  once you already have a stored voiceprint: **Enroll my voice** is always
+  the first step, and learning only refines what is already there. Accepting
+  can take a moment on a cold model — the row says "Warming up the voice
+  model…" while it waits.
+- **Delete / Export… / Import…**, on the row below Enroll. **Delete** is a two-step
+  confirm ("Press Delete again to remove your stored voiceprint.") — once
+  gone, it cannot be recovered. **Export…** opens a form for a passphrase
+  and a destination file path and writes an encrypted copy there —
+  the passphrase is never shown, logged, or echoed back. **Import…** opens
+  the same form with **Merge** (blend the file's voiceprint into the one
+  stored here — only *accepted* when the file was made with the same
+  embedding model, and with a vector of the same size) and **Replace**
+  (discard what's stored and keep the
+  file's instead — the only option when the model differs, reported as
+  "Different model — choose Replace"). A passphrase that does not open the
+  file is reported as "Wrong passphrase", and exporting *onto* your own
+  stored voiceprint is refused rather than destroying it. The typed path is
+  checked before anything is read or written: an import must name a file that
+  is actually there ("Import needs a file that is there to read."), and an
+  export must name a plain file in a folder that exists ("Export needs a
+  plain file in a folder that exists.") — a symlinked destination is refused,
+  so an export can never be redirected somewhere you did not name. A file
+  that opens with the right passphrase but does not hold a usable voiceprint
+  is refused too ("Import file is not a valid voiceprint"), leaving what you
+  already have untouched.
+- **Encryption.** The voiceprint is one JSON record encrypted with its own
+  random key, stored at `voiceprint.json` in the app's user data directory
+  (not the configurable `recordings_dir`, which may be a synced folder).
+  The key lives in your OS keyring when one is available ("Voice: enrolled
+  (keyring)"); otherwise it falls back to an owner-only key file in the
+  same directory ("Voice: enrolled (key file)") — a key file with looser
+  permissions than that is refused rather than used. Reading the key at
+  meeting Start is bounded to 1.5 seconds on a worker thread, so a
+  locked or slow keyring never delays Start; that meeting simply runs with
+  "Voice match: off (keyring locked)" and the next Start tries again.
+  Opening the Meetings screen itself never touches the key — it only asks
+  which mode is in force, to show "Voice: enrolled (keyring)" or "(key
+  file)". The key is *read* at meeting Start (above, bounded, on a worker
+  thread) and *created* only by explicit enrollment, which is why a macOS
+  Keychain prompt (if any) shows up there and not when you just open the
+  tab. A key file whose permissions have been widened is refused outright —
+  the rail then reads "Voice match: off (store unavailable)" and the repair
+  is `chmod 600`, not unlocking anything.
+- **Privacy.** What's stored is one averaged voice embedding (a list of
+  numbers) plus a sample count and timestamps — never raw audio, never a
+  transcript, and never anything from a specific meeting beyond that
+  running average. The embedding never appears in logs, `meeting.json`, or
+  a meeting's exported/ingested files; it crosses only the local pipe to
+  the diarization worker process, on this device. Deleting the voiceprint
+  removes that one file; nothing else references it.
+- **The match threshold is a starting value, not a validated one.**
+  `voice_match_threshold` (default `0.2`, a cosine-distance ceiling — lower
+  is stricter) hasn't been calibrated against real speech on every install;
+  raise it if you're never matched, lower it if someone else gets matched
+  as you. There is no on-screen "how close was your last match" readout
+  yet — the field exists in the stored record but nothing computes it. The
+  closest thing to that number today is the opt-in test at
+  `Tests/Audio/test_voiceprint_real.py`, which enrolls a real voice with the
+  macOS `say` command and prints the similarity it measured.
+- **The rail scrolls.** The Meetings rail is a scrolling pane, so on a
+  small terminal (roughly 100×30 and below) the Voice row and the learning
+  offer can sit below the fold — scroll the rail down to reach them.
+
 ## Common tasks
 
 1. **Record an in-person conversation (room mode).** Open Meetings, confirm
@@ -109,6 +229,10 @@ flat keys only — a dotted lookup into a nested table does not work here):
 | `diarizer_backend` | `"local"` | Which live diarizer to build when `live_diarization` is on. Only `"local"` is implemented today. |
 | `max_speakers` | `8` | Upper bound the local live diarizer uses when clustering voices into speaker ids. |
 | `diarize_mic_channel` | `false` | Hybrid rooms: also diarize the mic ("you") and overlap ("both") channels in call mode instead of always pre-naming them — see "Speaker labels" below. |
+| `voice_match` | `true` | Tag your own speech with your display name using an enrolled voiceprint — see "Remember my voice" above. No effect until you enroll one. |
+| `voice_match_threshold` | `0.2` | Cosine-distance ceiling for calling a cluster you (lower = stricter). A starting value, not validated for your voice/model — see "Remember my voice" above. |
+| `voice_match_min_seconds` | `4` | Seconds of your speech a cluster must accumulate before it can be matched at all. |
+| `voice_learn_offer` | `true` | Offer to learn from a meeting that matched you cleanly (at most once per meeting) — "Don't ask again" in that offer also flips this to `false`. |
 
 Each finished meeting's folder (named by start time, e.g.
 `2026-09-04_2121/`) contains:
@@ -247,7 +371,32 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against feat/meeting-followups @ 97a823256 + the PR #2471 Qodo fix
+*Verified against dev @ 15254e860 + feat/meeting-voiceprint @ 74b771396 (its
+final fix wave plus the Qodo review round, which added the transfer-path and
+import-record refusals documented above) —
+2026-09-07. That branch added self-voiceprint enrollment and matching
+(TASK-31826): the "Remember my voice" section and the four `voice_*`
+config keys above document `Enroll my voice`, the "Voice match: …" rail
+line, the matched-speaker marker and override, the post-Stop learning
+offer, Delete/Export/Import, the keyring/key-file encryption modes, and
+the privacy and threshold notes — verified by reading
+`tldw_chatbook/Audio/meeting_owner.py` and
+`tldw_chatbook/UI/Screens/meetings_screen.py` directly (copy strings,
+widget ids, and config defaults), and by the pilot/unit coverage in
+`Tests/UI/test_meetings_screen.py` and `Tests/Audio/test_voiceprint_store.py`,
+not by a live session — this host has never granted the app a real
+microphone enrollment. Two things this section says honestly rather than
+aspirationally: there is no Settings › Meetings page yet (every control is
+on the Meetings rail), and the "best similarity" calibration number is not
+shown on screen (only the opt-in `Tests/Audio/test_voiceprint_real.py`
+prints one, on a real Mac with `say`). The final fix wave corrected five
+statements on this page that did not match the code — the learning offer's
+trigger and its enrollment precondition, the "Voice match:" line's
+position, the Delete/Export/Import row, Merge's model check (enforced on
+accept, not by hiding the button), and what opening the screen does to the
+key — and added the `live speaker labels off` reason, which is what the
+SHIPPED default (`live_diarization = false`) now reports instead of "Voice
+match: on". Earlier stamp: feat/meeting-followups @ 97a823256 + the PR #2471 Qodo fix
 wave — 2026-09-06. That wave added the three sentences above about the
 start-stamped display name, the retryable failed rename, and control
 characters / Markdown punctuation in a typed name; all three are covered by
