@@ -991,6 +991,78 @@ asyncio.run(main())
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("phase", ["initial", "directory_accessor", "native_close"])
+def test_close_first_observes_helper_loss_and_retains_terminal_owner(tmp_path, phase):
+    program = """
+import asyncio, os, sys
+from pathlib import Path
+import Tests.conftest
+from tldw_chatbook.TTS import profile_repository as module
+from tldw_chatbook.TTS import profile_schema as schema
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.DB.private_sqlite_process import HELPER_ADMISSION
+async def main():
+    repository = module.TTSProfileRepository(Path(sys.argv[1]))
+    if sys.argv[2] == "directory_accessor":
+        incoming = Path(sys.argv[1]).with_name("incoming.sqlite3")
+        schema.open_profile_store(incoming).close()
+    await repository.open()
+    if sys.argv[2] == "directory_accessor":
+        await repository.restore_from(incoming)
+    owner, lease, executor = repository._connection, repository._lease, repository._executor
+    events = []
+    await asyncio.wrap_future(executor.submit(owner._connection.set_trace_callback, events.append))
+    lose_proof = owner._lose_proof
+    def observed_loss():
+        events.append("observed_loss")
+        return lose_proof()
+    owner._lose_proof = observed_loss
+    def kill():
+        owner._helper._child.kill()
+        owner._helper._child.wait(timeout=5)
+    phase = sys.argv[2]
+    if phase == "initial":
+        kill()
+    else:
+        method = "verified_parent_fd" if phase == "directory_accessor" else "close"
+        original = getattr(owner, method)
+        if phase == "directory_accessor":
+            assert repository._reusable_tombstones, "real restore must require settlement"
+        def lose_at_phase(*args, **kwargs):
+            events.append(phase)
+            kill()
+            return original(*args, **kwargs)
+        setattr(owner, method, lose_at_phase)
+    for attempt in range(2):
+        try:
+            await repository.close()
+        except ProfileRepositoryError as error:
+            outcome = (error.code, repository._helper_restart_required)
+            assert outcome == ("restart_required", True), (phase, attempt, outcome, events)
+            assert error.__cause__ is None
+            assert str(repository._active_database_path) not in str(error)
+        else:
+            raise AssertionError("lost-proof close reported success")
+        assert repository._connection is owner and not owner._sqlite_closed
+        assert repository._lease is lease and lease.acquired
+        assert repository._executor is executor and not repository._executor_shutdown
+        assert repository._exact_authority_quarantined
+        assert HELPER_ADMISSION.tts_proof_lost
+        assert os.fstat(owner._parent_fd).st_nlink > 0
+    observed = events.index("observed_loss")
+    assert events[observed + 1:] == [], events
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(tmp_path / "profiles.sqlite3"), phase],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("phase", ["policy", "metadata", "repository"])
 def test_helper_loss_during_repository_publication_retains_owner(tmp_path, phase):
     program = """
