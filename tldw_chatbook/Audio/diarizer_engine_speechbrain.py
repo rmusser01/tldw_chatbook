@@ -18,6 +18,12 @@ never learns which engine is running.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # never at runtime: both names belong to the worker's side
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+    from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
+
 MODEL = "speechbrain/spkrec-ecapa-voxceleb"
 # No loader-exposed revision today; a real pin is TODO once one exists.
 MODEL_ID = f"{MODEL}@unpinned"
@@ -162,7 +168,7 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
     return segments, out_centroids
 
 
-def load(live, max_speakers: int):
+def load(live: OnlineClusterer, max_speakers: int) -> LoadedEngine:
     """Load the ECAPA encoder and return the worker's `LoadedEngine` triple.
 
     Args:

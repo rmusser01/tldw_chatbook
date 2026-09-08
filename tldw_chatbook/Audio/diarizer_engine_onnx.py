@@ -21,10 +21,15 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:  # never at runtime: both modules are the worker's, not ours
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+    from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
 
 
 @dataclass(frozen=True)
@@ -143,6 +148,11 @@ LIVE_THRESHOLD: dict[str, float] = {
 #: without editing the manifest between cells; a normal run sets neither.
 LIVE_THRESHOLD_ENV = "TLDW_DIARIZER_LIVE_THRESHOLD"
 CLUSTER_THRESHOLD_ENV = "TLDW_DIARIZER_CLUSTER_THRESHOLD"
+#: The other two knobs `load()` reads from the environment (task 4: 31827) --
+#: how the worker process learns which files the app actually fetched, since
+#: it is spawned with a fixed argv. All four go through `_env_settings`.
+EMBEDDER_ENV = "TLDW_DIARIZER_EMBEDDER"
+MODELS_DIR_ENV = "TLDW_DIARIZER_MODELS_DIR"
 
 MIN_DURATION_ON, MIN_DURATION_OFF = 0.3, 0.5
 LIVE_THREADS, BATCH_THREADS = 2, 4
@@ -152,9 +162,27 @@ CENTROID_SECONDS = 30.0
 
 
 def model_id_for_embedder(key: str) -> str:
-    """The voiceprint model id for embedder `key` (spec §6): stable across
-    a run, changes if the manifest's file or hash for `key` changes."""
-    asset = EMBEDDERS[key]
+    """The voiceprint model id for embedder `key` (spec §6).
+
+    Stable across a run and across app versions; it changes only when the
+    manifest's file name or sha256 for `key` changes, which is exactly when
+    a stored voiceprint stops being comparable with fresh embeddings.
+
+    Args:
+        key: One of `EMBEDDERS`' manifest keys (`"titanet_small"`, ...).
+
+    Returns:
+        ``"sherpa-onnx/<file name>@<first 12 hex of its sha256>"``.
+
+    Raises:
+        ValueError: `key` is not a manifest key -- the same type (and the
+            same wording) `model_paths` raises for the same mistake, so a
+            caller like `diarizer_local.model_id_for` has ONE exception type
+            to handle rather than a `KeyError` leaking the dict access.
+    """
+    asset = EMBEDDERS.get(key)
+    if asset is None:
+        raise ValueError(f"unknown embedder: {key}")
     return f"sherpa-onnx/{asset.file_name}@{asset.sha256[:12]}"
 
 
@@ -166,12 +194,34 @@ MODEL_ID = model_id_for_embedder(DEFAULT_EMBEDDER)
 _MAX_THRESHOLD = 2.0
 
 
-def _threshold_from_env(name: str, default: float) -> float:
+def _env_value(name: str) -> str | None:
+    """`os.environ[name]` stripped, or None when unset OR blank.
+
+    ``FOO=`` is the shell's own way of saying "not set", so a blank value is
+    not an operator mistake and never frames an error line.
+    """
+    return os.environ.get(name, "").strip() or None
+
+
+def _env_error(name: str) -> None:
+    """Frame ONE unusable environment variable on stderr (Qodo 2).
+
+    Exactly the grammar `diarizer_worker.serve()` frames a failed command
+    with, and exactly as little: the variable's NAME, never its value (spec
+    §8 -- a models-dir value is a user path, and an embedder value is
+    whatever the operator typed).
+    """
+    sys.stderr.write(f"ERROR env {name}\n")
+    sys.stderr.flush()
+
+
+def _threshold_from_env(name: str, default: float | None) -> float | None:
     """`os.environ[name]` as a cosine distance in ``(0, 2)``, or `default`.
 
-    An unset, empty, unparseable or UNUSABLE value is IGNORED rather than
-    raising: this is a sweep knob, and a typo in it must never take the
-    worker's load path down (`main()` would frame it as `ERROR load
+    An unset or blank value is `default` in silence; an unparseable or
+    UNUSABLE one is IGNORED with a single framed `ERROR env <NAME>` line
+    rather than raising: this is a sweep knob, and a typo in it must never
+    take the worker's load path down (`main()` would frame it as `ERROR load
     ValueError` and the meeting would silently lose live labels).
 
     "Unusable" is not just "unparseable" (task 8 review, Minor 3): `nan`,
@@ -183,15 +233,88 @@ def _threshold_from_env(name: str, default: float) -> float:
     the collapse-everything value the sentence above names, and the guard used
     to let it through (final review Minor 2).
     """
+    raw = _env_value(name)
+    if raw is None:
+        return default
     try:
-        value = float(os.environ[name])
-    except (KeyError, TypeError, ValueError):
+        value = float(raw)
+    except (TypeError, ValueError):
+        _env_error(name)
         return default
     # This also rejects NaN, without a separate test: every comparison with NaN
     # is False, so the chain is False and `not` makes it True.
     if not (0.0 < value < _MAX_THRESHOLD):
+        _env_error(name)
         return default
     return value
+
+
+def _validated_models_dir(value: str | Path) -> Path:
+    """`value` as an existing model directory, through the CENTRAL validator.
+
+    Qodo 1 (Security): the models directory can come from an operator's
+    environment, and it decides which files are hashed and handed to
+    sherpa-onnx's own file open -- so it goes through
+    `Utils/path_validation.validate_path_simple` like every other externally
+    supplied path in this repo, not straight into `Path()`.
+
+    Imported HERE, not at module scope: `path_validation` is light (loguru and
+    the metrics counters, both already loaded in this process) but this
+    module's own scope stays stdlib-only for the worker's import-safety probes.
+
+    Raises:
+        ValueError: not a safe, existing directory. `load()` lets it out
+            unchanged and `diarizer_worker.main()` frames it as `ERROR load
+            ValueError` -- with no part of the value on stderr.
+    """
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    path = validate_path_simple(value, require_exists=True)
+    if not path.is_dir():
+        raise ValueError("models dir is not a directory")
+    return path
+
+
+def _env_settings() -> dict:
+    """Every `TLDW_DIARIZER_*` knob `load()` may read, under ONE rule (Qodo 2).
+
+    The rule: an unusable value is never guessed at. It frames exactly one
+    `ERROR env <NAME>` line (the name alone -- see `_env_error`) and then
+    either falls back to the manifest's measured default, for the two sweep
+    thresholds, or refuses the load, for the two that decide WHICH model file
+    is opened. Substituting a different embedder or directory there would load
+    a model the app never fetched while the app stamps every voiceprint with
+    the model id of the one it thinks ran (spec §6) -- silently, and for good.
+
+    Returns:
+        ``{"embedder", "models_dir", "live_threshold", "cluster_threshold"}``,
+        each None when its variable is unset, blank, or (thresholds only)
+        unusable -- meaning "the caller's own default applies".
+
+    Raises:
+        ValueError: `TLDW_DIARIZER_EMBEDDER` is not a manifest key, or
+            `TLDW_DIARIZER_MODELS_DIR` is not a safe existing directory.
+    """
+    embedder = _env_value(EMBEDDER_ENV)
+    if embedder is not None and embedder not in EMBEDDERS:
+        _env_error(EMBEDDER_ENV)
+        # No value in the message: unlike the kwarg form below, this one is
+        # an environment value and a caller may log what it catches.
+        raise ValueError("unknown embedder")
+    models_dir: Path | None = None
+    raw_dir = _env_value(MODELS_DIR_ENV)
+    if raw_dir is not None:
+        try:
+            models_dir = _validated_models_dir(raw_dir)
+        except ValueError:
+            _env_error(MODELS_DIR_ENV)
+            raise
+    return {
+        "embedder": embedder,
+        "models_dir": models_dir,
+        "live_threshold": _threshold_from_env(LIVE_THRESHOLD_ENV, None),
+        "cluster_threshold": _threshold_from_env(CLUSTER_THRESHOLD_ENV, None),
+    }
 
 
 def models_dir(override: Path | None = None) -> Path:
@@ -691,13 +814,13 @@ def _batch(sherpa_onnx, np, extractor, seg_path, emb_path, threshold, live, max_
 
 
 def load(
-    live,
+    live: OnlineClusterer,
     max_speakers: int,
     *,
     embedder: str | None = None,
     models_dir_override: Path | None = None,
     verify_hashes: bool = True,
-):
+) -> LoadedEngine:
     """Load the sherpa-onnx speaker embedding extractor and return the
     worker's `LoadedEngine` triple (spec §2).
 
@@ -710,6 +833,9 @@ def load(
             process has no other way to learn which embedder the app fetched).
         models_dir_override: Test/air-gapped seam for `models_dir()`; falls
             back to `TLDW_DIARIZER_MODELS_DIR` when omitted (same reason).
+            Either form is validated (Qodo 1): a directory that does not
+            exist, or a path the central validator refuses, raises here
+            rather than surfacing inside sherpa-onnx's own file open.
         verify_hashes: When true (the default), a SHA-256 mismatch against
             the manifest raises before any model is constructed.
 
@@ -717,21 +843,24 @@ def load(
         A `diarizer_worker.LoadedEngine` bound to a freshly loaded extractor.
 
     Raises:
-        ValueError: unknown `embedder`, or a model hash mismatch
-            ("model hash mismatch") -- `diarizer_worker.main()` frames this
-            as `ERROR load ValueError`.
+        ValueError: unknown `embedder`, an unusable models directory, or a
+            model hash mismatch ("model hash mismatch") --
+            `diarizer_worker.main()` frames all three as `ERROR load
+            ValueError` (an unusable env value is named first by
+            `_env_settings`, as `ERROR env <NAME>`).
     """
     import numpy as np
     import sherpa_onnx
 
     from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
 
+    env = _env_settings()
     if embedder is None:
-        embedder = os.environ.get("TLDW_DIARIZER_EMBEDDER")
+        embedder = env["embedder"]
     if models_dir_override is None:
-        env_dir = os.environ.get("TLDW_DIARIZER_MODELS_DIR")
-        if env_dir:
-            models_dir_override = Path(env_dir)
+        models_dir_override = env["models_dir"]
+    else:
+        models_dir_override = _validated_models_dir(models_dir_override)
 
     key = embedder or DEFAULT_EMBEDDER
     if key not in EMBEDDERS:
@@ -748,7 +877,12 @@ def load(
         )
 
     extractor = _make_extractor(LIVE_THREADS)
-    threshold = _threshold_from_env(CLUSTER_THRESHOLD_ENV, CLUSTER_THRESHOLD[key])
+    threshold = env["cluster_threshold"]
+    if threshold is None:
+        threshold = CLUSTER_THRESHOLD[key]
+    live_threshold = env["live_threshold"]
+    if live_threshold is None:
+        live_threshold = LIVE_THRESHOLD[key]
 
     return LoadedEngine(
         lambda pcm, sr: _embed(extractor, np, pcm, sr),
@@ -761,5 +895,5 @@ def load(
             sherpa_onnx, np, _make_extractor(BATCH_THREADS), seg_path, emb_path, threshold, live, max_speakers, wav, s, e
         ),
         model_id_for_embedder(key),
-        live_threshold=_threshold_from_env(LIVE_THRESHOLD_ENV, LIVE_THRESHOLD[key]),
+        live_threshold=live_threshold,
     )

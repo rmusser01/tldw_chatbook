@@ -11,6 +11,7 @@ import threading
 import time
 import types
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -168,11 +169,22 @@ def test_load_prefers_explicit_kwargs_over_env(fake_sherpa, tmp_path, monkeypatc
 
     (tmp_path / eng.SEGMENTATION.file_name).write_bytes(b"x")
     (tmp_path / eng.EMBEDDERS["titanet_small"].file_name).write_bytes(b"x")
+    other = tmp_path / "other"; other.mkdir()
     monkeypatch.setenv("TLDW_DIARIZER_EMBEDDER", "wespeaker_resnet34")
-    monkeypatch.setenv("TLDW_DIARIZER_MODELS_DIR", "/nonexistent/path")
+    # A REAL other directory (Qodo review): the env value used to be
+    # "/nonexistent/path", which under the one env rule is now an operator
+    # error in its own right -- and which proved nothing about precedence
+    # anyway, since `verify_hashes=False` never opens the directory. The
+    # `batch` call below pins the paths the pipeline actually gets.
+    monkeypatch.setenv("TLDW_DIARIZER_MODELS_DIR", str(other))
+    wav = tmp_path / "mixed.wav"; _wav(wav)
 
     loaded = eng.load(OnlineClusterer(), 8, embedder="titanet_small", models_dir_override=tmp_path, verify_hashes=False)
     assert loaded.model_id == eng.model_id_for_embedder("titanet_small")
+    loaded.batch(str(wav), 0.0, 4.0)
+    assert _Diarizer.last_config["segmentation"]["pyannote"]["model"] == str(
+        tmp_path / eng.SEGMENTATION.file_name
+    )
 
 
 # --- Task 8: per-engine live threshold + env sweep overrides ----------------
@@ -291,6 +303,129 @@ def test_invalid_threshold_env_values_are_ignored(fake_sherpa, tmp_path, monkeyp
     assert loaded.live_threshold == eng.LIVE_THRESHOLD["titanet_small"]
     loaded.batch(str(wav), 0.0, 4.0)
     assert _Diarizer.last_config["clustering"]["threshold"] == eng.CLUSTER_THRESHOLD["titanet_small"]
+
+
+# --- Qodo review (31827): env parsing and the models-dir validator ----------
+
+def test_load_puts_the_models_dir_env_value_through_the_central_validator(
+    fake_sherpa, tmp_path, monkeypatch, capsys
+):
+    """Qodo 1 (Security): `TLDW_DIARIZER_MODELS_DIR` is an operator-supplied
+    path that reaches model hashing and `sherpa_onnx`'s own file open, so it
+    goes through `Utils/path_validation.validate_path_simple` like every other
+    externally supplied path in this repo -- not straight into `Path()`.
+
+    The negative control is a traversal that EXISTS: `<tmp>/sub/../../<leaf>`
+    resolves to a real directory holding real model files, so a `Path()`-only
+    version of `load()` accepts it happily. Only the central validator (which
+    refuses a `../..` component outright) turns it down.
+    """
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    (tmp_path / "sub").mkdir()
+    traversal = f"{tmp_path}/sub/../../{tmp_path.name}"
+    assert Path(traversal).is_dir()               # the control: it really resolves
+    monkeypatch.setenv("TLDW_DIARIZER_MODELS_DIR", traversal)
+
+    with pytest.raises(ValueError):
+        eng.load(OnlineClusterer(), 8, verify_hashes=False)
+    err = capsys.readouterr().err
+    assert err.splitlines() == ["ERROR env TLDW_DIARIZER_MODELS_DIR"]   # the NAME only
+    assert str(tmp_path) not in err                                     # never the value
+
+
+@pytest.mark.parametrize("kind", ["missing", "a file"])
+def test_load_refuses_a_models_dir_that_is_not_an_existing_directory(
+    kind, fake_sherpa, tmp_path, monkeypatch
+):
+    """Both forms (Qodo 1: "and the kwarg form"): the worker must not open
+    model files under a directory that is not there, and must say so as a
+    `ValueError` -- which `diarizer_worker.main()` frames as `ERROR load
+    ValueError` -- rather than failing later inside sherpa-onnx."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    bad = tmp_path / "nope"
+    if kind == "a file":
+        bad.write_bytes(b"not a directory")
+
+    with pytest.raises(ValueError):
+        eng.load(OnlineClusterer(), 8, models_dir_override=bad, verify_hashes=False)
+
+    monkeypatch.setenv("TLDW_DIARIZER_MODELS_DIR", str(bad))
+    with pytest.raises(ValueError):
+        eng.load(OnlineClusterer(), 8, verify_hashes=False)
+
+
+@pytest.mark.parametrize(
+    "name, value, refuses",
+    [
+        ("TLDW_DIARIZER_EMBEDDER", "not-a-manifest-key", True),
+        ("TLDW_DIARIZER_MODELS_DIR", "/no/such/models/dir", True),
+        ("TLDW_DIARIZER_LIVE_THRESHOLD", "nan", False),
+        ("TLDW_DIARIZER_CLUSTER_THRESHOLD", "not-a-float", False),
+    ],
+)
+def test_every_unusable_env_value_is_framed_once_by_name_and_never_echoed(
+    name, value, refuses, fake_sherpa, tmp_path, monkeypatch, capsys
+):
+    """Qodo 2: one rule for all four `TLDW_DIARIZER_*` knobs `load()` reads.
+
+    An unusable value produces EXACTLY ONE framed `ERROR env <NAME>` line --
+    the worker's own stderr grammar, the variable's name and nothing else
+    (spec §8: never a value, which is a path or an operator's typo) -- and is
+    then never guessed at: a knob that decides WHICH model file is opened
+    refuses the load, a tuning knob falls back to its measured default.
+    """
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    monkeypatch.setenv(name, value)
+    wav = tmp_path / "mixed.wav"; _wav(wav)
+
+    if refuses:
+        with pytest.raises(ValueError):
+            eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    else:
+        loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+        assert loaded.live_threshold == eng.LIVE_THRESHOLD["titanet_small"]
+        loaded.batch(str(wav), 0.0, 4.0)
+        assert _Diarizer.last_config["clustering"]["threshold"] == eng.CLUSTER_THRESHOLD["titanet_small"]
+
+    err = capsys.readouterr().err
+    assert err.splitlines() == [f"ERROR env {name}"]
+    assert value not in err
+
+
+def test_a_blank_env_value_is_unset_not_unusable(fake_sherpa, tmp_path, monkeypatch, capsys):
+    """`FOO=` is the shell's way of saying "not set"; it must not be reported
+    as an operator error (the pre-existing behaviour of all four knobs)."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    for name in ("TLDW_DIARIZER_EMBEDDER", "TLDW_DIARIZER_MODELS_DIR",
+                 "TLDW_DIARIZER_LIVE_THRESHOLD", "TLDW_DIARIZER_CLUSTER_THRESHOLD"):
+        monkeypatch.setenv(name, "  ")
+
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.model_id == eng.model_id_for_embedder(eng.DEFAULT_EMBEDDER)
+    assert capsys.readouterr().err == ""
+
+
+def test_model_id_for_embedder_refuses_an_unknown_key_with_a_value_error():
+    """Qodo 4: the helper's documented failure mode is `model_paths`' own --
+    `ValueError`, not a bare `KeyError` leaking the dict access, so a caller
+    (`diarizer_local.model_id_for`) has one exception type to handle."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+
+    with pytest.raises(ValueError):
+        eng.model_id_for_embedder("not-a-manifest-key")
+    doc = eng.model_id_for_embedder.__doc__ or ""
+    assert "Args:" in doc and "Returns:" in doc and "Raises:" in doc
 
 
 # --- Task 3: ensure_models (downloader) -------------------------------------

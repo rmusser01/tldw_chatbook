@@ -37,6 +37,29 @@ def test_speechbrain_engine_module_imports_without_torch(monkeypatch):
     assert callable(mod.load)
 
 
+def test_both_engine_loads_annotate_the_shared_clusterer_and_return_type():
+    """Qodo 3: `main()` reaches an engine through `importlib.import_module(
+    ENGINES[name]).load(live, max_speakers)`, so nothing but these
+    annotations can catch an engine handed the wrong clusterer, or returning
+    something that is not a `LoadedEngine`, before it is selected at runtime.
+
+    They must stay FORWARD references: both modules carry `from __future__
+    import annotations` and import the two names only under `TYPE_CHECKING`,
+    so the worker's pinned import graph (`test_meeting_import_safety.py`)
+    does not change -- which is why this asserts the annotation STRINGS.
+    """
+    import inspect
+
+    from tldw_chatbook.Audio import diarizer_engine_onnx as onnx
+    from tldw_chatbook.Audio import diarizer_engine_speechbrain as sb
+
+    for mod in (onnx, sb):
+        sig = inspect.signature(mod.load)
+        assert sig.parameters["live"].annotation == "OnlineClusterer", mod.__name__
+        assert sig.parameters["max_speakers"].annotation == "int", mod.__name__
+        assert sig.return_annotation == "LoadedEngine", mod.__name__
+
+
 def test_loaded_engine_defaults_its_live_threshold_to_the_ecapa_tuned_value():
     """Task 8 (31827): the live clusterer's threshold becomes per-engine.
 
