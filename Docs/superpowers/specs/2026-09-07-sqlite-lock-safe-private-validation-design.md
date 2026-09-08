@@ -22,9 +22,14 @@ approved Python >=3.12 after reviewing these results, then approved the written
 native-close amendment. The updated implementation plan resumes with runtime
 admission (Task5a), then live integration (Task5b). Task5a passed independent spec
 and quality review at c007b696d: the active floor and pre-initialization native
-capability check are implemented. Live-handle policy is not yet integrated.
-The production shutdown gate
-must still pass; approval does not turn the diagnostic spike into qualification.
+capability check are implemented. Task5b integration and its fix round passed
+independent ownership/spec/quality review through c98ebfa61. Live policy, remote
+proof and guarded/terminal cleanup are integrated; the actual-app 14-case ordinary/
+abrupt exit gate passed on the local macOS runtime, including foreign-cohort
+preservation and separately observed original-data recovery. The full correction
+is not yet qualified: exclusive finalizer/census work, installed-wheel/platform
+coverage and 11 SemLock-blocked spawned cases remain Task6/7 obligations. Approval
+and the diagnostic spike are not substitutes for those remaining gates.
 
 Repair private-file inspection without canceling locks held by live SQLite
 connections. Keep Canvas Mermaid disabled until the corrective work is reviewed

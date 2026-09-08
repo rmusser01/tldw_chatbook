@@ -162,8 +162,13 @@ Task5b (live ownership and close-policy integration). The probe is not productio
 qualification or merge authorization; the original safety gates remain required.
 
 Implementation checkpoint: Task5a runtime floor and capability admission passed
-independent spec and quality review at c007b696d. This does not qualify the live
-handle policy, terminal retention or shutdown; Task5b owns those remaining gates.
+independent spec and quality review at c007b696d. Task5b live-handle integration
+and fix round passed independent ownership/spec/quality review through c98ebfa61;
+the actual-app 14-case ordinary/abrupt exit gate passed on the local macOS runtime.
+First-close restart-required projection and retained late-owner worker retry are
+covered by behavioral regressions. Exclusive finalizer/census and installed-wheel/
+platform qualification remain; 11 SemLock-blocked spawned cases are unqualified.
+This checkpoint is not whole-correction completion or Canvas admission.
 
 ## Links
 
