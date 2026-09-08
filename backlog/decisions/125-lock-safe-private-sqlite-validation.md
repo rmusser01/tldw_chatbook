@@ -42,6 +42,15 @@ database or moves live transactions out of the repository. This preserves
 ADR-051's metadata-focused startup while avoiding parent-side live proof closes.
 The approved written design includes this fixed supporting operation.
 
+An ordinary filesystem authority refusal after successful initialization keeps
+the healthy helper and its original pins. The user approved bounded staged
+sidecar capture on 2026-09-07: a retry may bind a previously unbound sidecar once,
+only after revalidating the exact acquired sidecar, main and directory pins.
+Already acquired pins are never replaced or reminted. Incomplete cohorts cannot
+authorize live use or restore export; transport/internal failures remain fatal.
+Exact authority restoration may recover a refused capture, not select a new
+generation.
+
 Repository restore receives an explicit revalidated parent/sidecar identity
 handoff before closing the live proof. Tombstone settlement retains a verified
 parent-directory handle, not original database/sidecar FDs. Both existing

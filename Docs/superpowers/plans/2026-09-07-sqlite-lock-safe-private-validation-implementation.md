@@ -329,14 +329,25 @@ Task 4 checkpoint: implementation `2db961c4d`, spec correction `d643bbc90`.
 Independent spec review passes after retaining healthy initialized proof across
 ordinary authority refusal. Quality review remains open: first sidecar capture
 can misclassify filesystem refusal as helper loss. The fix exposed an unresolved
-partial-capture policy: WAL may already be pinned when SHM capture fails. User
-direction is required before permitting completion of that staged cohort on
-retry or choosing a close-only state; neither behavior is approved here. Preserve
-all acquired pins and do not replace them or reconstruct proof while awaiting
-that decision. Task 5 remains gated. Root's broader repository/lifecycle run had
+partial-capture policy, now resolved by explicit user approval on 2026-09-07:
+retain and revalidate exact acquired WAL/main/directory pins; a retry may bind
+previously unbound SHM once. Never replace/reopen/remint an acquired pin. Distinguish
+bound absent, partial and complete states; partial cohorts cannot authorize use
+or restore export. Test actual-child no-pin refusal/restoration, partial completion,
+changed acquired WAL/main/parent refusal and exact restoration, same child/pins,
+charged admission until close/reap, and repeated pin commands refusing replacement.
+Normalize only recognized filesystem authority errno values; include fatal internal
+error and failed-initializer controls. Preserve deadlines/control-flow precedence.
+Task 5 remains gated on the scoped quality re-review. Root's broader repository/lifecycle run had
 360 passes and 11 failures creating stdlib multiprocessing semaphores before
 repository exercise; an isolated standard-library probe reproduces the failure
 outside the sandbox. These tests remain unqualified, not waived.
+
+Recovery note: the isolated checkout disappeared during the approval turn and was
+restored from the intact branch at `df5a48407`; the main checkout was untouched.
+Historical ignored reports are not assumed available. Current correction records
+belong to `.superpowers/sdd/2026-09-07-sqlite-lock-safe-private-validation-implementation/`;
+recovered prior evidence must be labeled as attributed history, not fresh execution.
 
 ### Task 5: Migrate live TTS authority, restore handoff and terminal cleanup
 
