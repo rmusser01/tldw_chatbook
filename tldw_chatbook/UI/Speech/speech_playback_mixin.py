@@ -1160,6 +1160,7 @@ class SpeechPlaybackMixin:
         if not hasattr(self.app, "audio_player"):
             return
 
+        playback_failed = False
         while True:
             try:
                 state = await self.app.audio_player.get_state()
@@ -1184,7 +1185,12 @@ class SpeechPlaybackMixin:
                         progress_bar.remove_class("hidden")
                         time_display.remove_class("hidden")
                         self.query_one("#audio-player-transport").remove_class("hidden")
-                elif state in [PlaybackState.IDLE, PlaybackState.FINISHED]:
+                elif state in (
+                    PlaybackState.IDLE,
+                    PlaybackState.FINISHED,
+                    PlaybackState.ERROR,
+                ):
+                    playback_failed = state == PlaybackState.ERROR
                     self._release_playback_artifact()
 
                     if self._result_transition_operation_id is None:
@@ -1196,11 +1202,14 @@ class SpeechPlaybackMixin:
                         # Reset button states when playback finishes
                         self._sync_idle_transport_actions()
                         self.query_one("#audio-player-status", Static).update(
-                            self._current_result_status_copy()
+                            "Playback failed"
+                            if playback_failed
+                            else self._current_result_status_copy()
                         )
 
-                    # Notify that playback is complete
-                    if state == PlaybackState.FINISHED:
+                    if playback_failed:
+                        self.app.notify("Playback failed", severity="error")
+                    elif state == PlaybackState.FINISHED:
                         self.app.notify("Playback complete", severity="information")
 
                     break
@@ -1219,7 +1228,9 @@ class SpeechPlaybackMixin:
                 self._sync_idle_transport_actions()
                 self.query_one("#audio-player-transport").add_class("hidden")
                 self.query_one("#audio-player-status", Static).update(
-                    self._current_result_status_copy()
+                    "Playback failed"
+                    if playback_failed
+                    else self._current_result_status_copy()
                 )
         except Exception as e:
             logger.debug(f"Could not reset UI on progress timer exit: {e}")

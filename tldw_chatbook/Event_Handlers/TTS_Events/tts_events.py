@@ -3992,7 +3992,8 @@ def _play_legacy_clip_and_await_completion(
         poll_interval_seconds: Sleep between checks.
 
     Returns:
-        `False` if `play()` itself never started the clip, if a stop was
+        `False` if `play()` itself never started the clip, if playback
+        reached `ERROR`, if a stop was
         requested (checked immediately after `play()` returns, and on
         every subsequent poll iteration), or if the clip stopped being
         current for any OTHER reason before reaching `FINISHED` --
@@ -4035,9 +4036,25 @@ def _play_legacy_clip_and_await_completion(
             return False
         if player.get_current_file() != audio_file:
             return False
-        if player.get_state() == PlaybackState.FINISHED:
+        state = player.get_state()
+        if state == PlaybackState.FINISHED:
             return True
+        if state in (PlaybackState.ERROR, PlaybackState.IDLE):
+            return False
         time.sleep(poll_interval_seconds)
+    # Recheck terminal state and exact clip ownership after the final sleep.
+    # A failure or stop at the deadline must not become timeout success.
+    if stop_requested is not None and stop_requested.is_set():
+        if player.get_current_file() in (None, audio_file):
+            player.stop()
+        return False
+    if player.get_current_file() != audio_file:
+        return False
+    state = player.get_state()
+    if state == PlaybackState.FINISHED:
+        return True
+    if state != PlaybackState.PLAYING:
+        return False
     # Task-4 review N3: the estimate under-ran -- make that DISTINGUISHABLE
     # in the logs rather than silently indistinguishable from a natural
     # finish (both return `True`). `logger` (loguru) is documented

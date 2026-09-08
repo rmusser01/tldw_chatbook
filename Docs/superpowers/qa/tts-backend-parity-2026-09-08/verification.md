@@ -63,17 +63,18 @@ and playback complete successfully.” Source duration: 5.717 seconds.
 
 | Backend delivery path | Format | Full decode | Player | Player elapsed / exit | Complete transcript |
 | --- | --- | --- | --- | --- | --- |
-| Chatterbox streaming tensors | WAV | 5.717 s | afplay | 6.608 s / 0 | Yes |
-| Higgs arrays | MP3 | 5.717 s | afplay | 6.319 s / 0 | Yes |
-| ElevenLabs PCM conversion | AAC (ADTS) | 5.760 s | afplay | 6.838 s / 0 | Yes |
-| ElevenLabs PCM conversion | FLAC | 5.717 s | afplay | 6.558 s / 0 | Yes |
-| AllTalk WAV conversion + playback wrapper | PCM / WAV | 5.717 s | afplay | 6.578 s / 0 | Yes |
-| OpenAI-compatible body delivery | Opus | 5.717 s | ffplay | 6.133 s / 0 | Yes |
+| Chatterbox streaming tensors | WAV | 5.717 s | afplay | 6.693 s / 0 | Yes |
+| Higgs arrays | MP3 | 5.717 s | afplay | 6.870 s / 0 | Yes |
+| ElevenLabs PCM conversion | AAC (ADTS) | 5.760 s | afplay | 6.882 s / 0 | Yes |
+| ElevenLabs PCM conversion | FLAC | 5.717 s | afplay | 6.611 s / 0 | Yes |
+| AllTalk WAV conversion + playback wrapper | PCM / WAV | 5.717 s | afplay | 6.575 s / 0 | Yes |
+| OpenAI-compatible body delivery | Opus | 5.717 s | ffplay | 6.046 s / 0 | Yes |
 
-Local evidence: `/private/tmp/tts-backend-parity-playback/evidence.json`, audio
+Local evidence: `/private/tmp/tts-backend-parity-qodo-playback/evidence.json`, audio
 files in its `artifacts/` directory, and
-`/private/tmp/validate-tts-backend-parity-playback.py`. These are validation
-artifacts, not application data or bundled model weights.
+`/private/tmp/validate-tts-backend-qodo-playback.py`. These are validation
+artifacts, not application data or bundled model weights. The table records the
+repeat run after the Qodo fixes; all six complete transcripts passed again.
 
 ## Automated checks
 
@@ -117,3 +118,43 @@ Shortening an existing explanatory comment removes 497 bytes from the boot
 bundle, yielding 803,744 bytes. Both the source and generated bundle have
 identical non-comment CSS to HEAD. No rule or budget constant changed; ADR-097
 permits shedding this existing boot cost. The CSS budget regression passes.
+
+
+## Qodo review follow-up
+
+All eight review comments were checked against the actual callers. Three runtime
+defects were confirmed: a nonzero player exit was ignored by both completion
+consumers; Higgs cleanup returned before native inference finished; and the Higgs
+buffer check undercounted float64 arrays.
+
+- Speech Lab treats player ERROR as terminal, releases the playback copy and
+  lease, resets transport controls, and reports failure. The legacy completion
+  poll rejects ERROR/IDLE immediately and verifies stop, current file, and state
+  again at its deadline. Only a still-playing current clip retains the existing
+  estimated-duration fallback; failed playback never invokes success.
+- Higgs owns one retained cleanup task through caller cancellation. The adapter's
+  foreground deadline stays bounded; cleanup releases the model after native
+  work actually stops. Tests cross the real manager and host shutdown boundaries.
+- Higgs checks both source nbytes and the proposed float32 buffer before
+  finiteness/downmix/conversion, including exact float64 and float16 boundaries.
+- Application-path tests cover PCM conversion, canceled copying, exact release
+  ownership and copy deletion, plus mounted Opus playback through the actual
+  asynchronous and synchronous players with only process/device seams replaced.
+- Direct buffer-limit tests cover below/equal/above values and every public error
+  field. PCM protocol values now have descriptive names, and Chatterbox's public
+  streaming method documents its request and complete-file/raw-PCM yield contract.
+
+Higgs regressions went from 4 failures to 8 passing cases; its affected
+backend/manager/bridge cohort passed 148 tests. Shared limit/PCM checks passed
+43 tests. Playback failure regressions went from 8 failures to 17 passing cases through
+the real application paths. A fresh independent review of these fixes found no
+further actionable issues. All six derived preflight checks pass. The diagnostic
+statement review found no added or changed logging calls, and the inventory
+already matches exactly; no regeneration was necessary.
+
+Playback/lifecycle coverage passed all 304 distinct cases across the broad run
+and focused rerun. The broad run first passed 303 cases and exposed one old
+ordering test that relied on five event-loop yields while its fake player could
+already finish. Explicit admission/finish events make that assertion
+deterministic; the entire utterance module and new failure module then passed
+38 tests. This fixture repair does not alter production behavior.

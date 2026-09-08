@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-08 18:21'
-updated_date: '2026-09-08 19:27'
+updated_date: '2026-09-08 19:49'
 labels: []
 dependencies: []
 ---
@@ -24,6 +24,7 @@ Users need each retained TTS provider to produce complete playable replies and p
 - [x] #4 Targeted regression tests and available real playback checks document full decoded duration, content, and model or credential limitations.
 - [x] #5 Supported output formats reach a compatible file player, and completion or failure belongs only to the process that played that clip.
 - [ ] #6 The repaired delivery paths preserve boot module and CSS budgets, with PR checks passing before integration.
+- [ ] #7 Qodo review findings are verified and addressed, including failed playback cleanup, retained Higgs shutdown ownership, buffer boundaries, and application-path coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,6 +38,7 @@ Reason: Restore existing complete-file, declared-format, effective-selection and
 3. Exercise every registered provider from mounted fresh controls through repeated admission and response consumption; check native audio.cpp contracts.
 4. Validate available local inference and playback with complete decoding and transcript checks, documenting unavailable services or model weights.
 5. Run targeted regressions, formatter/lint and required derived checks; record exact evidence and remaining limitations.
+6. Address verified PR review findings with failing regressions for terminal playback failures and model shutdown ownership; complete public playback and buffer-boundary coverage before rerunning targeted checks.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -48,5 +50,7 @@ Validation: main Python 3.12 targeted cohort: 744 passed, 1 optional Chatterbox 
 
 ADR required: no; existing 023, 039, 040 govern these repaired contracts. Diagnostic statements reviewed before regeneration: obsolete logs removed; only fixed Opus guidance and numeric process status added, no new logging destination/content interpolation. Evidence and limits: Docs/superpowers/qa/tts-backend-parity-2026-09-08/verification.md. Updated Speech Services guide and a lesson from the afplay false-success incident. No full test sweep. TASK-1880 remains partly open for caller-scoped/default PCM selection. Task renumbered from 32051 after a 189 remote-ref / all-worktree audit found an unrelated concurrent task with that ID; highest observed was 32075.
 
-PR #2520 follow-up: CI caught the new PCM helper on the boot path (974 modules against 973). Call-site imports and an explicit absent-at-ready pin restore 973/973; 4 census tests and 94 PCM/UI/streaming regressions pass. The unchanged dev CSS base was already 241 bytes over its 804,000 limit; shortening one existing comment saves 497 bytes, preserves every non-comment CSS token, and restores 803,744 bytes. The CSS regression passes. No budget constants were raised; existing ADR-097 governs this fix. PR CI/review results remain pending.
+PR #2520 follow-up: CI caught the new PCM helper on the boot path (974 modules against 973). Call-site imports and an explicit absent-at-ready pin restore 973/973; 4 census tests and 94 PCM/UI/streaming regressions pass. The unchanged dev CSS base was already 241 bytes over its 804,000 limit; shortening one existing comment saves 497 bytes, preserves every non-comment CSS token, and restores 803,744 bytes. The CSS regression passes. No budget constants were raised; existing ADR-097 governs this fix. All PR CI jobs passed on 272f074 before the review follow-up.
+
+Qodo follow-up addresses all eight comments: failed playback now terminates both UI/event consumers and releases artifacts; Higgs retains cleanup through host cancellation and bounds actual source/float32 buffers; public playback, limit-boundary and error-field tests cover the missing paths; PCM protocol constants and Chatterbox request/yield docs are explicit. Higgs/manager/bridge cohort: 148 passed; shared limits/PCM: 43 passed; focused playback: 17 passed. All 304 distinct playback/lifecycle cases passed across broad and focused runs after stabilizing one existing scheduler-racy ordering test (38 passed module rerun). Six actual device formats again preserved full duration and complete transcripts. Fresh independent review found no further actionable issues. All 6 preflight checks, focused formatting/syntax and baseline-relative lint pass; no new logging calls and no inventory regeneration needed. Review-fix commit and its PR gates remain pending.
 <!-- SECTION:NOTES:END -->

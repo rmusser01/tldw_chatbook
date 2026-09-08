@@ -12520,3 +12520,11 @@ frames/content **and** player elapsed time/completion; a nonempty file and a
 successful process exit can both conceal an unsupported format. Also retain
 the exact process in completion callbacks: a late previous monitor must not
 finish the next clip.
+
+PR #2520's Qodo review then exposed a second gap: the player correctly reported
+ERROR, but Speech Lab kept polling and spoken feedback reported success at its
+timeout. Mounted playback and public utterance tests reproduced eight failures
+that direct player tests missed. A manager-level Higgs close test also missed
+that its host detaches the manager at shutdown; a real host/manager test proved
+cleanup must remain owned past that deadline. Verify terminal outcomes and
+resource release through the caller that actually owns the operation.

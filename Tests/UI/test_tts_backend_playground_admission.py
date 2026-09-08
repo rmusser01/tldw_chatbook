@@ -15,12 +15,12 @@ import wave
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import httpx
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Select, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 from textual.worker import WorkerCancelled
 
 from Tests.UI.speech_playground_fixtures import _resolved, _wait_until
@@ -28,6 +28,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
 )
+from tldw_chatbook.TTS import audio_player as audio_player_module
 from tldw_chatbook.TTS import pcm_playback
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapter_types import TTSProviderDescriptor, TTSProviderSpec
@@ -575,6 +576,7 @@ async def test_returning_to_global_provider_keeps_its_voice_when_studio_owns_ano
         ("kokoro", "stop"),
         ("kokoro", "finish"),
         ("kokoro", "failure"),
+        ("kokoro", "error"),
         ("openai", "unknown"),
     ],
 )
@@ -635,10 +637,13 @@ async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
         assert artifact.audio_format == "pcm"
         assert artifact.path.suffix == ".pcm"
         assert artifact.path.read_bytes() == pcm
+        release = Mock(wraps=lab.handler.release_playground_result)
+        monkeypatch.setattr(lab.handler, "release_playground_result", release)
 
         exported = tmp_path / "exported.pcm"
         lab.pane._handle_audio_export(str(exported))
         assert exported.read_bytes() == pcm
+        release.reset_mock()
 
         for attempt in range(2):
             lab.pane.action_play_audio()
@@ -655,12 +660,30 @@ async def test_pcm_lab_playback_preserves_raw_export_and_refuses_unknown_shape(
                 _assert_wav(player.bodies[-1])
                 if terminal == "stop":
                     await lab.pane._stop_audio_async()
-                elif terminal == "finish":
-                    player.state = PlaybackState.FINISHED
+                elif terminal in {"finish", "error"}:
+                    player.state = (
+                        PlaybackState.ERROR
+                        if terminal == "error"
+                        else PlaybackState.FINISHED
+                    )
                     await _wait_until(
                         lab.pilot, lambda path=playback_path: not path.exists()
                     )
+                    assert lab.pane._progress_timer_task.done()
                 assert not playback_path.exists()
+            assert release.call_count == attempt + 1
+            assert lab.handler._playground_file_leases.get(artifact.path, 0) == 0
+            assert not lab.pane.query_one("#audio-play-btn", Button).disabled
+            assert lab.pane.query_one("#pause-audio-btn", Button).disabled
+            assert lab.pane.query_one("#stop-audio-btn", Button).disabled
+            if terminal == "error":
+                assert str(
+                    lab.pane.query_one("#audio-player-status", Static).content
+                ) == ("Playback failed")
+                assert (
+                    lab.app.notices.count(("Playback failed", "error")) == attempt + 1
+                )
+                assert ("Playback complete", "information") not in lab.app.notices
             assert artifact.path.read_bytes() == pcm
             assert exported.read_bytes() == pcm
 
@@ -698,6 +721,8 @@ async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retire
         )
         lab.handler._accept_playground_artifact(artifact)
         lab.pane._generation_complete(artifact)
+        release = Mock(wraps=lab.handler.release_playground_result)
+        monkeypatch.setattr(lab.handler, "release_playground_result", release)
         lab.app.audio_player = SimpleNamespace(
             get_state=AsyncMock(return_value=PlaybackState.IDLE),
             stop=AsyncMock(return_value=True),
@@ -712,12 +737,113 @@ async def test_cancelled_lab_pcm_copy_releases_its_lease_after_the_reader_retire
             assert original.exists()
             assert copies[0].exists()
             assert lab.handler._playground_file_leases[original] == 1
+            release.assert_not_called()
             finish.set()
             with pytest.raises(WorkerCancelled):
                 await playback_worker.wait()
             assert not copies[0].exists()
             assert original.exists()
             assert lab.handler._playground_file_leases.get(original, 0) == 0
+            release.assert_called_once_with(artifact.operation_id, original)
             lab.app.audio_player.play.assert_not_called()
         finally:
             finish.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_code", [0, 17, None])
+async def test_opus_lab_action_uses_real_player_and_observes_terminal_failure(
+    exit_code, backend_lab_factory, monkeypatch, tmp_path
+):
+    """Exercise application transport; the fake process makes no codec claim."""
+    player = audio_player_module.SimpleAudioPlayer()
+    player._system = "Darwin"
+    monkeypatch.setattr(audio_player_module, "_audio_player_instance", player)
+    monkeypatch.setattr(
+        audio_player_module.shutil,
+        "which",
+        lambda name: (
+            "/test/ffplay" if name == "ffplay" and exit_code is not None else None
+        ),
+    )
+    finished = threading.Event()
+    process = MagicMock()
+    process.poll.side_effect = lambda: exit_code if finished.is_set() else None
+
+    def wait(timeout=None):
+        assert finished.wait(5 if timeout is None else timeout)
+        return exit_code
+
+    process.wait.side_effect = wait
+    process.terminate.side_effect = finished.set
+    process.kill.side_effect = finished.set
+    spawn = Mock(return_value=process)
+    monkeypatch.setattr(audio_player_module.subprocess, "Popen", spawn)
+
+    async with backend_lab_factory("kokoro") as lab:
+        original = tmp_path / "owned.opus"
+        original.write_bytes(b"OggS synthetic device-transport fixture")
+        artifact = STTSGeneratedAudio(
+            path=original,
+            provider_id="kokoro",
+            model_id="kokoro",
+            voice_id="af_alloy",
+            source_text="A synthetic reply.",
+            operation_id="opus-transport",
+            audio_format="opus",
+            content_type="audio/opus",
+        )
+        lab.handler._accept_playground_artifact(artifact)
+        lab.pane._generation_complete(artifact)
+        release = Mock(wraps=lab.handler.release_playground_result)
+        monkeypatch.setattr(lab.handler, "release_playground_result", release)
+        try:
+            lab.pane.action_play_audio()
+            await lab.app.workers.wait_for_complete()
+            assert isinstance(
+                lab.app.audio_player, audio_player_module.AsyncAudioPlayer
+            )
+            assert lab.app.audio_player._player is player
+            if exit_code is None:
+                spawn.assert_not_called()
+                assert ("Failed to start playback", "error") in lab.app.notices
+            else:
+                assert spawn.call_args.args[0] == [
+                    "/test/ffplay",
+                    "-nodisp",
+                    "-autoexit",
+                    "-loglevel",
+                    "error",
+                    str(original),
+                ]
+                release.assert_not_called()
+                assert lab.handler._playground_file_leases[original] == 1
+                finished.set()
+                await _wait_until(lab.pilot, lab.pane._progress_timer_task.done)
+                expected_state = (
+                    PlaybackState.FINISHED if exit_code == 0 else PlaybackState.ERROR
+                )
+                assert await lab.app.audio_player.get_state() is expected_state
+                expected_notice = (
+                    ("Playback complete", "information")
+                    if exit_code == 0
+                    else ("Playback failed", "error")
+                )
+                assert lab.app.notices.count(expected_notice) == 1
+            release.assert_called_once_with(artifact.operation_id, original)
+            assert lab.handler._playground_file_leases.get(original, 0) == 0
+            assert original.exists()
+            assert not lab.pane.query_one("#audio-play-btn", Button).disabled
+            assert lab.pane.query_one("#pause-audio-btn", Button).disabled
+            assert lab.pane.query_one("#stop-audio-btn", Button).disabled
+            assert lab.pane.query_one("#audio-player-transport").has_class("hidden")
+            if exit_code != 0:
+                assert ("Playback complete", "information") not in lab.app.notices
+                assert (
+                    str(lab.pane.query_one("#audio-player-status", Static).content)
+                    == "Playback failed"
+                )
+            await lab.pane._stop_audio_async()
+            release.assert_called_once_with(artifact.operation_id, original)
+        finally:
+            finished.set()

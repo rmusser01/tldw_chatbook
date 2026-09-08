@@ -12,6 +12,10 @@ from tldw_chatbook.Utils.secure_temp_files import (
 )
 
 _COPY_BYTES = 64 * 1024
+_PCM16_SAMPLE_WIDTH_BYTES = 2
+_RIFF_UINT32_MAX = (1 << 32) - 1
+# The RIFF size field excludes the initial eight bytes of the 44-byte WAV header.
+_WAV_RIFF_OVERHEAD_BYTES = 36
 
 
 def create_pcm16_wav_copy(
@@ -37,12 +41,17 @@ def create_pcm16_wav_copy(
         type(sample_rate) is not int
         or type(channels) is not int
         or channels not in (1, 2)
-        or not 0 < sample_rate <= 0xFFFFFFFF // (2 * channels)
+        or sample_rate <= 0
+        or sample_rate > _RIFF_UINT32_MAX // (_PCM16_SAMPLE_WIDTH_BYTES * channels)
     ):
         raise ValueError("PCM playback requires a known sample rate and channel count")
+    frame_width_bytes = _PCM16_SAMPLE_WIDTH_BYTES * channels
     with source.open("rb") as raw:
         size = os.fstat(raw.fileno()).st_size
-        if not 0 < size <= 0xFFFFFFFF - 36 or size % (2 * channels):
+        if (
+            not 0 < size <= _RIFF_UINT32_MAX - _WAV_RIFF_OVERHEAD_BYTES
+            or size % frame_width_bytes
+        ):
             raise ValueError("PCM playback requires complete signed 16-bit frames")
         destination = Path(
             create_secure_temp_file(b"", suffix=".wav", prefix="tts_pcm_playback_")
@@ -50,7 +59,7 @@ def create_pcm16_wav_copy(
         try:
             with wave.open(str(destination), "wb") as output:
                 output.setnchannels(channels)
-                output.setsampwidth(2)
+                output.setsampwidth(_PCM16_SAMPLE_WIDTH_BYTES)
                 output.setframerate(sample_rate)
                 remaining = size
                 while remaining:

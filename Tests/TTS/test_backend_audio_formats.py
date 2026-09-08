@@ -17,6 +17,8 @@ from tldw_chatbook.TTS.backends.alltalk import AllTalkTTSBackend
 from tldw_chatbook.TTS.backends.elevenlabs import ElevenLabsTTSBackend
 from tldw_chatbook.TTS.backends.higgs import HiggsAudioTTSBackend
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
+from tldw_chatbook.TTS.legacy_bridge import LegacyBackendHost
+from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
 
 np = pytest.importorskip("numpy")
 AudioSegment = pytest.importorskip("pydub").AudioSegment
@@ -228,6 +230,175 @@ async def test_higgs_cancel_keeps_inference_owned_until_it_finishes(higgs_backen
         finish.set()
         with pytest.raises(asyncio.CancelledError):
             await task
+        await higgs_backend.close()
+
+
+@pytest.mark.asyncio
+async def test_higgs_manager_close_cannot_retire_running_inference(
+    higgs_backend, monkeypatch
+):
+    started = threading.Event()
+    finish = threading.Event()
+    engine = object()
+    higgs_backend.serve_engine = engine
+    manager = TTSBackendManager({})
+    manager._backends["local_higgs_v2"] = higgs_backend
+    manager._initialized_backends.add("local_higgs_v2")
+
+    def infer(*args, **kwargs):
+        started.set()
+        assert finish.wait(5)
+        return SimpleNamespace(audio=np.zeros(16, dtype=np.float32))
+
+    higgs_backend._invoke_serve_engine_generate = infer
+    original_wait = asyncio.wait
+
+    async def shortened_wait(tasks, *, timeout=None, **kwargs):
+        # Exercise the old five-second timeout without holding the test open.
+        return await original_wait(
+            tasks, timeout=0 if timeout == 5.0 else timeout, **kwargs
+        )
+
+    monkeypatch.setattr(asyncio, "wait", shortened_wait)
+    generation = asyncio.create_task(higgs_backend._run_generation([]))
+    closing = None
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        closing = asyncio.create_task(manager.close_all_backends())
+        await asyncio.wait_for(higgs_backend._shutdown_event.wait(), timeout=1)
+        _, pending = await original_wait({closing}, timeout=0.02)
+
+        assert closing in pending
+        assert await manager.get_backend("local_higgs_v2") is higgs_backend
+        assert higgs_backend.serve_engine is engine
+        assert higgs_backend._active_tasks
+
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await generation
+        await closing
+        assert higgs_backend.serve_engine is None
+        assert not higgs_backend.model_loaded
+        assert manager.get_backend_info("local_higgs_v2") is None
+    finally:
+        finish.set()
+        await asyncio.gather(
+            generation,
+            *([closing] if closing is not None else []),
+            return_exceptions=True,
+        )
+        await higgs_backend.close()
+
+
+@pytest.mark.asyncio
+async def test_higgs_host_deadline_retains_manager_cleanup_until_native_work_finishes(
+    higgs_backend,
+):
+    started = threading.Event()
+    finish = threading.Event()
+    engine = object()
+    higgs_backend.serve_engine = engine
+    manager = TTSBackendManager({})
+    manager._backends["local_higgs_v2"] = higgs_backend
+    manager._initialized_backends.add("local_higgs_v2")
+    host = LegacyBackendHost(
+        provider_id="higgs",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+
+    def infer(*args, **kwargs):
+        started.set()
+        assert finish.wait(5)
+        return SimpleNamespace(audio=np.zeros(16, dtype=np.float32))
+
+    higgs_backend._invoke_serve_engine_generate = infer
+
+    async def generate():
+        return [
+            part
+            async for part in host.generate(
+                "local_higgs_v2",
+                OpenAISpeechRequest(
+                    input="Hello.", voice="professional_female", response_format="pcm"
+                ),
+                None,
+            )
+        ]
+
+    generation = asyncio.create_task(generate())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        with pytest.raises(TimeoutError, match="manager did not close"):
+            await asyncio.wait_for(host.close(), timeout=1)
+
+        assert host._manager_close_task is not None
+        assert not host._manager_close_task.done()
+        assert await manager.get_backend("local_higgs_v2") is higgs_backend
+        assert higgs_backend.serve_engine is engine
+        assert not generation.done()
+
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await generation
+        with pytest.raises(asyncio.CancelledError):
+            await host._manager_close_task
+        assert higgs_backend.serve_engine is None
+        assert not higgs_backend.model_loaded
+        assert not higgs_backend._active_tasks
+    finally:
+        finish.set()
+        await asyncio.gather(generation, return_exceptions=True)
+        if host._manager_close_task is not None:
+            await asyncio.gather(host._manager_close_task, return_exceptions=True)
+        await higgs_backend.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dtype", "shape", "oversized"),
+    [
+        (np.float64, (8,), False),
+        (np.float64, (9,), True),
+        (np.float64, (2, 4), False),
+        (np.float64, (2, 5), True),
+        (np.float16, (16,), False),
+        (np.float16, (17,), True),
+    ],
+)
+async def test_higgs_bounds_source_and_float32_audio_before_delivery(
+    higgs_backend, monkeypatch, dtype, shape, oversized
+):
+    monkeypatch.setattr("tldw_chatbook.TTS.audio_limits.MAX_BUFFERED_AUDIO_BYTES", 64)
+    samples = np.full(shape, 0.25, dtype=dtype)
+    higgs_backend._invoke_serve_engine_generate = lambda *a, **k: SimpleNamespace(
+        audio=samples
+    )
+    chunks = []
+
+    async def generate():
+        async for part in higgs_backend.generate_speech_stream(
+            OpenAISpeechRequest(
+                input="Hello.", voice="professional_female", response_format="pcm"
+            )
+        ):
+            chunks.append(part)
+
+    try:
+        if oversized:
+            with pytest.raises(TTSOperationError) as caught:
+                await generate()
+            assert caught.value.code == "request_invalid"
+            assert not caught.value.retryable
+            assert caught.value.recovery_action == "shorten_text"
+            assert chunks == []
+        else:
+            await generate()
+            pcm = np.frombuffer(b"".join(chunks), dtype="<i2")
+            assert len(pcm) == shape[-1]
+            assert np.all(pcm == 8191)
+    finally:
         await higgs_backend.close()
 
 

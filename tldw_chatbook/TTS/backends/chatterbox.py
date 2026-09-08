@@ -969,7 +969,16 @@ class ChatterboxTTSBackend(TTSBackendBase):
     async def generate_speech_stream(
         self, request: OpenAISpeechRequest
     ) -> AsyncGenerator[bytes, None]:
-        """Deliver one utterance while retaining exclusive inference ownership."""
+        """Deliver one utterance while retaining exclusive inference ownership.
+
+        Args:
+            request: Text, voice, speed, output format, and streaming preference.
+                Setting ``stream=False`` selects batch inference.
+
+        Yields:
+            One complete encoded file for container formats, or signed 16-bit
+            mono PCM chunks at 24 kHz when raw PCM streaming is requested.
+        """
         async with (
             self._generation_lock,
             contextlib.aclosing(self._generate_speech_stream(request)) as stream,

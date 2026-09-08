@@ -128,6 +128,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         # Shutdown and task tracking
         self._active_tasks = set()
         self._shutdown_event = asyncio.Event()
+        self._close_task: asyncio.Task[None] | None = None
         self._generation_lock = asyncio.Lock()
         self._initialization_lock = asyncio.Lock()
 
@@ -509,13 +510,15 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         if isinstance(audio_data, torch.Tensor):
             audio_data = audio_data.detach().cpu().numpy()
         audio_data = np.asarray(audio_data)
+        # Bound both the retained source and the proposed float32 conversion.
+        float32_bytes = audio_data.size * np.dtype(np.float32).itemsize
+        check_buffered_audio_size(max(audio_data.nbytes, float32_bytes))
         if (
             audio_data.ndim not in (1, 2)
             or not audio_data.size
             or not np.isfinite(audio_data).all()
         ):
             raise ValueError("Higgs Audio returned invalid audio.")
-        check_buffered_audio_size(audio_data.size * 4)
         if audio_data.ndim == 2:
             audio_data = audio_data.mean(axis=0)
         return audio_data.astype(np.float32)
@@ -1464,19 +1467,21 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             "model": self.model_path,
         }
 
-    async def close(self):
-        """Clean up resources with proper task cancellation"""
+    async def close(self) -> None:
+        """Retain cleanup through cancellation until native workers have stopped."""
+        self._shutdown_event.set()
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_resources())
+        await join_retained_task(self._close_task)
+
+    async def _close_resources(self) -> None:
+        """Release the model only after all owned native work finishes."""
         logger.info("HiggsAudioTTSBackend: Starting cleanup...")
 
-        # Signal shutdown to stop new operations
-        self._shutdown_event.set()
-
-        # A canceled to_thread task can still be using the model. Keep the
-        # engine and active-task ownership intact if bounded close must retry.
+        # The host bounds the foreground wait and retains this cleanup on timeout.
+        # A canceled to_thread wrapper cannot stop native work using the model.
         if self._active_tasks:
-            _done, pending = await asyncio.wait(tuple(self._active_tasks), timeout=5.0)
-            if pending:
-                raise TimeoutError("Higgs Audio inference is still stopping.")
+            await asyncio.wait(tuple(self._active_tasks))
 
         # Wait a bit for any ongoing generation to notice shutdown
         await asyncio.sleep(0.1)
