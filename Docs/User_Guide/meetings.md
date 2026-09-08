@@ -233,7 +233,8 @@ The "Live speaker labels:" rail line reports the whole sequence:
 | `downloading 12 / 44 MB` | the fetch, updated once per MB — its total counts the model files' own bytes, so it is a little under the estimate above, which counts the tarball actually transferred |
 | `warming up` | files in place; the worker process is loading them |
 | `on (ONNX)` / `on (SpeechBrain)` | labelling |
-| `off (models unavailable)` | the fetch or the load failed — recording, transcript and Library ingest are unaffected; the meeting simply keeps "You"/"Others" |
+| `off (models unavailable)` | the ONNX model fetch or load failed — recording, transcript and Library ingest are unaffected; the meeting simply keeps "You"/"Others" |
+| `off (backend unavailable)` | the labelling process itself failed (it never finished loading, or it crashed twice) — nothing to download, and the same "recording is unaffected" applies. Common on the SpeechBrain engine, where the models are already on disk |
 | `off (not enabled in settings)` | `live_diarization` is `false` (the default) |
 
 Recording never waits for any of this: the download runs on its own thread

@@ -113,6 +113,9 @@ class FakeOwner:
         #: the last one stands, so a test can drive the rail through a real
         #: warm-up sequence on the screen's own timer.
         self.diarizer_statuses: list[str | None] = []
+        #: What `diarizer_coarse_reason()` answers -- the backend's static
+        #: reason behind an "unavailable" status (TASK-31827 final review I3).
+        self.diarizer_reason: str | None = None
         self.prepared = PrepareResult(
             tap_mode=TapMode(tap_kind, "Native (macOS tap)" if tap_kind == "native_macos" else "Unavailable, mic only"),
             provider="faster-whisper", model="base.en", diarization_available=False,
@@ -161,6 +164,9 @@ class FakeOwner:
         if len(self.diarizer_statuses) > 1:
             return self.diarizer_statuses.pop(0)
         return self.diarizer_statuses[0] if self.diarizer_statuses else None
+
+    def diarizer_coarse_reason(self):
+        return self.diarizer_reason
 
     def apply_device_choice(self, kind, value):
         self.choices.append((kind, value))
@@ -1053,6 +1059,7 @@ async def test_rail_reports_a_failed_model_fetch(tmp_path):
     owner.settings.live_diarization = True
     owner.prepared.diarizer_engine = "onnx"
     owner.diarizer_statuses = ["unavailable"]
+    owner.diarizer_reason = "models unavailable"
     async with host.run_test(size=(160, 45)) as pilot:
         await pilot.pause(0.3)
         screen = host.screen_stack[-1]
@@ -1061,6 +1068,37 @@ async def test_rail_reports_a_failed_model_fetch(tmp_path):
         assert await _wait_until(
             pilot, lambda: _text(line) == "Live speaker labels: off (models unavailable)"
         )
+
+
+@pytest.mark.asyncio
+async def test_rail_blames_the_backend_not_the_models_for_a_worker_failure(tmp_path):
+    """Final review I3: `"unavailable"` is also what a SpeechBrain worker
+    that never reported READY looks like -- the default engine on any install
+    with the torch extra, and nothing to do with models. Telling that user the
+    models are unavailable points them at the wrong repair."""
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "speechbrain"
+    owner.diarizer_statuses = ["unavailable"]
+    owner.diarizer_reason = "backend unavailable"
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        screen.query_one("#meetings-start", Button).press()
+        assert await _wait_until(
+            pilot, lambda: _text(line) == "Live speaker labels: off (backend unavailable)"
+        )
+
+
+def test_the_screens_copy_of_the_models_reason_matches_the_backend():
+    """The screen keeps that string as a literal so `diarizer_local` stays
+    out of its import graph and off the per-tick path; the two must not
+    drift."""
+    from tldw_chatbook.Audio.diarizer_local import COARSE_MODELS_UNAVAILABLE
+    from tldw_chatbook.UI.Screens.meetings_screen import DIARIZER_MODELS_UNAVAILABLE
+
+    assert DIARIZER_MODELS_UNAVAILABLE == COARSE_MODELS_UNAVAILABLE
 
 
 @pytest.mark.asyncio

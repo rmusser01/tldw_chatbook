@@ -1635,6 +1635,29 @@ def test_diarizer_status_reads_the_live_backends_warm_up(tmp_path, monkeypatch):
     assert owner.diarizer_status() is None
 
 
+def test_diarizer_coarse_reason_reads_the_same_backend_as_the_status(tmp_path, monkeypatch):
+    """Final review I3: the rail needs to tell a failed model fetch apart
+    from a worker that never warmed up -- both report `"unavailable"`. The
+    reason comes from the SAME backend the status does, so a finished
+    meeting's released worker cannot answer for a running one."""
+    from tldw_chatbook.Audio.diarizer_local import COARSE_UNAVAILABLE, model_id_for
+
+    backend = FakeBackend()
+    backend.warmup_status = "unavailable"
+    backend.coarse_reason = COARSE_UNAVAILABLE
+    _backend_spy(monkeypatch, backend, engine="onnx")
+    owner = _tap_owner(
+        tmp_path, monkeypatch, live_diarization=True, diarizer_backend="onnx",
+        voiceprint_store=_store(tmp_path, model_id=model_id_for("onnx")),
+    )
+    assert owner.diarizer_coarse_reason() is None            # nothing built yet
+    owner.start()
+    assert owner.diarizer_coarse_reason() == COARSE_UNAVAILABLE
+    owner.stop()
+    owner.dismiss_learning()
+    assert owner.diarizer_coarse_reason() is None
+
+
 def test_owner_never_imports_an_engine_package(tmp_path):
     """Spec §4: the owner decides availability by `find_spec` alone -- an
     `import torch` here would put the 2 GB stack in the UI process."""

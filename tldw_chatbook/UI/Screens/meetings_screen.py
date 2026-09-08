@@ -86,6 +86,13 @@ ENROLL_SECONDS = 30.0
 #: owner's `ENGINE_NAMES` is keyed by MODEL-ID PREFIX, which is what its own
 #: `_engine_name` needs and not what this copy is keyed on.
 DIARIZER_ENGINE_NAMES = {"onnx": "ONNX", "speechbrain": "SpeechBrain"}
+#: `diarizer_local.COARSE_MODELS_UNAVAILABLE` -- the one coarse reason that
+#: means "the model fetch or load failed" rather than "the worker failed".
+#: COPIED, not imported: `diarizer_local` must stay out of this module's
+#: import graph (`Tests/Audio/test_meeting_import_safety.py`, the UI-ready
+#: census) and off the per-tick path. `test_meetings_screen.py` pins the two
+#: strings equal.
+DIARIZER_MODELS_UNAVAILABLE = "models unavailable"
 
 
 def _onnx_download_mb(embedder: str | None) -> int | None:
@@ -1048,7 +1055,13 @@ class MeetingsScreen(BaseAppScreen):
             name = self._live_engine_name
             copy = f"Live speaker labels: on ({name})" if name else ""
         elif status == "unavailable":
-            copy = "Live speaker labels: off (models unavailable)"
+            # Engine-specific (final review I3): "unavailable" is also what a
+            # SpeechBrain worker that never reported READY (or a second crash
+            # on either engine) reports, and that has nothing to do with
+            # models -- pointing the user at a download would be a wrong
+            # repair. The backend already tells the two apart.
+            models = owner.diarizer_coarse_reason() == DIARIZER_MODELS_UNAVAILABLE
+            copy = f"Live speaker labels: off ({'models' if models else 'backend'} unavailable)"
         else:                                # "downloading <a> / <b> MB", "warming up"
             copy = f"Live speaker labels: {status}"
         if copy:

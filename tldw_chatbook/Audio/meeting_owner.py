@@ -835,14 +835,33 @@ class MeetingSessionOwner:
             backend exists (live labels off, no engine resolved, or the last
             meeting's worker has been released).
         """
-        # `is_active`, not just "a session object exists": a FINISHED meeting
-        # keeps its `_diarizer` reference, and reading that made the rail go
-        # on reporting "ready" after the worker had been closed and released.
+        return getattr(self._live_backend(), "warmup_status", None)
+
+    def diarizer_coarse_reason(self) -> str | None:
+        """Why the live backend gave up, when it has (spec §7).
+
+        Returns:
+            One of `diarizer_local`'s static `COARSE_*` strings from the same
+            backend `diarizer_status()` reads, or None. The rail needs it
+            because `"unavailable"` covers both a failed ONNX model fetch and
+            a worker that never reported READY, and those point the user at
+            different repairs (final review I3).
+        """
+        return getattr(self._live_backend(), "coarse_reason", None)
+
+    def _live_backend(self) -> Any | None:
+        """The backend the rail reads: the RUNNING meeting's, else the worker
+        retained for a learning offer, else None.
+
+        `is_active`, not just "a session object exists": a FINISHED meeting
+        keeps its `_diarizer` reference, and reading that made the rail go on
+        reporting "ready" after the worker had been closed and released.
+        """
         session = self.session if self.is_active else None
         diarizer = getattr(session, "_diarizer", None) if session is not None else None
         if diarizer is None:
             diarizer = self._session_diarizer or self._retained_diarizer
-        return getattr(diarizer, "warmup_status", None)
+        return diarizer
 
     # ---- self voiceprint --------------------------------------------------
     def _voiceprint_store(self) -> Any:
