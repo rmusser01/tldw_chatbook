@@ -23568,6 +23568,19 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
             )
             return
+        if button_id and button_id.startswith("console-conversation-appearance-"):
+            # task-31207: the row's leftmost icon control opens the
+            # appearance picker (icon + color).
+            event.stop()
+            self._workspace._open_console_conversation_appearance_picker(
+                str(getattr(event.button, "conversation_id", "") or "").strip(),
+                conversation_title=str(
+                    getattr(event.button, "conversation_title", "") or ""
+                ),
+                icon=str(getattr(event.button, "icon", "") or ""),
+                color=str(getattr(event.button, "color", "") or ""),
+            )
+            return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
             await self._workspace.open_console_workspace_conversation(

@@ -35,10 +35,23 @@ GLYPH_TEMPORARY = "◌"
 GLYPH_VOICE_RECORDING = "◉"
 
 #: The voice pipeline is working WITHOUT capturing right now: model warmup /
-#: preparing messages (prefixed by the screen) and the transcribing phase
+#: preparing messages (prefixed by the screen) and transcribing phase
 #: (composer voice chip). CN-05 (TASK-2154.13): these used to share
 #: ``GLYPH_TEMPORARY``'s "◌" with temporary-session tabs; "◌" is now
 #: temporary-only, and the half-filled circle reads as "in progress" rather
 #: than "outline of a thing". TASK-2154.19 hangs ASCII fallbacks off both
 #: voice glyphs, same as the rest of this vocabulary.
 GLYPH_VOICE_WORKING = "◐"
+
+#: task-31207: the dim placeholder drawn by a conversation row's icon control
+#: when no custom icon is set -- an empty slot inviting the click that opens
+#: the appearance picker.
+GLYPH_APPEARANCE_PLACEHOLDER = "▢"
+
+#: task-31207: what the icon control renders in ASCII-glyph mode. Arbitrary
+#: user emoji cannot map meaningfully to ASCII (and emoji rendering is what
+#: that mode exists to avoid), so a set icon degrades to a colored ``*`` and
+#: the unset placeholder to a dim ``+`` -- two distinguishable affordances
+#: without any font-dependent glyph.
+GLYPH_APPEARANCE_ASCII_SET = "*"
+GLYPH_APPEARANCE_ASCII_UNSET = "+"

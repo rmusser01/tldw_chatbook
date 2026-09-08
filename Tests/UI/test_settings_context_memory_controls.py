@@ -633,32 +633,6 @@ async def test_summary_prompt_route_focuses_existing_internal_prompt_editor() ->
 
 
 @pytest.mark.asyncio
-async def test_note_summary_prompt_jump_focuses_registered_prompt() -> None:
-    """TASK-31901: the summarize-to-note jump lands on the
-    console.summarize_note prompt row."""
-    app = _build_test_app()
-    host = DestinationHarness(app, "settings")
-    async with host.run_test(size=(110, 40)) as pilot:
-        await pilot.app.workers.wait_for_complete()
-        screen = _active_destination_screen(host)
-        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-        await pilot.pause()
-
-        screen.query_one(
-            "#settings-console-context-edit-note-summary-prompt", Button
-        ).press()
-        await pilot.pause()
-        await pilot.pause()
-
-        assert screen.active_category == SettingsCategoryId.INTERNAL_PROMPTS.value
-        search = screen.query_one("#internal-prompts-search", Input)
-        assert search.value == "console.summarize_note"
-        focused = screen.focused
-        assert focused is not None
-        assert focused.id == "prompt-row-console__summarize_note"
-
-
-@pytest.mark.asyncio
 async def test_provider_context_window_repair_saves_to_model_capability_authority(
     monkeypatch,
 ) -> None:

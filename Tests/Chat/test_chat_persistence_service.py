@@ -15,6 +15,8 @@ from Tests.Chat.test_citation_trace_repository import (
     _repository as citation_repository,
 )
 from tldw_chatbook.Canvas.staging import CanvasStagingStore
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
 from tldw_chatbook.Chat.chat_persistence_service import (
     ChatPersistenceService,
     CitationPersistenceUnavailable,
@@ -2932,3 +2934,182 @@ def test_update_roleplay_context_propagates_second_conflict():
         )
 
     assert db.update_attempts == 2
+
+
+@pytest.mark.integration
+class TestConsoleConversationAppearance:
+    """task-31207: appearance rides conversations.metadata like console_speech."""
+
+    _created = 0
+
+    def _create_conversation(self, db_instance) -> str:
+        TestConsoleConversationAppearance._created += 1
+        character_id = db_instance.add_character_card(
+            {"name": f"Ivy {TestConsoleConversationAppearance._created}"}
+        )
+        return ChatPersistenceService(db_instance).create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+
+    @staticmethod
+    def _appearance_service(db_instance) -> ChatConversationService:
+        return ChatConversationService(db_instance)
+
+    @staticmethod
+    def _version(db_instance, conversation_id: str) -> int:
+        record = db_instance.get_conversation_by_id(conversation_id)
+        assert record is not None
+        return int(record["version"])
+
+    def test_round_trip_through_versioned_update(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance()
+        )
+
+        version = self._version(db_instance, conversation_id)
+        assert version is not None
+        assert service.update_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪", color="#f87171"),
+            expected_version=version,
+        )
+
+        # The write bumped the version; reads see the new values.
+        assert self._version(db_instance, conversation_id) == version + 1
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance(icon="🧪", color="#f87171")
+        )
+
+    def test_update_preserves_metadata_siblings(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        version = self._version(db_instance, conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps({"console_speech": {"paused": True}})},
+            version,
+        )
+
+        version = self._version(db_instance, conversation_id)
+        assert service.update_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🎨"),
+            expected_version=version,
+        )
+        stored = json.loads(
+            db_instance.get_conversation_by_id(conversation_id)["metadata"]
+        )
+        assert stored["console_speech"] == {"paused": True}
+        assert stored["console_appearance"] == {"icon": "🎨", "color": None}
+
+    def test_update_rejects_stale_version(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        version = self._version(db_instance, conversation_id)
+
+        assert not service.update_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪"),
+            expected_version=version + 5,
+        )
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance()
+        )
+
+    def test_missing_conversation_fails_closed(self, db_instance):
+        service = self._appearance_service(db_instance)
+        assert service.get_conversation_appearance("") == (
+            ConsoleConversationAppearance()
+        )
+        assert service.get_conversation_appearance("no-such-id") == (
+            ConsoleConversationAppearance()
+        )
+        assert not service.update_conversation_appearance(
+            conversation_id="no-such-id",
+            appearance=ConsoleConversationAppearance(icon="🧪"),
+            expected_version=1,
+        )
+
+    def test_batched_read_returns_sanitized_appearances(self, db_instance):
+        service = self._appearance_service(db_instance)
+        kept = self._create_conversation(db_instance)
+        plain = self._create_conversation(db_instance)
+        version = self._version(db_instance, kept)
+        assert service.update_conversation_appearance(
+            conversation_id=kept,
+            appearance=ConsoleConversationAppearance(icon="🧪", color="#22d3ee"),
+            expected_version=version,
+        )
+        db_instance.soft_delete_conversation(plain, self._version(db_instance, plain))
+
+        appearances = service.get_conversation_appearances(
+            [kept, plain, "no-such-id"]
+        )
+        assert appearances[kept] == ConsoleConversationAppearance(
+            icon="🧪", color="#22d3ee"
+        )
+        # Soft-deleted and unknown ids contribute nothing.
+        assert plain not in appearances
+        assert "no-such-id" not in appearances
+
+    def test_batched_read_sanitizes_malformed_metadata(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        version = self._version(db_instance, conversation_id)
+        db_instance.update_conversation(
+            conversation_id,
+            {"metadata": json.dumps({"console_appearance": {"icon": "ab"}})},
+            version,
+        )
+
+        appearances = service.get_conversation_appearances([conversation_id])
+        assert appearances[conversation_id] == ConsoleConversationAppearance()
+
+    def test_set_conversation_appearance_retries_version_conflicts(self, db_instance):
+        """task-31207: a streaming reply bumping the version mid-write must
+        not fail the cosmetic click; the wrapper re-reads and retries."""
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+
+        real_update = service.update_conversation_appearance
+        calls = {"n": 0}
+
+        def _conflict_once(**kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Simulate a concurrent write: bump the row's version so the
+                # versioned update fails, exactly like a real conflict.
+                db_instance.update_conversation(
+                    conversation_id, {"title": "moved underneath"}, kwargs["expected_version"]
+                )
+                return False
+            return real_update(**kwargs)
+
+        service.update_conversation_appearance = _conflict_once  # type: ignore[method-assign]
+        try:
+            assert service.set_conversation_appearance(
+                conversation_id=conversation_id,
+                appearance=ConsoleConversationAppearance(icon="🧪", color="#22d3ee"),
+            )
+        finally:
+            service.update_conversation_appearance = real_update  # type: ignore[method-assign]
+        assert calls["n"] == 2
+        assert service.get_conversation_appearance(conversation_id) == (
+            ConsoleConversationAppearance(icon="🧪", color="#22d3ee")
+        )
+
+    def test_set_conversation_appearance_gives_up_after_max_attempts(self, db_instance):
+        service = self._appearance_service(db_instance)
+        conversation_id = self._create_conversation(db_instance)
+        service.update_conversation_appearance = lambda **kwargs: False  # type: ignore[method-assign]
+        assert not service.set_conversation_appearance(
+            conversation_id=conversation_id,
+            appearance=ConsoleConversationAppearance(icon="🧪"),
+            max_attempts=2,
+        )
