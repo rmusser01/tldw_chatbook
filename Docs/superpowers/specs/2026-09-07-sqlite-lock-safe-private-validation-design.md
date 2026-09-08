@@ -2,7 +2,7 @@
 
 Date: 2026-09-07
 Status: Approved, including the native-close amendment
-Runtime decision: Python >=3.12 approved by user on 2026-09-07; not yet implemented
+Runtime decision: Python >=3.12 approved by user on 2026-09-07; Task5a runtime floor and admission implemented and reviewed at c007b696d
 Task: TASK-31942
 ADR: [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md)
 
@@ -20,7 +20,10 @@ reproduced ordinary-exit deletion. That supports the approved amendment below,
 not production qualification or a weakened preservation requirement. The user
 approved Python >=3.12 after reviewing these results, then approved the written
 native-close amendment. The updated implementation plan resumes with runtime
-admission (Task5a), then live integration (Task5b). The production shutdown gate
+admission (Task5a), then live integration (Task5b). Task5a passed independent spec
+and quality review at c007b696d: the active floor and pre-initialization native
+capability check are implemented. Live-handle policy is not yet integrated.
+The production shutdown gate
 must still pass; approval does not turn the diagnostic spike into qualification.
 
 Repair private-file inspection without canceling locks held by live SQLite

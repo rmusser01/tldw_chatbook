@@ -378,6 +378,7 @@ Task5b integrates that policy with the reviewed helper and owns the shutdown gat
 - Modify `pyproject.toml` (requires-python, classifiers, mypy target); `README.md`, `AGENTS.md`, `CLAUDE.md`, `Packaging/README.md`, `Packaging/windows/build_windows.py`, `scripts/preflight.sh`, `run_all_tests_with_report.py`, and active examples in `scripts/terminal_qualification/README.md`.
 - Modify `.github/workflows/derived-artifacts.yml`, `.github/workflows/test.yml`, `.github/workflows/nightly-deep.yml`, `.github/workflows/css-bundle-guard.yml`; corresponding `Tests/CI/test_github_actions_test_workflow.py`, `test_ci_queue_pressure_contract.py`, `test_derived_artifacts_workflow.py` only where their qualification contracts change.
 - Modify `Tests/Architecture/test_python_floor_syntax.py`; preserve the explicitly legacy 3.11 detector in `Tests/floor_syntax.py` unless a small docstring clarification is necessary. No general syntax-parser rewrite.
+- Modify `Tests/DB/test_private_sqlite_inventory.py` and `backlog/docs/sqlite-private-owner-inventory.md` only to account for the approved fixed, argument-free capability probe's literal `sqlite3.connect(":memory:")`. This creates no filesystem owner or new public connection seam. Keep all file/URI connections under the existing registration policy.
 
 **Interfaces:**
 
@@ -386,7 +387,7 @@ Task5b integrates that policy with the reviewed helper and owns the shutdown gat
 - Missing/rejected public capability maps to `ProfileRepositoryError("runtime_unsupported") from None`. Add that closed code and fixed public text: `TTS profile repository unavailable: SQLite runtime lacks required close-policy support.` Preserve bounded error serialization; do not include SQLite exception text or paths. Do not translate unrelated programming errors with an indiscriminate catch-all.
 - `_worker_open` performs the probe after any already-owned cleanup and before canonicalizing/initializing a new store or acquiring new store/helper ownership. Preserve existing cleanup owners and normal error propagation. A failed probe does not latch terminal proof loss.
 
-- [ ] Add the new policy tests with a real native handle and missing-capability negative control:
+- [x] Add the new policy tests with a real native handle and missing-capability negative control:
 
 ```python
 import sqlite3
@@ -418,8 +419,8 @@ def test_missing_constant_refuses_before_opening_probe(monkeypatch):
 ```
 
 Native positive tests require the declared supported capability; report an unavailable build as an explicit qualification gap, not a fake pass. Add focused proxies for missing methods, rejected `setconfig`, rejected/false `getconfig`, and source-text sentinel suppression. Verify the owned probe closes on configuration failure and success; the borrowed configuration helper never closes. Test the closed code survives pickling and unknown codes still map to `operation_failed`.
-- [ ] Run `../../.venv/bin/python -m pytest -q Tests/TTS/test_profile_sqlite_policy.py` and record RED for the absent API.
-- [ ] Implement the leaf policy and closed error mapping. Keep configuration equivalent to the following, with explicit capability checks and the specified bounded mapping around SQLite's public capability refusals:
+- [x] Run `../../.venv/bin/python -m pytest -q Tests/TTS/test_profile_sqlite_policy.py` and record RED for the absent API.
+- [x] Implement the leaf policy and closed error mapping. Keep configuration equivalent to the following, with explicit capability checks and the specified bounded mapping around SQLite's public capability refusals:
 
 ```python
 option = sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE
@@ -428,12 +429,13 @@ if connection.getconfig(option) is not True:
     raise ProfileRepositoryError("runtime_unsupported")
 ```
 
-- [ ] Add `test_unsupported_runtime_refuses_before_store_initialization` to the lifecycle tests. Patch the repository's imported preflight function to raise `runtime_unsupported`, then open a repository under a nonexistent `tmp_path / "not-created" / "profiles.sqlite3"`. Assert that exact error, no parent/store/lease/helper creation and bounded `close()`. Restore preflight and prove a fresh owned repository can open/close, with admission counters unchanged. Run that exact node RED before inserting the probe; run GREEN afterward.
-- [ ] Add runtime-floor metadata tests before changing metadata. Parse TOML with `tomllib` and assert `requires-python == ">=3.12"`, no Python3.11 classifier and mypy target `3.12`. Check the named active build/preflight floors and qualification CI jobs, not every historical 3.11 string in the repository. Run `Tests/Packaging/test_python_runtime_floor.py` RED.
-- [ ] Update the named metadata/docs/scripts and CI contracts. Minimum package/AST qualification jobs move to 3.12. Remove the unsupported Ubuntu3.11 nightly row instead of duplicating the existing Ubuntu3.12 row. Preserve Ubuntu3.12/3.13, macOS3.12 and Windows3.12/cp1252 rows, existing triggers, concurrency, sequencing and budgets. Leave standalone backlog guard and standalone CI-shape-only Python3.11 jobs unchanged because they do not install/parse Chatbook. Do not bump `packages/tldw_profile_core`, vendored projects, backend-specific environments or dependencies; retain historical Windows3.11 evidence.
-- [ ] Correct the syntax guard's coupling to the old floor. Keep historical PEP701 verdicts explicitly labeled Python3.11, including an optional comparison with an actual 3.11 interpreter. The supported-floor guard must compile every shipped module on the actual declared interpreter, including when pytest itself is running on 3.12 (remove that early skip). On newer test runtimes, report missing 3.12 explicitly; minimum-runtime CI must execute the real compile check. Do not use `ast.parse(feature_version=...)` as tokenizer evidence or keep applying the legacy PEP701 detector as a 3.12 rejection rule.
-- [ ] Add real-floor positive and negative controls to that guard: `x = f"{ {"k": 1}["k"] }"` compiles on 3.12; `def broken(: pass` does not. Feed these through the same subprocess compile harness used by the shipped-module check. This protects the guard when accepting now-valid PEP701 source; no runtime download during tests.
-- [ ] Run the bounded selection below and `zsh -n scripts/preflight.sh`; syntax-check the two changed Python entry scripts without executing their build/full-suite bodies. Run static checks on the touched files and inspect the full active-runtime diff for accidental historical/vendor/dependency changes.
+- [x] Add `test_unsupported_runtime_refuses_before_store_initialization` to the lifecycle tests. Patch the repository's imported preflight function to raise `runtime_unsupported`, then open a repository under a nonexistent `tmp_path / "not-created" / "profiles.sqlite3"`. Assert that exact error, no parent/store/lease/helper creation and bounded `close()`. Restore preflight and prove a fresh owned repository can open/close, with admission counters unchanged. Run that exact node RED before inserting the probe; run GREEN afterward.
+- [x] Add runtime-floor metadata tests before changing metadata. Parse TOML with `tomllib` and assert `requires-python == ">=3.12"`, no Python3.11 classifier and mypy target `3.12`. Check the named active build/preflight floors and qualification CI jobs, not every historical 3.11 string in the repository. Run `Tests/Packaging/test_python_runtime_floor.py` RED.
+- [x] Account for exactly one raw call at `TTS/profile_sqlite_policy.require_native_close_policy_support` in the existing raw census. Pair the exact count/site with a source guard requiring that argument-free function's call to be `sqlite3.connect(":memory:")` with no URI, factory, alternate argument or forwarded input. Exercise accepted literal memory plus refused file, URI, variable-target and duplicate-call synthetic controls; retain every prior alias/bypass control. Document the memory-only exception beside the census, not as a fictitious file owner. The existing unrelated raw Collections call must remain a census failure until separately corrected; no general raw-memory bypass is introduced.
+- [x] Update the named metadata/docs/scripts and CI contracts. Minimum package/AST qualification jobs move to 3.12. Remove the unsupported Ubuntu3.11 nightly row instead of duplicating the existing Ubuntu3.12 row. Preserve Ubuntu3.12/3.13, macOS3.12 and Windows3.12/cp1252 rows, existing triggers, concurrency, sequencing and budgets. Leave standalone backlog guard and standalone CI-shape-only Python3.11 jobs unchanged because they do not install/parse Chatbook. Do not bump `packages/tldw_profile_core`, vendored projects, backend-specific environments or dependencies; retain historical Windows3.11 evidence.
+- [x] Correct the syntax guard's coupling to the old floor. Keep historical PEP701 verdicts explicitly labeled Python3.11, including an optional comparison with an actual 3.11 interpreter. The supported-floor guard must compile every shipped module on the actual declared interpreter, including when pytest itself is running on 3.12 (remove that early skip). On newer test runtimes, report missing 3.12 explicitly; minimum-runtime CI must execute the real compile check. Do not use `ast.parse(feature_version=...)` as tokenizer evidence or keep applying the legacy PEP701 detector as a 3.12 rejection rule.
+- [x] Add real-floor positive and negative controls to that guard: `x = f"{ {"k": 1}["k"] }"` compiles on 3.12; `def broken(: pass` does not. Feed these through the same subprocess compile harness used by the shipped-module check. This protects the guard when accepting now-valid PEP701 source; no runtime download during tests.
+- [x] Run the bounded selection below and `zsh -n scripts/preflight.sh`; syntax-check the two changed Python entry scripts without executing their build/full-suite bodies. Run static checks on the touched files and inspect the full active-runtime diff for accidental historical/vendor/dependency changes.
 
 ```bash
 ../../.venv/bin/python -m pytest -q --tb=short \
@@ -447,7 +449,20 @@ if connection.getconfig(option) is not True:
   Tests/CI/test_derived_artifacts_workflow.py
 ```
 
-- [ ] Commit only the enumerated changed files as `feat(tts): require native SQLite close-policy capability`; obtain independent spec and quality review. Document unavailable interpreter/platform evidence and existing unrelated failures. This task alone does not claim the live flag is applied or foreign-cohort finalization is fixed.
+Also run the focused new memory-probe census guard and existing transition/alias/bypass controls in `Tests/DB/test_private_sqlite_inventory.py`; the whole inventory may be run diagnostically to distinguish its known unrelated failures, but cannot be reported green while they remain.
+
+- [x] Commit only the enumerated changed files as `feat(tts): require native SQLite close-policy capability`; obtain independent spec and quality review. Document unavailable interpreter/platform evidence and existing unrelated failures. This task alone does not claim the live flag is applied or foreign-cohort finalization is fixed.
+
+Task5a checkpoint: commits `406f1e71f` and `c007b696d` passed independent spec
+and quality review. Required selection: 106 passed, one optional historical
+Python3.11 skip, one existing Requests dependency warning; focused memory-census
+controls: 11 passed. Controller fresh critical admission/floor run: 21 passed;
+focused Ruff check, task-owned format subset and immutable diff check passed.
+Four inherited formatter failures and broader legacy lint debt remain explicit;
+the full inventory is not green. Two minor review notes (a non-counting missing-
+method proxy close assertion and baseline qualification noise) are retained for
+final review. Actual remote CI/platform execution, the optional historical
+interpreter comparison and Task5b shutdown qualification are not claimed.
 
 ### Task 5b: Migrate live TTS authority, native close policy and terminal cleanup
 
@@ -707,4 +722,4 @@ Preserve the existing source-free child fault/lifecycle captures. Do not reinter
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4 have already passed their independent gates; do not restart them. Task5a then Task5b resume the user's selected subagent-driven workflow, with separate spec/quality gates before Task6/7. None of the amendment implementation is complete at this plan checkpoint. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4 and Task5a have passed their independent gates; do not restart them. Task5b resumes the user's selected subagent-driven workflow before Task6/7. Runtime admission is complete; live ownership, cleanup and production shutdown remain unqualified. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
