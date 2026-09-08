@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:24'
-updated_date: '2026-09-08 21:52'
+updated_date: '2026-09-08 22:32'
 labels:
   - library
   - notes
@@ -52,4 +52,6 @@ Root cause: LibraryNotesCanvas.apply_session_state rewrote the title Input from 
 RESIDUAL, needs its own task (not this AC): with title, Tab and body sent as one uninterrupted burst, the Tab focus move lands AFTER the burst, so the body text is appended to the title ('My third notehello from jordan, testing the library'). Nothing is scrambled or lost now, and with ~1 s between the three sends it is correct ('My fourth note' / 'a real body'). A bare two-Input Textual app routes the same burst correctly, so this is this screen's key-dispatch cost, not a Textual given.
 
 Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py; Tests/UI/test_library_crit8_polish_shell.py (4 tests); Docs/User_Guide/library/notes.md. Commits 086e76e813 (deferral) and ab929759cc (the focused-field guard, folded in by a parallel commit on this branch).
+
+FIX ROUND 2 (scoped re-review). The first round's deferral introduced a regression: _sync_library_canvas queues the Notes focus restore on the work pane, and a pane that declines to recompose never consumes it -- it fired at the NEXT recompose and pulled focus back out of the field the reader had moved to (same lateness for LibraryNoteWorkPane.EditorReady, whose handler re-lands an untouched create on the title). The refresh is now SKIPPED rather than held open: the blur handler and deferred apply are gone, and canvas_sync builds neither the restore nor a work-pane follow-up while the reader owns the editor (notes_editor_owned). The next refresh arriving with focus outside the title/body paints the stored state. Two probes drive the real seam (_sync_library_canvas), not sync_state directly -- which is exactly where the regression hid. Commit 65d0cdd406.
 <!-- SECTION:NOTES:END -->
