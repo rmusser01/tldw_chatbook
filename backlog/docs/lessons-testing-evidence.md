@@ -12126,3 +12126,13 @@ affected cancellation before provider entry.
 compositor output. An orphaned polling timer is a concrete lifecycle defect;
 without repeated paint evidence, it does not establish the cause of a reporter's
 visible terminal flicker.
+
+**TASK-32012 follow-up.** Holding provider validation open after Enter still
+produced zero full-screen updates and stable geometry, but actual partial spans
+repainted the unchanged transcript title, composer reason and footer hints about
+five times per second. Suppressing equal text writes at those three widgets in
+the experiment left only caret paints. The mounted regression therefore checks
+emitted partial spans, alongside full-screen updates, and then completes the send.
+The first implementation caught only one of two heading writers; the real-paint
+assertion remained red until both were guarded. Keep responsive width and
+visibility recalculation outside text equality guards.

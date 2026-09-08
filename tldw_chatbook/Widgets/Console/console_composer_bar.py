@@ -1909,14 +1909,14 @@ class ConsoleComposerBar(Horizontal):
             # never re-parsed as markup, so a future reason carrying "[...]"
             # cannot smuggle in styling or a second action.
             if self.has_class("console-composer-setup-blocked"):
-                strip.update(
-                    Content.from_markup(
-                        "[@click=app.run_setup_wizard]$reason ›[/]",
-                        reason=reason,
-                    )
+                reason_content = Content.from_markup(
+                    "[@click=app.run_setup_wizard]$reason ›[/]",
+                    reason=reason,
                 )
             else:
-                strip.update(Content(reason))
+                reason_content = Content(reason)
+            if strip.content != reason_content:
+                strip.update(reason_content)
             # TASK-24415: the cap is a function of the live row width so the
             # draft keeps its floor; below a legible budget the strip hides
             # entirely (the Send tooltip still carries the reason).
@@ -1936,7 +1936,8 @@ class ConsoleComposerBar(Horizontal):
                 strip.styles.height = 0
                 strip.styles.min_height = 0
         else:
-            strip.update(Content(""))
+            if strip.content != Content(""):
+                strip.update(Content(""))
             strip.styles.display = "none"
             strip.styles.width = 0
             strip.styles.min_width = 0

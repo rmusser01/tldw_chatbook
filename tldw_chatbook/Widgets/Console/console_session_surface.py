@@ -800,7 +800,9 @@ class ConsoleSessionSurface(Vertical):
         self._session_title = normalized or None
         try:
             header = self.query_one("#console-transcript-title", Static)
-            header.update(self._render_transcript_title())
+            title_content = self._render_transcript_title()
+            if header.content != title_content:
+                header.update(title_content)
         except Exception:
             return
 
@@ -824,7 +826,9 @@ class ConsoleSessionSurface(Vertical):
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
             return
-        title.update(self._render_transcript_title())
+        title_content = self._render_transcript_title()
+        if title.content != title_content:
+            title.update(title_content)
 
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
