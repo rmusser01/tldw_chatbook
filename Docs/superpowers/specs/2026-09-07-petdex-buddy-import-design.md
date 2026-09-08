@@ -52,11 +52,24 @@ links, duplicate members, metadata size, image size and total decoded pixels bef
 conversion. Read only declared metadata and image payloads, treating other text as
 data; executable files are never run or imported into a native asset directory.
 Malformed declarations or ambiguous sprite choices stop review rather than selecting
-the first file. Reuse existing private staging and archive validation primitives.
+the first file. Preserve package-local license/notice files as bounded data in the
+reviewed provenance carrier, rather than discarding everything except images/JSON.
+Reuse existing private staging and archive validation primitives.
 
 Metadata JSON is limited to 2 MiB, downloaded image bytes to 25 MiB and dimensions
 to the native 4096-pixel edge limit; native decoded-pixel and total-pack budgets
-also apply. Registry responses have a 10 MiB cap. Failed or cancelled network/import
+also apply. Registry responses have a 10 MiB cap after content decoding. Enforce
+streaming read limits rather than trusting Content-Length; reject compressed
+responses that exceed the decoded cap. Capture destination authority before fetch
+and recheck after every asynchronous stage and before publication. The existing
+`Utils/egress.py` guards URLs and redirects but explicitly does not pin the checked
+DNS result to the connection. Reuse its policy and bounded-fetch behavior; do not
+claim it already validates the actual peer. Before enabling remote import, define
+and test a connection-pinning adapter that preserves HTTPS hostname verification,
+checks every redirect, and does not allow a proxy to bypass destination checks.
+Keep local package import independently usable if that adapter is unavailable.
+This transport addition belongs in the Petdex ADR and implementation plan.
+Failed or cancelled network/import
 operations clean only their owned staging. Authentication/rate-limit errors are
 reported explicitly without turning a failed remote import into a false success.
 
@@ -68,11 +81,15 @@ regions. Preserve per-state frame counts and timing, converting whole-loop durat
 to integer frame durations whose sum matches the original. Do not stretch or crop
 away character features to force an unsupported layout.
 
-Use declared supported named states when available. For absent declarations, use
-the pinned nine-row classic state mapping and timings; in an eleven-row sheet,
-preserve additional rows as explicitly unnamed custom sequences requiring preview,
-not invented emotions. Unknown versions/layouts are rejected rather than guessed.
-Persist how defaults were selected in conversion provenance.
+Use only supported, validated state declarations or an explicitly recognized
+version's pinned layout. The nine-row classic mapping is established by the source
+review; eleven-row geometry alone does not prove row semantics, used-cell counts or
+timing. Do not apply the classic mapping to v2 by assumption. If v2 metadata is
+insufficient, keep import unpublished and offer manual row/frame-count/timing
+mapping with a visual preview. Cancellation creates nothing. A tested official v2
+mapping can be added without manual mapping once backed by fixtures. Reject
+conflicting metadata/version/dimensions; do not prefer whichever happens to parse.
+Persist the mapping source (declared, pinned classic, or user-reviewed).
 
 Suggested required-state mappings:
 
@@ -86,8 +103,8 @@ Suggested required-state mappings:
 
 Retain waving, jumping, directional runs and other available states as custom
 animations with original labels. Preview all mappings and identify defaults,
-fallbacks and missing states. Require explicit review of unnamed rows; users may
-exclude them. Honor native minimum/maximum frame durations rather than accepting
+fallbacks and missing states. Manually mapped rows require exact frame counts and
+timing; users may exclude them. Honor native minimum/maximum frame durations rather than accepting
 invalid timing metadata. Final publication requires the existing activatable-state
 validator to succeed; no fabricated happy/sad artwork fills gaps.
 
@@ -99,8 +116,9 @@ workflow without a separate Petdex-specific character pathway.
 
 ## Acceptance and evidence
 
-- Local v1, v2, scaled sheets and public object/compact manifests share a verified
-  source-to-native conversion path, with correct region pixels, frame counts and timing.
+- Local v1, fully declared v2, manually mapped v2, scaled sheets and public
+  object/compact manifests share a verified source-to-native conversion path, with
+  correct region pixels, frame counts and timing. Undeclared v2 never guesses rows.
 - Distinct sentinel colors/pixels in rows catch row swaps, off-by-one crops and use
   of unused atlas cells. Missing speaking animation is visibly an idle fallback.
 - Unknown versions, oversized/decompression-bomb images, invalid paths, symlinks,

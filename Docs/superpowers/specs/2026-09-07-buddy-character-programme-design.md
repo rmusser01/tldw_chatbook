@@ -1,6 +1,6 @@
 # Buddy imports and animated character expressions
 
-Status: Design review
+Status: Reviewed design; implementation pending
 Date: 2026-09-07
 Creator: tldw-project
 
@@ -14,8 +14,9 @@ floating Buddy to remain enabled, installed, or selected.
 Settings → Appearance exposes Character expressions: Dynamic or Static. Dynamic
 plays available animation, with static fallback. Static still changes expression
 with the interaction; it freezes animation within the selected expression.
-Existing reaction-off behavior retains the neutral portrait. Reduce motion and
-disabled application animations take precedence over Dynamic.
+Existing reaction-off behavior retains the neutral portrait unless a manual
+reaction is explicitly selected, preserving current manual-selection precedence.
+Reduce motion and disabled application animations take precedence over Dynamic.
 
 The user explicitly selected independent copies and animation with static fallback.
 The Dynamic default and immediate settings application were presented before the
@@ -62,13 +63,20 @@ animated Console expressions already work.
   and `backlog/decisions/122-bundled-pixel-migu-character-and-buddy.md`.
 - Reason: explicit conversion between previously separate visual contracts,
   external import trust boundaries, local ownership and long-lived motion UX.
-- New decision: record a narrowly scoped amendment to ADR-074 after this design
-  review. It authorizes explicit snapshot conversion, not live runtime coupling.
-  Allocate its canonical number against current dev/open work when filing it.
+- Playback decision: [ADR-128](../../../backlog/decisions/128-character-expression-playback.md)
+  records the motion preference and rendering lifecycle.
+- Conversion and Petdex decisions: file separate narrowly scoped decisions before
+  their implementation plans, including the portable notice carrier and remote
+  connection validation. Explicit snapshot conversion does not authorize live
+  runtime coupling. Allocate canonical numbers against current dev/open work.
 
-No database migration is expected for animation assets. Confirm publication and
-source-context requirements during implementation planning; do not introduce an
-unversioned schema extension if the existing fields prove insufficient.
+No database migration is expected for animation assets. Playback uses existing
+animated-image bytes and their first composited frame, avoiding a portable poster
+index extension. Conversion does require explicit provenance/notice preservation
+in publication and portable formats; current publishers/exporters do not preserve
+it sufficiently. Its separate implementation plan must define the bounded versioned
+carrier before coding. Do not claim that existing JSON storage alone proves
+end-to-end metadata portability.
 
 ## Scope and preservation
 
@@ -103,6 +111,11 @@ rendered result, not merely settings values or a timer invocation. Use disposabl
 profiles and databases. Full-suite execution requires the repository's normal
 user opt-in; targeted import, database, renderer and settings tests are the default.
 
+See the [design review](../reviews/2026-09-07-buddy-character-design-review.md)
+for source-backed corrections and the encoder experiment.
+
 This branch contains design documents only. There is no runtime implementation,
 new schema, new installed pet, published art pack, or test-pass claim for the
-proposed behavior. Review the specs before writing implementation plans.
+proposed behavior. The design review is complete; playback can advance to its
+implementation plan. Conversion and Petdex planning must resolve the specific
+portable metadata and transport contracts recorded above.

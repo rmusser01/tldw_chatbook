@@ -13,7 +13,8 @@ Also accept an imported native Buddy archive as a conversion source. Review show
 1. Source Buddy, creator and immutable revision/archive digest.
 2. New character name, portrait and optional personality/greeting text.
 3. Available animations and suggested expression mappings, playable in Dynamic or
-   Static preview, with a selectable representative frame.
+   Static preview. Static shows the first composited frame of the encoded result;
+   the character portrait has a separate source-pose choice.
 4. Missing expressions, explicit fallback choices and source/license notices.
 5. Create character, followed by an explicit Open in Console action.
 
@@ -65,29 +66,64 @@ authored speaking reaction. Require a valid neutral/portrait selection to publis
 ## Asset conversion and provenance
 
 For each selected sequence, render frame regions/alignment on a stable transparent
-canvas. Preserve order, duration and loop behavior. Encode multi-frame sequences as
+canvas. Flatten the native frame selection exactly: a Persona Visual frame pointing
+at an animated source image uses the native selected raster frame and does not
+implicitly expand nested animations. Preserve the resulting visible timeline and
+loop behavior. Encode multi-frame sequences as
 lossless animated WebP using existing Pillow capabilities; verify the codec is
 available. Single-frame sequences become PNG. When animation encoding is unavailable,
 offer the reviewed static result with a clear explanation; do not report animation
 as preserved. Encoded output must pass the native Visual Identity image validator.
+Preflight the destination limits as well as source limits: Persona Visual permits
+256 assets/custom-state sets while Shared Visual Identity allows 128 expression
+assets. Refuse silent truncation; review must let the user reduce the selection.
+Bound conversion canvas pixels and total decoded/encoded bytes before allocation.
+
+An encoder can coalesce adjacent equal frames. Derive frame count and durations
+from the decoded output, not the source list. Compare the composited pixel timeline
+at source/output transition boundaries and total duration, rather than requiring
+equal frame indices. Record finite-loop conversion explicitly: source loop=false
+means one play; source loop=true means infinite. Normalize GIF repetition counts
+and WebP loop counts to total plays at the decoder boundary. A generated sequence
+that coalesces to one frame is published as a static PNG. If the codec cannot retain
+the required pixels, alpha, timing or loop semantics, offer static conversion or
+cancel with an explanation, not an allegedly faithful animation.
 
 Store the chosen static portrait separately in the character's normal image field.
-Keep the expression's preview index in a validated namespaced entry of the existing
+Keep conversion provenance in a validated namespaced entry of the existing
 `source_context_json`: `tldw/buddy_conversion`, version 1. It records source identity
 and revision/digest, original creator/license/source URL, conversion date, and
-per-expression source state, source frame hashes, preview index and fallback use.
+per-expression source state, source/output hashes and fallback use.
 Only bounded known fields are consumed; no embedded instructions are executed.
 
-Expose the validated preview index to the local playback DTO. A missing or invalid
-index defaults to frame zero. The animation retains its original order. Export
-preserves source attribution and conversion metadata; consumers without that
-metadata can still display the ordinary animated image and first-frame fallback.
+This provenance is not runtime authority and does not select animation frames.
+Bind per-expression records to output SHA-256. Replacing an image clears its old
+conversion record; retaining an image through an edit preserves the record.
 
-Create character rows, immutable visual version and binding through existing local
-repositories/publication services under a coordinated transaction. Stage assets in
-the private destination filesystem before publication. A failure must leave no
-selectable half-character or binding; clean unpublished assets with the existing
-publication recovery/cleanup mechanism. Do not introduce a second cross-store journal.
+Publication and portability need explicit changes: the current editor publisher
+replaces source context with local bookkeeping and stamps `SAMIRA_LICENSE`; Actor
+Pack export defaults root provenance/license and import drops asset context. Those
+behaviors must not be reused for foreign art. Carry source terms unchanged, including
+unspecified terms; never grant AGPL or Apache merely because conversion ran here.
+Add a bounded, versioned provenance/notice carrier to the portable contract used
+by conversion, preserve it through export/import and editing, and include it in
+archive integrity checks. Distinguish public source URLs, creator and notices from
+local authority IDs, paths and credentials, which must never be exported. Source
+notices must not be truncated to the current 256-character display-summary limit.
+The conversion implementation plan must define this additive contract and its
+compatibility fixtures before code; do not claim server notice preservation until
+its native validation/import path passes. Playback alone needs no such extension.
+
+Use the existing Actor Pack character activation boundary: privately prepare and
+verify assets first, then atomically insert the character, portable identity, visual
+version and binding in one outer SQLite transaction. Adapt a reviewed conversion
+snapshot into that service; do not call `publish_visual_identity_candidate` inside
+the transaction. That editor function rejects active transactions, and its candidate
+constructor cannot create an unbound character graph. Do not publish a dummy graph.
+A failure leaves no selectable half-character or binding. Reuse the Actor Pack's
+owned-file cleanup and expose cleanup-pending honestly. Crash recovery may leave
+unreferenced private assets but cannot leave a partially committed actor. No second
+cross-store journal is needed for SQLite-owned characters.
 
 Recheck source revision and destination authority before commit. A changed source
 requires a fresh review; cancellation removes private staging and creates no actor.
@@ -101,8 +137,12 @@ copied. A character does not inherit the Persona user's identity.
   its additional poses/sequences; actual counts are asserted from the source manifest.
 - Native checksum failure, path traversal, undeclared members, resource-limit excess,
   stale reviews and duplicate normalized mappings fail before publication.
-- Animated pixels, transparency, timings, finite/infinite loops and selected static
-  preview survive conversion, native import, database reopen and export/reimport.
+- Animated pixels, transparency, timings, finite/infinite loops and static frame-zero
+  previews survive conversion, native import, database reopen and export/reimport.
+- Equal adjacent frames and all-identical frames prove metadata is derived from the
+  output; source/destination asset and memory limits fail before oversized work.
+- Retaining/replacing an expression, profile forking and export/reimport preserve
+  the correct provenance without stale output hashes, invented licenses or local IDs.
 - Delete/edit the original Buddy and verify the character still renders and edits.
 - Inject database, staging and binding failures and confirm no partial actor leaks.
 - Open the created character in Console: live operational transitions and manual

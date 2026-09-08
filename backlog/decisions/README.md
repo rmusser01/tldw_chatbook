@@ -104,6 +104,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-118](118-chunking-lab-local-execution-and-recovery.md) | Accepted | Keep Chunking Lab local-first, with faithful full-recipe previews, immutable A/B results, conflict-safe catalog saves, and private recoverable session checkpoints. |
 | [ADR-122](122-bundled-pixel-migu-character-and-buddy.md) | Accepted | Include pixel-migu as optional fresh-profile character and Buddy content using existing ownership and runtime boundaries. |
 | [ADR-127](127-fresh-install-private-data-root-recovery.md) | Accepted | Select durable home-level private storage for fresh installs blocked by shared default ancestors. |
+| [ADR-128](128-character-expression-playback.md) | Accepted | Present Dynamic or Static Console character expressions with bounded preparation and visibility-aware playback. |
 
 ## Historical Decision Material
 
