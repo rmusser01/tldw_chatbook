@@ -43,6 +43,9 @@ class _InstalledHelper(_Info):
     status: Literal["qualified"]
     resource: Literal["_age/backup-age", "_age/backup-age.exe"]
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    python_versions: tuple[Literal["3.11", "3.12", "3.13"], ...] = Field(
+        min_length=1, max_length=3
+    )
 
 
 class _UnavailableHelper(BaseModel):
@@ -226,6 +229,9 @@ def _qualified_helper() -> Path:
         if len(matches) != 1 or not isinstance(matches[0], _InstalledHelper):
             raise CryptoError("helper_unavailable")
         manifest = matches[0]
+        current_python = ".".join(platform.python_version_tuple()[:2])
+        if current_python not in manifest.python_versions:
+            raise CryptoError("helper_unavailable")
         expected_resource = (
             "_age/backup-age.exe" if current_os == "windows" else "_age/backup-age"
         )
@@ -260,7 +266,7 @@ def _qualified_helper() -> Path:
         )
         info = _Info.model_validate_json(output.getvalue())
         if info.model_dump() != manifest.model_dump(
-            exclude={"resource", "sha256", "status"}
+            exclude={"python_versions", "resource", "sha256", "status"}
         ):
             raise CryptoError("helper_unavailable")
         return binary

@@ -86,6 +86,10 @@ REQUIRED_SDIST_PATHS = {
     "pyproject.toml",
     "requirements.txt",
     "Packaging/backup_age/LICENSE.age.txt",
+    "Packaging/backup_age/LICENSE.go.txt",
+    "Packaging/backup_age/LICENSE.hpke.txt",
+    "Packaging/backup_age/LICENSE.x-crypto.txt",
+    "Packaging/backup_age/PATENTS.go.txt",
     "Packaging/backup_age/README.md",
     "Packaging/backup_age/THIRD_PARTY_NOTICES.txt",
     "Packaging/backup_age/build_helper.py",
@@ -455,6 +459,14 @@ def _validate_backup_helper_wheel(wheel: Path, members: set[str]) -> list[str]:
             errors.append("wheel: native wheel must qualify exactly one backup helper")
             return errors
         entry = qualified[0]
+        python_versions = entry.get("python_versions")
+        if (
+            not isinstance(python_versions, list)
+            or not python_versions
+            or len(python_versions) != len(set(python_versions))
+            or not set(python_versions) <= {"3.11", "3.12", "3.13"}
+        ):
+            errors.append("wheel: native helper Python qualification is invalid")
         target = (entry.get("os"), entry.get("arch"))
         platform_tag = BACKUP_HELPER_PLATFORM_TAGS.get(target)
         if platform_tag is None or not wheel.name.endswith(
@@ -480,7 +492,14 @@ def _validate_backup_helper_wheel(wheel: Path, members: set[str]) -> list[str]:
             "sha256"
         ):
             errors.append("wheel: native helper digest differs from manifest")
-        for name in ("LICENSE.age.txt", "THIRD_PARTY_NOTICES.txt"):
+        for name in (
+            "LICENSE.age.txt",
+            "LICENSE.go.txt",
+            "LICENSE.hpke.txt",
+            "LICENSE.x-crypto.txt",
+            "PATENTS.go.txt",
+            "THIRD_PARTY_NOTICES.txt",
+        ):
             resource_name = f"{BACKUP_HELPER_ROOT}/_age/{name}"
             if resource_name not in members:
                 errors.append(f"wheel: missing backup helper notice: {resource_name}")

@@ -84,3 +84,14 @@ Modified delivery/runtime files: `pyproject.toml`, `MANIFEST.in`,
 `Packaging/backup_age/*`, `tldw_chatbook/Backup_Recovery/crypto.py`, and
 `tldw_chatbook/Backup_Recovery/helper_manifest.json`. Focused packaging and real-helper
 fixtures plus the manual native qualification workflow carry the release evidence.
+
+Review fixes carry the qualified Python minor versions into the installed manifest and
+reject unqualified interpreters before helper invocation; the py3 wheel therefore
+keeps the application installable on Python >=3.11 while encryption stays unavailable
+outside its tested cell. Native wheels now include byte-identical upstream hpke,
+x/crypto, and Go license texts plus Go's PATENTS grant; `go version -m` confirmed those
+two modules and age are the only linked non-standard dependencies. Separate fresh
+offline environments installed the sdist and editable checkout. The sdist stayed
+unavailable without `_age`; the editable environment executed the documented explicit
+contributor build into a private path and remained unavailable afterward. Fix-round
+evidence: packaging 16 passed, crypto 37 passed, and the distribution guard passed.

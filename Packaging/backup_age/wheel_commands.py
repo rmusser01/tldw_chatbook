@@ -98,8 +98,22 @@ class BackupHelperBuildPy(build_py):
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
         if digest != record["sha256"]:
             raise RuntimeError("built helper digest differs from qualification record")
+        python_versions = sorted(
+            version
+            for version, result in record["python"].items()
+            if result.startswith("passed_")
+        )
+        if not python_versions:
+            raise RuntimeError("qualified helper has no qualified Python cell")
 
-        for name in ("LICENSE.age.txt", "THIRD_PARTY_NOTICES.txt"):
+        for name in (
+            "LICENSE.age.txt",
+            "LICENSE.go.txt",
+            "LICENSE.hpke.txt",
+            "LICENSE.x-crypto.txt",
+            "PATENTS.go.txt",
+            "THIRD_PARTY_NOTICES.txt",
+        ):
             shutil.copy2(_source_root() / "Packaging/backup_age" / name, resource_root)
         source_manifest = json.loads(
             (
@@ -115,6 +129,7 @@ class BackupHelperBuildPy(build_py):
             "arch": goarch,
             "resource": f"_age/{binary_name}",
             "sha256": digest,
+            "python_versions": python_versions,
         }
         source_manifest["helpers"] = [
             qualified_entry if (item["os"], item["arch"]) == target else item

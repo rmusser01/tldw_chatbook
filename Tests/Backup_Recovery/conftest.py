@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 
 import pytest
@@ -32,6 +33,7 @@ def helper_resource_root(tmp_path_factory):
         "status": "qualified",
         **info,
         "resource": f"_age/{binary.name}",
+        "python_versions": [".".join(platform.python_version_tuple()[:2])],
     }
     source_manifest["helpers"] = [
         qualified

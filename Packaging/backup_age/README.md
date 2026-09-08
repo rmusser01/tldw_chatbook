@@ -36,8 +36,10 @@ changes only its selected tuple from `unavailable` to `qualified` and copies the
 matching binary and notices into `_age`. Manifest data is strict, bounded to 16 KiB,
 and rejects unknown fields. The binary must be a regular executable of at most
 32 MiB with matching platform, digest, permission, and runtime `info`. No manifest
-value selects an executable path. Package installation is the trust boundary; this
-is integrity verification, not protection against a compromised local installer.
+value selects an executable path. Each qualified entry also lists its actually tested
+major/minor Python cells; runtime rejects any other interpreter before invoking the
+helper. Package installation is the trust boundary; this is integrity verification,
+not protection against a compromised local installer.
 
 Python serializes transforms per application process. Three bounded pipe workers
 avoid stdin/stdout/stderr backpressure, with a minimal child environment. Cancel
@@ -108,6 +110,14 @@ absent from `PATH`; the application and native child ran under inherited macOS
 process sandbox network denial. A real network probe failed with `EPERM` before the
 round trip and two-direction source/package interoperability checks ran.
 
+Qualification also performed two separate source-install checks in fresh private
+environments. The built sdist was installed offline with build isolation disabled and
+reported `helper_unavailable` with no `_age` resource. A copied checkout was installed
+editable offline; from that checkout root, its installed Python explicitly invoked
+`build_helper` into a private temporary destination and verified protocol `info`.
+The contributor artifact did not enter the package, and the editable application
+continued to report `helper_unavailable`.
+
 From the repository root, with a development Python environment and Go on PATH:
 
 ```sh
@@ -140,10 +150,11 @@ golang.org/x/text v0.41.0
 golang.org/x/tools v0.49.0
 ```
 
-The linked helper dependency packages on this host are age, hpke, and x/crypto,
-plus the Go standard library. Their inspected upstream LICENSE files use the
-BSD 3-Clause license; the Go toolchain/runtime does too. The module graph also
-contains qualification-only CLI and upstream-test dependencies. Binary delivery
-must carry applicable notices and recheck the linked graph for every release
-platform. Release maintainers own pin changes, reproducible packaging, integrity
-metadata, license notices, and rerunning both-direction interoperability tests.
+`go version -m` records age, hpke, and x/crypto as the only linked non-standard
+modules; the binary also contains the Go standard library/runtime. Native wheels carry
+the exact upstream age, hpke, x/crypto, and Go license files plus Go's PATENTS grant
+and `THIRD_PARTY_NOTICES.txt`. The module graph also contains qualification-only CLI
+and upstream-test dependencies that are not linked into the binary. Release
+maintainers must repeat the linked-module/license audit for every pin, toolchain, and
+platform change, and own reproducible packaging, integrity metadata, signing, and
+both-direction interoperability tests.

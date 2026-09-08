@@ -8,6 +8,20 @@
     "required_go": "1.26.0",
     "tested_go": "1.26.2",
     "dependency_mode": "preprovisioned_private_cache_then_GOPROXY_off_GOSUMDB_off",
+    "linked_modules": [
+      "filippo.io/age v1.3.2",
+      "filippo.io/hpke v0.4.0",
+      "golang.org/x/crypto v0.55.0",
+      "Go 1.26.2 standard library/runtime"
+    ],
+    "redistribution_notices": [
+      "LICENSE.age.txt",
+      "LICENSE.go.txt",
+      "LICENSE.hpke.txt",
+      "LICENSE.x-crypto.txt",
+      "PATENTS.go.txt",
+      "THIRD_PARTY_NOTICES.txt"
+    ],
     "build_flags": [
       "-mod=readonly",
       "-trimpath",

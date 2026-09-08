@@ -537,7 +537,7 @@ def test_misbehaving_child_output_is_bounded(
     info = {
         key: value
         for key, value in qualified.items()
-        if key not in {"resource", "sha256", "status"}
+        if key not in {"python_versions", "resource", "sha256", "status"}
     }
     binary = root / "backup-age"
     binary.write_text(
