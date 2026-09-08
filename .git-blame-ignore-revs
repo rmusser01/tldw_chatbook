@@ -274,3 +274,17 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # removals only -- zero assertion values changed, proven by an AST-level
 # comparison of each file against the same transform applied to its parent.
 5dd2e71cfe2401ad26d8df38c8ec3fa4badad471
+
+# Wave-8 task 1: notes state object + shims (notes series 1/N). 100 of the 105
+# "note"-named LibraryScreen attributes relocated verbatim into
+# LibraryNotesState (3 WIRING prior-extracted coordinator instances and 2
+# shared shell focus fields another subsystem also WRITES stayed); 91
+# __init__ assignments removed outright and 0 becoming constructor arguments
+# (every folded default is a static literal or a pure no-argument factory
+# call); 9 assignments kept at their original positions because they run after
+# the forced-early construction point; 83 comment lines moved byte-for-byte
+# with their fields, verified in both directions; a sentinel-wrapped
+# generated-property shim block over a FOUR-way prefix mapping installed at
+# module end; one bypass-fixture seeding line and the screen size-ratchet
+# re-pin. Zero method bodies touched.
+ec731818132255dbf8b30deb6ba2f9a20ff20ecf
