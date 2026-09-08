@@ -12,6 +12,8 @@ task parent `4ab86c34d` (task 3's close), wave start `889e12b86`.
 | `96409c16e` | `docs(library): wave-close stale-prose sweep — 11 class-3 sites, all line-neutral` |
 | `bad16ab8f` | `chore(backlog): file the two wave-8 findings that have no owner` — TASK-32040, TASK-32041, plus a wave-8 block on TASK-31249 |
 | `9381fdad3` | `docs(library): program close — trajectory, lessons, and the phase-C handoff` |
+| `12ac59b45` | `docs(library): name every wave-boundary commit in the program-close table` |
+| `841261666` | `docs(sdd): wave-8 task-4 close — durable evidence` (this report) |
 
 Nothing pushed. `progress.md` was not touched. No `.git-blame-ignore-revs`
 row was added by this task: neither commit is a pure move, which is §10's own
@@ -284,7 +286,15 @@ accuracy round is not self-verifying.
 
 ### 3.6 §25 (new) — the program close
 
-The eight-wave trajectory table, and the arithmetic that closes exactly:
+The eight-wave trajectory table — **all sixteen boundary measurements
+re-derived at this close** by `git show <commit>:library_screen.py` piped
+through an `ast` walk of the `LibraryScreen` class body (the ratchet's own
+semantics, not `wc -l`), every one agreeing with the `_BUDGETS` row recorded
+at that commit, and every boundary commit now NAMED in the table so the
+claim is checkable. Wave 3 was the only wave whose endpoints the document
+carried without a named commit; measured, `315cd4c3c` is 43977/1316 and
+`5ee7b60b9` is 42940/1304, confirming what was written. And the arithmetic
+that closes exactly:
 
 ```
 45,134 − 17,544 (the waves' own PRs) + 4,640 (dev, between waves) = 32,230
