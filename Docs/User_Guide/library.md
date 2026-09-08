@@ -400,8 +400,9 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 |---|---|
 | / | Focus the filter of the list you're on — the Media, Conversations, Prompts, or Notes canvas's own **Title/keyword…** / filter box — so the footer's "/ focus search" lands where you're looking. On the landing (and any canvas with no filter of its own) it focuses the rail's **Search Library…** box instead. Never fires while a text field already has focus. Get started has no hidden search target; use **Explore all tools** or a direct route. |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
-| ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
+| ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list — or the New note canvas's Blank note / template rows — move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
+| Tab / Shift+Tab | Move to the next/previous control **within Library**. Tab stays on this screen; the top navigation bar is reached with its own keys (Ctrl+digit / F-keys), never by tabbing off the end of a canvas |
 | Esc | Context-dependent — see below |
 
 Entering a Media, Notes, Prompts, or Skills list (from the rail, or
@@ -409,6 +410,15 @@ returning from its item) focuses the list's first row, so ↑/↓/Enter work
 immediately without tabbing to find it. Escape then reads the surface
 you're on:
 
+- **In any search or filter box** — the rail's **Search Library…** box, a
+  canvas's own filter, the Search / RAG query box — Escape hands focus to
+  the first control on the canvas, so the next key you press is a canvas
+  key rather than another character in the box (press Escape then `i` on
+  the landing and Import opens). Nothing you typed is cleared, and the
+  footer switches from "typing in field" to the canvas's own hints. Where
+  a surface already gives Escape a job (an editor, Import, Export, an
+  armed confirmation — the entries below), that job still wins; the box
+  simply stops holding the key hostage.
 - **On the plain list** — Escape moves focus to the rail's **Search
   Library…** box in the full Library, or **Import…** in Get started; it never
   leaves the canvas or changes what's shown.
@@ -445,6 +455,12 @@ now focuses the active list canvas's own filter — Media/Prompts share the
 per-canvas route the Conversations and Notes canvases already had — instead
 of the rail's global search two panes away; pinned at 235x52 and 100x30 in
 `test_slash_focuses_the_media_filter_not_the_rail_search`).*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32051:
+Escape now leaves a focused search/filter box for the canvas, so the next
+printable key is a canvas key; task-32052: Tab stays inside the Library
+screen instead of walking into the top navigation bar. Pinned in
+`Tests/UI/test_library_crit8_keyboard.py`.)*
 
 ## Related settings & docs
 

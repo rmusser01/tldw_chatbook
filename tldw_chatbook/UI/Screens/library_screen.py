@@ -961,6 +961,20 @@ class LibraryScreen(BaseAppScreen):
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
         ("escape", "library_emergency_return", "Return to Library rail"),
+        # task-32051: the LAST resort before the focus-rail hop -- Escape in
+        # a Library text box hands focus back to the canvas. Position is the
+        # whole contract: every binding above owns Escape for its own
+        # surface (editor -> list, Ingest -> hub, ...), and Textual runs the
+        # first one whose ``check_action`` passes, so declaring this after
+        # them means it can never steal a surface's own exit. ``check_action``
+        # mirrors that order explicitly (F1's help panel filters BINDINGS
+        # through ``check_action`` alone, with no notion of declaration
+        # order, so an honest gate is what keeps Escape a single row there).
+        # It is declared BEFORE ``library_list_focus_rail`` on purpose: that
+        # one focuses ``#library-search-input``, which is a no-op when the
+        # rail search box is exactly where the caret already is -- the live
+        # defect (Escape inert, then ``i`` typed into the box).
+        ("escape", "library_blur_text_field", "Back to canvas"),
         ("escape", "library_list_focus_rail", "Focus rail"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
@@ -25320,6 +25334,20 @@ class LibraryScreen(BaseAppScreen):
                     getattr(self._ingest_state, "last_submission", None) is not None
                 ),
             )
+        if action == "library_blur_text_field":
+            # task-32051: only while a text box genuinely owns the caret, and
+            # only where no EARLIER Escape binding already owns the key --
+            # the same try-in-order resolution Textual applies to the key
+            # itself, restated here because ``check_action`` is also what F1
+            # and the footer read (they have no notion of declaration order,
+            # so a bare "a text field has focus" gate would double the Escape
+            # row in F1 on every canvas that already has one).
+            if not isinstance(self.focused, (Input, TextArea)):
+                return False
+            return not any(
+                self.check_action(earlier, ())
+                for earlier in self._library_escape_actions_before(action)
+            )
         if action == "library_list_focus_rail":
             # task-4023 AC#7: Collections joins the list-canvas Escape
             # contract (it was the one browse canvas where Escape was
@@ -26881,6 +26909,58 @@ class LibraryScreen(BaseAppScreen):
             then=lambda: self._focus_library_control(opener_selector),
         )
         return True
+
+    @classmethod
+    def _library_escape_actions_before(cls, action: str) -> tuple[str, ...]:
+        """The ``escape`` actions Textual tries before ``action`` (task-32051).
+
+        Read off ``BINDINGS`` in declaration order rather than restated as a
+        literal: this screen has grown from six Escape bindings to a dozen,
+        and every hard-coded count/list of them in this file has gone stale
+        at least once.
+
+        Args:
+            action: The escape action whose predecessors are wanted.
+
+        Returns:
+            The action names declared for ``escape`` ahead of ``action``.
+        """
+        earlier: list[str] = []
+        for entry in cls.BINDINGS:
+            if isinstance(entry, Binding):
+                key, name = entry.key, entry.action
+            else:
+                key, name = entry[0], entry[1]
+            if key != "escape":
+                continue
+            if name == action:
+                break
+            earlier.append(str(name))
+        return tuple(earlier)
+
+    def action_library_blur_text_field(self) -> None:
+        """Escape in a Library text box: hand focus back to the canvas.
+
+        task-32051 (critique #8 row 2): with the caret in the rail "Search
+        Library…" box or the Search/RAG query box, Escape did nothing and the
+        next printable key was inserted as text (live: ``i`` landed in the
+        search box instead of opening Import). Only Tab/F6 could leave.
+
+        Lands on the first canvas control that is neither the field itself
+        nor another text box -- so the printable canvas keys (``i``, ``n``,
+        ``u``/``o`` on Search/RAG) work on the very next keystroke, which is
+        the whole point. Clearing focus outright is the last resort for a
+        canvas that offers no focusable control at all.
+        """
+        for widget in self.focus_chain:
+            if widget is self.focused or isinstance(widget, (Input, TextArea)):
+                continue
+            if any(node.id == "library-canvas" for node in widget.ancestors):
+                widget.focus()
+                break
+        else:
+            self.set_focus(None)
+        self._refresh_footer_typing_context(self.focused)
 
     def action_library_list_focus_rail(self) -> None:
         """Escape: move focus from a list canvas toward the rail (task-2856 AC2).
