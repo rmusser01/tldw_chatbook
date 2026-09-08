@@ -92,7 +92,10 @@ from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
 )
-from ...Library.collections_capture_models import CaptureIdentity
+from ...Library.collections_capture_models import (
+    CaptureIdentity,
+    CapturePageRequest,
+)
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
     LibraryEvidenceStatus,
@@ -3078,6 +3081,10 @@ class LibraryScreen(BaseAppScreen):
             if collections_capture_scope is not None
             else None
         )
+        # task-32057 AC#2: the rail's Collections count before the canvas
+        # has ever been opened. ``None`` until the first prefetch lands, so
+        # the row's ``count_pending`` placeholder rule still applies.
+        self._library_collections_prefetched_total: int | None = None
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -11421,49 +11428,45 @@ class LibraryScreen(BaseAppScreen):
             # being browsed, so every OTHER content type's refresh doesn't
             # pay for an off-thread keyring read it has no use for).
             self._refresh_library_skills_trust_posture()
-        self.run_worker(
-            self._prefetch_library_collections_count(),
-            group="library_collections_count_prefetch",
-            exclusive=True,
-        )
 
-    async def _prefetch_library_collections_count(self) -> None:
-        """Fill the Collections rail count before the row is ever visited.
+    async def _read_library_collections_count(self) -> None:
+        """Read the Collections capture total for the rail row.
 
         task-32057 AC#2: the capture count rides
         ``LibraryCollectionsCaptureController.state.exact_total``, which
-        only exists once a page has been loaded -- and until this, the
-        only thing that loaded one was opening the canvas. So the rail
+        only exists once the canvas has loaded a page -- so the rail
         painted a bare "Collections" beside "Media (11)"/"Notes (7)",
         indistinguishable from Search / RAG, whose count is absent by
-        design. This runs the SAME page-1 request the canvas issues (the
-        one enumerator, not a second count query that could disagree with
-        the list), then repaints the rail the way a snapshot change does.
+        design.
 
-        Cheap and idempotent: it returns immediately once any page is
-        loaded, so the canvas visit itself never pays for it twice.
+        Two deliberate constraints:
+
+        * It reads page 1 through the SAME scope-service enumerator the
+          canvas lists from (so the rail count and the list can never
+          disagree) but NOT through the reader controller -- a count read
+          must not pre-select a capture or arm an applied scope for the
+          Continue receipt, i.e. decide any part of a visit the user has
+          not made yet. The controller's own total wins the moment the
+          canvas has one.
+        * It runs INSIDE the local-source snapshot pass rather than as its
+          own worker, so the count arrives with every other count and the
+          screen still reconciles exactly once per snapshot
+          (``Tests/UI/test_library_entry_compose_once.py``).
         """
         collections = self._collections_controller
         controller = collections._ensure_library_collections_capture_controller()
-        if controller is None or controller.state.page is not None:
+        if controller is None:
             return
-        controller.adopt_active_authority()
-        request = collections._library_collections_capture_request()
-        if request is None:
+        scope_service = controller.scope_service
+        authority = getattr(scope_service, "active_authority", None)
+        if authority is None:
             return
         try:
-            loaded = await controller.load_page(request)
+            page = await scope_service.list_page(CapturePageRequest(authority.key))
         except Exception:
-            logger.debug("Library Collections count prefetch failed.")
+            logger.debug("Library Collections count read failed.")
             return
-        if not loaded or not self.is_mounted:
-            return
-        self._library_entry_reconcile_dirty = True
-        self._library_snapshot_state_generation += 1
-        self._schedule_library_entry_reconcile(
-            self._library_snapshot_state_generation,
-            self._library_entry_route_key(),
-        )
+        self._library_collections_prefetched_total = page.total
 
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
         return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
@@ -13143,6 +13146,15 @@ class LibraryScreen(BaseAppScreen):
         DestinationRecoveryState | None,
         dict[str, int | None],
     ]:
+        # task-32057 AC#2: the Collections capture total is one more local
+        # source count, read here so it lands with the rest of the snapshot
+        # and the screen still reconciles exactly ONCE per snapshot pass
+        # (``Tests/UI/test_library_entry_compose_once.py``). It is kept out
+        # of the shared gather below on purpose: that gather's deadline and
+        # its all-or-nothing failure branches would drop the count whenever
+        # an UNRELATED source seam fails, which is precisely the "counts
+        # disagree" complaint this fixes.
+        await self._read_library_collections_count()
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
         conversation_service = getattr(
@@ -15210,6 +15222,12 @@ class LibraryScreen(BaseAppScreen):
             if collections_state is not None
             else None
         )
+        if collections_count is None:
+            # task-32057 AC#2: before (and between) canvas visits the rail
+            # reads the prefetched total from the same enumerator, so the
+            # row never paints a countless "Collections" beside its
+            # counted siblings.
+            collections_count = self._library_collections_prefetched_total
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_loading = not self._library_loaded and not self._library_lookup_error
