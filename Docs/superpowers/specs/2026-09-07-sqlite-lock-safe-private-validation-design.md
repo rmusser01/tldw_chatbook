@@ -204,6 +204,19 @@ lease's original path cohort; mixed or substituted cohorts remain refused.
 each currently guarded use. Never silently rebuild proof after helper death or
 retarget a lease to a new inode.
 
+Ordinary post-initialization filesystem authority refusals preserve the healthy
+helper, control channel and all acquired pins. Bounded staged capture is approved:
+if WAL was acquired before SHM capture failed, retry first revalidates that exact
+WAL plus the original main and directory authority, then may bind the previously
+unbound SHM once under the same privacy/identity guards. No acquired descriptor
+or identity may be replaced, reopened or reminted. Distinguish the bound absent
+pre-capture state, a partially captured cohort and the complete cohort. Partial
+capture cannot authorize live SQL use or restore export. A changed acquired pin
+remains refused; restoring its exact authority may permit completion. The same
+helper and charged permit survive ordinary refusal until owned close/reap.
+Normalize only recognized filesystem authority errors; internal, transport and
+protocol failures remain fatal, and unsuccessful initialization remains refused.
+
 The wrapper retains the helper lease instead of raw original-inode FDs or a local
 immutable evidence connection. It may retain a separately verified directory-only
 parent FD for the concrete namespace consumers below. Normal close revalidates
