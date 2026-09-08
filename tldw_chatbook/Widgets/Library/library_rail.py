@@ -750,9 +750,6 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             # at a stale query had no affordance at all.
             clear = Button("x", id="library-search-clear", compact=True)
             clear.tooltip = "Clear the Library search box"
-            clear.styles.width = 3
-            clear.styles.min_width = 3
-            clear.styles.height = 3
             yield clear
         for section in self.shell.sections:
             yield from self._compose_section(section)
