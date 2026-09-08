@@ -105,10 +105,6 @@
     "widget_defaults_scoped.tcss::ConsolePromptQueueRegion (UI/Console_Modules/prompt_queue.py)": 765,
     "widget_defaults_scoped.tcss::ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py)": 2786,
     "widget_defaults_scoped.tcss::ConsoleReviewNotesModal (Widgets/Console/console_review_notes_modal.py)": 1701,
-=======
-    "widget_defaults_scoped.tcss::ConsoleSaveMarkdownModal (Widgets/Console/console_save_markdown_modal.py)": 643,
-    "widget_defaults_scoped.tcss::ConsoleSelectionMenu (Widgets/Console/console_selection_menu.py)": 1419,
->>>>>>> 3de53ca21b (perf: consolidate modal defaults with original-cascade parity coverage)
     "widget_defaults_scoped.tcss::ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py)": 1379,
     "widget_defaults_scoped.tcss::ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py)": 483,
     "widget_defaults_scoped.tcss::ConsoleTerminalSessionModal (Widgets/Console/console_terminal_session_modal.py)": 604,

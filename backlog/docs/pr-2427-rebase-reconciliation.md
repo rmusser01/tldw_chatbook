@@ -1030,3 +1030,16 @@ only its own two fresh pytest processes with SIGINT and observed both exit 2:
 119 and 82 cases had passed, respectively, with no failures. Those interrupted
 runs are not complete-file qualification. Reviewed fixes will be checkpointed
 and rebased before restarting all affected complete mounted files on new dev.
+
+The Watchlists fix now paints both the SelectCurrent background and its nested
+Static value/arrow foreground through theme tokens, scoped to the same two IDs.
+The intermediate current-only foreground failed all six label-contrast checks;
+the final six control/theme cases pass. The complete overlay file passes **15
+tests in 73.95s** and the four complete CSS guard files pass **70 tests in
+77.14s**, with existing dependency warnings only. Independent final review
+passes. The measured budget is **803,658/804,000 bytes**, and the broad-subject
+census is **274/274**; the exact-ID Static descendant adds one subject. The
+approved snapshot writer independently measures that under-cap total and
+refreshes only the CSS snapshot without force. Its diff includes the already
+present 26-byte ConsoleSelectionMenu drift plus the 557-byte Watchlists rule;
+neither is a cap increase or hidden stylesheet change.
