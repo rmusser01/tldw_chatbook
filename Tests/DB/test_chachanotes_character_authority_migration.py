@@ -42,7 +42,7 @@ HISTORICAL_NOTES_COLUMNS = {
 SERVER_AUTHORITY = f"server-user-v1:{'a' * 64}"
 
 
-def _version(connection: sqlite3.Connection) -> int:
+def _version(connection: sqlite3.Connection | sqlite3.Cursor) -> int:
     row = connection.execute(
         "SELECT version FROM db_schema_version WHERE schema_name = ?",
         (SCHEMA_NAME,),
@@ -51,7 +51,7 @@ def _version(connection: sqlite3.Connection) -> int:
     return int(row[0])
 
 
-def _conversation_columns(connection: sqlite3.Connection) -> set[str]:
+def _conversation_columns(connection: sqlite3.Connection | sqlite3.Cursor) -> set[str]:
     return {
         str(row[1])
         for row in connection.execute("PRAGMA table_info(conversations)").fetchall()
@@ -295,27 +295,27 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     authority_query = "SELECT id, assistant_authority_id FROM conversations ORDER BY id"
     # Pin the exact v27→v28 delta before later migrations add their own fields.
     with chachanotes_db_at_version(path, 28, client_id="migration-test") as db:
-        connection = db.get_connection()
-        assert _version(connection) == 28
-        assert _conversation_columns(connection) - before_columns == {
-            "assistant_authority_id"
-        }
-        authority_column = next(
-            row
-            for row in connection.execute("PRAGMA table_info(conversations)")
-            if row[1] == "assistant_authority_id"
-        )
-        assert authority_column[2] == "TEXT"
-        assert authority_column[3] == 0
-        assert dict(connection.execute(authority_query).fetchall()) == expected
-        assert connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
+        with db.transaction() as cursor:
+            assert _version(cursor) == 28
+            assert _conversation_columns(cursor) - before_columns == {
+                "assistant_authority_id"
+            }
+            authority_column = next(
+                row
+                for row in cursor.execute("PRAGMA table_info(conversations)")
+                if row[1] == "assistant_authority_id"
+            )
+            assert authority_column[2] == "TEXT"
+            assert authority_column[3] == 0
+            assert dict(cursor.execute(authority_query).fetchall()) == expected
+            assert cursor.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
 
     current = open_current_chachanotes_from_legacy(path, client_id="migration-test")
     try:
-        connection = current.get_connection()
-        assert _version(connection) == current._CURRENT_SCHEMA_VERSION
-        assert dict(connection.execute(authority_query).fetchall()) == expected
-        assert connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
+        with current.transaction() as cursor:
+            assert _version(cursor) == current._CURRENT_SCHEMA_VERSION
+            assert dict(cursor.execute(authority_query).fetchall()) == expected
+            assert cursor.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0] == 0
     finally:
         current.close_connection()
 
