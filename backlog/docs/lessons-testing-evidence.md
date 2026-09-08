@@ -12111,3 +12111,18 @@ starts, wait for the expected starts (poll with a generous deadline)
 rather than a flat window sized to the happy path. The probe already
 records STARTS rather than running state, so waiting cannot miss a worker
 that finishes quickly.
+
+## A settled paint does not prove a failed send released its busy state
+
+**TASK-32010, 2026-09-07.** Extending the existing mounted Console diagnostic
+test to press Enter with capture enabled found zero repeated full-screen
+compositor updates after a readiness exception, yet the transcript's 200ms timer
+kept running. The failed echo was correctly marked unsent, but the controller
+remained VALIDATING and refused another send. Testing slot release and an actual
+controller retry exposed the missing exception cleanup. The same omission also
+affected cancellation before provider entry.
+
+**What to do.** Check send state, retry and timer termination alongside actual
+compositor output. An orphaned polling timer is a concrete lifecycle defect;
+without repeated paint evidence, it does not establish the cause of a reporter's
+visible terminal flicker.
