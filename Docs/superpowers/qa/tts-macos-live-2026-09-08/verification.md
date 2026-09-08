@@ -10,9 +10,12 @@ or audio output was replaced with a fixture in these live runs.
 - **audio.cpp Speak replies:** Speech Lab could generate successfully, but the
   Console destination check omitted the native capability reader and rejected
   an exact model with `TTSEffectiveResolutionError: catalog_unavailable` before
-  synthesis. The handler now uses the service's public capability snapshot API.
-  This retains managed-runtime fencing, exact model/voice validation, and final
-  endpoint authorization. The Console regression crosses destination resolution
+  synthesis. The handler now deliberately refreshes the native catalog before
+  using the service's passive public capability snapshot API. This starts a
+  stopped managed child and applies eligible staged settings while retaining
+  exact model/voice validation and final endpoint authorization. Qodo found the
+  stopped-child gap in the initial repair; eight new cases reproduced it before
+  the follow-up fix. The original Console regression crosses destination resolution
   and admission for both an explicit voice and the server default voice; both
   cases failed before the repair and passed afterward.
 - **Chatterbox installation:** an unbounded extra could resolve Chatterbox
@@ -32,6 +35,9 @@ or audio output was replaced with a fixture in these live runs.
   `27a7555c2e3333d4c5e38a48626cfdb18aa8226c`. The successful audio.cpp runs
   include this task's destination-reader repair. The initial failing run is
   retained separately.
+- Managed cold-start follow-up runs use dev
+  `7e81ed55db66ace04cb3dd1f8feb6d40a21f6f48` plus this task's repairs.
+  The tested TTS runtime tree was unchanged by the rebase before that follow-up.
 - Chatterbox 0.1.7, Torch/Torchaudio 2.6.0, Transformers 5.2.0, NumPy 1.26.4,
   Perth 1.0.1, setuptools 80.10.2, pydub 0.25.1, SoundFile 0.14.0 and
   sounddevice 0.5.6. Actual worker initialization logs identify CPU or MPS;
@@ -91,6 +97,25 @@ The primary verifier for MPS and native runs is `Systran/faster-whisper-base.en`
 at `3d3d5dee26484f91867d81cb899cfcf72b96be6c`, CPU/int8. The Chatterbox CPU run
 passed with tiny.en at `0d3d19a32d3338f10357c0889762bd8d64bbdeba`.
 
+### Managed cold-start follow-up
+
+The real app supervisor also owns separate CPU and Metal runs. Mounting leaves
+the process stopped at generation 0; destination resolution starts generation 1.
+Before each of two automatic replies, the harness explicitly shuts down the
+child. The production request handler then starts generations 2 and 3, generates
+the complete sentence and drains the real speaker stream. Service shutdown joins
+all owned resources and returns to Stopped. These runs exercise Console speech;
+the mounted Speech Lab pane receives no Generate action in this follow-up.
+
+| Managed route | Reply 1 decoded / device drain | Reply 2 decoded / device drain | Complete content |
+| --- | --- | --- | --- |
+| CPU, Supertonic F16 | 6.455 / 6.506 s | 6.446 / 6.492 s | Both |
+| Metal, Supertonic F16 | 6.453 / 6.494 s | 6.447 / 6.491 s | Both |
+
+All four recordings pass the same full-file transcription and audio checks.
+Together with the initial WAV and installed-wheel MP3 runs, the evidence covers
+**19 real clips across seven configurations**.
+
 ## Installation verification
 
 An unseeded Python 3.12 uv environment could not install the original wheel's
@@ -116,24 +141,30 @@ claim to exercise the separate audio.cpp source repair.
 All three MP3 clips decoded and transcribed completely and played through real
 afplay processes with exit code 0. Speech Lab decoded/player time was
 4.880/5.899 s; the two automatic replies were 4.760/5.904 s and 4.840/5.892 s.
-Both replies reached `playing → stopped`. This brings the live evidence to
-**15 clips across five configurations**. The installed wheel's SHA-256 is
+Both replies reached `playing → stopped`. These initial runs account for
+15 clips across five configurations. The installed wheel's SHA-256 is
 `26829fbcefc8d739bb40cd2a45961014b1b95b56e1f52e99a4e4c7b57bd4bacb`;
 its exact runtime versions and separate run evidence are retained locally.
 
 ## Automated checks and review
 
 - Native destination regression: **2 failed before / 2 passed after** the fix.
-- Console/native/effective-selection/diagnostic cohort: **181 passed**.
+- Managed/Console/native/effective-selection/diagnostic cohort: **270 passed**.
+  The managed follow-up adds **8 failed before / 11 passed after** cases covering
+  cold start, restart, staged configuration, exact selection rejection, changes
+  between preparation and passive validation, and old-consent rejection after a
+  port change. Passive settings/profile discovery still does not launch a child.
 - Chatterbox delivery and audio.cpp adapter cohort: **215 passed**, including
   the real Chatterbox subprocess protocol test. No optional backend skip.
-- Independent review checked public versus prepared capability access,
-  managed-runtime fencing, and final destination authorization. Its two
-  revised Console cases plus removed-model/removed-voice controls passed.
-- All six derived-artifact preflight checks passed. Both changed Python files
+- Independent follow-up review checked the deliberate preparation boundary,
+  passive validation races and GET-only destination discovery; it found no
+  additional correctness or security issue. Final synthesis retains its separate
+  admitted-endpoint authorization check.
+- All six derived-artifact preflight checks passed. All three changed Python files
   pass formatting and syntax/undefined-name checks. Full Ruff has the same
-  57 existing handler and 5 existing test diagnostics as the base, with no
-  added diagnostics.
+  57 existing handler, 5 existing Console-test and 3 existing managed-test
+  diagnostics as the base, with no added diagnostics. The two targeted cohorts
+  contain **485 distinct passing tests**.
 
 No full repository test sweep was run. Initial tests reported a missing
 pytest-timeout plugin; it was installed before the final backend cohort.
@@ -147,6 +178,9 @@ Local evidence root: `/private/tmp/tts-macos-live-validation`.
 - `validate_live.py`: mounted application synthesis/playback harness.
 - `run_native_validation.py`: loopback server ownership, readiness, real app run,
   and process termination/reaping. CPU uses port 18731; Metal uses port 18732.
+- `validate_managed_live.py` and `verify_managed_content.py`: real managed cold
+  start/restart playback and complete-file transcription; results are in
+  `runs/audio_cpp-{cpu,metal}-wav-managed-cold/evidence.json`.
 - `verify_content.py`: complete-file independent transcription and content checks.
 - `live-summary.json`, `runtime-versions.json`, model provenance files, and
   `runs/{chatterbox-cpu-wav,chatterbox-mps-wav,audio_cpp-cpu-wav-fixed,audio_cpp-metal-wav}/evidence.json`.
@@ -161,7 +195,8 @@ Local evidence root: `/private/tmp/tts-macos-live-validation`.
 
 The native config selects backend CPU or Metal, lazy loading, offline task TTS,
 the absolute Supertonic GGUF/spec paths, and server-default M1. CORS and request
-body logging are disabled. Both owned native servers stopped and were reaped.
+body logging are disabled. Externally launched servers were reaped; the managed
+follow-up joined service shutdown after three owned generations per compute path.
 Application config, data, caches and newly installed runtime/model assets are
 isolated under this task's evidence root. The CPU transcription check reused
 the earlier Kokoro validation's tiny.en model cache read-only, as recorded in

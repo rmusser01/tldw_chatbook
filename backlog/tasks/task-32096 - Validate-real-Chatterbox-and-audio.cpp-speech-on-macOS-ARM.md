@@ -1,11 +1,11 @@
 ---
 id: TASK-32096
 title: Validate real Chatterbox and audio.cpp speech on macOS ARM
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 22:15'
-updated_date: '2026-09-08 23:05'
+updated_date: '2026-09-08 23:48'
 labels: []
 dependencies: []
 ---
@@ -41,5 +41,5 @@ Reason: verify and, if necessary, repair existing inference and playback contrac
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Validated real Chatterbox CPU/MPS and pinned audio.cpp CPU/Metal synthesis through mounted Speech Lab and repeated Speak replies, with full decode, actual device completion and independent transcription. A further installed-wheel MPS/MP3 run validates setuptools 81; 15 real clips passed. Fixed missing native capability wiring in Console destination resolution and repaired Chatterbox extra dependency bounds after fresh-wheel installation failures. The two native regressions failed before and passed after; 181 Console/resolver and 215 backend cases pass. Fresh-wheel import/resource/isolation checks and all six preflight checks pass. Updated recovery guidance and evidence lessons. Exact runtimes, hashes, model limits and evidence are in Docs/superpowers/qa/tts-macos-live-2026-09-08/verification.md. Existing ADRs 023 and 050 apply; no new boundary or ADR required. PR integration and hosted review remain pending.
+Validated real Chatterbox CPU/MPS and pinned audio.cpp CPU/Metal through Speech Lab and repeated Speak replies, with full decode, actual device completion and independent transcription. Installed-wheel MPS/MP3 also validates setuptools 81. Qodo identified a stopped managed child gap; the deliberate catalog refresh now precedes passive native validation. Real managed CPU and Metal runs pass cold destination resolution and restart before each reply, for 19 verified clips across seven configurations. Regression coverage proves exact model/voice rejection, passive discovery, post-preparation races and changed-port consent rejection. All 485 distinct targeted tests pass across the 270 managed/Console/resolver and 215 backend cohorts. Eight managed cases failed before the follow-up repair; all eleven follow-up regressions pass. Fresh-wheel installation/resource/isolation checks, six preflight checks and formatting pass with no new Ruff diagnostics. Independent review found no remaining issues. Recovery guidance, evidence lessons and Docs/superpowers/qa/tts-macos-live-2026-09-08/verification.md record the exact runtime/model identities, setup failures and limitations. User configuration remains unchanged. Submitted as PR #2532 against current dev. Existing ADRs 023 and 050 apply; no new architecture or ADR required.
 <!-- SECTION:NOTES:END -->

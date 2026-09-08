@@ -12540,10 +12540,18 @@ real-service regression reproduced the failure for explicit and server-default
 voices. Wiring the public capability reader fixed both tests and real CPU/Metal
 playback, without weakening exact model/voice validation.
 
+Qodo then identified a second gap: those live runs used an already-running
+external server. The public snapshot intentionally cannot start a stopped
+managed child. Eight managed cases failed until destination resolution used
+the existing deliberate catalog refresh before passive validation. Real managed
+CPU and Metal runs then passed cold start and shutdown/restart before each reply.
+
 **Practice.** Exercise the same destination-resolution and authorization path
 as automatic speech, before admitting and draining its audio request. A working
 adapter, Speech Lab run, or handler call without a destination fingerprint does
-not prove Speak replies can reach that adapter.
+not prove Speak replies can reach that adapter. Include a stopped managed child
+when the provider supports app-owned startup; keep passive observation tests
+separate so fixing deliberate first use does not make background reads launch it.
 
 ## Optional runtime imports can conceal an unusable model dependency
 
