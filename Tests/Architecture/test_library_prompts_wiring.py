@@ -528,6 +528,7 @@ _PROMPTS_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # task-32393: the prompt editor's dirty flip repaints its meta line
     # without a recompose, and the footer's Escape chip reads the same flag.
     "_register_footer_shortcuts",
+    "_library_source_load_failure",
     "_run_library_service_call",
     "_safe_text",
     "_sanitize_media_field",

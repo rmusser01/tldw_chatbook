@@ -22,8 +22,181 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import pytest_asyncio
 
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+
+
+def _notifier_owner(notifier):
+    """Return the instance behind a bound notifier, if any."""
+    return getattr(notifier, "__self__", None)
+
+
+class _RawAppIngestionStateGuard:
+    """Restore process-wide ingestion state borrowed by one real-app test."""
+
+    def __init__(self) -> None:
+        from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        self._media_db_module = media_db_module
+        self._ingestion_indexing = ingestion_indexing
+        self._prior_indexer = ingestion_indexing._indexer
+        self._prior_hook_installed = ingestion_indexing._hook_installed
+        self._prior_failure_notifier = getattr(
+            self._prior_indexer, "_failure_notifier", None
+        )
+        self._prior_guidance_notifier = getattr(
+            self._prior_indexer, "_guidance_notifier", None
+        )
+        self._prior_ingest_callback = (
+            ingestion_indexing._media_post_ingest_hook
+            in media_db_module._MEDIA_POST_INGEST_CALLBACKS
+        )
+        self._prior_delete_callback = (
+            ingestion_indexing._media_post_delete_hook
+            in media_db_module._MEDIA_POST_DELETE_CALLBACKS
+        )
+        self._app = None
+        self._closed = False
+
+    def claim(self, app) -> None:
+        """Identify the app whose notifier registrations this guard owns."""
+        assert self._app is None
+        self._app = app
+
+    def _stop_owned_indexer(self, indexer, app) -> bool:
+        """Stop *indexer* only while it remains this guard's global service."""
+        ingestion_indexing = self._ingestion_indexing
+        with ingestion_indexing._hook_lock:
+            with ingestion_indexing._indexer_lock:
+                if ingestion_indexing._indexer is not indexer:
+                    if _notifier_owner(indexer._failure_notifier) is app:
+                        indexer.set_failure_notifier(None)
+                    if _notifier_owner(indexer._guidance_notifier) is app:
+                        indexer.set_guidance_notifier(None)
+                    return False
+
+                current_failure = indexer._failure_notifier
+                current_guidance = indexer._guidance_notifier
+                notifier_transferred = any(
+                    notifier is not None and _notifier_owner(notifier) is not app
+                    for notifier in (current_failure, current_guidance)
+                )
+                if notifier_transferred:
+                    if _notifier_owner(current_failure) is app:
+                        indexer.set_failure_notifier(None)
+                    if _notifier_owner(current_guidance) is app:
+                        indexer.set_guidance_notifier(None)
+                    return False
+                if not any(
+                    _notifier_owner(notifier) is app
+                    for notifier in (current_failure, current_guidance)
+                ):
+                    return False
+
+                ingestion_indexing._indexer = None
+                owned_thread = indexer._thread
+                indexer.stop()
+                assert indexer._stopped is True
+                assert owned_thread is None or not owned_thread.is_alive()
+                if not self._prior_ingest_callback:
+                    self._media_db_module.unregister_media_post_ingest_callback(
+                        ingestion_indexing._media_post_ingest_hook
+                    )
+                if not self._prior_delete_callback:
+                    self._media_db_module.unregister_media_post_delete_callback(
+                        ingestion_indexing._media_post_delete_hook
+                    )
+                ingestion_indexing._hook_installed = self._prior_hook_installed
+                assert (
+                    ingestion_indexing._media_post_ingest_hook
+                    in self._media_db_module._MEDIA_POST_INGEST_CALLBACKS
+                ) is self._prior_ingest_callback
+                assert (
+                    ingestion_indexing._media_post_delete_hook
+                    in self._media_db_module._MEDIA_POST_DELETE_CALLBACKS
+                ) is self._prior_delete_callback
+                return True
+
+    async def close(self) -> None:
+        """Release only state still owned by the claimed app."""
+        if self._closed:
+            return
+        self._closed = True
+        app = self._app
+        assert app is not None
+        ingestion_indexing = self._ingestion_indexing
+        current = ingestion_indexing._indexer
+        registration_owned = False
+
+        if current is self._prior_indexer:
+            current_failure = getattr(current, "_failure_notifier", None)
+            current_guidance = getattr(current, "_guidance_notifier", None)
+            notifier_transferred = any(
+                notifier is not prior and _notifier_owner(notifier) is not app
+                for notifier, prior in (
+                    (current_failure, self._prior_failure_notifier),
+                    (current_guidance, self._prior_guidance_notifier),
+                )
+            )
+            if current is not None:
+                if _notifier_owner(current_failure) is app:
+                    current.set_failure_notifier(self._prior_failure_notifier)
+                if _notifier_owner(current_guidance) is app:
+                    current.set_guidance_notifier(self._prior_guidance_notifier)
+            registration_owned = not notifier_transferred
+        elif self._prior_indexer is None and current is not None:
+            await asyncio.to_thread(self._stop_owned_indexer, current, app)
+        elif current is not None:
+            current_failure = getattr(current, "_failure_notifier", None)
+            current_guidance = getattr(current, "_guidance_notifier", None)
+            if _notifier_owner(current_failure) is app:
+                current.set_failure_notifier(None)
+            if _notifier_owner(current_guidance) is app:
+                current.set_guidance_notifier(None)
+        else:
+            registration_owned = self._prior_indexer is None
+
+        if registration_owned:
+            if not self._prior_ingest_callback:
+                self._media_db_module.unregister_media_post_ingest_callback(
+                    ingestion_indexing._media_post_ingest_hook
+                )
+            if not self._prior_delete_callback:
+                self._media_db_module.unregister_media_post_delete_callback(
+                    ingestion_indexing._media_post_delete_hook
+                )
+            ingestion_indexing._hook_installed = self._prior_hook_installed
+            assert (
+                ingestion_indexing._media_post_ingest_hook
+                in self._media_db_module._MEDIA_POST_INGEST_CALLBACKS
+            ) is self._prior_ingest_callback
+            assert (
+                ingestion_indexing._media_post_delete_hook
+                in self._media_db_module._MEDIA_POST_DELETE_CALLBACKS
+            ) is self._prior_delete_callback
+
+        active_indexer = ingestion_indexing._indexer
+        if active_indexer is not None:
+            assert _notifier_owner(active_indexer._failure_notifier) is not app
+            assert _notifier_owner(active_indexer._guidance_notifier) is not app
+
+
+@pytest_asyncio.fixture
+async def _isolated_raw_app_ingestion_state():
+    """Keep a real app's process-wide ingestion lease inside one test."""
+    guard = _RawAppIngestionStateGuard()
+    yield guard.claim
+    await guard.close()
+
+
+class _NotifierOwner:
+    def notify_failure(self, _message):
+        return None
+
+    def notify_guidance(self, _message):
+        return None
 
 
 def _scratch_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -75,7 +248,9 @@ def test_library_route_is_flagged_reusable() -> None:
 @pytest.mark.ui
 @pytest.mark.asyncio
 async def test_library_reuse_and_suspend_timer_quiescence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _isolated_raw_app_ingestion_state,
 ) -> None:
     """One journey pins reuse, timer quiescence, and the resume seam.
 
@@ -87,6 +262,7 @@ async def test_library_reuse_and_suspend_timer_quiescence(
     from tldw_chatbook.app import TldwCli
 
     app = TldwCli()
+    _isolated_raw_app_ingestion_state(app)
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app, pilot)
 
@@ -175,7 +351,9 @@ async def test_library_reuse_and_suspend_timer_quiescence(
 @pytest.mark.ui
 @pytest.mark.asyncio
 async def test_suspended_library_gates_ingest_dom_work_until_resume(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _isolated_raw_app_ingestion_state,
 ) -> None:
     """Registry events against a hidden Library defer DOM work to resume."""
     _scratch_env(monkeypatch, tmp_path)
@@ -183,6 +361,7 @@ async def test_suspended_library_gates_ingest_dom_work_until_resume(
     from tldw_chatbook.app import TldwCli
 
     app = TldwCli()
+    _isolated_raw_app_ingestion_state(app)
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+3", "LibraryScreen")
@@ -218,6 +397,177 @@ async def test_suspended_library_gates_ingest_dom_work_until_resume(
         assert library._library_ingest_suspended_activity is False
 
 
+@pytest.mark.asyncio
+async def test_raw_app_ingestion_guard_stops_owned_indexer_and_removes_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+
+    monkeypatch.setattr(ingestion_indexing, "_indexer", None)
+    monkeypatch.setattr(ingestion_indexing, "_hook_installed", False)
+    monkeypatch.setattr(media_db_module, "_MEDIA_POST_INGEST_CALLBACKS", [])
+    monkeypatch.setattr(media_db_module, "_MEDIA_POST_DELETE_CALLBACKS", [])
+
+    owner = _NotifierOwner()
+    guard = _RawAppIngestionStateGuard()
+    guard.claim(owner)
+    ingestion_indexing.install_media_ingest_hook(
+        failure_notifier=owner.notify_failure,
+        guidance_notifier=owner.notify_guidance,
+    )
+    owned_indexer = ingestion_indexing._indexer
+    with owned_indexer._thread_lock:
+        owned_indexer._ensure_thread_locked()
+    owned_thread = owned_indexer._thread
+    assert owned_thread is not None and owned_thread.is_alive()
+
+    await guard.close()
+
+    assert ingestion_indexing._indexer is None
+    assert owned_indexer._stopped is True
+    assert not owned_thread.is_alive()
+    assert ingestion_indexing._hook_installed is False
+    assert media_db_module._MEDIA_POST_INGEST_CALLBACKS == []
+    assert media_db_module._MEDIA_POST_DELETE_CALLBACKS == []
+
+
+@pytest.mark.asyncio
+async def test_raw_app_ingestion_guard_restores_borrowed_indexer_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+
+    borrowed = ingestion_indexing.IngestionIndexer()
+    prior_failure = Mock()
+    prior_guidance = Mock()
+    borrowed.set_failure_notifier(prior_failure)
+    borrowed.set_guidance_notifier(prior_guidance)
+    monkeypatch.setattr(ingestion_indexing, "_indexer", borrowed)
+    monkeypatch.setattr(ingestion_indexing, "_hook_installed", True)
+    monkeypatch.setattr(
+        media_db_module,
+        "_MEDIA_POST_INGEST_CALLBACKS",
+        [ingestion_indexing._media_post_ingest_hook],
+    )
+    monkeypatch.setattr(
+        media_db_module,
+        "_MEDIA_POST_DELETE_CALLBACKS",
+        [ingestion_indexing._media_post_delete_hook],
+    )
+
+    owner = _NotifierOwner()
+    guard = _RawAppIngestionStateGuard()
+    guard.claim(owner)
+    ingestion_indexing.install_media_ingest_hook(
+        failure_notifier=owner.notify_failure,
+        guidance_notifier=owner.notify_guidance,
+    )
+
+    await guard.close()
+
+    assert ingestion_indexing._indexer is borrowed
+    assert borrowed._stopped is False
+    assert borrowed._failure_notifier is prior_failure
+    assert borrowed._guidance_notifier is prior_guidance
+    assert ingestion_indexing._hook_installed is True
+    assert media_db_module._MEDIA_POST_INGEST_CALLBACKS == [
+        ingestion_indexing._media_post_ingest_hook
+    ]
+    assert media_db_module._MEDIA_POST_DELETE_CALLBACKS == [
+        ingestion_indexing._media_post_delete_hook
+    ]
+
+
+@pytest.mark.asyncio
+async def test_raw_app_ingestion_guard_preserves_transferred_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+
+    monkeypatch.setattr(ingestion_indexing, "_indexer", None)
+    monkeypatch.setattr(ingestion_indexing, "_hook_installed", False)
+    monkeypatch.setattr(media_db_module, "_MEDIA_POST_INGEST_CALLBACKS", [])
+    monkeypatch.setattr(media_db_module, "_MEDIA_POST_DELETE_CALLBACKS", [])
+
+    owner = _NotifierOwner()
+    guard = _RawAppIngestionStateGuard()
+    guard.claim(owner)
+    ingestion_indexing.install_media_ingest_hook(
+        failure_notifier=owner.notify_failure,
+        guidance_notifier=owner.notify_guidance,
+    )
+    transferred = _NotifierOwner()
+    ingestion_indexing.install_media_ingest_hook(
+        guidance_notifier=transferred.notify_guidance
+    )
+    active_indexer = ingestion_indexing._indexer
+
+    await guard.close()
+
+    assert ingestion_indexing._indexer is active_indexer
+    assert active_indexer._stopped is False
+    assert active_indexer._failure_notifier is None
+    assert _notifier_owner(active_indexer._guidance_notifier) is transferred
+    assert ingestion_indexing._hook_installed is True
+    assert media_db_module._MEDIA_POST_INGEST_CALLBACKS == [
+        ingestion_indexing._media_post_ingest_hook
+    ]
+    assert media_db_module._MEDIA_POST_DELETE_CALLBACKS == [
+        ingestion_indexing._media_post_delete_hook
+    ]
+
+
+@pytest.mark.asyncio
+async def test_raw_app_ingestion_guard_does_not_stop_replacement_at_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+
+    monkeypatch.setattr(ingestion_indexing, "_indexer", None)
+    monkeypatch.setattr(ingestion_indexing, "_hook_installed", False)
+    monkeypatch.setattr(media_db_module, "_MEDIA_POST_INGEST_CALLBACKS", [])
+    monkeypatch.setattr(media_db_module, "_MEDIA_POST_DELETE_CALLBACKS", [])
+
+    owner = _NotifierOwner()
+    guard = _RawAppIngestionStateGuard()
+    guard.claim(owner)
+    ingestion_indexing.install_media_ingest_hook(
+        failure_notifier=owner.notify_failure,
+        guidance_notifier=owner.notify_guidance,
+    )
+    retiring_indexer = ingestion_indexing._indexer
+    replacement_owner = _NotifierOwner()
+    replacement = ingestion_indexing.IngestionIndexer()
+    replacement.set_failure_notifier(replacement_owner.notify_failure)
+    replacement.set_guidance_notifier(replacement_owner.notify_guidance)
+
+    async def replace_before_dispatch(function, *args):
+        ingestion_indexing._indexer = replacement
+        return function(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", replace_before_dispatch)
+    await guard.close()
+
+    assert ingestion_indexing._indexer is replacement
+    assert replacement._stopped is False
+    assert _notifier_owner(replacement._failure_notifier) is replacement_owner
+    assert _notifier_owner(replacement._guidance_notifier) is replacement_owner
+    assert retiring_indexer._stopped is False
+    assert retiring_indexer._failure_notifier is None
+    assert retiring_indexer._guidance_notifier is None
+    assert ingestion_indexing._hook_installed is True
+    assert media_db_module._MEDIA_POST_INGEST_CALLBACKS == [
+        ingestion_indexing._media_post_ingest_hook
+    ]
+    assert media_db_module._MEDIA_POST_DELETE_CALLBACKS == [
+        ingestion_indexing._media_post_delete_hook
+    ]
+
+
 class _RecordingTimer:
     def __init__(self) -> None:
         self.stopped = False
@@ -234,6 +584,21 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     the suspended flag. Enumerating them HERE too means a new timer added
     to the hook without updating this table fails loudly.
     """
+    from types import SimpleNamespace
+
+    from textual.app import active_app
+
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        UnresolvedConversationKey,
+    )
+    from tldw_chatbook.UI.Library_Modules import library_unavailable_navigation
+    from tldw_chatbook.UI.Library_Modules.library_navigation_controller import (
+        LibraryNavigationController,
+    )
+    from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+        LibraryUnavailableConversationsBrowse,
+        RoleplayReturnTarget,
+    )
     from tldw_chatbook.UI.Screens.library_screen import (
         LibraryIngestState,
         LibraryMediaState,
@@ -253,6 +618,32 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     screen._notes_state = LibraryNotesState()
     notes_timer = _RecordingTimer()
     screen._notes_state.autosave_timer = notes_timer
+    # Seed the constructor-owned navigation seam too: suspend must execute
+    # the real return cleanup before reaching the timer helpers below.
+    screen._unavailable_navigation = library_unavailable_navigation
+    screen._navigation_controller = LibraryNavigationController(
+        screen,
+        invalidate_media_browse=lambda: None,
+        unmount_collections_capture=lambda: None,
+    )
+    admission = library_unavailable_navigation._LibraryCharacterNavigationAdmission(
+        route=LibraryUnavailableConversationsBrowse(
+            UnresolvedConversationKey("test-profile", "conversation-1"),
+            RoleplayReturnTarget.console_context_character(),
+        ),
+        database=object(),
+        generation=4,
+    )
+    screen._navigation_controller.character_route = admission
+    screen._navigation_controller.character_candidate = admission
+    screen._library_navigation_context_generation = 4
+    return_control = SimpleNamespace(display=True)
+
+    def query_return_control(selector):
+        assert selector == "#library-character-return"
+        return [return_control]
+
+    screen.query = query_return_control
     # (wave-7 task 1, retargeted by task 3) Every media name this test seeds
     # -- the two debounce timers, and three of the five settlement fields the
     # focus-disarm helper resets -- lives on `_media_state`. An
@@ -306,9 +697,17 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     screen._media_state.last_exact_settlement = None
     screen._media_state.last_successful_settlement = None
 
-    LibraryScreen.on_screen_suspend(screen)
+    active_app_token = active_app.set(SimpleNamespace(screen=object()))
+    try:
+        LibraryScreen.on_screen_suspend(screen)
+    finally:
+        active_app.reset(active_app_token)
 
     assert screen._library_screen_suspended is True
+    assert screen._navigation_controller.character_route is None
+    assert screen._navigation_controller.character_candidate is None
+    assert screen._library_navigation_context_generation == 5
+    assert return_control.display is False
     for attr in timer_attrs:
         assert timers[attr].stopped, f"{attr} was not stopped"
         assert getattr(screen, attr) is None, f"{attr} was not cleared"

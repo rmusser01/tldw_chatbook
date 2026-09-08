@@ -39,20 +39,13 @@ completeness checks ran alongside it, both returning nothing new:
   beyond the six ``on_prompt_block_editor_*`` handlers, which already contain
   "prompt" and are therefore already in the 161.
 
-**Single vs. split controller: single, decided by connected-components
-analysis, not by feel.** The plan explicitly leaves a two-controller split on
-the table for a cluster this size ("split ONLY on a clean ownership seam;
-when unsure, one controller"). Building the ``self.<name>`` reference graph
-among all 161 candidates yields **one connected component of 145 names plus
-16 isolated singletons** -- no second component of any size, and therefore no
-seam to split on. The hypothetical editor/studio-vs-browse seam does not
-hold: the editor's own exit path (``_exit_library_prompt_editor_guarded``)
-drives the browse refetch, the detail loader
-(``_refresh_library_prompt_detail``) is reached from both the row handler and
-the conflict resolvers, and the delete/undo flow writes state both surfaces
-read. **Decision: ONE combined ``LibraryPromptsController``**, matching the
-skills/search+RAG/ingest precedent's identical resolution at comparable
-scale.
+**Single controller: no independent ownership seam.** The ``self.<name>``
+graph of 161 candidates has one 145-name component and 16 singletons.
+An editor/browse split would cross the editor exit's browse refetch,
+the detail loader shared by row handlers and conflict resolvers, and the
+delete/undo state read by both surfaces. One ``LibraryPromptsController``
+therefore follows the skills/search+RAG/ingest precedent and the plan's
+requirement to split only at a clean ownership seam.
 
 **22 of the 161 candidates excluded, not moved (139 move):**
 
@@ -243,7 +236,7 @@ name, per the two binding kinds; see ``LibraryIngestController.__init__`` and
 binding surface below was derived MECHANICALLY, by walking all 139 moved
 bodies for every ``self.<attr>`` load/store AND every
 ``getattr(self, "<literal>")`` call, then subtracting this controller's own
-state fields and the movers themselves -- 42 names, every one of them pinned
+state fields and the movers themselves -- 43 names, every one of them pinned
 in ``test_prompts_controller_binds_every_name_its_moved_bodies_use``:
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -450,6 +443,7 @@ class LibraryPromptsController:
         open_library_export_canvas,
         refresh_local_source_snapshot,
         register_footer_shortcuts,
+        library_source_load_failure,
         run_library_service_call,
         safe_text,
         sanitize_media_field,
@@ -520,6 +514,7 @@ class LibraryPromptsController:
         self._open_library_export_canvas_fn = open_library_export_canvas
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
         self._register_footer_shortcuts_fn = register_footer_shortcuts
+        self._library_source_load_failure_fn = library_source_load_failure
         self._run_library_service_call_fn = run_library_service_call
         self._safe_text_fn = safe_text
         self._sanitize_media_field_fn = sanitize_media_field
@@ -577,14 +572,8 @@ class LibraryPromptsController:
 
     @property
     def focused(self) -> Any:
-        """Live-forward the screen's currently focused widget.
-
-        Bound explicitly because four moved bodies reach it as
-        ``getattr(self, "focused", None)`` -- an expression the recipe's own
-        ``self.<attr>`` census cannot see, and one that returns its DEFAULT
-        forever (no exception, no red test) when the name is unbound. The
-        skills series shipped exactly that regression; see the module
-        docstring's framework-services note.
+        """Live-forward focus: four movers use ``getattr`` with a silent default.
+        See the module's framework-services note for the Skills regression.
         """
         return self._screen.focused
 
@@ -716,6 +705,10 @@ class LibraryPromptsController:
     @property
     def _register_footer_shortcuts(self) -> Any:
         return self._register_footer_shortcuts_fn
+
+    @property
+    def _library_source_load_failure(self) -> Any:
+        return self._library_source_load_failure_fn
 
     @property
     def _run_library_service_call(self) -> Any:
@@ -4129,6 +4122,9 @@ class LibraryPromptsController:
                         self._library_prompt_browse_controller.mutation_refresh_scope,
                         focus_identity=focus_identity,
                     )
+                    source_failure = self._library_source_load_failure()
+                    if source_failure is None or source_failure.severity != "error":
+                        self._refresh_local_source_snapshot()
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
                 if self.is_mounted:
@@ -4455,6 +4451,9 @@ class LibraryPromptsController:
                         self._library_prompt_browse_controller.mutation_refresh_scope,
                         focus_identity="library-prompts-delete-undo",
                     )
+                    source_failure = self._library_source_load_failure()
+                    if source_failure is None or source_failure.severity != "error":
+                        self._refresh_local_source_snapshot()
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
                 if self.is_mounted:
