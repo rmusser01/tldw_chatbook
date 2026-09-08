@@ -2040,6 +2040,61 @@ async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size)
         assert "Providers & Models" in painted, painted
 
 
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
+    """task-32045 (critique #7 P2): zero selected dims Export/Review/Delete
+    with the "○" marker but said nothing inline, while Analyze already
+    explains its own block (task-31981). Export/Review/Delete share one
+    gate (``selected_count == 0``), so one reason line -- same
+    ``.library-media-action-reason`` grammar -- covers all three rather
+    than repeating per button.
+
+    Args:
+        size: The terminal dimensions under test.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        await _wait_for_selector(screen, pilot, "#library-media-select-actions")
+        await pilot.pause()
+        export_btn = screen.query_one("#library-media-export-selected", Button)
+        review_btn = screen.query_one("#library-media-review-selected", Button)
+        delete_btn = screen.query_one("#library-media-delete-selected", Button)
+        assert export_btn.disabled is True
+        assert review_btn.disabled is True
+        assert delete_btn.disabled is True
+        reason_line = screen.query_one("#library-media-select-bulk-reason", Static)
+        assert reason_line.styles.visibility == "visible"
+        painted = _painted(host, reason_line.region).replace("\n", " ")
+        assert "Select items to enable" in painted, painted
+
+        screen.query_one("#library-media-row-0").press()
+        await pilot.pause()
+        # task-252 Tier 1: a single row press is patched in place (never a
+        # recompose), so the line stays mounted but hidden -- "gone" means
+        # ``visibility: hidden`` (nothing painted; the row list below keeps
+        # its height, unlike ``display=False`` which would shift it).
+        hidden_reason = screen.query_one("#library-media-select-bulk-reason", Static)
+        assert hidden_reason.styles.visibility == "hidden"
+        assert "Select items to enable" not in _painted(
+            host, hidden_reason.region
+        ).replace("\n", " ")
+        assert (
+            screen.query_one("#library-media-export-selected", Button).disabled
+            is False
+        )
+        assert (
+            screen.query_one("#library-media-review-selected", Button).disabled
+            is False
+        )
+        assert (
+            screen.query_one("#library-media-delete-selected", Button).disabled
+            is False
+        )
+
+
 @pytest.mark.asyncio
 async def test_select_mode_analyze_reason_refreshes_on_resume():
     """task-32039 AC#2: a provider configured mid-session clears the gate on return.
