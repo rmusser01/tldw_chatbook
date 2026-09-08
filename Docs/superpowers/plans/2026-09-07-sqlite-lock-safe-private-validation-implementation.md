@@ -468,7 +468,8 @@ interpreter comparison and Task5b shutdown qualification are not claimed.
 
 **Depends on:** reviewed Tasks1–4 and Task5a. Resume the production shutdown gate,
 not the discarded default-close approach. Read both preserved gate and native
-spike reports before implementing. All new steps below remain unchecked.
+spike reports before implementing. Implementation and scoped review are complete
+through c98ebfa61; the full spawned-test qualification remains open below.
 
 **Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`, and `TTS/profile_migration_namespace.py` only for the required validated metadata adaptation; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py` and focused namespace comparison tests as needed. Exclusive finalizer behavior remains Task 6.
 
@@ -480,7 +481,7 @@ spike reports before implementing. All new steps below remain unchecked.
 - Add `ExactProfileStoreProofLostError` as an `ExactProfileStoreAuthorityError` subtype in `profile_schema.py`; distinguish terminal helper loss from a healthy-helper namespace mismatch. Add closed repository code `restart_required` with user-facing text stating restart is required, without paths.
 - The process-owned admission object exposes `latch_tts_proof_loss() -> None`; subsequent retained admissions refuse. It records no database paths/connections. Existing repository/application ownership retains terminal objects and permits; it does not use a generic SQLite registry.
 
-- [ ] Write the real two-repository lock test before replacing the wrapper:
+- [x] Write the real two-repository lock test before replacing the wrapper:
 
 ```python
 @pytest.mark.asyncio
@@ -502,10 +503,10 @@ async def test_closing_one_repository_preserves_sibling_writer(tmp_path):
 
 Define the strict contender in this test module from Task 3's diagnostic algorithm, or import a shared test-only support module after explicitly moving it there. Never import another test module just to acquire fixtures. Include partial sidecar-pin failure while a sibling owns a real transaction.
 
-- [ ] Run the new test and record behavioral RED. Replace local pins/evidence SQL with the fixed helper. Preserve query-only-before-admission, exact version, metadata validation, post-init binding and named/parent/sidecar checks at every existing guarded use. Pass the live opener's absolute deadline through both helper and normal private seam, using the initial reserved capacity.
-- [ ] Add `test_exact_live_policy_precedes_first_sql` using the actual live opener and a tracing factory proxy: record successful set/get and require it before the first execute, including `PRAGMA query_only`. Add rejected actual-handle set/get after successful memory preflight: assert no SQL, no usable publication and ordinary close/reap/release. Inject a first native close failure and assert `ExactProfileStoreCleanupError.connection` retains the complete owner for retry. An already-open but unused handle cannot be dropped merely because configuration failed.
-- [ ] Add `test_live_policy_does_not_change_initialization_or_immutable_evidence`: observe exact-live handles configured, with creation/migration/evidence handles still following their existing ownership/checkpoint rules. Exercise fresh store, supported legacy-schema migration, completed schema publication and two real reopen cycles with committed residual WAL. Run these focused nodes RED, apply the scoped policy, then GREEN. No factory-wide monkeypatch is the product implementation.
-- [ ] Replace both descriptor-field consumers explicitly. `_worker_close_for_restore` captures `TTSRestoreAuthority` before checkpoint and revalidates afterward; it installs generation-bound parent/sidecar identities before closing. `_worker_cleanup` calls `verified_parent_fd` for required reusable-tombstone settlement. Remove their permissive missing-field `getattr` branches. Preserve exact namespace removal under exclusive restore ownership; metadata export never authorizes a replacement cohort.
+- [x] Run the new test and record behavioral RED. Replace local pins/evidence SQL with the fixed helper. Preserve query-only-before-admission, exact version, metadata validation, post-init binding and named/parent/sidecar checks at every existing guarded use. Pass the live opener's absolute deadline through both helper and normal private seam, using the initial reserved capacity.
+- [x] Add `test_exact_live_policy_precedes_first_sql` using the actual live opener and a tracing factory proxy: record successful set/get and require it before the first execute, including `PRAGMA query_only`. Add rejected actual-handle set/get after successful memory preflight: assert no SQL, no usable publication and ordinary close/reap/release. Inject a first native close failure and assert `ExactProfileStoreCleanupError.connection` retains the complete owner for retry. An already-open but unused handle cannot be dropped merely because configuration failed.
+- [x] Add `test_live_policy_does_not_change_initialization_or_immutable_evidence`: observe exact-live handles configured, with creation/migration/evidence handles still following their existing ownership/checkpoint rules. Exercise fresh store, supported legacy-schema migration, completed schema publication and two real reopen cycles with committed residual WAL. Run these focused nodes RED, apply the scoped policy, then GREEN. No factory-wide monkeypatch is the product implementation.
+- [x] Replace both descriptor-field consumers explicitly. `_worker_close_for_restore` captures `TTSRestoreAuthority` before checkpoint and revalidates afterward; it installs generation-bound parent/sidecar identities before closing. `_worker_cleanup` calls `verified_parent_fd` for required reusable-tombstone settlement. Remove their permissive missing-field `getattr` branches. Preserve exact namespace removal under exclusive restore ownership; metadata export never authorizes a replacement cohort.
 
 ```python
 authority = exact_connection.export_restore_authority(deadline=deadline)
@@ -517,9 +518,9 @@ self._restore_sidecar_identities = {
 # incomplete os.stat_result values or weaken existing exact-removal checks.
 ```
 
-- [ ] Add real restore-with-retained-sidecars, failed export before close, migration/restore tombstones through final close, and integer parent gid/mode/identity substitution tests. Preserve the existing healthy-helper exact-namespace restoration and close-retry behavior.
-- [ ] Add real healthy-cleanup tests before changing `_worker_cleanup`: pending writes are rolled back, committed writes recover after reopen, a pinned reader yields a valid partial PASSIVE checkpoint, and a live sibling writer remains excluded from an external contender after this repository closes. Observe exactly one `PRAGMA main.wal_checkpoint(PASSIVE)` on normal cleanup and none on restore's guarded TRUNCATE close path. Inject exact `sqlite_errorcode == sqlite3.SQLITE_BUSY` separately from IOERR/LOCKED/malformed results: only exact BUSY or a valid three-integer checkpoint result can continue under valid proof. A busy/partial result never authorizes unlinking remaining WAL/SHM.
-- [ ] Implement normal cleanup on its existing serialized worker: proof check, roll back its pending transaction, proof check, verified-directory tombstone settlement, proof check, one PASSIVE checkpoint, post-proof check, wrapper native close, then normal remaining ownership release. Preserve deadlines/progress cancellation; do not add a retry loop or alter auto-checkpoint. On non-BUSY checkpoint or close failure retain the connection/lease/helper/worker for the existing guarded retry. Update `_finish_close` so an error with a retained cleanup owner cannot shut down its executor. Keep this separate from terminal proof-loss handling.
+- [x] Add real restore-with-retained-sidecars, failed export before close, migration/restore tombstones through final close, and integer parent gid/mode/identity substitution tests. Preserve the existing healthy-helper exact-namespace restoration and close-retry behavior.
+- [x] Add real healthy-cleanup tests before changing `_worker_cleanup`: pending writes are rolled back, committed writes recover after reopen, a pinned reader yields a valid partial PASSIVE checkpoint, and a live sibling writer remains excluded from an external contender after this repository closes. Observe exactly one `PRAGMA main.wal_checkpoint(PASSIVE)` on normal cleanup and none on restore's guarded TRUNCATE close path. Inject exact `sqlite_errorcode == sqlite3.SQLITE_BUSY` separately from IOERR/LOCKED/malformed results: only exact BUSY or a valid three-integer checkpoint result can continue under valid proof. A busy/partial result never authorizes unlinking remaining WAL/SHM.
+- [x] Implement normal cleanup on its existing serialized worker: proof check, roll back its pending transaction, proof check, verified-directory tombstone settlement, proof check, one PASSIVE checkpoint, post-proof check, wrapper native close, then normal remaining ownership release. Preserve deadlines/progress cancellation; do not add a retry loop or alter auto-checkpoint. On non-BUSY checkpoint or close failure retain the connection/lease/helper/worker for the existing guarded retry. Update `_finish_close` so an error with a retained cleanup owner cannot shut down its executor. Keep this separate from terminal proof-loss handling.
 
 ```python
 # Within serialized normal cleanup, with the surrounding phase proof checks:
@@ -538,8 +539,8 @@ else:
 ```
 
 The result-shape checks occur before unpacking; tests cover wrong length/types/ranges. Use existing deadline/progress machinery rather than an unbounded new SQL path. A newly lost helper at any phase switches to terminal retention, with no subsequent rollback/checkpoint/close.
-- [ ] Add helper-loss tests in isolated owned processes, not the main pytest process, so retained SQLite handles/workers cannot contaminate later tests. Kill only the captured helper; assert use and close yield `restart_required`, no SQL/finalizer cleanup occurs in-process, repeated new repository construction cannot acquire retained capacity, and healthy sibling work continues. Include helper loss between live SQLite open and wrapper publication.
-- [ ] Implement terminal handling before ordinary authority failure handling:
+- [x] Add helper-loss tests in isolated owned processes, not the main pytest process, so retained SQLite handles/workers cannot contaminate later tests. Kill only the captured helper; assert use and close yield `restart_required`, no SQL/finalizer cleanup occurs in-process, repeated new repository construction cannot acquire retained capacity, and healthy sibling work continues. Include helper loss between live SQLite open and wrapper publication.
+- [x] Implement terminal handling before ordinary authority failure handling:
 
 ```python
 except ExactProfileStoreProofLostError:
@@ -550,16 +551,33 @@ except ExactProfileStoreProofLostError:
 ```
 
 `_helper_restart_required` is initialized false on repository construction and never reset in-process. Keep references through the existing app-owned repository; do not release its SHARED lease, live SQLite, worker or retained permit. Reap the dead helper independently. Healthy-helper close failure retains the ordinary retry path. Pre-live helper failure releases ordinary ownership and does not latch. Admission latching checks existing waiters inside the reservation loop and wakes them; unrelated transient reservations and already-healthy siblings remain usable. Bound terminal owners by the existing four retained permits, not a new global connection registry.
-- [ ] Qualify normal application shutdown and abrupt exit separately with private namespaces and externally held observer handles. During terminal retention, exclusive store acquisition must remain blocked. After owned process exit it must succeed, with foreign substituted cohorts unchanged. If orderly interpreter finalizers close SQLite unsafely or ownership cannot be retained without hanging shutdown, STOP: report the failed approved-design gate. Do not substitute `os._exit`, force-kill product behavior, restore foreign paths in the fixture to hide failure, or silently weaken the contract.
-- [ ] Use an actual app-owned repository/worker for ordinary shutdown, not only a module-global sqlite handle. Seed stores in a separate child so the live parent never acquires legacy raw main/WAL/SHM descriptors. Exercise idle/read/write states, helper loss during partial publication, one/two live owners, outstanding statements and large transactions that actually spill pages. Audit whether production can expose a BLOB handle; test its real lifetime if reachable, otherwise document the concrete API boundary rather than inventing a new BLOB API.
-- [ ] Keep foreign-cohort preservation and original-data recovery as separate observations: compare foreign names/inodes/link counts/bytes through external observer handles after exit, then recover the original owned store in a separately owned namespace without letting fixture cleanup mutate the observed foreign cohort. Verify committed values, rollback of uncommitted/spilled writes and integrity after ordinary native finalization. Retain default-close failure only as a diagnostic control, not a deliberately failing normal-suite test. Report unsupported platform coverage explicitly.
-- [ ] Cancel an async waiter while its repository worker is paused at a barrier. Assert the worker retains its reservation/helper until settlement and no later operation reuses its capacity early. Verify deadline exhaustion prevents publication but permits bounded owned cleanup.
+- [x] Qualify normal application shutdown and abrupt exit separately with private namespaces and externally held observer handles. During terminal retention, exclusive store acquisition must remain blocked. After owned process exit it must succeed, with foreign substituted cohorts unchanged. If orderly interpreter finalizers close SQLite unsafely or ownership cannot be retained without hanging shutdown, STOP: report the failed approved-design gate. Do not substitute `os._exit`, force-kill product behavior, restore foreign paths in the fixture to hide failure, or silently weaken the contract.
+- [x] Use an actual app-owned repository/worker for ordinary shutdown, not only a module-global sqlite handle. Seed stores in a separate child so the live parent never acquires legacy raw main/WAL/SHM descriptors. Exercise idle/read/write states, helper loss during partial publication, one/two live owners, outstanding statements and large transactions that actually spill pages. Audit whether production can expose a BLOB handle; test its real lifetime if reachable, otherwise document the concrete API boundary rather than inventing a new BLOB API.
+- [x] Keep foreign-cohort preservation and original-data recovery as separate observations: compare foreign names/inodes/link counts/bytes through external observer handles after exit, then recover the original owned store in a separately owned namespace without letting fixture cleanup mutate the observed foreign cohort. Verify committed values, rollback of uncommitted/spilled writes and integrity after ordinary native finalization. Retain default-close failure only as a diagnostic control, not a deliberately failing normal-suite test. Report unsupported platform coverage explicitly.
+- [x] Cancel an async waiter while its repository worker is paused at a barrier. Assert the worker retains its reservation/helper until settlement and no later operation reuses its capacity early. Verify deadline exhaustion prevents publication but permits bounded owned cleanup.
 - [ ] Run the new lifecycle file plus `Tests/TTS/test_profile_repository_lifecycle.py` and `Tests/TTS/test_profile_repository.py`. Confirm all terminal tests are process-contained and normal repeated open/close cycles are leak-free.
-- [ ] Commit only the named TTS/process/test files with message `fix(tts): preserve remote proof authority across repository lifecycle`; obtain independent ownership/security review before final qualification.
+- [x] Commit only the named TTS/process/test files with message `fix(tts): preserve remote proof authority across repository lifecycle`; obtain independent ownership/security review before final qualification.
+
+Task5b reviewed checkpoint: implementation 42e2766e9 and fix-round1 c98ebfa61
+passed independent scoped ownership/spec/quality review; both Important findings
+(first-close terminal projection and late-owner worker loss) are addressed, with
+no new blocking fix findings. Parent live ownership uses fixed remote proof,
+pre-SQL native close policy, explicit directory/restore handoffs and bounded
+terminal retention. Actual-app 14-case ordinary/abrupt shutdown gates passed,
+including foreign-cohort preservation and separate committed/uncommitted recovery.
+The round1 two-file run (235 passed, one existing warning, 175.59s) plus the added
+residual-only case establishes 236 distinct passing cases there; controller fresh
+committed six-case review regression: 6 passed, one warning, 5.81s. Touched-file formats and
+changed-span lint checks pass; aggregate lint debt remains disclosed. The earlier
+three-file attempt: 382 passed then failed before body at SemLock ENOSPC; 32 explicit
+unaffected tail cases passed, but the failed node and 10 subsequent spawned cases
+remain unqualified. The unchecked combined-run gate transfers to Task7, not a
+waiver. Installed-wheel/platform proof and the remaining descriptor census stay
+Task6/7 obligations. Whole TASK-31942 remains In Progress; V2 stays disabled.
 
 ### Task 6: Correct exclusive descriptor-view finalizers
 
-**Files:** Modify `DB/private_sqlite.py`, `TTS/profile_migration_publication.py`, `profile_migration_recovery.py`, `profile_errors.py`, and affected namespace ownership code; extend `Tests/DB/test_private_sqlite.py`, `Tests/TTS/test_profile_migration_publication.py`, `test_profile_migration_recovery.py`, `test_profile_repository_lifecycle.py`.
+**Files:** Modify `DB/private_sqlite.py`, `TTS/profile_migration_publication.py`, `profile_migration_recovery.py`, `profile_errors.py`, `profile_repository.py` for the required retained-owner propagation, and affected namespace ownership code; extend `Tests/DB/test_private_sqlite.py`, `Tests/DB/test_private_sqlite_inventory.py`, `Tests/TTS/test_profile_migration_publication.py`, `test_profile_migration_recovery.py`, `test_profile_repository_lifecycle.py`. Update `backlog/docs/sqlite-private-owner-inventory.md` for the required descriptor/raw-close census; unrelated owner repairs remain out of scope.
 
 **Interfaces:** Preserve `connect_private_sqlite_descriptor(owner_id, descriptor_fd, **kwargs)` for the remaining registered exclusive owners. Borrow the verified FD during SQLite open; no `os.dup`/immediate raw close. Remove only the obsolete live `tts.profile_store_descriptor` owner after Task5b no longer uses it. Public caller-owned descriptors remain borrowed.
 
@@ -722,4 +740,4 @@ Preserve the existing source-free child fault/lifecycle captures. Do not reinter
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4 and Task5a have passed their independent gates; do not restart them. Task5b resumes the user's selected subagent-driven workflow before Task6/7. Runtime admission is complete; live ownership, cleanup and production shutdown remain unqualified. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a and Task5b implementation have passed independent review; do not restart them. Task6 continues the user's selected subagent-driven workflow before Task7 final qualification. Runtime admission, live ownership and the macOS actual-app shutdown gates have passing scoped evidence; the full correction remains unqualified. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
