@@ -1,46 +1,29 @@
 #!/bin/bash
-# Build script for tldw_chatbook PyPI distribution
+# Build a release distribution from committed source in an external scratch tree.
 
-set -e  # Exit on error
+set -euo pipefail
 
-echo "🚀 Building tldw_chatbook distribution..."
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/tldw-chatbook-dist.XXXXXX")
+trap 'rm -rf "$SCRATCH"' EXIT
 
-# Navigate to project root
-cd "$(dirname "$0")/.."
+if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=normal)" ]; then
+    echo "ERROR: commit or remove task changes before building a release" >&2
+    exit 1
+fi
 
-# Clean Python artifacts
-echo "🧹 Cleaning Python artifacts..."
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find . -name "*.pyc" -o -name "*.pyo" -exec rm -f {} + 2>/dev/null || true
-find . -name ".DS_Store" -exec rm -f {} + 2>/dev/null || true
+echo "Building committed tldw_chatbook source in $SCRATCH"
+mkdir -p "$SCRATCH/source" "$SCRATCH/dist"
+git -C "$ROOT" archive --format=tar HEAD | tar -xf - -C "$SCRATCH/source"
 
-# Clean previous builds
-echo "🧹 Cleaning previous builds..."
-rm -rf dist/ build/ *.egg-info
+cd "$SCRATCH/source"
+python -m build --outdir "$SCRATCH/dist"
+python -m twine check "$SCRATCH/dist"/*
+python Packaging/check_manifest.py "$SCRATCH/dist"
 
-# Build source distribution and wheel
-echo "🔨 Building source and wheel distributions..."
-python -m build
+rm -rf "$ROOT/dist"
+mkdir -p "$ROOT/dist"
+cp "$SCRATCH/dist"/* "$ROOT/dist/"
 
-# Check the distributions
-echo "✅ Checking distributions with twine..."
-python -m twine check dist/*
-
-# Verify manifest
-echo "📋 Verifying distribution contents..."
-python Packaging/check_manifest.py
-
-echo ""
-echo "✨ Build complete!"
-echo ""
-echo "📦 Distribution files created in ./dist/"
-ls -la dist/
-echo ""
-echo "📤 To upload to TestPyPI (for testing):"
-echo "  python -m twine upload --repository testpypi dist/*"
-echo ""
-echo "📤 To upload to PyPI (production):"
-echo "  python -m twine upload dist/*"
-echo ""
-echo "🧪 To test installation from wheel:"
-echo "  pip install dist/tldw_chatbook-*.whl"
+echo "Distribution files created in $ROOT/dist"
+ls -la "$ROOT/dist"

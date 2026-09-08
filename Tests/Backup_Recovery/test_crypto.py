@@ -12,6 +12,17 @@ import time
 import pytest
 
 
+def _copy_helper_package(helper_resource_root, destination):
+    package_root = destination / "package"
+    root = package_root / "_age"
+    shutil.copytree(helper_resource_root, root)
+    shutil.copy2(
+        helper_resource_root.parent / "helper_manifest.json",
+        package_root / "helper_manifest.json",
+    )
+    return root
+
+
 def test_encrypted_stream_round_trip(tmp_path, helper_resource_root, monkeypatch):
     from tldw_chatbook.Backup_Recovery.crypto import transform
     from tldw_chatbook.Backup_Recovery import crypto
@@ -206,30 +217,35 @@ def test_unqualified_resource_is_unavailable(
 ):
     from tldw_chatbook.Backup_Recovery import crypto
 
-    root = tmp_path / "resource"
-    shutil.copytree(helper_resource_root, root)
-    manifest_path = root / "manifest.json"
+    root = _copy_helper_package(helper_resource_root, tmp_path)
+    manifest_path = root.parent / "helper_manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    qualified = next(
+        entry for entry in manifest["helpers"] if entry["status"] == "qualified"
+    )
     if defect == "missing_binary":
         (root / "backup-age").unlink()
     elif defect == "digest":
-        manifest["sha256"] = "0" * 64
+        qualified["sha256"] = "0" * 64
     elif defect == "platform":
-        manifest["arch"] = "unsupported"
+        qualified["arch"] = "unsupported"
     elif defect == "protocol":
-        manifest["protocol"] = 2
+        qualified["protocol"] = 2
     elif defect == "boolean_protocol":
-        manifest["protocol"] = True
+        qualified["protocol"] = True
     elif defect == "unknown_field":
-        manifest["path"] = "/untrusted"
+        qualified["path"] = "/untrusted"
     elif defect == "binary_symlink":
         (root / "backup-age").unlink()
         (root / "backup-age").symlink_to(helper_resource_root / "backup-age")
     manifest_path.write_text(
-        json.dumps(manifest) + (" " * 5000 if defect == "oversized_manifest" else "")
+        json.dumps(manifest) + (" " * 17000 if defect == "oversized_manifest" else "")
     )
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: root)
-    assert crypto.helper_capability() == (False, "helper_unavailable")
+    expected = (
+        "helper_integrity_mismatch" if defect == "digest" else "helper_unavailable"
+    )
+    assert crypto.helper_capability() == (False, expected)
 
 
 def test_byte_budgets_count_streamed_input_and_output(tmp_path, crypto, monkeypatch):
@@ -512,10 +528,17 @@ def test_misbehaving_child_output_is_bounded(
     import sys
     from tldw_chatbook.Backup_Recovery import crypto
 
-    root = tmp_path / "fault-helper"
-    shutil.copytree(helper_resource_root, root)
-    metadata = json.loads((root / "manifest.json").read_text())
-    info = {k: v for k, v in metadata.items() if k != "sha256"}
+    root = _copy_helper_package(helper_resource_root, tmp_path)
+    manifest_path = root.parent / "helper_manifest.json"
+    metadata = json.loads(manifest_path.read_text())
+    qualified = next(
+        entry for entry in metadata["helpers"] if entry["status"] == "qualified"
+    )
+    info = {
+        key: value
+        for key, value in qualified.items()
+        if key not in {"resource", "sha256", "status"}
+    }
     binary = root / "backup-age"
     binary.write_text(
         f"#!{sys.executable}\nimport os, sys\n"
@@ -527,8 +550,8 @@ def test_misbehaving_child_output_is_bounded(
         + f"while True: os.write({2 if mode == 'stderr_flood' else 1}, b'secret-sentinel' * 1024)\n"
     )
     binary.chmod(0o700)
-    metadata["sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-    (root / "manifest.json").write_text(json.dumps(metadata))
+    qualified["sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(metadata))
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: root)
     start = time.monotonic()
     if mode == "info_flood":
@@ -562,16 +585,16 @@ def test_empty_payload_and_maximum_binary_password(tmp_path, crypto):
     assert len(sealed.read_bytes()) > 16
 
 
-@pytest.mark.parametrize("name", ["manifest.json", "backup-age"])
+@pytest.mark.parametrize("name", ["helper_manifest.json", "backup-age"])
 def test_nonregular_resource_does_not_block_capability(
     tmp_path, helper_resource_root, name
 ):
     import sys
 
-    root = tmp_path / "resource"
-    shutil.copytree(helper_resource_root, root)
-    (root / name).unlink()
-    os.mkfifo(root / name)
+    root = _copy_helper_package(helper_resource_root, tmp_path)
+    path = root.parent / name if name == "helper_manifest.json" else root / name
+    path.unlink()
+    os.mkfifo(path)
     # Inherit Tests/conftest.py's isolated config/home; bound the probe itself.
     probe = subprocess.run(
         [

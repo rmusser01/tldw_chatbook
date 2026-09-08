@@ -7,6 +7,8 @@ import argparse
 import configparser
 from email.parser import Parser
 import fnmatch
+import hashlib
+import json
 from pathlib import Path, PurePosixPath
 import tarfile
 import zipfile
@@ -83,8 +85,19 @@ REQUIRED_SDIST_PATHS = {
     "MANIFEST.in",
     "pyproject.toml",
     "requirements.txt",
+    "Packaging/backup_age/LICENSE.age.txt",
+    "Packaging/backup_age/README.md",
+    "Packaging/backup_age/THIRD_PARTY_NOTICES.txt",
+    "Packaging/backup_age/build_helper.py",
+    "Packaging/backup_age/go.mod",
+    "Packaging/backup_age/go.sum",
+    "Packaging/backup_age/main.go",
+    "Packaging/backup_age/main_test.go",
+    "Packaging/backup_age/qualification.json",
+    "Packaging/backup_age/wheel_commands.py",
     "tldw_chatbook/__init__.py",
     "tldw_chatbook/app.py",
+    "tldw_chatbook/Backup_Recovery/helper_manifest.json",
     "tldw_chatbook/css/tldw_cli_modular.tcss",
     "tldw_chatbook/css/components/stats_screen.css",
     "tldw_chatbook/Config_Files/rag_pipelines.toml",
@@ -106,6 +119,7 @@ REQUIRED_SDIST_PATHS = {
 REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/__init__.py",
     "tldw_chatbook/app.py",
+    "tldw_chatbook/Backup_Recovery/helper_manifest.json",
     "tldw_chatbook/css/tldw_cli_modular.tcss",
     "tldw_chatbook/Config_Files/rag_pipelines.toml",
     "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql",
@@ -159,6 +173,22 @@ FORBIDDEN_WHEEL_PATHS = {
 EXPECTED_CONSOLE_SCRIPTS = {
     "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
     "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
+}
+
+BACKUP_HELPER_ROOT = "tldw_chatbook/Backup_Recovery"
+BACKUP_HELPER_TARGETS = {
+    ("darwin", "arm64"),
+    ("darwin", "amd64"),
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+    ("windows", "amd64"),
+}
+BACKUP_HELPER_PLATFORM_TAGS = {
+    ("darwin", "arm64"): "macosx_12_0_arm64",
+    ("darwin", "amd64"): "macosx_12_0_x86_64",
+    ("linux", "amd64"): "manylinux_2_28_x86_64",
+    ("linux", "arm64"): "manylinux_2_28_aarch64",
+    ("windows", "amd64"): "win_amd64",
 }
 
 
@@ -329,6 +359,134 @@ def _validate_metadata(
     return errors
 
 
+def _validate_backup_helper_sdist(sdist: Path, members: set[str]) -> list[str]:
+    errors: list[str] = []
+    helper_binaries = {
+        name
+        for name in members
+        if name.startswith(f"{BACKUP_HELPER_ROOT}/_age/backup-age")
+    }
+    if helper_binaries:
+        errors.append(
+            "sdist: backup helper binaries are forbidden; "
+            f"found={sorted(helper_binaries)}"
+        )
+    with tarfile.open(sdist, "r:gz") as archive:
+        manifest_member = next(
+            (
+                member
+                for member in archive.getmembers()
+                if member.isfile()
+                and member.name.endswith(f"/{BACKUP_HELPER_ROOT}/helper_manifest.json")
+            ),
+            None,
+        )
+        stream = archive.extractfile(manifest_member) if manifest_member else None
+        if stream is None:
+            return errors + ["sdist: backup helper manifest cannot be read"]
+        try:
+            manifest = json.loads(stream.read())
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            return errors + [
+                f"sdist: invalid backup helper manifest: {type(error).__name__}"
+            ]
+    helpers = manifest.get("helpers", [])
+    if manifest.get("schema_version") != 1 or not isinstance(helpers, list):
+        errors.append("sdist: invalid backup helper manifest structure")
+    elif any(entry.get("status") != "unavailable" for entry in helpers):
+        errors.append("sdist: every backup helper target must be unavailable")
+    return errors
+
+
+def _validate_backup_helper_wheel(wheel: Path, members: set[str]) -> list[str]:
+    errors: list[str] = []
+    manifest_name = f"{BACKUP_HELPER_ROOT}/helper_manifest.json"
+    with zipfile.ZipFile(wheel) as archive:
+        try:
+            manifest = json.loads(archive.read(manifest_name))
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            return [f"wheel: invalid backup helper manifest: {type(error).__name__}"]
+
+        if manifest.get("schema_version") != 1:
+            errors.append("wheel: backup helper manifest schema must be 1")
+        helpers = manifest.get("helpers")
+        if not isinstance(helpers, list):
+            return errors + ["wheel: backup helper manifest helpers must be a list"]
+        targets = {
+            (entry.get("os"), entry.get("arch"))
+            for entry in helpers
+            if isinstance(entry, dict)
+        }
+        if len(helpers) != 5 or targets != BACKUP_HELPER_TARGETS:
+            errors.append(
+                "wheel: backup helper manifest must inventory every target once"
+            )
+        qualified = [
+            entry
+            for entry in helpers
+            if isinstance(entry, dict) and entry.get("status") == "qualified"
+        ]
+        binary_members = {
+            name
+            for name in members
+            if name.startswith(f"{BACKUP_HELPER_ROOT}/_age/backup-age")
+        }
+        pure = wheel.name.endswith("-py3-none-any.whl")
+        wheel_metadata_name = next(
+            (name for name in members if name.endswith(".dist-info/WHEEL")), None
+        )
+        wheel_metadata = (
+            Parser().parsestr(archive.read(wheel_metadata_name).decode("utf-8"))
+            if wheel_metadata_name
+            else None
+        )
+        if pure:
+            if qualified or binary_members:
+                errors.append(
+                    "wheel: py3-none-any wheel must not contain a backup helper"
+                )
+            if wheel_metadata is None or wheel_metadata["Root-Is-Purelib"] != "true":
+                errors.append(
+                    "wheel: pure helper inventory requires Root-Is-Purelib true"
+                )
+            return errors
+
+        if len(qualified) != 1:
+            errors.append("wheel: native wheel must qualify exactly one backup helper")
+            return errors
+        entry = qualified[0]
+        target = (entry.get("os"), entry.get("arch"))
+        platform_tag = BACKUP_HELPER_PLATFORM_TAGS.get(target)
+        if platform_tag is None or not wheel.name.endswith(
+            f"-py3-none-{platform_tag}.whl"
+        ):
+            errors.append("wheel: native helper platform tag differs from manifest")
+        if wheel_metadata is None or wheel_metadata["Root-Is-Purelib"] != "false":
+            errors.append(
+                "wheel: native helper inventory requires Root-Is-Purelib false"
+            )
+        elif f"py3-none-{platform_tag}" not in (wheel_metadata.get_all("Tag") or []):
+            errors.append("wheel: native helper WHEEL tag differs from manifest")
+        resource = entry.get("resource")
+        expected_resource = (
+            f"{BACKUP_HELPER_ROOT}/{resource}" if isinstance(resource, str) else ""
+        )
+        if binary_members != {expected_resource}:
+            errors.append(
+                "wheel: native helper resource inventory differs; "
+                f"found={sorted(binary_members)}"
+            )
+        elif hashlib.sha256(archive.read(expected_resource)).hexdigest() != entry.get(
+            "sha256"
+        ):
+            errors.append("wheel: native helper digest differs from manifest")
+        for name in ("LICENSE.age.txt", "THIRD_PARTY_NOTICES.txt"):
+            resource_name = f"{BACKUP_HELPER_ROOT}/_age/{name}"
+            if resource_name not in members:
+                errors.append(f"wheel: missing backup helper notice: {resource_name}")
+    return errors
+
+
 def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     """Return whether exactly one sdist and wheel satisfy the release contract."""
 
@@ -384,6 +542,8 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
             wheel_members,
         )
     )
+    errors.extend(_validate_backup_helper_sdist(sdist, sdist_members))
+    errors.extend(_validate_backup_helper_wheel(wheel, wheel_members))
 
     if errors:
         for error in errors:

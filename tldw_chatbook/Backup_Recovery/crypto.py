@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from threading import Event, Lock, Thread
 import time
-from typing import BinaryIO, Literal
+from typing import Annotated, BinaryIO, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -39,8 +39,29 @@ class _Info(BaseModel):
     arch: Literal["arm64", "amd64"]
 
 
-class _Manifest(_Info):
+class _InstalledHelper(_Info):
+    status: Literal["qualified"]
+    resource: Literal["_age/backup-age", "_age/backup-age.exe"]
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _UnavailableHelper(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    status: Literal["unavailable"]
+    reason: Literal["not_qualified"]
+    os: Literal["darwin", "linux", "windows"]
+    arch: Literal["arm64", "amd64"]
+
+
+_HelperEntry = Annotated[
+    _InstalledHelper | _UnavailableHelper, Field(discriminator="status")
+]
+
+
+class _DeliveryManifest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    schema_version: int = Field(strict=True, ge=1, le=1)
+    helpers: tuple[_HelperEntry, ...] = Field(min_length=1, max_length=5)
 
 
 def _package_resource_root() -> Path:
@@ -176,16 +197,18 @@ def _open_regular(path: Path) -> BinaryIO:
 
 def _qualified_helper() -> Path:
     root = _package_resource_root()
-    manifest_path = root / "manifest.json"
+    manifest_path = root.parent / "helper_manifest.json"
     binary = root / ("backup-age.exe" if os.name == "nt" else "backup-age")
     try:
+        if not binary.is_file():
+            raise CryptoError("helper_unavailable")
         if manifest_path.is_symlink() or binary.is_symlink():
             raise CryptoError("helper_unavailable")
         with _open_regular(manifest_path) as stream:
-            encoded = stream.read(4097)
-            if len(encoded) > 4096:
+            encoded = stream.read(16_385)
+            if len(encoded) > 16_384:
                 raise CryptoError("helper_unavailable")
-            manifest = _Manifest.model_validate_json(encoded)
+            delivery = _DeliveryManifest.model_validate_json(encoded)
         current_os = {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}.get(
             platform.system()
         )
@@ -195,7 +218,18 @@ def _qualified_helper() -> Path:
             "x86_64": "amd64",
             "AMD64": "amd64",
         }.get(platform.machine())
-        if (manifest.os, manifest.arch) != (current_os, current_arch):
+        matches = [
+            helper
+            for helper in delivery.helpers
+            if (helper.os, helper.arch) == (current_os, current_arch)
+        ]
+        if len(matches) != 1 or not isinstance(matches[0], _InstalledHelper):
+            raise CryptoError("helper_unavailable")
+        manifest = matches[0]
+        expected_resource = (
+            "_age/backup-age.exe" if current_os == "windows" else "_age/backup-age"
+        )
+        if manifest.resource != expected_resource:
             raise CryptoError("helper_unavailable")
         with _open_regular(binary) as stream:
             metadata = os.fstat(stream.fileno())
@@ -209,7 +243,9 @@ def _qualified_helper() -> Path:
                     raise CryptoError("helper_unavailable")
                 hasher.update(block)
             digest = hasher.hexdigest()
-        if digest != manifest.sha256 or not os.access(binary, os.X_OK):
+        if digest != manifest.sha256:
+            raise CryptoError("helper_integrity_mismatch")
+        if not os.access(binary, os.X_OK):
             raise CryptoError("helper_unavailable")
         output = io.BytesIO()
         _pipes(
@@ -223,10 +259,16 @@ def _qualified_helper() -> Path:
             deadline=time.monotonic() + 5,
         )
         info = _Info.model_validate_json(output.getvalue())
-        if info.model_dump() != manifest.model_dump(exclude={"sha256"}):
+        if info.model_dump() != manifest.model_dump(
+            exclude={"resource", "sha256", "status"}
+        ):
             raise CryptoError("helper_unavailable")
         return binary
-    except (OSError, ValueError, ValidationError, CryptoError):
+    except CryptoError as error:
+        if str(error) == "helper_integrity_mismatch":
+            raise
+        raise CryptoError("helper_unavailable") from None
+    except (OSError, ValueError, ValidationError):
         raise CryptoError("helper_unavailable") from None
 
 
@@ -234,8 +276,8 @@ def helper_capability() -> tuple[bool, str]:
     """Check installed integrity/platform/protocol before soliciting a password."""
     try:
         _qualified_helper()
-    except CryptoError:
-        return False, "helper_unavailable"
+    except CryptoError as error:
+        return False, str(error)
     return True, "available"
 
 

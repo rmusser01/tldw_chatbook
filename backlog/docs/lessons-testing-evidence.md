@@ -9,6 +9,23 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Packaging build copies can become duplicate source owners (TASK-31985, 2026-09-07)
+
+**Incident.** The packaging baseline left an untracked `build/lib` tree inside the
+checkout. The architecture guard
+`test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners`
+recursively scanned Python files from the whole repository root and found the same
+tracked source again under `build/lib`. It therefore counted a second
+`DEFAULT_RUNTIME_POLICY_PATH` owner and failed, although the generated copy was
+byte-identical. Moving `build` outside the checkout made the sole failing guard pass.
+
+**What to do.** Build wheels, sdists, editable copies, and test source trees in a
+private directory outside the entire checkout. A hidden or ignored directory is not
+safe: whole-root guards can traverse `.superpowers` and any other nested scratch tree.
+Keep only final distribution artifacts in the checkout after validation.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled

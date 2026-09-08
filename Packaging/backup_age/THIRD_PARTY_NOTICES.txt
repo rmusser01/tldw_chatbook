@@ -1,0 +1,11 @@
+The backup-age helper statically links these pinned packages:
+
+- filippo.io/age v1.3.2
+- filippo.io/hpke v0.4.0
+- golang.org/x/crypto v0.55.0
+- the Go 1.26.2 standard library/runtime
+
+The inspected upstream license files for these linked packages and the Go
+toolchain/runtime use the BSD 3-Clause license. LICENSE.age.txt reproduces the
+age license required for binary redistribution. Release owners must recheck the
+linked package graph and applicable notices whenever a pin or toolchain changes.

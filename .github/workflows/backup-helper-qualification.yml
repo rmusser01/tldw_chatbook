@@ -1,0 +1,165 @@
+name: Backup helper native qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-candidate:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }} Python ${{ matrix.python }}
+    runs-on:
+      - self-hosted
+      - backup-helper
+      - ${{ matrix.goos }}
+      - ${{ matrix.goarch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+        python: ["3.11", "3.12", "3.13"]
+        include:
+          - goos: windows
+            goarch: amd64
+            python: "3.11"
+          - goos: windows
+            goarch: amd64
+            python: "3.12"
+          - goos: windows
+            goarch: amd64
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.2
+          cache-dependency-path: Packaging/backup_age/go.sum
+      - name: Provision pinned dependencies
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check \
+            pytest "pydantic>=2.4,<3" loguru psutil build wheel setuptools
+          go -C Packaging/backup_age mod download all
+      - name: Build and probe the native candidate
+        shell: bash
+        env:
+          QUALIFICATION_TARGET: ${{ matrix.goos }}/${{ matrix.goarch }}
+          QUALIFICATION_OUTPUT: ${{ runner.temp }}/backup-helper-evidence.json
+          QUALIFICATION_ROOT: ${{ runner.temp }}/backup-helper
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          from pathlib import Path
+          import subprocess
+          import struct
+          import sys
+
+          from Packaging.backup_age.build_helper import build_helper
+
+          goos, goarch = os.environ["QUALIFICATION_TARGET"].split("/")
+          root = Path(os.environ["QUALIFICATION_ROOT"])
+          root.mkdir(parents=True, exist_ok=True)
+          helper = build_helper(
+              goos,
+              goarch,
+              root / ("backup-age.exe" if goos == "windows" else "backup-age"),
+          )
+          info = json.loads(subprocess.check_output([str(helper), "info"]))
+          password = b"qualification-pipe-fixture"
+          plaintext = b"native pipe behavior" * 4096
+          sealed = subprocess.check_output(
+              [str(helper), "encrypt"],
+              input=struct.pack(">I", len(password)) + password + plaintext,
+          )
+          restored = subprocess.check_output(
+              [str(helper), "decrypt"],
+              input=struct.pack(">I", len(password)) + password + sealed,
+          )
+          assert restored == plaintext
+          filesystem = "unavailable"
+          minimum_os_evidence = "requires platform release review"
+          signature_package_trust = "requires platform release review"
+          if sys.platform == "darwin":
+              filesystem = subprocess.check_output(["mount"], text=True).splitlines()[0]
+              minimum_os_evidence = subprocess.check_output(
+                  ["otool", "-l", str(helper)], text=True
+              )
+              signature = subprocess.run(
+                  ["codesign", "--verify", "--verbose=4", str(helper)],
+                  capture_output=True,
+                  text=True,
+              )
+              signature_package_trust = {
+                  "returncode": signature.returncode,
+                  "stdout": signature.stdout,
+                  "stderr": signature.stderr,
+              }
+          elif sys.platform.startswith("linux"):
+              filesystem = subprocess.check_output(
+                  ["findmnt", "-n", "-o", "FSTYPE", str(root)], text=True
+              ).strip()
+              minimum_os_evidence = subprocess.check_output(
+                  ["readelf", "-n", str(helper)], text=True
+              )
+              signature_package_trust = "unsigned_binary_with_sha256_inventory"
+          elif os.name == "nt":
+              filesystem = subprocess.check_output(
+                  [
+                      "powershell",
+                      "-NoProfile",
+                      "-Command",
+                      f"(Get-Volume -DriveLetter '{root.drive[0]}').FileSystem",
+                  ],
+                  text=True,
+              ).strip()
+              signature_package_trust = subprocess.check_output(
+                  [
+                      "powershell",
+                      "-NoProfile",
+                      "-Command",
+                      f"Get-AuthenticodeSignature '{helper}' | ConvertTo-Json -Compress",
+                  ],
+                  text=True,
+              ).strip()
+          evidence = {
+              "target": os.environ["QUALIFICATION_TARGET"],
+              "python": platform.python_version(),
+              "runner_os": platform.platform(),
+              "filesystem": filesystem,
+              "minimum_os_evidence": minimum_os_evidence,
+              "helper_info": info,
+              "sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+              "size": helper.stat().st_size,
+              "pipe_behavior": "passed_real_encrypt_decrypt",
+              "helper_integrity": "passed_sha256_and_info",
+              "signature_package_trust": signature_package_trust,
+              "runtime_network_containment": "requires_cell_specific_release_review",
+              "status": "candidate_only_not_advertised",
+          }
+          Path(os.environ["QUALIFICATION_OUTPUT"]).write_text(
+              json.dumps(evidence, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+      - name: Verify source protocol and pinned graph
+        shell: bash
+        run: |
+          go -C Packaging/backup_age mod verify
+          go -C Packaging/backup_age test ./...
+          go -C Packaging/backup_age vet ./...
+          python -m pytest \
+            Tests/Packaging/test_backup_helper_distribution.py::test_build_helper_produces_the_pinned_native_protocol \
+            Tests/Packaging/test_backup_helper_distribution.py::test_source_checkout_declares_every_target_unavailable \
+            -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-helper-${{ matrix.goos }}-${{ matrix.goarch }}-py${{ matrix.python }}
+          path: ${{ runner.temp }}/backup-helper-evidence.json
+          if-no-files-found: error
