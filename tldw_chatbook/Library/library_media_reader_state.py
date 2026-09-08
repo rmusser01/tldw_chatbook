@@ -178,6 +178,7 @@ def resolve_media_reader_layout(
     *,
     previous: MediaReaderEffectiveLayout | None = None,
     priority: PaneName | None = None,
+    reader_has_item: bool = True,
 ) -> MediaReaderEffectiveLayout:
     """Resolve Media preferences through the shared adaptive layout policy.
 
@@ -186,6 +187,9 @@ def resolve_media_reader_layout(
         preferences: Persisted manual pane preferences.
         previous: Previously resolved layout used for hysteresis.
         priority: Pane explicitly requested by the user, if any.
+        reader_has_item: Whether the Reader has an item open. When ``False``
+            the empty Reader's wasted width goes to the Items list so a long
+            title stops truncating (task-31979); ``True`` restores the split.
 
     Returns:
         Media-compatible effective pane geometry.
@@ -196,6 +200,7 @@ def resolve_media_reader_layout(
         MEDIA_READER_LAYOUT_PROFILE,
         previous=previous,
         priority=priority,
+        reader_has_item=reader_has_item,
     )
 
 

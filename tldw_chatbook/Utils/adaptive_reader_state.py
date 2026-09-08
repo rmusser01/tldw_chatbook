@@ -212,6 +212,7 @@ def resolve_adaptive_reader_layout(
     *,
     previous: AdaptiveReaderEffectiveLayout | None = None,
     priority: PaneName | None = None,
+    reader_has_item: bool = True,
 ) -> AdaptiveReaderEffectiveLayout:
     """Resolve saved pane preferences into one responsive effective layout.
 
@@ -221,6 +222,15 @@ def resolve_adaptive_reader_layout(
         profile: Destination list and work-pane width policy.
         previous: Previously resolved layout used for hysteresis.
         priority: Pane explicitly requested by the user, if any.
+        reader_has_item: Whether the work (Reader) pane has an item open.
+            When ``False`` (the pane shows only its empty-state placeholder)
+            the width normally reserved for a document is given to the Items
+            list instead, down to the work pane's floor, so a long title stops
+            truncating in the wasted space (task-31979). Defaults to ``True``,
+            which reproduces the pre-task split exactly; only the non-starved
+            main path reallocates -- a width-starved priority layout has no
+            surplus to give. Automatic widths only: obeyed as typed under
+            ``custom_widths_enabled``, matching the ``list_grows`` gate.
 
     Returns:
         Current effective pane geometry.
@@ -388,6 +398,16 @@ def resolve_adaptive_reader_layout(
                     items_width,
                 ),
             )
+    if items_open and not reader_has_item and not preferences.custom_widths_enabled:
+        # task-31979: the work (Reader) pane is showing only its empty-state
+        # placeholder, so the width normally held for a document is wasted
+        # while the Items list truncates long titles into ~56 cells. Hand that
+        # freed width to the list, down to the work pane's own floor; selecting
+        # an item (reader_has_item=True) restores the split unchanged. Gated on
+        # automatic widths like the list_grows block above: Custom obeys.
+        freed = width - grip_width - library_width - items_width - work_min_width
+        if freed > 0:
+            items_width += freed
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,
         items_open=items_open,
