@@ -1082,8 +1082,11 @@ def _remove_file_quietly(path: Path) -> None:
     Args:
         path: The audio file to remove.
     """
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
     try:
-        path.unlink()
+        with acquire_storage(path):
+            path.unlink()
     except FileNotFoundError:
         pass
     except OSError as exc:

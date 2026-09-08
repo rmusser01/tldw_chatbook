@@ -724,15 +724,17 @@ class LocalMCPStore:
         return LocalMCPStoreState.from_dict(payload)
 
     def save(self, state: LocalMCPStoreState) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        payload = state.to_dict()
-        payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            payload = state.to_dict()
+            payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
 
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+            with temp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
 
-        temp_path.replace(self.path)
+            temp_path.replace(self.path)
 
     def list_profiles(self) -> list[LocalExternalMCPProfile]:
         return list(self.load().profiles)

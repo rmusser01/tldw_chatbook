@@ -151,6 +151,76 @@ _SQLITE_OWNER_POLICIES = {
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
     ),
+    "recovery.operations.workspaces": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.agent_runs": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.subscriptions": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.scheduled_tasks": SQLiteOwnerPolicy(
+        "tldw_chatbook/Scheduling/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.notifications": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notifications/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.events": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notifications/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.sync": SQLiteOwnerPolicy(
+        "tldw_chatbook/Sync_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.file_notes": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.receipts": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed operational history snapshot; imported claims remain inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.agent_logs": SQLiteOwnerPolicy(
+        "tldw_chatbook/Agents/recovery", _READ_ONLY_URI,
+        "Read exact workspace and historical change roots for retained run logs.",
+        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
+    "recovery.operations.kanban": SQLiteOwnerPolicy(
+        "tldw_chatbook/Kanban_Interop/recovery", _PRIVATE_AND_READ_ONLY,
+        "Installed Kanban content/history snapshot with explicit schema metadata.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.note_bindings": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/recovery", _READ_ONLY_URI,
+        "Semantic sync/member validation of core-owned shared payload.",
+        preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
     "recovery.domain.study": SQLiteOwnerPolicy(
         "tldw_chatbook/Study_Interop/recovery", _READ_ONLY_URI,
         "Semantic study/quiz validation of the core-owned shared physical payload.",

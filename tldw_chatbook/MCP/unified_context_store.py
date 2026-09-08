@@ -40,20 +40,22 @@ class UnifiedMCPContextStore:
         return UnifiedMCPContext.from_dict(payload)
 
     def save(self, context: UnifiedMCPContext) -> None:
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-            payload = context.to_dict()
-            payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+                payload = context.to_dict()
+                payload["updated_at"] = _datetime_to_iso(datetime.now(timezone.utc))
 
-            with temp_path.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
+                with temp_path.open("w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2, sort_keys=True)
 
-            temp_path.replace(self.path)
-        except OSError as exc:
-            logger.warning(
-                f"Unable to persist Unified MCP context to {self.path}: {exc}"
-            )
+                temp_path.replace(self.path)
+            except OSError as exc:
+                logger.warning(
+                    f"Unable to persist Unified MCP context to {self.path}: {exc}"
+                )
 
     def _read_payload(self) -> Any:
         try:

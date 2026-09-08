@@ -84,14 +84,13 @@ UNRESOLVED_OWNERS = (
     "persona.assets",
     "mcp.permissions",
     "config.history",
-    "workspaces.state",
     "subscriptions.assets",
     "eval.definitions",
     "chat.attachments",
     "chat.prompts",
     "chunking.templates",
     "tokenizers.custom",
-    "tamagotchi",
+    "tamagotchi.config",
     "runtime.credentials",
 )
 
@@ -158,8 +157,48 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
             issues.add("undeclared_alias")
     if any(len(values) > 1 for values in shared.values()):
         issues.add("shared_identity_mismatch")
-    if any(parent in roots for root in roots for parent in root.parents):
-        issues.add("overlapping_owner_roots")
+    # A tree's explicit same-owner/profile parent edges describe topology, not
+    # competing root ownership. Any missing edge or cross-owner overlap refuses.
+    by_path = {}
+    for item in items:
+        if item.logical_id in resolved_paths:
+            by_path.setdefault(Path(resolved_paths[item.logical_id]), []).append(item)
+    for child_path, children in by_path.items():
+        for parent_path in child_path.parents:
+            if parent_path not in by_path:
+                continue
+            for child in children:
+                current = child
+                prefix = current.logical_id.split(":")[:3]
+                valid = (
+                    len(prefix) == 3
+                    and prefix[0] == "profile"
+                    and prefix[2] == child.owner
+                )
+                visited = set()
+                while valid and Path(resolved_paths[current.logical_id]) != parent_path:
+                    if current.logical_id in visited:
+                        valid = False
+                        break
+                    visited.add(current.logical_id)
+                    expected_parent = Path(resolved_paths[current.logical_id]).parent
+                    matches = [
+                        by_id[key]
+                        for key in current.dependencies
+                        if key in by_id
+                        and by_id[key].status == "included_directory"
+                        and by_id[key].owner == child.owner
+                        and by_id[key].logical_id.split(":")[:3] == prefix
+                        and resolved_paths.get(key) == str(expected_parent)
+                    ]
+                    if len(matches) != 1:
+                        valid = False
+                        break
+                    current = matches[0]
+                if not valid or any(
+                    parent.owner != child.owner for parent in by_path[parent_path]
+                ):
+                    issues.add("overlapping_owner_roots")
     for item in items:
         if item.status in {"unused", "intentionally_excluded"}:
             continue
@@ -431,7 +470,12 @@ def _merge_chachanotes_cohort(
     never part of the durable scope label. A mismatching original declaration is
     refused before any rewrite can hide it by splitting into different groups.
     """
-    owners = {"db.chachanotes.primary", "study.local", "quiz.local"}
+    owners = {
+        "db.chachanotes.primary",
+        "study.local",
+        "quiz.local",
+        "notes.sync_bindings",
+    }
     original = {}
     physical = {}
     try:

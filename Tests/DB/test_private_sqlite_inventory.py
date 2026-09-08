@@ -639,10 +639,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 60)
+        for number in range(1, 72)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 26)
+        f"B{number:02d}" for number in range(1, 36)
     ]
 
 
@@ -1078,7 +1078,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 16,
+            "copy_private_sqlite": 26,
             "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
@@ -1174,6 +1174,18 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ): 1,
         }
     )
+    expected_calls.update({
+        ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notes/recovery', '_ReceiptsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Kanban_Interop/recovery', '_KanbanAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/DB/recovery_operations', '_WorkspacesAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/DB/recovery_operations', '_AgentRunsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/DB/recovery_operations', '_SubscriptionsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notifications/recovery', '_NotificationsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Notifications/recovery', '_EventsAdapter.capture', "copy_private_sqlite"): 1,
+    })
     actual_calls: Counter[tuple[str, str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
         module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
@@ -1406,6 +1418,20 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
     installed_domain_authority = {
         "recovery.domain.research", "recovery.domain.writing",
         "recovery.domain.evals", "recovery.domain.study",
+    }
+    installed_domain_authority |= {
+        'recovery.operations.workspaces',
+        'recovery.operations.agent_runs',
+        'recovery.operations.subscriptions',
+        'recovery.operations.scheduled_tasks',
+        'recovery.operations.notifications',
+        'recovery.operations.events',
+        'recovery.operations.sync',
+        'recovery.operations.file_notes',
+        'recovery.operations.receipts',
+        'recovery.operations.agent_logs',
+        'recovery.operations.kanban',
+        'recovery.operations.note_bindings',
     }
     assert {a.backup_owner_id for a in adapters} | installed_domain_authority == {
         name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed

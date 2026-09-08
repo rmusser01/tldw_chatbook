@@ -53,6 +53,16 @@ CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_recovery",
 )
 COPY_BACKUP_OWNER_IDS = (
+    "recovery.operations.workspaces",
+    "recovery.operations.agent_runs",
+    "recovery.operations.subscriptions",
+    "recovery.operations.scheduled_tasks",
+    "recovery.operations.notifications",
+    "recovery.operations.events",
+    "recovery.operations.sync",
+    "recovery.operations.file_notes",
+    "recovery.operations.receipts",
+    "recovery.operations.kanban",
     "recovery.domain.research",
     "recovery.domain.writing",
     "recovery.domain.evals",

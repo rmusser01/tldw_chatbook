@@ -581,7 +581,7 @@ def test_discovery_custom_paths_and_explicit_core_dependencies(tmp_path):
         assert not classify_entries((item,)).complete
     chacha = core_adapters()[0].discover(config)[0]
     assert "profile:selected:persona.assets:unresolved" in chacha.dependencies
-    assert "profile:selected:notes.file_notes:unresolved" in chacha.dependencies
+    assert "profile:selected:notes.file_notes" in chacha.dependencies
 
 
 def test_local_cross_store_dependencies_use_exact_profile_ids(tmp_path):

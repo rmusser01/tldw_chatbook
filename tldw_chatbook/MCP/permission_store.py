@@ -226,23 +226,27 @@ class MCPPermissionStore:
             payload: Full store payload to persist. Mutated in place to
                 add/overwrite ``updated_at`` before it is written.
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-        payload["updated_at"] = _iso_utc_now()
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            payload["updated_at"] = _iso_utc_now()
 
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+            with temp_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
 
-        temp_path.replace(self.path)
+            temp_path.replace(self.path)
 
     def _backup_corrupt_file(self) -> None:
-        backup_path = self.path.with_suffix(f"{self.path.suffix}.bak")
-        try:
-            self.path.replace(backup_path)
-        except OSError as exc:
-            logger.warning(
-                f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}"
-            )
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            backup_path = self.path.with_suffix(f"{self.path.suffix}.bak")
+            try:
+                self.path.replace(backup_path)
+            except OSError as exc:
+                logger.warning(
+                    f"Failed to back up corrupt MCP permission store at '{self.path}': {exc}"
+                )
 
     # -- profile helpers -----------------------------------------------------
 

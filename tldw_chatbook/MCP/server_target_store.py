@@ -268,18 +268,20 @@ class ConfiguredServerTargetStore:
                 raise AuthorityScopeUnavailable() from None
 
     def save_targets(self, targets: Sequence[ConfiguredServerTarget]) -> None:
-        with self._mutation_lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-            payload = {
-                "targets": [target.to_dict() for target in targets],
-                "updated_at": _datetime_to_iso(datetime.now(timezone.utc)),
-            }
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            with self._mutation_lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+                payload = {
+                    "targets": [target.to_dict() for target in targets],
+                    "updated_at": _datetime_to_iso(datetime.now(timezone.utc)),
+                }
 
-            with temp_path.open("w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
+                with temp_path.open("w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2, sort_keys=True)
 
-            temp_path.replace(self.path)
+                temp_path.replace(self.path)
 
     def bootstrap_from_legacy_config(
         self, app_config: Mapping[str, Any] | None

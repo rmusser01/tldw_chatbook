@@ -39,14 +39,17 @@ class _CoreAdapter:
                         context,
                         owner,
                         ""
-                        if owner == "config" or owner.startswith("db.")
+                        if owner
+                        in ("config", "notes.file_notes", "notes.sync_bindings")
+                        or owner.startswith("db.")
                         else "unresolved",
                     )
                     for owner in ("config",) + self.dependent_owners
                 ),
                 shared_group=(
                     "shared:chachanotes:profile:" + context.profile_id
-                    if self.owner_id == "db.chachanotes.primary" and status == "included"
+                    if self.owner_id == "db.chachanotes.primary"
+                    and status == "included"
                     else None
                 ),
             ),
@@ -219,13 +222,29 @@ class _CoreAdapter:
                         ),
                     ):
                         if connection.execute(query).fetchone() is not None:
-                            key = prefix + owner + ":unresolved"
+                            key = (
+                                prefix
+                                + owner
+                                + ("" if owner == "notes.file_notes" else ":unresolved")
+                            )
                             if (
                                 key not in item.dependencies
                                 or key not in candidates
                                 or not candidates[key].exists()
                             ):
                                 return ("dependency_unavailable",)
+                            if owner == "notes.file_notes":
+                                from tldw_chatbook.Notes.recovery import (
+                                    recovery_adapters,
+                                )
+
+                                adapter = next(
+                                    a
+                                    for a in recovery_adapters()
+                                    if a.owner_id == owner
+                                )
+                                if adapter.validate(candidates[key]):
+                                    return ("dependency_unavailable",)
                 for owner, table, column, identity in references:
                     key = prefix + owner
                     if owner == self.owner_id:

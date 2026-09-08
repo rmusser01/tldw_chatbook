@@ -263,36 +263,38 @@ class ShadowRepo:
         check: bool = True,
         binary: bool = False,
     ) -> subprocess.CompletedProcess:
-        cmd = [
-            self._git,
-            "--git-dir",
-            str(self.git_dir),
-            "--work-tree",
-            str(self.root),
-            *args,
-        ]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                env=self._env(),
-                timeout=_GIT_TIMEOUT_SECONDS,
-                text=not binary,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise ChangeTrackingError(
-                f"git {args[0]} timed out after {_GIT_TIMEOUT_SECONDS:.0f}s"
-            ) from exc
-        except OSError as exc:
-            raise ChangeTrackingUnavailableError(str(exc)) from exc
-        if check and proc.returncode != 0:
-            stderr = proc.stderr if isinstance(proc.stderr, str) else (
-                proc.stderr.decode("utf-8", "replace") if proc.stderr else ""
-            )
-            raise ChangeTrackingError(
-                f"git {args[0]} failed ({proc.returncode}): {stderr.strip()[:400]}"
-            )
-        return proc
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.git_dir):
+            cmd = [
+                self._git,
+                "--git-dir",
+                str(self.git_dir),
+                "--work-tree",
+                str(self.root),
+                *args,
+            ]
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    env=self._env(),
+                    timeout=_GIT_TIMEOUT_SECONDS,
+                    text=not binary,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ChangeTrackingError(
+                    f"git {args[0]} timed out after {_GIT_TIMEOUT_SECONDS:.0f}s"
+                ) from exc
+            except OSError as exc:
+                raise ChangeTrackingUnavailableError(str(exc)) from exc
+            if check and proc.returncode != 0:
+                stderr = proc.stderr if isinstance(proc.stderr, str) else (
+                    proc.stderr.decode("utf-8", "replace") if proc.stderr else ""
+                )
+                raise ChangeTrackingError(
+                    f"git {args[0]} failed ({proc.returncode}): {stderr.strip()[:400]}"
+                )
+            return proc
 
     def _locked(self):
         """Context manager: in-process lock + portable cross-process lockdir."""
@@ -349,28 +351,30 @@ class ShadowRepo:
     def ensure_initialized(self) -> None:
         """Create + pin the shadow repo. Idempotent, self-healing (config and
         excludes rewritten every call — they are cheap, and drift heals)."""
-        if not (self.git_dir / "HEAD").exists():
-            self.git_dir.parent.mkdir(parents=True, exist_ok=True)
-            self._run("init", "--quiet")
-        self.hooks_dir.mkdir(parents=True, exist_ok=True)
-        pins = (
-            ("user.name", "tldw-chatbook change review"),
-            ("user.email", "change-review@tldw-chatbook.invalid"),
-            ("commit.gpgsign", "false"),
-            ("core.hooksPath", str(self.hooks_dir)),
-            ("gc.auto", "0"),
-            ("core.untrackedCache", "true"),
-            ("core.worktree", str(self.root)),
-        )
-        for key, value in pins:
-            self._run("config", key, value)
-        exclude = self.git_dir / "info" / "exclude"
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        exclude.write_text(
-            "# managed by tldw-chatbook change review (TASK-1970)\n"
-            + "\n".join(FORCED_EXCLUDES)
-            + "\n"
-        )
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.git_dir):
+            if not (self.git_dir / "HEAD").exists():
+                self.git_dir.parent.mkdir(parents=True, exist_ok=True)
+                self._run("init", "--quiet")
+            self.hooks_dir.mkdir(parents=True, exist_ok=True)
+            pins = (
+                ("user.name", "tldw-chatbook change review"),
+                ("user.email", "change-review@tldw-chatbook.invalid"),
+                ("commit.gpgsign", "false"),
+                ("core.hooksPath", str(self.hooks_dir)),
+                ("gc.auto", "0"),
+                ("core.untrackedCache", "true"),
+                ("core.worktree", str(self.root)),
+            )
+            for key, value in pins:
+                self._run("config", key, value)
+            exclude = self.git_dir / "info" / "exclude"
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            exclude.write_text(
+                "# managed by tldw-chatbook change review (TASK-1970)\n"
+                + "\n".join(FORCED_EXCLUDES)
+                + "\n"
+            )
 
     # -- snapshots ---------------------------------------------------------
 
@@ -427,88 +431,90 @@ class ShadowRepo:
         Raises:
             ChangeTrackingError: A git step failed or produced no tip.
         """
-        import sys as _sys
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.git_dir):
+            import sys as _sys
 
-        from tldw_chatbook.Workspaces.change_bounds import scan_root
+            from tldw_chatbook.Workspaces.change_bounds import scan_root
 
-        with self._locked():
-            self.ensure_initialized()
-            scan = scan_root(
-                self.root,
-                max_files=_sys.maxsize,
-                max_total_bytes=_sys.maxsize,
-            )
-            self.last_oversize_excluded = scan.oversized
-            self.last_nested_repos = scan.nested_repos
-            # info/exclude is line-oriented and has NO newline escaping --
-            # a filename carrying \n would INJECT extra patterns (Qodo
-            # #1251 finding 5). Such paths are unexcludable; they are
-            # unstaged after add instead (argv is newline-safe).
-            excludable = [
-                rel
-                for rel in scan.oversized
-                if "\n" not in rel and "\r" not in rel
-            ]
-            unexcludable = [
-                rel for rel in scan.oversized if rel not in excludable
-            ]
-            # TASK-1976: nested repos are excluded from tracking entirely.
-            # This is not merely hygiene -- `git add -A` HARD-FAILS (128,
-            # "does not have a commit checked out") on a commitless child
-            # repo, which would kill tracking for the whole root; and a
-            # committed child would land as a gitlink whose inner changes
-            # are invisible anyway. Excluded + disclosed is the honest,
-            # uniform behavior (test: nested-edit-invisible).
-            nested_excludable = [
-                rel
-                for rel in scan.nested_repos
-                if "\n" not in rel and "\r" not in rel
-            ]
-            # Qodo #1254 finding 5: a newline-named nested repo cannot go
-            # into info/exclude, and a commitless child makes `add -A`
-            # FATAL -- exclude it at add time via pathspec magic instead
-            # (argv is newline-safe; `literal` disables glob semantics).
-            nested_unexcludable = [
-                rel for rel in scan.nested_repos if rel not in nested_excludable
-            ]
-            if excludable or nested_excludable:
-                exclude = self.git_dir / "info" / "exclude"
-                with exclude.open("a", encoding="utf-8") as fh:
-                    fh.write(
-                        "# oversize + nested (TASK-1975/1976), "
-                        "rewritten per snapshot\n"
-                    )
-                    for rel in excludable:
-                        fh.write(_exclude_pattern(rel) + "\n")
-                    for rel in nested_excludable:
-                        fh.write(_exclude_pattern(rel) + "/\n")
-            add_args = ["add", "-A", "--", "."]
-            add_args.extend(
-                f":(literal,exclude){rel}" for rel in nested_unexcludable
-            )
-            self._run(*add_args)
-            for rel in unexcludable:
-                self._run(
-                    "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
-                    check=False,
+            with self._locked():
+                self.ensure_initialized()
+                scan = scan_root(
+                    self.root,
+                    max_files=_sys.maxsize,
+                    max_total_bytes=_sys.maxsize,
                 )
-            had_tip = self.tip() is not None
-            if had_tip:
-                staged = self._run("diff", "--cached", "--quiet", check=False)
-                if staged.returncode == 0:
-                    return self.tip()  # type: ignore[return-value]
-                if staged.returncode not in (0, 1):
-                    raise ChangeTrackingError(
-                        "git diff --cached failed while checking cleanliness"
+                self.last_oversize_excluded = scan.oversized
+                self.last_nested_repos = scan.nested_repos
+                # info/exclude is line-oriented and has NO newline escaping --
+                # a filename carrying \n would INJECT extra patterns (Qodo
+                # #1251 finding 5). Such paths are unexcludable; they are
+                # unstaged after add instead (argv is newline-safe).
+                excludable = [
+                    rel
+                    for rel in scan.oversized
+                    if "\n" not in rel and "\r" not in rel
+                ]
+                unexcludable = [
+                    rel for rel in scan.oversized if rel not in excludable
+                ]
+                # TASK-1976: nested repos are excluded from tracking entirely.
+                # This is not merely hygiene -- `git add -A` HARD-FAILS (128,
+                # "does not have a commit checked out") on a commitless child
+                # repo, which would kill tracking for the whole root; and a
+                # committed child would land as a gitlink whose inner changes
+                # are invisible anyway. Excluded + disclosed is the honest,
+                # uniform behavior (test: nested-edit-invisible).
+                nested_excludable = [
+                    rel
+                    for rel in scan.nested_repos
+                    if "\n" not in rel and "\r" not in rel
+                ]
+                # Qodo #1254 finding 5: a newline-named nested repo cannot go
+                # into info/exclude, and a commitless child makes `add -A`
+                # FATAL -- exclude it at add time via pathspec magic instead
+                # (argv is newline-safe; `literal` disables glob semantics).
+                nested_unexcludable = [
+                    rel for rel in scan.nested_repos if rel not in nested_excludable
+                ]
+                if excludable or nested_excludable:
+                    exclude = self.git_dir / "info" / "exclude"
+                    with exclude.open("a", encoding="utf-8") as fh:
+                        fh.write(
+                            "# oversize + nested (TASK-1975/1976), "
+                            "rewritten per snapshot\n"
+                        )
+                        for rel in excludable:
+                            fh.write(_exclude_pattern(rel) + "\n")
+                        for rel in nested_excludable:
+                            fh.write(_exclude_pattern(rel) + "/\n")
+                add_args = ["add", "-A", "--", "."]
+                add_args.extend(
+                    f":(literal,exclude){rel}" for rel in nested_unexcludable
+                )
+                self._run(*add_args)
+                for rel in unexcludable:
+                    self._run(
+                        "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
+                        check=False,
                     )
-            commit_args = ["commit", "--quiet", "--no-verify", "-m", message]
-            if not had_tip:
-                commit_args.append("--allow-empty")
-            self._run(*commit_args)
-            new_tip = self.tip()
-            if not new_tip:
-                raise ChangeTrackingError("snapshot commit produced no tip")
-            return new_tip
+                had_tip = self.tip() is not None
+                if had_tip:
+                    staged = self._run("diff", "--cached", "--quiet", check=False)
+                    if staged.returncode == 0:
+                        return self.tip()  # type: ignore[return-value]
+                    if staged.returncode not in (0, 1):
+                        raise ChangeTrackingError(
+                            "git diff --cached failed while checking cleanliness"
+                        )
+                commit_args = ["commit", "--quiet", "--no-verify", "-m", message]
+                if not had_tip:
+                    commit_args.append("--allow-empty")
+                self._run(*commit_args)
+                new_tip = self.tip()
+                if not new_tip:
+                    raise ChangeTrackingError("snapshot commit produced no tip")
+                return new_tip
 
     # -- reading changes ---------------------------------------------------
 
@@ -625,12 +631,14 @@ class ShadowRepo:
         Args:
             paths: Root-relative paths to stage with ``add -f``.
         """
-        existing = [p for p in paths if (self.root / p).exists()]
-        if not existing:
-            return
-        with self._locked():
-            self.ensure_initialized()
-            self._run("add", "-f", "--", *existing)
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.git_dir):
+            existing = [p for p in paths if (self.root / p).exists()]
+            if not existing:
+                return
+            with self._locked():
+                self.ensure_initialized()
+                self._run("add", "-f", "--", *existing)
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 
@@ -649,7 +657,9 @@ class ShadowRepo:
             ChangeTrackingError: The checkout failed (including any path
                 absent from ``commit``).
         """
-        if not paths:
-            return
-        with self._locked():
-            self._run("checkout", commit, "--", *paths)
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.git_dir):
+            if not paths:
+                return
+            with self._locked():
+                self._run("checkout", commit, "--", *paths)

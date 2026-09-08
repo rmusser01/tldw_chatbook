@@ -164,33 +164,35 @@ class MCPExecutionLog:
             OSError: If the log file or its parent directory cannot be
                 written (callers treat recording as best-effort).
         """
-        payload = self._metadata_only_payload(asdict(record))
-        encoded_line = (json.dumps(payload) + "\n").encode("utf-8")
-        rotated = self.path.with_name(self.path.name + ".1")
-        with self._lock:
-            self._secure_parent()
-            self._migrate_generation(rotated)
-            active_payload = self._migrate_generation(self.path)
-            line_count = (
-                len(active_payload.splitlines()) if active_payload is not None else 0
-            )
-            if line_count >= self.max_records_per_file:
-                atomic_private_write_bytes(
-                    rotated,
-                    active_payload or b"",
-                    application_owned_directory=self.path.parent,
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            payload = self._metadata_only_payload(asdict(record))
+            encoded_line = (json.dumps(payload) + "\n").encode("utf-8")
+            rotated = self.path.with_name(self.path.name + ".1")
+            with self._lock:
+                self._secure_parent()
+                self._migrate_generation(rotated)
+                active_payload = self._migrate_generation(self.path)
+                line_count = (
+                    len(active_payload.splitlines()) if active_payload is not None else 0
                 )
-                atomic_private_write_bytes(
+                if line_count >= self.max_records_per_file:
+                    atomic_private_write_bytes(
+                        rotated,
+                        active_payload or b"",
+                        application_owned_directory=self.path.parent,
+                    )
+                    atomic_private_write_bytes(
+                        self.path,
+                        encoded_line,
+                        application_owned_directory=self.path.parent,
+                    )
+                    return
+                with open_private_text_append(
                     self.path,
-                    encoded_line,
                     application_owned_directory=self.path.parent,
-                )
-                return
-            with open_private_text_append(
-                self.path,
-                application_owned_directory=self.path.parent,
-            ) as handle:
-                handle.write(encoded_line.decode("utf-8"))
+                ) as handle:
+                    handle.write(encoded_line.decode("utf-8"))
 
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
         """Return recent records, newest first, across both generations.
@@ -202,44 +204,46 @@ class MCPExecutionLog:
             Up to ``limit`` record dicts, newest first. Torn or corrupt
             JSONL lines are skipped rather than raising.
         """
-        if limit <= 0:
-            return []
-        rows: list[dict[str, Any]] = []
-        rotated = self.path.with_name(self.path.name + ".1")
-        with self._lock:
-            try:
-                self._secure_parent()
-            except PrivatePathError as exc:
-                logger.warning(
-                    "MCP execution log read disabled (status={}).",
-                    exc.result.status.value,
-                )
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.path):
+            if limit <= 0:
                 return []
-            for source in (rotated, self.path):  # oldest generation first
+            rows: list[dict[str, Any]] = []
+            rotated = self.path.with_name(self.path.name + ".1")
+            with self._lock:
                 try:
-                    raw = self._migrate_generation(source)
+                    self._secure_parent()
                 except PrivatePathError as exc:
                     logger.warning(
-                        "MCP execution-log generation skipped "
-                        "(status={}, generation={}).",
+                        "MCP execution log read disabled (status={}).",
                         exc.result.status.value,
-                        "rotated" if source == rotated else "active",
                     )
-                    continue
-                if raw is None:
-                    continue
-                for line in raw.decode("utf-8", errors="replace").splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
+                    return []
+                for source in (rotated, self.path):  # oldest generation first
                     try:
-                        decoded = json.loads(line)
-                    except json.JSONDecodeError:
+                        raw = self._migrate_generation(source)
+                    except PrivatePathError as exc:
+                        logger.warning(
+                            "MCP execution-log generation skipped "
+                            "(status={}, generation={}).",
+                            exc.result.status.value,
+                            "rotated" if source == rotated else "active",
+                        )
                         continue
-                    if isinstance(decoded, dict):
-                        rows.append(decoded)
-        rows.reverse()
-        return rows[:limit]
+                    if raw is None:
+                        continue
+                    for line in raw.decode("utf-8", errors="replace").splitlines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            decoded = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(decoded, dict):
+                            rows.append(decoded)
+            rows.reverse()
+            return rows[:limit]
 
     def _secure_parent(self) -> None:
         secure_private_directory(

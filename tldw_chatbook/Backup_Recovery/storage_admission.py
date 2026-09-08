@@ -485,12 +485,65 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
         raise bootstrap.RecoveryRequired("capture_source_outside_scope")
 
 
-def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> bytes:
-    """Return bounded definition bytes after native reader retirement."""
-    if owner_id != "eval.definitions":
+# Explicit installed owners; identifiers grant no path or maintenance authority.
+_RAW_RECOVERY_LIMITS = {
+    "eval.definitions": 1024**4,
+    "mcp.local": 16 * 1024**2,
+    "mcp.targets": 16 * 1024**2,
+    "mcp.context": 16 * 1024**2,
+    "mcp.permissions": 16 * 1024**2,
+    "mcp.history": 256 * 1024**3,
+    "runtime.source_state": 16 * 1024**2,
+    "tamagotchi.config": 16 * 1024**2,
+    "workspaces.change_tracking": 256 * 1024**3,
+    "agents.history": 256 * 1024**3,
+    "subscriptions.assets": 256 * 1024**3,
+}
+
+
+def _recovery_file_limit(owner_id: str, max_bytes: int) -> None:
+    if owner_id not in _RAW_RECOVERY_LIMITS:
         raise bootstrap.RecoveryRequired("capture_owner_not_registered")
+    if (
+        type(max_bytes) is not int
+        or max_bytes <= 0
+        or max_bytes > _RAW_RECOVERY_LIMITS[owner_id]
+    ):
+        raise ValueError("invalid_capture_byte_limit")
+
+
+def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> bytes:
+    """Return bounded definition bytes only after positive reader retirement."""
     if type(max_bytes) is not int or max_bytes <= 0 or max_bytes > 16 * 1024**2:
         raise ValueError("invalid_capture_byte_limit")
+    return _consume_recovery_file(
+        owner_id, candidate, max_bytes=max_bytes, collect=True
+    )
+
+
+def _check_recovery_file(
+    owner_id: str,
+    candidate: Path,
+    *,
+    max_bytes: int,
+    cancel: threading.Event | None = None,
+) -> None:
+    """Check opaque bytes in bounded chunks without exposing a native handle."""
+    _consume_recovery_file(
+        owner_id, candidate, max_bytes=max_bytes, collect=False, cancel=cancel
+    )
+
+
+def _consume_recovery_file(
+    owner_id: str,
+    candidate: Path,
+    *,
+    max_bytes: int,
+    collect: bool,
+    cancel: threading.Event | None = None,
+) -> bytes | None:
+    """Return bounded definition bytes after native reader retirement."""
+    _recovery_file_limit(owner_id, max_bytes)
     selected = lexical_path(candidate)
     scope = getattr(_local, "capture_scope", None)
     lease = acquire_storage(selected) if scope is None else None
@@ -513,13 +566,18 @@ def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> by
             chunks = []
             total = 0
             while True:
+                if cancel is not None and cancel.is_set():
+                    raise InterruptedError("cancelled")
+                if scope is not None:
+                    scope.check()
                 chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
                 if not chunk:
                     break
                 total += len(chunk)
                 if total > max_bytes:
                     raise ValueError("definition_byte_limit")
-                chunks.append(chunk)
+                if collect:
+                    chunks.append(chunk)
             if scope is not None:
                 _check_capture_file_identity(scope, selected, os.fstat(fd))
                 current_parent = selected.parent.stat()
@@ -529,7 +587,7 @@ def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> by
                     held_parent.st_ino,
                 ):
                     raise bootstrap.RecoveryRequired("capture_target_changed")
-            return b"".join(chunks)
+            return b"".join(chunks) if collect else None
     finally:
         # If native retirement fails, ordinary admission is retained too. Never
         # release a lease around a potentially live descriptor.
@@ -552,10 +610,7 @@ def copy_capture_file(
     alone never does. Every acquired descriptor is retired before return, or its
     unresolved resource retains native exclusion through the existing quarantine.
     """
-    if owner_id != "eval.definitions":
-        raise bootstrap.RecoveryRequired("capture_owner_not_registered")
-    if type(max_bytes) is not int or max_bytes <= 0 or max_bytes > 1024**4:
-        raise ValueError("invalid_capture_byte_limit")
+    _recovery_file_limit(owner_id, max_bytes)
     scope = getattr(_local, "capture_scope", None)
     if scope is None:
         raise bootstrap.RecoveryRequired("capture_requires_maintenance")

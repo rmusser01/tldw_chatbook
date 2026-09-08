@@ -5689,3 +5689,20 @@ before applying their original injection. Actual ordinary admission runs normall
 the original private-path assertions pass unchanged. Keep simulated native faults
 local to the owner being qualified, and verify the trace reaches that boundary
 before interpreting a failure as lifecycle evidence.
+
+## SQLite context-manager exit is not native connection retirement (TASK-31991)
+
+**Incident.** Task8 operational recovery initially preserved all SQLite rows but
+failed source-byte assertions for EventStateRepository and SyncStateRepository.
+Their file-backed `_get_connection` handles were used with SQLite context managers,
+which commit/rollback without closing; the native cycles later finalized during
+fixture authority setup, checkpointing WAL into the source main file. Explicit
+fixture `gc.collect()` before namespace enrollment made the source-byte comparison
+stable. This is fixture setup, not evidence of production maintenance drain: these
+owners' `.close()` only closes their retained memory connection. The coordinated
+runtime drain remains task10's responsibility.
+
+**What to do.** Prove actual native connection retirement before claiming that a
+writer has drained. A `with connection` block, a successful transaction, and delayed
+fixture garbage collection establish different properties. Keep writer exclusion
+and deliberately drained snapshot setup as separate behavioral tests.

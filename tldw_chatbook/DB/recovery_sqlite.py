@@ -17,9 +17,11 @@ def _validate_sqlite(
     connection: sqlite3.Connection,
     versions: tuple[int, ...],
     schemas: tuple[tuple[int, tuple[str, ...]], ...],
+    *,
+    version_query: str = "PRAGMA user_version",
 ) -> tuple[str, ...]:
     connection.execute("PRAGMA trusted_schema=OFF")
-    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    version = connection.execute(version_query).fetchone()[0]
     if version not in versions:
         return ("unsupported_schema_version",)
     actual = tuple(
@@ -28,7 +30,10 @@ def _validate_sqlite(
             "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
         )
     )
-    if actual != dict(schemas)[version]:
+    if not any(
+        known_version == version and actual == schema
+        for known_version, schema in schemas
+    ):
         return ("unsupported_schema",)
     if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
         return ("invalid_domain_reference",)

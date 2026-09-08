@@ -206,12 +206,14 @@ class JSONStorage(StorageAdapter):
         """
         super().__init__(enable_recovery)
         self.filepath = Path(filepath).expanduser()
-        self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        self.max_backups = max_backups
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.filepath):
+            self.filepath.parent.mkdir(parents=True, exist_ok=True)
+            self.max_backups = max_backups
 
-        # Initialize file if it doesn't exist
-        if not self.filepath.exists():
-            self._write_data({})
+            # Initialize file if it doesn't exist
+            if not self.filepath.exists():
+                self._write_data({})
 
     def _read_data(self) -> Dict[str, Dict[str, Any]]:
         """Read all data from JSON file."""
@@ -225,18 +227,20 @@ class JSONStorage(StorageAdapter):
 
     def _write_data(self, data: Dict[str, Dict[str, Any]]) -> bool:
         """Write all data to JSON file."""
-        try:
-            # Write to temporary file first for safety
-            temp_file = self.filepath.with_suffix(".tmp")
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.filepath):
+            try:
+                # Write to temporary file first for safety
+                temp_file = self.filepath.with_suffix(".tmp")
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
 
-            # Atomic replace
-            temp_file.replace(self.filepath)
-            return True
-        except IOError as e:
-            print(f"Error writing JSON storage: {e}")
-            return False
+                # Atomic replace
+                temp_file.replace(self.filepath)
+                return True
+            except IOError as e:
+                print(f"Error writing JSON storage: {e}")
+                return False
 
     def load(self, pet_id: str) -> Optional[Dict[str, Any]]:
         """Load pet state from JSON file."""
@@ -245,69 +249,77 @@ class JSONStorage(StorageAdapter):
 
     def _create_backup(self) -> None:
         """Create a backup of the current JSON file."""
-        if not self.filepath.exists():
-            return
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.filepath):
+            if not self.filepath.exists():
+                return
 
-        try:
-            # Create backup filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = self.filepath.with_suffix(f".backup_{timestamp}.json")
+            try:
+                # Create backup filename with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = self.filepath.with_suffix(f".backup_{timestamp}.json")
 
-            # Copy current file to backup
-            shutil.copy2(self.filepath, backup_path)
+                # Copy current file to backup
+                shutil.copy2(self.filepath, backup_path)
 
-            # Clean up old backups
-            self._cleanup_old_backups()
+                # Clean up old backups
+                self._cleanup_old_backups()
 
-        except Exception as e:
-            logger.warning(f"Failed to create backup: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to create backup: {e}")
 
     def _cleanup_old_backups(self) -> None:
         """Remove old backup files exceeding max_backups limit."""
-        try:
-            # Find all backup files
-            backup_pattern = f"{self.filepath.stem}.backup_*.json"
-            backups = sorted(self.filepath.parent.glob(backup_pattern))
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.filepath):
+            try:
+                # Find all backup files
+                backup_pattern = f"{self.filepath.stem}.backup_*.json"
+                backups = sorted(self.filepath.parent.glob(backup_pattern))
 
-            # Remove oldest backups if exceeding limit
-            while len(backups) > self.max_backups:
-                oldest = backups.pop(0)
-                oldest.unlink()
-                logger.debug(f"Removed old backup: {oldest}")
+                # Remove oldest backups if exceeding limit
+                while len(backups) > self.max_backups:
+                    oldest = backups.pop(0)
+                    oldest.unlink()
+                    logger.debug(f"Removed old backup: {oldest}")
 
-        except Exception as e:
-            logger.warning(f"Failed to cleanup backups: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup backups: {e}")
 
     def save(self, pet_id: str, state: Dict[str, Any]) -> bool:
         """Save pet state to JSON file with backup."""
         # Create backup before saving
-        if self.filepath.exists():
-            self._create_backup()
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.filepath):
+            if self.filepath.exists():
+                self._create_backup()
 
-        data = self._read_data()
+            data = self._read_data()
 
-        # Validate state before saving if recovery is enabled
-        if self.enable_recovery and StateValidator:
-            is_valid, error = StateValidator.validate_state(state)
-            if not is_valid:
-                logger.warning(f"Attempting to save invalid state: {error}")
-                # Try to repair before saving
-                state = StateValidator.repair_state(state, state.get("name", "Pet"))
+            # Validate state before saving if recovery is enabled
+            if self.enable_recovery and StateValidator:
+                is_valid, error = StateValidator.validate_state(state)
+                if not is_valid:
+                    logger.warning(f"Attempting to save invalid state: {error}")
+                    # Try to repair before saving
+                    state = StateValidator.repair_state(state, state.get("name", "Pet"))
 
-        # Add timestamp
-        state_with_timestamp = state.copy()
-        state_with_timestamp["last_saved"] = datetime.now().isoformat()
+            # Add timestamp
+            state_with_timestamp = state.copy()
+            state_with_timestamp["last_saved"] = datetime.now().isoformat()
 
-        data[pet_id] = state_with_timestamp
-        return self._write_data(data)
+            data[pet_id] = state_with_timestamp
+            return self._write_data(data)
 
     def delete(self, pet_id: str) -> bool:
         """Delete pet from JSON file."""
-        data = self._read_data()
-        if pet_id in data:
-            del data[pet_id]
-            return self._write_data(data)
-        return False
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(self.filepath):
+            data = self._read_data()
+            if pet_id in data:
+                del data[pet_id]
+                return self._write_data(data)
+            return False
 
     def list_pets(self) -> list[str]:
         """List all pet IDs in JSON file."""

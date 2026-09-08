@@ -212,11 +212,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 
 | Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
 | --- | --- | --- | --- | --- | --- |
-| tldw_chatbook/Agents/project_instruction_resolver.py | _read_candidate | open | 1 | unsupported | agents |
-| tldw_chatbook/Agents/run_log.py | RunLogWriter._write_bytes | open | 1 | unsupported | agents |
-| tldw_chatbook/Agents/run_log.py | RunLogWriter._write_bytes | write | 1 | unsupported | agents |
-| tldw_chatbook/Agents/run_log.py | RunLogWriter.bind | mkdir | 2 | unsupported | agents |
-| tldw_chatbook/Agents/run_log.py | RunLogWriter.bind | write_text | 1 | unsupported | agents |
+| tldw_chatbook/Agents/project_instruction_resolver.py | _read_candidate | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Agents/run_log.py | RunLogWriter._write_bytes | open | 1 | qualified | agents.history |
+| tldw_chatbook/Agents/run_log.py | RunLogWriter._write_bytes | write | 1 | qualified | agents.history |
+| tldw_chatbook/Agents/run_log.py | RunLogWriter.bind | mkdir | 2 | qualified | agents.history |
+| tldw_chatbook/Agents/run_log.py | RunLogWriter.bind | write_text | 1 | qualified | agents.history |
 | tldw_chatbook/Audio/recording_service.py | AudioRecordingService._pyaudio_recording_loop | open | 1 | process_artifact | process |
 | tldw_chatbook/Audio/recording_service.py | AudioRecordingService._save_audio_file | open | 1 | process_artifact | process |
 | tldw_chatbook/Audio_Services_Interop/local_audio_services_service.py | LocalAudioServicesService._persist_history | mkdir | 1 | unsupported | files |
@@ -348,7 +348,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/DB/AgentRuns_DB.py | AgentRunsDB | inherits:BaseDB | 1 | unsupported | sqlite |
+| tldw_chatbook/DB/AgentRuns_DB.py | AgentRunsDB | inherits:BaseDB | 1 | qualified | db.agent_runs |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB.backup_database | backup_connection_to_private | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/Client_Media_DB_v2.py | MediaDatabase._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
@@ -366,10 +366,10 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/DB/Prompts_DB.py | export_prompts_formatted | open | 2 | unsupported | sqlite |
 | tldw_chatbook/DB/Prompts_DB.py | export_prompts_formatted | write | 2 | unsupported | sqlite |
 | tldw_chatbook/DB/RAG_Indexing_DB.py | RAGIndexingDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
-| tldw_chatbook/DB/Subscriptions_DB.py | SubscriptionsDB | inherits:BaseDB | 1 | unsupported | sqlite |
-| tldw_chatbook/DB/Subscriptions_DB.py | SubscriptionsDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
-| tldw_chatbook/DB/Subscriptions_DB.py | ensure_site_configs_schema | connect_private_sqlite | 1 | unsupported | sqlite |
-| tldw_chatbook/DB/Workspace_DB.py | WorkspaceDB | inherits:BaseDB | 1 | unsupported | sqlite |
+| tldw_chatbook/DB/Subscriptions_DB.py | SubscriptionsDB | inherits:BaseDB | 1 | qualified | db.subscriptions |
+| tldw_chatbook/DB/Subscriptions_DB.py | SubscriptionsDB._get_connection | connect_private_sqlite | 1 | qualified | db.subscriptions |
+| tldw_chatbook/DB/Subscriptions_DB.py | ensure_site_configs_schema | connect_private_sqlite | 1 | qualified | db.subscriptions |
+| tldw_chatbook/DB/Workspace_DB.py | WorkspaceDB | inherits:BaseDB | 1 | qualified | db.workspaces |
 | tldw_chatbook/DB/base_db.py | BaseDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | generic_boundary | evals |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | generic_boundary | evals |
@@ -447,34 +447,34 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | _load_packaged_workflow | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/adapters/image_format_utils.py | maybe_convert_format | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/request_validation.py | _validate_reference_image_content | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_db.py | open_connection | connect_private_sqlite | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.__init__ | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService._search_cards_raw | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService._search_result_for_card | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.copy_card_with_checklists | connect | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.export_board | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_board | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_card | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_card_link_counts | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_checklist | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_checklist_item | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_comment | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_label | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_list | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_storage_status | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_board_activities | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_boards | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_activities | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_labels | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_links | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_cards | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_cards_by_linked_content | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_checklist_items | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_checklists | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_comments | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_labels | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_lists | connect | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.transaction | connect | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Kanban_Interop/local_kanban_db.py | open_connection | connect_private_sqlite | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.__init__ | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService._search_cards_raw | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService._search_result_for_card | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.copy_card_with_checklists | connect | 2 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.export_board | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_board | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_card | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_card_link_counts | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_checklist | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_checklist_item | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_comment | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_label | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_list | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.get_storage_status | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_board_activities | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_boards | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_activities | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_labels | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_card_links | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_cards | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_cards_by_linked_content | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_checklist_items | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_checklists | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_comments | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_labels | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.list_lists | connect | 1 | qualified | kanban.local |
+| tldw_chatbook/Kanban_Interop/local_kanban_service.py | LocalKanbanService.transaction | connect | 1 | qualified | kanban.local |
 | tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py | save_summary_to_file | makedirs | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py | save_summary_to_file | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py | save_summary_to_file | write | 1 | unsupported | miscellaneous |
@@ -530,28 +530,28 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Logging_Config.py | PrivateRotatingFileHandler._harden_existing_generations | open_private_binary | 1 | diagnostics | diagnostics |
 | tldw_chatbook/Logging_Config.py | PrivateRotatingFileHandler._open | open_private_text_append_stream | 1 | diagnostics | diagnostics |
 | tldw_chatbook/Logging_Config.py | RichLogHandler._process_log_queue | write | 2 | diagnostics | diagnostics |
-| tldw_chatbook/MCP/client.py | _StdioJSONRPCConnection._send_message | write | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog._migrate_generation | atomic_private_write_bytes | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog._read_bytes | open_private_binary | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog._secure_parent | secure_private_directory | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | atomic_private_write_bytes | 2 | unsupported | mcp |
-| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | open_private_text_append | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | write | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore._read_payload | open | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | dump | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | mkdir | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | open | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | dump | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | mkdir | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | open | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore._read_payload | open | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | dump | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | mkdir | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | open | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore._read_payload | open | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | dump | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | mkdir | 1 | unsupported | mcp |
-| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | open | 1 | unsupported | mcp |
+| tldw_chatbook/MCP/client.py | _StdioJSONRPCConnection._send_message | write | 1 | process_artifact | process-transport |
+| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog._migrate_generation | atomic_private_write_bytes | 1 | qualified | mcp.history |
+| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog._read_bytes | open_private_binary | 1 | qualified | mcp.history |
+| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog._secure_parent | secure_private_directory | 1 | qualified | mcp.history |
+| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | atomic_private_write_bytes | 2 | qualified | mcp.history |
+| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | open_private_text_append | 1 | qualified | mcp.history |
+| tldw_chatbook/MCP/execution_log.py | MCPExecutionLog.append | write | 1 | qualified | mcp.history |
+| tldw_chatbook/MCP/local_store.py | LocalMCPStore._read_payload | open | 1 | qualified | mcp.local |
+| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | dump | 1 | qualified | mcp.local |
+| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | mkdir | 1 | qualified | mcp.local |
+| tldw_chatbook/MCP/local_store.py | LocalMCPStore.save | open | 1 | qualified | mcp.local |
+| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | dump | 1 | qualified | mcp.permissions |
+| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | mkdir | 1 | qualified | mcp.permissions |
+| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore.save | open | 1 | qualified | mcp.permissions |
+| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore._read_payload | open | 1 | qualified | mcp.targets |
+| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | dump | 1 | qualified | mcp.targets |
+| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | mkdir | 1 | qualified | mcp.targets |
+| tldw_chatbook/MCP/server_target_store.py | ConfiguredServerTargetStore.save_targets | open | 1 | qualified | mcp.targets |
+| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore._read_payload | open | 1 | qualified | mcp.context |
+| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | dump | 1 | qualified | mcp.context |
+| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | mkdir | 1 | qualified | mcp.context |
+| tldw_chatbook/MCP/unified_context_store.py | UnifiedMCPContextStore.save | open | 1 | qualified | mcp.context |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._build_reading_export_response | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._extract_ebook_text | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._extract_pdf_text | open | 1 | unsupported | miscellaneous |
@@ -598,48 +598,48 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Models/evaluation_state.py | EvaluationState.load_from_file | open | 1 | external_input | evals |
 | tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | dump | 1 | external_input | evals |
 | tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | open | 1 | external_input | evals |
-| tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.directory | mkdir | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.file | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_network.py | _capture_ssh_trust_source | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_network.py | _file_digest | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | AsyncGitProcessRunner._write_process_stdin | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | FileNotesGitService._commit_local_state_is_supported | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory._capture_entry | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.capture_index | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_directory | mkdir | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_file | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica.__init__ | connect_private_sqlite | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica.__init__ | mkdir | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | _read_regular_file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/git_process_containment.py | _WindowsAsyncChildProcess.communicate.write_input | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/note_import_discovery.py | _inspect_selected_path | open | 2 | unsupported | notes |
-| tldw_chatbook/Notes/note_import_discovery.py | _open_verified_directory | open | 2 | unsupported | notes |
-| tldw_chatbook/Notes/note_import_discovery.py | _read_discovered_source_posix | open | 3 | unsupported | notes |
-| tldw_chatbook/Notes/note_import_discovery.py | _scan_child_directory | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/note_import_discovery.py | _verify_lexical_source_binding | open | 2 | unsupported | notes |
-| tldw_chatbook/Notes/note_import_receipts.py | NoteImportReceiptRepository._connect | connect_private_sqlite | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_engine.py | NotesSyncEngine._write_file_info | write_text | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.__enter__ | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._read_file | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._verified_child_directory | mkdir | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._verified_child_directory | open | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._write_all | write | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | open | 1 | unsupported | notes |
-| tldw_chatbook/Notifications/client_notifications_db.py | ClientNotificationsDB | inherits:BaseDB | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Notifications/client_notifications_db.py | ClientNotificationsDB._get_connection | connect_private_sqlite | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository | inherits:BaseDB | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository._get_connection | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.directory | mkdir | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.file | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_network.py | _LayoutBuilder.file | write | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_network.py | _capture_ssh_trust_source | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_network.py | _file_digest | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | AsyncGitProcessRunner._write_process_stdin | write | 1 | process_artifact | process-transport |
+| tldw_chatbook/Notes/file_notes_git_service.py | FileNotesGitService._commit_local_state_is_supported | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory._capture_entry | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.capture_index | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_directory | mkdir | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_file | open | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _PrivatePushProofDirectory.create_file | write | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica.__init__ | connect_private_sqlite | 1 | qualified | notes.file_notes |
+| tldw_chatbook/Notes/file_notes_replica.py | FileNotesReplica.__init__ | mkdir | 1 | qualified | notes.file_notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | _read_regular_file | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/git_process_containment.py | _WindowsAsyncChildProcess.communicate.write_input | write | 1 | process_artifact | process-transport |
+| tldw_chatbook/Notes/note_import_discovery.py | _inspect_selected_path | open | 2 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/note_import_discovery.py | _open_verified_directory | open | 2 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/note_import_discovery.py | _read_discovered_source_posix | open | 3 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/note_import_discovery.py | _scan_child_directory | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/note_import_discovery.py | _verify_lexical_source_binding | open | 2 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/note_import_receipts.py | NoteImportReceiptRepository._connect | connect_private_sqlite | 1 | qualified | notes.sync_state |
+| tldw_chatbook/Notes/sync_engine.py | NotesSyncEngine._write_file_info | write_text | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.__enter__ | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._read_file | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._verified_child_directory | mkdir | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._verified_child_directory | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._write_all | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notifications/client_notifications_db.py | ClientNotificationsDB | inherits:BaseDB | 1 | qualified | notifications.client |
+| tldw_chatbook/Notifications/client_notifications_db.py | ClientNotificationsDB._get_connection | connect_private_sqlite | 1 | qualified | notifications.client |
+| tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository | inherits:BaseDB | 1 | qualified | runtime.event_state |
+| tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository._get_connection | connect_private_sqlite | 1 | qualified | runtime.event_state |
 | tldw_chatbook/Persona_Visual/assets.py | _decode_selected_frame | open | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/assets.py | _open_profile_root | open | 2 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/assets.py | _read_profile_file_fallback | open | 1 | unsupported | assets |
@@ -716,7 +716,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/STT/parakeet_external.py | ExternalParakeetVerifier._verify_uncached | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/STT/parakeet_onnx.py | _wav_duration | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/STT/transcribe_cpp.py | _read_normalized_wav | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Scheduling/db/scheduled_tasks_db.py | ScheduledTasksDB | inherits:BaseDB | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Scheduling/db/scheduled_tasks_db.py | ScheduledTasksDB | inherits:BaseDB | 1 | qualified | db.scheduled_tasks |
 | tldw_chatbook/Skills_Interop/atomic_write.py | write_bytes_atomic | write_bytes | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/atomic_write.py | write_text_atomic | write_text | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService._load_index | open | 1 | unsupported | skills |
@@ -742,15 +742,15 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Skills_Interop/skill_trust_store.py | _atomic_write_json | write_text | 1 | unsupported | skills |
 | tldw_chatbook/Skills_Interop/skill_trust_store.py | _ensure_trust_directory | mkdir | 1 | unsupported | skills |
 | tldw_chatbook/Study_Interop/local_study_service.py | LocalStudyService.import_flashcards_json_file | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Subscriptions/briefing_audio.py | _looks_like_wav | open | 1 | unsupported | subscriptions |
-| tldw_chatbook/Subscriptions/briefing_audio.py | briefing_audio_dir | secure_private_directory | 1 | unsupported | subscriptions |
-| tldw_chatbook/Subscriptions/briefing_export.py | _copy_episode_audio_file | open | 2 | unsupported | subscriptions |
-| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | open | 1 | unsupported | subscriptions |
-| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | write | 1 | unsupported | subscriptions |
-| tldw_chatbook/Subscriptions/site_config_manager.py | SiteConfigManager.export_configs | write_text | 1 | unsupported | subscriptions |
-| tldw_chatbook/Sync_Interop/notes_mirror.py | NotesMirror.__init__ | connect_private_sqlite | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Sync_Interop/sync_state_repository.py | SyncStateRepository | inherits:BaseDB | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Sync_Interop/sync_state_repository.py | SyncStateRepository._get_connection | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Subscriptions/briefing_audio.py | _looks_like_wav | open | 1 | qualified | subscriptions.assets |
+| tldw_chatbook/Subscriptions/briefing_audio.py | briefing_audio_dir | secure_private_directory | 1 | qualified | subscriptions.assets |
+| tldw_chatbook/Subscriptions/briefing_export.py | _copy_episode_audio_file | open | 2 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | write | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Subscriptions/site_config_manager.py | SiteConfigManager.export_configs | write_text | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Sync_Interop/notes_mirror.py | NotesMirror.__init__ | connect_private_sqlite | 1 | memory | dormant-default-memory-no-installed-callers |
+| tldw_chatbook/Sync_Interop/sync_state_repository.py | SyncStateRepository | inherits:BaseDB | 1 | qualified | runtime.sync_state |
+| tldw_chatbook/Sync_Interop/sync_state_repository.py | SyncStateRepository._get_connection | connect_private_sqlite | 1 | qualified | runtime.sync_state |
 | tldw_chatbook/TTS/TTS_Generation.py | TTSService._commit_voice_setup_default | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/TTS_Generation.py | TTSService._prepared_provider_read | write | 1 | unsupported | tts |
 | tldw_chatbook/TTS/TTS_Generation.py | TTSService._restart_audio_cpp | write | 1 | unsupported | tts |
@@ -1108,12 +1108,12 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleMarkdownMessage._open_link | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage.__init__ | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | copy2 | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._read_data | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | SQLiteStorage._connect | connect_private_sqlite | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage.__init__ | mkdir | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | copy2 | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._read_data | open | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | open | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | SQLiteStorage._connect | connect_private_sqlite | 2 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
 | tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget._write_json_export | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget._write_text_export | write | 3 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget.export_log | open | 1 | unsupported | miscellaneous |
@@ -1138,12 +1138,12 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_save_theme | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_save_theme | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Workspaces/change_retention.py | prune_change_history | mkdir | 2 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo._locked._Lock.__enter__ | mkdir | 2 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.ensure_initialized | mkdir | 3 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.ensure_initialized | write_text | 1 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.snapshot | open | 1 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.snapshot | write | 3 | unsupported | workspaces |
+| tldw_chatbook/Workspaces/change_retention.py | prune_change_history | mkdir | 2 | qualified | workspaces.change_tracking |
+| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo._locked._Lock.__enter__ | mkdir | 2 | qualified | workspaces.change_tracking |
+| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.ensure_initialized | mkdir | 3 | qualified | workspaces.change_tracking |
+| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.ensure_initialized | write_text | 1 | qualified | workspaces.change_tracking |
+| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.snapshot | open | 1 | qualified | workspaces.change_tracking |
+| tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.snapshot | write | 3 | qualified | workspaces.change_tracking |
 | tldw_chatbook/Writing_Interop/local_writing_service.py | LocalWritingService._connect | connect_private_sqlite | 2 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | <module> | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/app.py | TldwCli._display_buffered_logs | write | 1 | unsupported | miscellaneous |
@@ -1181,8 +1181,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/runtime_policy/server_credentials.py | KeyringServerCredentialStore._save_index | set_password | 1 | unsupported | runtime |
 | tldw_chatbook/runtime_policy/server_credentials.py | KeyringServerCredentialStore.delete_scoped_secret | delete_password | 3 | unsupported | runtime |
 | tldw_chatbook/runtime_policy/server_credentials.py | KeyringServerCredentialStore.set_scoped_secret | set_password | 1 | unsupported | runtime |
-| tldw_chatbook/runtime_policy/source_state.py | RuntimeSourceStateStore.load | open_private_binary | 1 | unsupported | runtime |
-| tldw_chatbook/runtime_policy/source_state.py | RuntimeSourceStateStore.save | atomic_private_write_text | 1 | unsupported | runtime |
+| tldw_chatbook/runtime_policy/source_state.py | RuntimeSourceStateStore.load | open_private_binary | 1 | qualified | runtime.source_state |
+| tldw_chatbook/runtime_policy/source_state.py | RuntimeSourceStateStore.save | atomic_private_write_text | 1 | qualified | runtime.source_state |
 | tldw_chatbook/tldw_api/utils.py | prepare_files_for_httpx | open | 1 | unsupported | server |
 
 ## Targeted evidence
@@ -1224,9 +1224,9 @@ The concrete `renameatx_np` callable assignment and `os.replace` seams are now c
 | tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | os.replace | 1 | disposable | diagnostics |
 | tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._default_url_file_downloader | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._copy_payload | os.replace | 1 | unsupported | models |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | os.replace | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | os.replace | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._migrate_legacy_blob | os.replace | 1 | unsupported | rag |
-| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | os.replace | 1 | unsupported | subscriptions |
+| tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | os.replace | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/TTS/profile_migration_namespace.py | _rename_noreplace | renameatx_np | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | os.replace | 1 | unsupported | tts |
 | tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.replace | 1 | unsupported | miscellaneous |
@@ -1254,14 +1254,14 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_with_parakeet_mlx | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_buffer_with_parakeet_mlx | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/video_processing.py | LocalVideoProcessor._discard_temp_cookiefile | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | os.unlink | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | os.unlink | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | os.unlink | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | os.unlink | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.move_file | os.unlink | 2 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.delete_file | os.unlink | 1 | unsupported | notes |
-| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | os.unlink | 1 | unsupported | notes |
-| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.move_file | os.unlink | 2 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.delete_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Persona_Visual/authoring_workspace.py | cleanup_persona_visual_authoring_workspace | os.unlink | 2 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_workspace_asset | os.unlink | 1 | unsupported | assets |
 | tldw_chatbook/Persona_Visual/importer.py | _delete_candidate | os.unlink | 3 | unsupported | assets |
@@ -1357,7 +1357,6 @@ operational activation stay explicit dependencies. See [core qualification](back
 | tldw_chatbook/Evals/recovery.py | _Adapter.validate | connect_private_sqlite | 1 | generic_boundary | native-domain-recovery |
 | tldw_chatbook/Evals/recovery.py | _Adapter.capture | copy_private_sqlite | 1 | generic_boundary | native-domain-recovery |
 | tldw_chatbook/Evals/recovery.py | _Adapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-domain-recovery |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _read_recovery_file | open | 1 | generic_boundary | native-domain-recovery |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | copy_capture_file | open | 2 | generic_boundary | native-domain-recovery |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | copy_capture_file | write | 1 | generic_boundary | native-domain-recovery |
 
@@ -1466,3 +1465,120 @@ Research, writing and EvalsDB retain their literal registered connection/copy si
 `DB/recovery_sqlite.py` only shares schema/FK/integrity validation and capture guards;
 it neither opens storage nor chooses dynamic SQLite authority. The exact source and
 copy census rows therefore remain unchanged by this consolidation.
+
+## Task 8 installed operational producer additions
+
+| tldw_chatbook/Agents/recovery.py | _RunLogs.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/file_inventory.py | inventory_tree.walk | open | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _consume_recovery_file | open | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _AgentRunsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _AgentRunsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.validate_dependencies | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _WorkspacesAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/DB/recovery_operations.py | _WorkspacesAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Kanban_Interop/recovery.py | _KanbanAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Kanban_Interop/recovery.py | _KanbanAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notes/recovery.py | _FileNotesAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notes/recovery.py | _FileNotesAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notes/recovery.py | _ReceiptsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notes/recovery.py | _ReceiptsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notes/recovery.py | _SyncBindings.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notifications/recovery.py | _EventsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notifications/recovery.py | _EventsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notifications/recovery.py | _NotificationsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Notifications/recovery.py | _NotificationsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Scheduling/recovery.py | _ScheduledTasksAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Scheduling/recovery.py | _ScheduledTasksAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Sync_Interop/recovery.py | _SyncAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Sync_Interop/recovery.py | _SyncAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| sqlite:recovery.operations.workspaces | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.agent_runs | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.subscriptions | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.scheduled_tasks | tldw_chatbook/Scheduling/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.notifications | tldw_chatbook/Notifications/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.events | tldw_chatbook/Notifications/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.sync | tldw_chatbook/Sync_Interop/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.file_notes | tldw_chatbook/Notes/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.receipts | tldw_chatbook/Notes/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.agent_logs | tldw_chatbook/Agents/recovery | _READ_ONLY_URI | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.kanban | tldw_chatbook/Kanban_Interop/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.note_bindings | tldw_chatbook/Notes/recovery | _READ_ONLY_URI | sqlite/operational-recovery-qualified |
+
+## Task 8 qualified operational owners (TASK-31991)
+
+This section supersedes the initial unsupported cohort entries **only for the exact
+owners and producer rows marked `qualified` above**. It does not qualify RAG/vector
+indexes (task 19), remaining generic file owners (task 9), managed credentials
+(task 14), cross-platform metadata, or complete backup service composition. Adapters
+are inert installed declarations; optional-disabled features still retain their
+present files. Absent required SQLite stores remain missing-required; absent exact
+optional raw files are unused, while unknown app-owned children block completeness.
+
+| Owner | Installed selector and capture | Schema / dependencies | Activation claims retained as historical evidence |
+| --- | --- | --- | --- |
+| db.workspaces | workspaces_db_path; full WorkspaceDB | schema_version MAX 2, exact catalog/FK/quick_check | workspace IDs, active flags, runtime binding locators and allow_write metadata, handoff audits |
+| db.agent_runs | agent_runs.db beside selected ChaChaNotes DB | schema_version MAX 12, exact catalog; core dependency | running/queued status, resumed/parent run IDs, budgets, definitions, snapshots/change notes |
+| db.subscriptions | subscriptions_db_path; full SubscriptionsDB | schema_version MAX 1; two complete exact layouts: base and SiteConfigManager's core42 hybrid; hybrid requires embedded db_schema_version42; complete audio rows require exact profile payload IDs | URLs, enabled state, credential scopes, briefing/script/audio generation records, site definitions |
+| db.scheduled_tasks | scheduled_tasks_db_path | schema_version MAX 3, exact catalog/FK | enabled schedules, queued/running jobs, histories, claimed delivery/execution state |
+| notifications.client | notifications_db_path | schema_version MAX 1, exact catalog/FK | notification payloads and dispatch/delivery metadata |
+| runtime.event_state | profile/tldw_chatbook_event_state.db | schema_version MAX 1, exact catalog/FK | stream cursors, principal/profile/source authority, observer status |
+| runtime.sync_state | profile/tldw_chatbook_sync_state.db | schema_version MAX 4, exact catalog/FK | identity mappings, device/source/principal scope, uploads/downloads/conflicts and cursors |
+| kanban.local | profile/tldw_chatbook_kanban.db | local_kanban_schema_meta schema_version1, exact catalog/FK; get_storage_status uses this same store | boards/cards/checklists/comments/activities, content identity |
+| notes.file_notes | profile/file_notes.sqlite; full FileNotesReplica including FTS internals and raw revisions | installed unstamped schema, literal SELECT 0 only as validation dispatch; no version written | raw bytes, tombstones, protected paths, pre-edit/recovery snapshots; disk roots are historical text |
+| notes.sync_state | profile/tldw_chatbook_notes_sync_state.db; actual NoteImportReceiptRepository | PRAGMA user_version1, exact catalog/FK; selected core dependency | approval/session IDs, pending payload/folder/membership effects, receipts and retries |
+| notes.sync_bindings | shared physical ChaChaNotes payload | exact core42 and membership ownership semantics; same-profile core dependency and proven original physical identity | manual stays manual; managed owner_id/owner_active stay intact; legacy sync_sessions/conflicts/logs remain inert |
+| mcp.local / mcp.targets / mcp.context | profile/local_mcp_store.json, mcp_server_targets.json, unified_mcp_context.json | checked bounded JSON objects, immutable bytes; 16MiB each | server commands, environment placeholders, tool profiles/targets/session bindings |
+| mcp.permissions | profile/mcp_permissions.json and exact .bak | checked opaque recovery bytes, 16MiB each; corrupt backup is preserved evidence | historical allow/deny rules never become approvals |
+| mcp.history | profile/mcp_execution_log.jsonl and exact .1 | checked opaque bytes, 256GiB/member | execution history; capture never invokes read_recent generation migration |
+| runtime.source_state | runtime_policy.json beside selected config | checked bounded JSON object, 16MiB | selected server/local source, last-online state and reconnection scope |
+| subscriptions.assets | profile/briefing_audio, explicit tree topology and all present files | checked opaque bytes; complete DB file_path dependencies use exact profile IDs and staged candidates | historical generated audio; no synthesis, export or cleanup replay |
+| workspaces.change_tracking | profile/change_review, exact ShadowRepoService default | bounded no-follow topology, all retained Git bytes; no Git process during discovery/capture | commit/object/index/config/lock evidence never authorizes hooks, worktree restoration or stale-lock takeover |
+| agents.history | exact configured tool sandbox plus local_filesystem WorkspaceDB and retained AgentRuns change roots, dotted and legacy run_log_dir_name subtrees only | checked opaque bounded files; DB locators must qualify; no arbitrary workspace contents | run logs/manifests/segments remain evidence, never tool permission |
+| tamagotchi.config | ConfigFileStorage default .config/tldw_chatbook/tamagotchi_pets.json (APPDATA on Windows), exact timestamp backups | checked opaque bytes, 16MiB each; unknown siblings block | pet state and corrupt recovery backups; no constructor repair/replay |
+
+Every owner above declares activation_required=True. `relocate` validates and
+preserves immutable evidence; it neither claims fresh live allocation nor applies
+imported path mappings. Tasks 17/20/21 must create/revalidate fresh live claims in
+staged restore and the task20 durable activation ledger. Task25 is only the minimal
+recovery launcher. Imported fields alone are never authorization to execute, access
+external files, reconnect, rerun jobs or promote managed membership to manual.
+
+ADR-021 describes an intended File Notes database/projection/recovery split. The
+installed implementation has **one file_notes.sqlite replica/revision store**, not
+the planned file_notes.db/notes_recovery.db pair. No phantom files or missing-required
+rows were invented. ADR-029/030/036/059/060 ownership and selective export exclusions
+remain intact. The installed NoteImportReceiptRepository holds import effects and
+receipts; planned lasting-sync roots/journals are not yet present. Legacy lasting
+sync fields in ChaChaNotes remain separately owned by notes.sync_bindings.
+
+`JSONStorage`/`SQLiteStorage` are exported arbitrary-path capabilities with no
+installed production construction sites; BaseTamagotchi defaults to MemoryStorage.
+The exact call-site guard invalidates this unused classification if wiring appears.
+NotesMirror likewise has no installed construction sites and defaults to memory.
+No fabricated private SQLite filename or capture policy was added for these dormant
+capabilities. Generic file tools operate on external/user-selected data; only the
+application-owned log subtrees within workspace roots belong to agents.history.
+
+Raw copying/checking retains task7 native FD/parent retirement and the fixed
+application authority, selected namespaces plus bootstrap.unbound, exact enrolled
+sources and private staging. `_check_recovery_file` streams bounded chunks and
+observes cancellation without collecting bytes. Opaque validation proves safe byte
+access, **not** semantic authority or a runnable Git/audio/permission schema. Tree
+metadata is a task9 prerequisite and directory entries carry explicit same-profile
+parent dependencies; unrelated owner/root overlaps still fail.
+
+Ordinary MCP saves/migrations/appends, run-log writes, pet JSON saves/backups, shadow
+Git operations and retention hold admission for their full mutation/process lifetime.
+Briefing atomic writes already use the checked private writer; cleanup unlink now
+also admits the whole operation. The operational process test stalls an actual Git
+wrapper and proves maintenance cannot enter before its child process exits.
+
+Fixture capture deliberately drains old EventStateRepository._get_connection and
+SyncStateRepository._get_connection native cycles using gc.collect before enrolling
+fixture authority: their per-call `with connection` commits but does not close, and
+.close only handles memory connections. This **does not qualify runtime maintenance
+drain**. Task10 owns coordinated live-resource closure; no complete backup capability
+may infer production drain from fixture GC.

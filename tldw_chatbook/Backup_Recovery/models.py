@@ -39,6 +39,12 @@ class Inventory:
 
 @dataclass(frozen=True)
 class SchemaPolicy:
+    """Installed layouts; repeated version entries are exact alternatives.
+
+    Validators match one complete ordered catalog, never a union of fragments.
+    The tuple is installed code policy and cannot be populated from an archive.
+    """
+
     owner: str
     versions: tuple[int, ...]
     schema_sql: tuple[tuple[int, tuple[str, ...]], ...]

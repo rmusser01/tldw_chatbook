@@ -150,6 +150,7 @@ def test_every_persistence_source_symbol_has_reviewed_owner_row():
             module, symbol, call, count, classification, cohort = fields
             assert classification in {
                 "unsupported",
+                "qualified",
                 "external_input",
                 "server",
                 "memory",
