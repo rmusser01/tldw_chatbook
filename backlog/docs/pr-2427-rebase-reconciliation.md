@@ -352,3 +352,48 @@ only the manifest summary's owner count from 599 to the measured 600; its owner
 rows and sink topology already matched the current source. The Backlog identity
 census now passes 3,591 records. Evidence:
 `/private/tmp/pr2427-latest-preflight-final.log`.
+
+## Current Qodo review and remaining qualification gates
+
+Checkpoint `2ec344752d268d5ba857a851a448c89af0ab7614` was published after the
+rebase. Qodo's requested review completed against that head and added comment
+3954688544: two raw checkpoint reads in the dispatch-recovery test should use
+the database transaction manager. Both now do, retaining identical queries and
+assertions, with each context exiting before further asynchronous work. The
+complete recovery file passes **22 tests**; independent review, scoped Ruff
+checks/formatting, and diff checks pass. Evidence:
+`/private/tmp/pr2427-qodo-transaction.log`.
+
+Qodo also retained the disputed LoopDeps positional finding. Rechecking the
+parent of `8e1d9c72b6a8e6b361ea766eadbfeb0e2609e61b` confirms that the eighth
+argument was `call_model_with_continuation` before disclosure was introduced.
+Both complete agent persistence/disclosure files now pass **38 tests**,
+including the real positional continuation control. The thread was resolved
+with this evidence, not by reinstating the regressed field order. Evidence:
+`/private/tmp/pr2427-qodo-loopdeps.log`, PR reply 3954727441.
+
+The four native label controls pass in isolation after asserting exact row
+identity, full state/tooltip text, and the owning tray's actual wrap/truncation
+budget. The complete 351-test native file remains running at this checkpoint;
+focused evidence is not whole-file qualification. The generic text helpers
+were not broadened. Evidence: `/private/tmp/pr2427-label-focused-final.log`.
+
+Fresh architecture census: **47 passed / 3 failed**. Console is 17,534 lines
+against 16,811 (+723); Library 37,063 against 36,109 (+954); media-browse
+controller 555 against 371 (+184). Evidence:
+`/private/tmp/pr2427-size-final-census.log`. Additional ownership moves remain
+subject to the pending design approval; no limits were raised.
+
+Latest GitHub Perf Guard run 34191172522 has two real failures: **281 broad
+selectors against 274**, and **811,541 startup CSS bytes against 804,000**.
+Consolidating eight widget styles in `f99371858f` added 7,655 eager bytes;
+other drift subtracts 105, producing the 7,541-byte excess over the cap. A
+snapshot refresh alone cannot qualify this. Read-only analysis proposes using
+the existing route-owned split mechanism for Watchlists-only rules (11,203
+bytes; projected startup 800,338), keeping mixed/shared rules eager. This is
+pending user approval, actual build measurement, and navigation/visual tests.
+The seven narrow selector replacements also remain pending approval.
+
+Remote dev was checked again and remains
+`37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`, already contained in this branch.
+Final-head verification/review and normal merge remain open.
