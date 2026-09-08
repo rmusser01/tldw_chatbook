@@ -24555,6 +24555,16 @@ class LibraryScreen(BaseAppScreen):
                             restored_items.append(
                                 self._library_media_mutation_summary(media_id, result)
                             )
+                        else:
+                            # task-31982 AC#3: a restore that returned an
+                            # unexpected shape (not a Mapping, no exception)
+                            # committed nothing usable. Counting it as
+                            # neither success nor failure let the receipt
+                            # total drift and dropped the id from the
+                            # retryable set -- it is a failure, mapped like
+                            # the unavailable path so the count stays honest.
+                            failed.append(media_id)
+                            failure_reason = failure_reason or "restore returned no record"
                     except Exception as exc:
                         logger.warning(
                             "Failed to restore a Library media item in bulk-delete "
