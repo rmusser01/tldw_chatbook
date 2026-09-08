@@ -257,7 +257,7 @@ the RED tuple"):
 8. **1 further class-monkeypatch exclusion** (recipe SS3's opening rule).
    ``_library_note_dirty`` (``monkeypatch.setattr(LibraryScreen, ...)`` at
    ``test_library_shell.py:2419`` and ``monkeypatch.setattr(type(screen),
-   "_library_note_dirty", property(...))`` at ``:17651-17655``) is the only one of the three class-patched names
+   "_library_note_dirty", property(...))`` at ``:17652-17656``) is the only one of the three class-patched names
    (``_focus_library_notes_tree_after_page``,
    ``_refresh_library_note_detail``) not already covered above.
    ``_refresh_library_note_detail`` is additionally one of the FOUR names
