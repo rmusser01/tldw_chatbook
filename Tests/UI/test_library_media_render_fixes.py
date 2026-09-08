@@ -2588,6 +2588,98 @@ async def test_media_facet_failure_paints_the_same_callout():
 
 
 @pytest.mark.asyncio
+async def test_repeated_media_load_failure_names_the_reopen_recovery():
+    """task-31982 AC#2: a second consecutive failed Retry stops repeating.
+
+    The critique's residue: the callout's Retry re-issued on the same failed
+    path and repainted the identical sentence with no next step. When the
+    same reason recurs on a consecutive Retry the message must name the
+    recovery action instead -- reopen Chatbook to reconnect to the store.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        calls = await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        first = " ".join(_painted(host, copy.region).split())
+        # The FIRST failure is silent about the recovery step -- one honest
+        # sentence, exactly as before.
+        assert first == "Couldn't load page 1 · database is locked", first
+
+        screen.query_one("#library-media-load-failure").query_one(
+            "#library-media-retry", Button
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) == 2,
+            message="The callout's Retry never re-issued.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="The retried request never settled.",
+        )
+        await pilot.pause()
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        second = " ".join(_painted(host, copy.region).split())
+        assert second.startswith("Couldn't load page 1 · database is locked"), second
+        assert "reopen Chatbook to reconnect to the media database" in second, second
+
+
+@pytest.mark.asyncio
+async def test_facet_only_failure_leaves_the_row_supported_actions_live():
+    """task-31982 AC#1/#4: the facet read and the row read are independent.
+
+    ``list_library_media_types`` and ``search_media`` are separate queries on
+    separate worker groups with independent failure fences, so a facet
+    failure over a healthy page must NOT disable the actions the row data
+    supports -- Export, Review, Select and Trash stay live because their own
+    read succeeded.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+
+        async def _fails(**_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        host.app_instance.media_reading_scope_service.list_library_media_types = _fails
+        screen._request_library_media_facets()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.facet_failure is not None
+                and not controller.facet_loading
+            ),
+            message="The forced Media facet failure never settled.",
+        )
+        await pilot.pause()
+
+        # The page read succeeded, its rows are retained, and the "nothing to
+        # select" predicate the whole-list gate reads stays False.
+        assert controller.page_failure is None
+        assert len(controller.retained_items) == 2
+        assert not screen._library_media_list_unselectable()
+
+        # ...so every action the row data supports stays live and un-gated.
+        for widget_id, label in (
+            ("#library-media-export", "Export…"),
+            ("#library-media-review", "Review these"),
+            ("#library-media-trash-open", "Trash"),
+            ("#library-media-select-toggle", "Select"),
+        ):
+            button = screen.query_one(widget_id, Button)
+            assert not button.disabled, widget_id
+            assert str(button.label) == label, widget_id
+
+
+@pytest.mark.asyncio
 async def test_media_failure_callout_tint_follows_the_severity():
     """task-31632 AC#1: a timeout and a hard failure do not paint alike."""
     host = _host()

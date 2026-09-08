@@ -224,7 +224,9 @@ the list happens to show now, so a stale page can never be the reason
 Undo is unavailable. If a restore itself fails, the receipt becomes
 "✗ undo failed · n of m · \<reason\>" and "Undo" becomes "Retry undo",
 retrying only the items still outstanding; a later full success clears
-the receipt as normal. "Undo" is the at-point convenience; the durable way
+the receipt as normal. A restore that comes back with nothing usable
+(not just one that errors) counts toward that "n of m" and stays in the
+retry set, so the receipt total never understates what still needs redoing. "Undo" is the at-point convenience; the durable way
 back is the **Trash view** the receipt points at (see "Media Trash"
 below), which lists every deleted item — including ones from earlier
 sessions — and restores them per item. (Re-importing the same file from
@@ -288,7 +290,7 @@ list and dropped both while the confirmation was armed).*
 | "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
 | "sort: Newest" | Opens the same kind of bounded keyboard list with all four orders (Newest, Oldest, Title A-Z, Title Z-A) fully visible and ✓ on the active one. Escape cancels. |
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
-| "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is named by the kind of failure it is ("the connection failed", "the database could not be read", or "an unexpected error" when it is none of those), so a private path — and the exception's own text — never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
+| "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is named by the kind of failure it is ("the connection failed", "the database could not be read", or "an unexpected error" when it is none of those), so a private path — and the exception's own text — never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. When the fault callout itself fails the same way on a consecutive Retry, the message stops repeating one sentence and names the recovery step — "Couldn't load page 1 · database is locked · reopen Chatbook to reconnect to the media database" — so a persistent fault points somewhere rather than looping. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Review these" | Pins the whole filtered list as an ordered review set (see "Review sets" below). Like "Export…" — the other action that acts on the whole filtered list — it renders as "○ Review these" with the failure on its tooltip when the first load failed with nothing behind it, and stays live over rows a later failure retained. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". It is never disabled by a failed Media load — it is the route to your deleted items exactly when the list is unhappy — whereas "Export…" and "Review these" render as "○ Export…" / "○ Review these" with the reason on their tooltip when the list has nothing to select. |
@@ -329,6 +331,15 @@ same row and the $error border, and it kept that border across a Retry press;
 while "Trash" stayed live. This SUPERSEDES the class-name disclosure recorded
 in the 2026-09-05 stamp below — a non-OS/database failure now reads as the
 kind of failure it is, never as `ValueError`.)*
+
+*Verified against fix/media-crit6-faultscope — 2026-09-07 (task-31982: the
+undo receipt now counts a restore that returns an unexpected shape as a
+still-failed id — "1 of 2" with the id retryable, not a silent clean undo;
+the Media fault callout, on the same reason failing a consecutive Retry,
+appends "· reopen Chatbook to reconnect to the media database" instead of
+repeating; and the facet (media-types) read and the row read are confirmed
+independent — a facet-only failure leaves Export/Review/Select/Trash live
+over the rows that loaded. Confirmed against the product code and its tests.)*
 
 *Verified against fix/media-wave5-g @ c9b3f3a77 — 2026-09-05 (task-31632:
 launched with a scratch profile whose media DB path is a directory; Library ▸

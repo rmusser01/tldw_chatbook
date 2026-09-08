@@ -69,6 +69,13 @@ _CLASS_REASONS: tuple[tuple[type[BaseException], str], ...] = (
     (sqlite3.Error, _DATABASE_UNREADABLE_REASON),
 )
 _UNMAPPED_REASON = "an unexpected error"
+# task-31982 AC#2: the recovery step a repeated failure names instead of
+# repeating its one sentence. A media read faulting the same way on a
+# consecutive Retry is a persistent fault the in-callout Retry cannot clear;
+# the only lever left is reconnecting to the store. Appended as its own
+# ``·`` clause so the callout grammar ("what · why") is unchanged. It carries
+# no exception text (PR G's privacy rule).
+_REOPEN_RECOVERY = "reopen Chatbook to reconnect to the media database"
 # Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
 # (kept, unlike other exceptions -- see below), but that text can embed a
 # database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
@@ -179,11 +186,24 @@ def _load_failure(
     )
 
 
-def _raised_failure(what: str, exc: BaseException) -> DestinationRecoveryState:
-    """Name a raised load failure through the shared reason mapping."""
+def _raised_failure(
+    what: str, exc: BaseException, *, repeated: bool = False
+) -> DestinationRecoveryState:
+    """Name a raised load failure through the shared reason mapping.
+
+    Args:
+        what: What could not be loaded, as a clause.
+        exc: The exception the failed request raised.
+        repeated: True when this same reason has just recurred on a
+            consecutive Retry (task-31982 AC#2). The failure then names the
+            reopen recovery step instead of repeating its one sentence.
+    """
+    reason = _retry_failure_reason(exc)
+    if repeated:
+        reason = f"{reason} · {_REOPEN_RECOVERY}"
     return _load_failure(
         what,
-        _retry_failure_reason(exc),
+        reason,
         timed_out=isinstance(exc, TimeoutError),
     )
 
@@ -227,6 +247,13 @@ class LibraryMediaBrowseController:
         # the one the canvas paints.
         self.page_failure: DestinationRecoveryState | None = None
         self.facet_failure: DestinationRecoveryState | None = None
+        # task-31982 AC#2: the reason each fence last failed with, kept
+        # across Retries (``begin`` clears ``page_failure`` on every request,
+        # so it cannot tell a repeat from a first failure). A consecutive
+        # failure with the SAME reason names the reopen recovery step; a
+        # success on either fence clears its own tracker.
+        self._page_fault_reason = ""
+        self._facet_fault_reason = ""
         self._page_generation = 0
 
         self.type_options: tuple[str, ...] = ()
@@ -419,7 +446,12 @@ class LibraryMediaBrowseController:
             self.inflight_scope = None
             if self.freshness != "stale":
                 self.error_copy, failure_what = self._failure_copy(scope)
-                self.page_failure = _raised_failure(failure_what, exc)
+                reason = _retry_failure_reason(exc)
+                repeated = reason == self._page_fault_reason
+                self._page_fault_reason = reason
+                self.page_failure = _raised_failure(
+                    failure_what, exc, repeated=repeated
+                )
             else:
                 # task-31220: on a stale page the stale copy is the ONLY
                 # thing shown, and leaving it untouched is what made Retry
@@ -446,6 +478,7 @@ class LibraryMediaBrowseController:
         self.inflight_scope = None
         self.error_copy = ""
         self.page_failure = None
+        self._page_fault_reason = ""
         self.stale_copy = ""
         self.stale_reason = ""
         self._sync(focus_identity)
@@ -627,7 +660,10 @@ class LibraryMediaBrowseController:
             )
             self.facet_loading = False
             self.facet_error_copy = _FACET_ERROR
-            self.facet_failure = _raised_failure(_FACET_WHAT, exc)
+            reason = _retry_failure_reason(exc)
+            repeated = reason == self._facet_fault_reason
+            self._facet_fault_reason = reason
+            self.facet_failure = _raised_failure(_FACET_WHAT, exc, repeated=repeated)
             self._sync(None)
             return
         if (
@@ -640,6 +676,7 @@ class LibraryMediaBrowseController:
         self.facet_loading = False
         self.facet_error_copy = ""
         self.facet_failure = None
+        self._facet_fault_reason = ""
         self._sync(None)
 
     def invalidate_facets(self, *, fingerprint: str = "") -> int:
