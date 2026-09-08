@@ -1748,3 +1748,32 @@ invoke `validate_dependencies` on semantic **included_directory** items as well 
 file payloads. Creating directory topology instead of calling raw-file capture
 must not bypass the graph check. These are declared semantic dependency cycles
 with the core owner, to be resolved as complete groups, not recursive execution.
+
+## Task 10 maintenance foundation — integration remains incomplete
+
+`Admission.pause_requested(namespaces)` observes checked native registry/group/gate
+contention without waiting for native locks. A true result is only a conservative
+pause hint; it never acknowledges producer retirement or grants capture authority.
+The same Admission instance remembers the gate identities used by normal admission
+and refuses replaced gates or changed observed groups. A responder must reuse its
+actual holder's authority, retain its native normal lease through real owner drain,
+and fail closed on missing, pending, unsafe or otherwise uncertain evidence.
+
+The process lease coordinator now counts pending native acquisitions before waiting
+outside its RLock. Last-token retirement also joins outside the lock; retiring or
+ambiguous native holds stay observable in `_retiring_holds` until positive retirement.
+Future drain must include both `_holds` and `_retiring_holds`, as well as installed
+producer-operation and native-handle tokens. Neither aggregate count is owner proof.
+Startup acquisition coalesces concurrent callers without waiting under the RLock.
+Startup holds still last until process exit; no release/reacquire or responder is
+installed by this foundation.
+
+`Participant` and `require_participant_coverage` define the planned protocol and
+refuse uncovered path-bearing items. No passive owner exemptions or installed
+participant factories are qualified yet. All preceding `participant_pending`
+annotations and producer obligations remain in force, including actual Event/Sync
+file connections, raw writers, cross-store publication and dirty editor boundaries.
+Complete backup and replacement remain unavailable. Targeted foundation evidence:
+16 focused tests; 79 combined participant/admission/bootstrap checks; 379 required
+SQLite/census/service guards passed, with the existing Windows-only guard skipped
+on this Mac. These overlapping runs do not prove full Task10 owner coverage.

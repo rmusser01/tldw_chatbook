@@ -16,13 +16,16 @@ import stat
 import threading
 
 from . import bootstrap
-from .admission import Admission, _local
+from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
 from .profile_paths import effective_config_path, lexical_path
 from .qualification import qualified_for
 
 _lock = threading.RLock()
 _holds: dict[tuple[int, str], "_Hold"] = {}
+# Last-token closes wait outside _lock. Keep their native lifetime observable
+# until positive retirement; future maintenance drain must include this set.
+_retiring_holds: set["_Hold"] = set()
 _startups: dict[tuple[int, str], "StorageLease"] = {}
 _forked_with_owners = False
 
@@ -41,13 +44,12 @@ class _Hold:
             name="chatbook-storage-admission",
         )
         self.thread.start()
-        self.ready.wait()
-        if self.error is not None:
-            raise bootstrap.RecoveryRequired("storage_admission_unavailable") from None
 
     def _run(self, authority: Admission) -> None:
         try:
-            with authority.normal(self.names):
+            # A last pending token may cancel before native admission succeeds.
+            # Waiting happens on this thread, never under the coordinator lock.
+            with authority._admit(self.names, False, None, self.stop):
                 self.ready.set()
                 self.stop.wait()
         except BaseException as error:
@@ -62,6 +64,7 @@ class StorageLease:
         self._key = key
 
     def close(self) -> None:
+        retired = None
         with _lock:
             key, self._key = self._key, None
             if key is None or key[0] != os.getpid():
@@ -70,8 +73,14 @@ class StorageLease:
             hold.count -= 1
             if hold.count == 0:
                 hold.stop.set()
-                hold.thread.join()
                 del _holds[key]
+                _retiring_holds.add(hold)
+                retired = hold
+        if retired is not None:
+            retired.thread.join()
+            with _lock:
+                if retired.error is None or isinstance(retired.error, AdmissionCancelled):
+                    _retiring_holds.discard(retired)
 
     def __enter__(self) -> "StorageLease":
         return self
@@ -166,8 +175,10 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
         if not allowed:
             raise bootstrap.RecoveryRequired(reason)
         return StorageLease(None)
+    # Opening existing authority can wait on the registry. Retiring unrelated
+    # owners must remain possible while that or a native gate is contended.
+    authority = admission_authority(root)
     with _lock:
-        authority = admission_authority(root)
         names = _scope(root, selector, lexical_path(path) if path is not None else None)
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
@@ -178,9 +189,15 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
             _holds[key] = hold
         hold.count += 1
         token = StorageLease(key)
+    # Count pending acquisitions before dropping the lock: a drain must see
+    # them, and another acquiring thread must share this same native hold.
+    try:
+        hold.ready.wait()
+        if hold.error is not None:
+            raise bootstrap.RecoveryRequired("storage_admission_unavailable")
         # Enrollment races an unbound selection. Revalidate after acquiring its
         # lease; never enter on a stale pre-enrollment decision.
-        try:
+        with _lock:
             allowed, reason = bootstrap.startup_permission(selector, root)
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
@@ -189,10 +206,10 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
                 != names
             ):
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
-        except BaseException:
-            token.close()
-            raise
         return token
+    except BaseException:
+        token.close()
+        raise
 
 
 def admit_startup() -> None:
@@ -200,11 +217,16 @@ def admit_startup() -> None:
     bootstrap.require_startup_permission()
     key = (os.getpid(), str(bootstrap.default_bootstrap_root()))
     with _lock:
-        if key not in _startups:
-            try:
-                _startups[key] = acquire_storage()
-            except bootstrap.RecoveryRequired as error:
-                raise SystemExit("Recovery required: " + str(error)) from None
+        if key in _startups:
+            return
+    try:
+        lease = acquire_storage()
+    except bootstrap.RecoveryRequired as error:
+        raise SystemExit("Recovery required: " + str(error)) from None
+    with _lock:
+        selected = _startups.setdefault(key, lease)
+    if selected is not lease:
+        lease.close()
 
 
 def _shutdown() -> None:
@@ -216,10 +238,11 @@ def _shutdown() -> None:
 def _after_fork() -> None:
     # Forked children cannot inherit a fictitious live lease thread/refcount.
     # Spawn imports establish their own leases before loading runtime modules.
-    global _lock, _holds, _startups, _forked_with_owners
-    _forked_with_owners = bool(_holds)
+    global _lock, _holds, _retiring_holds, _startups, _forked_with_owners
+    _forked_with_owners = bool(_holds or _retiring_holds)
     _lock = threading.RLock()
     _holds = {}
+    _retiring_holds = set()
     _startups = {}
 
 

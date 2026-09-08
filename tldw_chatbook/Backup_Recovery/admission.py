@@ -74,6 +74,8 @@ class Admission:
 
     def __init__(self, control_root: Path):
         self.control_root = control_root
+        self._observed_gates: dict[str, tuple[int, int]] = {}
+        self._observed_groups: dict[tuple[str, ...], tuple[str, ...]] = {}
         allowed, reason = qualified_for("admission", control_root.parent)
         if not allowed:
             raise AdmissionError(reason)
@@ -97,6 +99,8 @@ class Admission:
         """Open established authority without recreating lost control evidence."""
         authority = object.__new__(cls)
         authority.control_root = control_root
+        authority._observed_gates = {}
+        authority._observed_groups = {}
         with authority._directory() as parent:
             with authority._lock(parent, "registry.lock", fcntl.LOCK_SH):
                 authority._read(parent)
@@ -447,12 +451,15 @@ class Admission:
                         for name in group:
                             fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)
                             trial.callback(os.close, fd)
+                            self._observe_gate(parent, name, fd)
                             fcntl.flock(
                                 fd,
                                 (fcntl.LOCK_EX if maintenance else fcntl.LOCK_SH)
                                 | fcntl.LOCK_NB,
                             )
+                            self._observe_gate(parent, name, fd)
                         if not maintenance:
+                            self._observed_groups[names] = group
                             for name in group:
                                 kind = "incompatible" if incompatible else "lease"
                                 leases.enter_context(
@@ -542,6 +549,51 @@ class Admission:
     def normal(self, namespaces: tuple[str, ...]) -> ContextManager[None]:
         """Hold before opening owners, until transactions and connections retire."""
         return self._admit(namespaces, False, None, None)
+
+    def pause_requested(self, namespaces: tuple[str, ...]) -> bool:
+        """Probe native contention without waiting or granting capture authority.
+
+        Registry contention is conservatively a pause hint. Missing, unsafe,
+        replaced or pending evidence refuses. The holder must retain its normal
+        lease until its actual producers and resources retire; this observation
+        never acknowledges drain and creates no durable request/ack records.
+        """
+        names = self._names(namespaces)
+        with self._directory() as parent, ExitStack() as descriptors:
+            registry_fd = self._open(parent, "registry.lock", os.O_RDWR)
+            descriptors.callback(os.close, registry_fd)
+            try:
+                fcntl.flock(registry_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            registry = self._read(parent)
+            group = self._groups(registry, names)
+            if any(registry.entries[name].pending for name in group):
+                raise AdmissionError("remap_recovery_required")
+            previous = self._observed_groups.setdefault(names, group)
+            if previous != group:
+                raise AdmissionError("admission_scope_changed")
+            contended = False
+            for name in group:
+                fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)
+                descriptors.callback(os.close, fd)
+                self._observe_gate(parent, name, fd)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    contended = True
+                # Continue checking every gate, even when another is contended.
+                self._observe_gate(parent, name, fd)
+            return contended
+
+    def _observe_gate(self, parent: int, name: str, fd: int) -> None:
+        """Bind pause observations to the same pinned gates used for admission."""
+        held = os.fstat(fd)
+        current = os.stat(self._key(name, "gate"), dir_fd=parent, follow_symlinks=False)
+        identity = held.st_dev, held.st_ino
+        previous = self._observed_gates.setdefault(name, identity)
+        if identity != previous or identity != (current.st_dev, current.st_ino):
+            raise AdmissionError("admission_gate_changed")
 
     def maintenance(
         self,
