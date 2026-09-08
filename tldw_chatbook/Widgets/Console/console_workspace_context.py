@@ -19,10 +19,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH,
 )
 from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_APPEARANCE_ASCII_SET,
+    GLYPH_APPEARANCE_ASCII_UNSET,
+    GLYPH_APPEARANCE_PLACEHOLDER,
     GLYPH_COLLAPSED,
     GLYPH_EXPANDED,
 )
-from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Widgets.glyph_fallback import ascii_glyph_mode, resolve_glyph
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
     CONSOLE_DEFAULT_CONVERSATION_DETAIL,
@@ -387,9 +390,10 @@ def _marker_aware_tooltip(text: str, marker_glyph: str) -> str:
 # it; the guarded relabel pass corrects it immediately (see
 # `_maybe_relabel_for_width`).
 _FALLBACK_ROW_CONTENT_WIDTH = 20
-# Grouped-browser rows share their line with the star control (width 3 +
-# 1 margin) and carry 1 cell of button padding per side.
-_BROWSER_ROW_CHROME_WIDTH = 6
+# Grouped-browser rows share their line with the appearance icon control
+# (width 4 + 1 margin, task-31207) and the star control (width 3 + 1 margin),
+# and carry 1 cell of button padding per side.
+_BROWSER_ROW_CHROME_WIDTH = 11
 # Every row button carries a 1-line bottom margin (see the row CSS).
 _ROW_BOTTOM_MARGIN = 1
 # Minimum measured-width change (in cells) that triggers a relabel recompose
@@ -1192,6 +1196,64 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         return button
 
     @staticmethod
+    def _conversation_appearance_button(
+        row: ConsoleConversationBrowserRow,
+        index: int,
+        *,
+        row_height: int,
+    ) -> Button:
+        """Build the leftmost icon control for one browser row (task-31207).
+
+        Shows the conversation's custom icon (colored via Rich markup) or a
+        dim placeholder when unset; in ASCII-glyph mode a fixed substitute
+        stands in for both, since arbitrary user emoji cannot map to ASCII.
+        Mirrors the star control: same height math, same identity attributes
+        for the press handler, disabled for rows with no persisted
+        conversation to carry metadata.
+        """
+        icon = str(row.icon or "")
+        color = str(row.color or "")
+        if ascii_glyph_mode():
+            glyph = GLYPH_APPEARANCE_ASCII_SET if icon else GLYPH_APPEARANCE_ASCII_UNSET
+        elif icon:
+            glyph = icon
+        else:
+            glyph = resolve_glyph(GLYPH_APPEARANCE_PLACEHOLDER)
+        label = _escape_markup(glyph)
+        # The color tints the glyph only — never the title button — so the
+        # row's selected/broken CSS states keep their meaning.
+        label = f"[{color}]{label}[/]" if color else f"[dim]{label}[/]"
+        conversation_id = str(row.conversation_id or "").strip()
+        button = Button(
+            Text.from_markup(label),
+            id=f"console-conversation-appearance-{index}",
+            classes="console-workspace-action console-conversation-appearance",
+            compact=True,
+            disabled=not conversation_id,
+        )
+        button.styles.height = row_height
+        button.styles.min_height = row_height
+        # Sizing lives here, not in the boot CSS bundle: the boot-parsed
+        # byte budget is at its ratchet ceiling (ADR-097), and this tray
+        # already sets its row controls' geometry inline (see the star).
+        # Compact Button supplies one cell of internal line padding per
+        # side, leaving two cells for a wide icon in the four-cell box.
+        button.styles.width = 4
+        button.styles.min_width = 4
+        button.styles.max_width = 4
+        button.styles.margin = (0, 1, 1, 0)
+        button.styles.text_align = "center"
+        button.tooltip = (
+            f"Change icon and color for {_escape_markup(row.title or 'this conversation')}."
+        )
+        button.row_key = row.row_key
+        button.conversation_id = row.conversation_id
+        button.conversation_title = row.title
+        button.icon = icon
+        button.color = color
+        return button
+
+    @staticmethod
     def _conversation_browser_rows_height(
         rows: tuple[ConsoleConversationBrowserRow, ...],
         budget: int,
@@ -1920,6 +1982,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 secondary_copy = f"{secondary_copy} · Queue {row.queued_count}"
             secondary = truncate_console_row_cells(secondary_copy, budget)
             status_suffix = f" [{status}]" if status else ""
+            # task-31207: the icon control is the row's leftmost element,
+            # left of the conversation name, mirroring the star on the right.
+            control_height = _conversation_row_render_height(
+                len(name_lines), row.subagent_count
+            )
+            yield self._conversation_appearance_button(
+                row,
+                index,
+                row_height=control_height,
+            )
             # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
             # PRE-escape, pre-period sentence body -- `_conversation_button`
             # passes it straight to `_marker_aware_tooltip`, which escapes

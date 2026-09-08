@@ -599,3 +599,33 @@ def test_semantic_filters_match_operational_state_without_title_keywords():
         e.row_key
         for e in build_console_switcher_entries(rows, query="workspace:research")
     ] == ["saved"]
+def test_switcher_entries_carry_icon_and_color():
+    """task-31208: the Ctrl+K switcher shows the same appearance as the rail."""
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        ConsoleConversationBrowserInputRow,
+    )
+
+    def _row(key, title, *, icon="", color=""):
+        return ConsoleConversationBrowserInputRow(
+            row_key=key,
+            conversation_id=key,
+            native_session_id=None,
+            title=title,
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="",
+            icon=icon,
+            color=color,
+        )
+
+    entries = build_console_switcher_entries(
+        (
+            _row("conv-icon", "Lab chat", icon="🧪", color="#f87171"),
+            _row("conv-plain", "Plain chat"),
+        )
+    )
+    by_key = {entry.row_key: entry for entry in entries}
+    assert by_key["conv-icon"].icon == "🧪"
+    assert by_key["conv-icon"].color == "#f87171"
+    assert by_key["conv-plain"].icon == ""
+    assert by_key["conv-plain"].color == ""

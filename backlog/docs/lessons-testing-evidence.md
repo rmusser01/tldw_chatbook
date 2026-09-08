@@ -12179,3 +12179,47 @@ landing after the final expanded tab space. A follow-up `❤️` case caught a
 prefix-width cutoff inside its variation-selector sequence. Hit testing now
 uses whole grapheme boundaries measured with the wrapper's cell-width policy;
 clicking either emoji cell and then typing must preserve the emoji.
+
+---
+
+Region assertions inside the Console left rail need the rail explicitly opened
+
+**task-31207, 2026-09-05.** The new appearance-control geometry test read
+`Region(0, 0, 0, 0)` for every conversation row button — the pre-existing
+star and title buttons included — while the identical script run OUTSIDE
+pytest laid out perfectly (icon at x=4 width 4). The divergence was not
+timing, bytecode, or import order (all were chased first): the Console left
+rail starts COLLAPSED under the fresh test config's saved rail preference,
+and `display: none` on `#console-left-rail` zeroes every descendant region.
+The standalone probe passed only because it read the developer's real
+`~/.config`, where the rail happens to be open — a config-dependent pass.
+
+**What to do.** Before asserting any geometry inside the Console left rail,
+open it explicitly (`console._set_console_rail_preference(left_open=True)`
+plus a pause) and use the stylesheet-carrying harness (`StyledConsoleHarness`):
+under a bare harness the new width-4 control has no CSS rule and defaults to
+a wide auto width that eats the row — the TASK-2154.1 "new widget in a shared
+row" trap reproduced exactly here. DOM/label queries work collapsed; regions
+do not. If a region reads exactly zero for EVERY widget in a subtree, climb
+the ancestor chain and look for `display: none` before suspecting layout or
+the harness.
+
+---
+
+A dirty tree is not provenance — verify suspected pre-existing failures against a clean HEAD worktree
+
+**task-31210, 2026-09-06.** Twelve `test_console_native_chat_flow.py` tests
+failed during the task-31207 sweep, and the failure (`ChatScreen has no
+attribute '_retrieval'`) was blamed on the in-flight `wiring.py` refactor
+sitting uncommitted in the working tree — a plausible story, reported as fact.
+A clean `git worktree add /tmp/head-verify HEAD` run showed the same tests
+**red at HEAD**: the breakage predated both the feature branch and the
+in-flight changes. The actual cause (eager unguarded controller reads in
+`console_view_hooks` hitting bare-`__new__` test screens) was only found
+because the worktree check ruled the plausible story out.
+
+**What to do.** When a probe asserts that gated/queued work "always"
+starts, wait for the expected starts (poll with a generous deadline)
+rather than a flat window sized to the happy path. The probe already
+records STARTS rather than running state, so waiting cannot miss a worker
+that finishes quickly.
