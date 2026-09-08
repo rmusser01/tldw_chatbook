@@ -1,5 +1,6 @@
 """Real closed-store proof, immutable validation, and original-cohort ownership."""
 
+import errno
 import importlib
 import json
 import os
@@ -486,11 +487,11 @@ def test_actual_lease_retains_original_proof_across_authority_refusal(
 
     def launch(args, **kwargs):
         # Observe the real proof's original descriptor identities on each
-        # recheck return (including refusals), without changing its operations.
+        # shared pin-check return (including refusals), without changing operations.
         script = f"""
 import json,os,runpy,sys
 def observe(frame,event,arg):
-    if event == 'return' and frame.f_code.co_name == 'recheck' and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof':
+    if event == 'return' and frame.f_code.co_name == '_recheck_original_pins' and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof':
         proof = frame.f_locals['self']
         descriptors = dict(parent=proof.parent_fd,main=proof.file_fd,**proof.sidecars)
         observation = {{name:os.fstat(fd).st_ino for name,fd in descriptors.items()}}
@@ -649,3 +650,303 @@ def test_failed_initializer_exits_without_accepting_queued_control_frame(tmp_pat
         "status": "tts_error",
         "reason": "schema_corrupt",
     }
+
+
+def test_actual_first_pin_nofollow_refusal_restores_absent_then_complete_cohort(
+    tmp_path,
+):
+    path = closed_store(tmp_path)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    wal = path.with_name(path.name + "-wal")
+    shm = path.with_name(path.name + "-shm")
+    with process.HelperAdmission().reserve(
+        transient=1, retained=1, deadline=deadline
+    ) as owner:
+        lease = process.HelperLease.start(
+            protocol.PrepareRequest(str(path), False, False, False),
+            operation="tts_exact_current",
+            reservation=owner,
+            deadline=deadline,
+        )
+        original = lease.initial_response["identity"]
+        child = lease._child
+        assert original["wal"] is None and original["shm"] is None
+        wal.symlink_to(path)
+        try:
+            assert lease.request("tts_pin_sidecars", deadline=deadline) == {
+                "version": 1,
+                "operation": "tts_pin_sidecars",
+                "status": "tts_error",
+                "reason": "operation_failed",
+            }
+            assert not lease._failed and child.poll() is None
+        finally:
+            wal.unlink()
+        restored = lease.request("tts_recheck", deadline=deadline)
+        assert restored["status"] == "ok"
+        assert restored["identity"]["main"]["ino"] == original["main"]["ino"]
+        assert (
+            restored["identity"]["wal"] is None and restored["identity"]["shm"] is None
+        )
+        wal.touch(mode=0o600)
+        shm.touch(mode=0o600)
+        assert lease.request("tts_pin_sidecars", deadline=deadline)["status"] == "ok"
+        authority = protocol.TTSRestoreAuthority.from_payload(
+            lease.request("tts_export_restore_authority", deadline=deadline)["identity"]
+        )
+        assert authority.wal.ino == wal.stat().st_ino
+        assert authority.shm.ino == shm.stat().st_ino
+        assert lease._child is child and child.poll() is None
+        lease.close()
+        assert child.returncode == 0 and lease.cleanup_state == "reaped"
+
+
+@pytest.mark.parametrize("target", ["wal", "main", "parent"])
+def test_actual_partial_capture_retains_pins_until_exact_authority_restoration(
+    tmp_path, monkeypatch, target
+):
+    store = tmp_path / "store"
+    store.mkdir(mode=0o700)
+    path = closed_store(store)
+    wal = path.with_name(path.name + "-wal")
+    shm = path.with_name(path.name + "-shm")
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    admission = process.HelperAdmission()
+    observations = tmp_path / "capture-pins.jsonl"
+    real_popen = subprocess.Popen
+
+    def launch(args, **kwargs):
+        script = f"""
+import json,os,runpy,sys
+opens = {{'main':0,'wal':0}}
+def observe(frame,event,arg):
+    if event == 'return' and frame.f_code.co_name == '_open_artifact_fd' and isinstance(arg,int):
+        leaf = frame.f_locals['leaf']
+        if leaf == {path.name!r}:
+            opens['main'] += 1
+        elif leaf == {wal.name!r}:
+            opens['wal'] += 1
+    if event == 'return' and frame.f_code.co_name == 'pin_sidecars' and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof':
+        proof = frame.f_locals['self']
+        pins = dict(parent=proof.parent_fd,main=proof.file_fd,**proof.sidecars)
+        observation = {{name:[fd,os.fstat(fd).st_ino] for name,fd in pins.items()}}
+        observation['pid'] = os.getpid()
+        observation['sql_closed'] = proof.evidence is None
+        observation['opens'] = dict(opens)
+        with open({str(observations)!r},'a') as output:
+            output.write(json.dumps(observation)+'\\n')
+sys.setprofile(observe)
+sys.argv = [{args[-1]!r}]
+runpy.run_path(sys.argv[0],run_name='__main__')
+"""
+        return real_popen([args[0], "-I", "-S", "-c", script], **kwargs)
+
+    monkeypatch.setattr(process.subprocess, "Popen", launch)
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    lease = None
+    try:
+        with admission.reserve(transient=1, retained=1, deadline=deadline) as owner:
+            lease = process.HelperLease.start(
+                protocol.PrepareRequest(str(path), False, False, False),
+                operation="tts_exact_current",
+                reservation=owner,
+                deadline=deadline,
+            )
+            assert lease.initial_response["status"] == "ok"
+            child = lease._child
+            owner.handoff_retained(lease)
+        wal.touch(mode=0o600)
+        shm.symlink_to(path)
+        refusal = {
+            "version": 1,
+            "operation": "tts_pin_sidecars",
+            "status": "tts_error",
+            "reason": "operation_failed",
+        }
+        with admission.reserve(transient=4, retained=3, deadline=deadline):
+            assert lease.request("tts_pin_sidecars", deadline=deadline) == refusal
+            first = json.loads(observations.read_text().splitlines()[0])
+            assert set(first) == {"parent", "main", "wal", "pid", "sql_closed", "opens"}
+            assert first["wal"][1] == wal.stat().st_ino
+            assert first["opens"] == {"main": 1, "wal": 1}
+            shm.unlink()
+            for operation in ("tts_recheck", "tts_export_restore_authority"):
+                assert lease.request(operation, deadline=deadline) == {
+                    **refusal,
+                    "operation": operation,
+                }
+            # Missing SHM still refuses without forgetting the acquired WAL.
+            assert lease.request("tts_pin_sidecars", deadline=deadline) == refusal
+            with substituted_proof_namespace(path, target):
+                # Even a valid missing sidecar must not bind under changed authority.
+                shm.touch(mode=0o600)
+                try:
+                    assert (
+                        lease.request("tts_pin_sidecars", deadline=deadline) == refusal
+                    )
+                finally:
+                    shm.unlink()
+                assert not lease._failed and lease.cleanup_state == "still_owned"
+                assert child.poll() is None
+                with pytest.raises(process.HelperTimeoutError):
+                    admission.reserve(
+                        transient=0,
+                        retained=1,
+                        deadline=process.OperationDeadline(time.monotonic()),
+                    )
+            seen = [json.loads(line) for line in observations.read_text().splitlines()]
+            assert len(seen) == 3
+            assert all(item == first for item in seen)
+            assert first["pid"] == child.pid and first["sql_closed"]
+            shm.touch(mode=0o600)
+            assert (
+                lease.request("tts_pin_sidecars", deadline=deadline)["status"] == "ok"
+            )
+            complete = json.loads(observations.read_text().splitlines()[-1])
+            assert {key: complete[key] for key in first} == first
+            assert complete["shm"][1] == shm.stat().st_ino
+            authority = protocol.TTSRestoreAuthority.from_payload(
+                lease.request("tts_export_restore_authority", deadline=deadline)[
+                    "identity"
+                ]
+            )
+            assert authority.wal.ino == first["wal"][1]
+            assert authority.shm.ino == complete["shm"][1]
+            with substituted_proof_namespace(path, "shm"):
+                assert lease.request("tts_pin_sidecars", deadline=deadline) == refusal
+            assert lease.request("tts_recheck", deadline=deadline)["status"] == "ok"
+        lease.close()
+        assert child.returncode == 0 and lease.cleanup_state == "reaped"
+        with admission.reserve(transient=4, retained=4, deadline=deadline):
+            pass
+    finally:
+        if lease is not None:
+            lease.close()
+
+
+@pytest.mark.parametrize("boundary", ["open", "identity"])
+@pytest.mark.parametrize(
+    "number",
+    [
+        errno.ELOOP,
+        errno.EACCES,
+        errno.EPERM,
+        errno.ENOENT,
+        errno.ENOTDIR,
+        errno.EBADF,
+        errno.EIO,
+        errno.EMFILE,
+        None,
+    ],
+)
+def test_actual_capture_errno_classification(tmp_path, monkeypatch, number, boundary):
+    path = closed_store(tmp_path)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    real_popen = subprocess.Popen
+
+    def launch(args, **kwargs):
+        # Inject one filesystem-boundary failure after successful initialization.
+        script = f"""
+import runpy,sys
+def inject(frame,event,arg):
+    if event == 'call' and frame.f_code.co_name == 'pin_sidecars' and frame.f_globals.get('__name__') == 'tldw_chatbook.TTS.profile_sqlite_proof':
+        proof = frame.f_locals['self']
+        original = frame.f_globals['_open_artifact_fd'] if {boundary!r} == 'open' else proof._file_identity
+        def refused(*args,**kwargs):
+            if {boundary!r} == 'open':
+                frame.f_globals['_open_artifact_fd'] = original
+            else:
+                proof._file_identity = original
+            if {number!r} is None:
+                raise RuntimeError('private-test-detail')
+            raise OSError({number},'private-test-detail')
+        if {boundary!r} == 'open':
+            frame.f_globals['_open_artifact_fd'] = refused
+        else:
+            proof._file_identity = refused
+        sys.setprofile(None)
+sys.setprofile(inject)
+sys.argv = [{args[-1]!r}]
+runpy.run_path(sys.argv[0],run_name='__main__')
+"""
+        return real_popen([args[0], "-I", "-S", "-c", script], **kwargs)
+
+    monkeypatch.setattr(process.subprocess, "Popen", launch)
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    with process.HelperAdmission().reserve(
+        transient=1, retained=1, deadline=deadline
+    ) as owner:
+        lease = process.HelperLease.start(
+            protocol.PrepareRequest(str(path), False, False, False),
+            operation="tts_exact_current",
+            reservation=owner,
+            deadline=deadline,
+        )
+        assert lease.initial_response["status"] == "ok"
+        if number in {errno.EBADF, errno.EIO, errno.EMFILE, None}:
+            with pytest.raises(process.HelperUnavailableError):
+                lease.request("tts_pin_sidecars", deadline=deadline)
+            assert lease._failed
+            assert lease._child.wait(timeout=2) == 0
+            with pytest.raises(process.HelperUnavailableError):
+                lease.request("tts_recheck", deadline=deadline)
+        else:
+            assert lease.request("tts_pin_sidecars", deadline=deadline) == {
+                "version": 1,
+                "operation": "tts_pin_sidecars",
+                "status": "tts_error",
+                "reason": "operation_failed",
+            }
+            assert not lease._failed and lease._child.poll() is None
+            assert lease.request("tts_recheck", deadline=deadline)["status"] == "ok"
+        lease.close()
+        assert lease.cleanup_state == "reaped"
+
+
+def test_actual_capture_privacy_refusal_never_remints_acquired_shm(tmp_path):
+    path = closed_store(tmp_path)
+    process = module("DB.private_sqlite_process")
+    protocol = module("DB.private_sqlite_protocol")
+    deadline = process.OperationDeadline(time.monotonic() + 30)
+    wal = path.with_name(path.name + "-wal")
+    shm = path.with_name(path.name + "-shm")
+    with process.HelperAdmission().reserve(
+        transient=1, retained=1, deadline=deadline
+    ) as owner:
+        lease = process.HelperLease.start(
+            protocol.PrepareRequest(str(path), False, False, False),
+            operation="tts_exact_current",
+            reservation=owner,
+            deadline=deadline,
+        )
+        assert lease.initial_response["status"] == "ok"
+        wal.touch(mode=0o600)
+        shm.touch(mode=0o600)
+        shm.chmod(0o644)
+        original_shm = shm.stat().st_ino
+        refusal = {
+            "version": 1,
+            "operation": "tts_pin_sidecars",
+            "status": "tts_error",
+            "reason": "operation_failed",
+        }
+        assert lease.request("tts_pin_sidecars", deadline=deadline) == refusal
+        with substituted_proof_namespace(path, "shm"):
+            assert lease.request("tts_pin_sidecars", deadline=deadline) == refusal
+            assert lease.request("tts_export_restore_authority", deadline=deadline) == {
+                **refusal,
+                "operation": "tts_export_restore_authority",
+            }
+        shm.chmod(0o600)
+        assert lease.request("tts_pin_sidecars", deadline=deadline)["status"] == "ok"
+        authority = protocol.TTSRestoreAuthority.from_payload(
+            lease.request("tts_export_restore_authority", deadline=deadline)["identity"]
+        )
+        assert authority.shm.ino == original_shm
+        assert not lease._failed and lease._child.poll() is None
+        lease.close()
+        assert lease.cleanup_state == "reaped" and lease._child.returncode == 0
