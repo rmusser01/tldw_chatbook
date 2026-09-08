@@ -19,7 +19,10 @@ from tldw_chatbook.Chat.console_trace_legacy import (
 )
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    _install_canvas_revision_payload_validator,
+)
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 
@@ -495,10 +498,18 @@ class PhysicalTraceCompactor:
             check_same_thread=False,
             timeout=15,
         )
-        connection.row_factory = sqlite3.Row
-        connection.isolation_level = None
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.isolation_level = None
+            connection.execute("PRAGMA foreign_keys = ON")
+            _install_canvas_revision_payload_validator(connection)
+            return connection
+        except BaseException:
+            try:
+                connection.close()
+            except BaseException:  # noqa: BLE001, S110 - preserve setup failure
+                pass
+            raise
 
     def _allocated_metrics(
         self, connection: sqlite3.Connection

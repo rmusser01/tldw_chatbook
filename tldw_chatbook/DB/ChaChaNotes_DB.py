@@ -460,6 +460,19 @@ def _canvas_revision_payload_valid(
     )
 
 
+def _install_canvas_revision_payload_validator(
+    connection: sqlite3.Connection,
+) -> None:
+    """Install the pure Canvas payload validator required by the schema."""
+
+    connection.create_function(
+        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
+        3,
+        _canvas_revision_payload_valid,
+        deterministic=True,
+    )
+
+
 class _CanvasRevisionDeletionAuthorization:
     """Connection-local capability for an exact repository-owned hard purge."""
 
@@ -3436,12 +3449,7 @@ UPDATE db_schema_version
                     self._local.semantic_mutation_authorization = (
                         register_semantic_mutation_guard(conn)
                     )
-                    conn.create_function(
-                        _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION,
-                        3,
-                        _canvas_revision_payload_valid,
-                        deterministic=True,
-                    )
+                    _install_canvas_revision_payload_validator(conn)
                     canvas_deletion_authorization = (
                         _CanvasRevisionDeletionAuthorization(conn)
                     )
