@@ -504,7 +504,7 @@ python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 <a id="task-7"></a>
 ## Task 7: Add recovery adapters for local research writing study and evaluation data
 
-**Backlog:** [TASK-31990](../../../backlog/tasks/task-31990%20-%20Add-recovery-adapters-for-local-research-writing-study-and-evaluation-data.md) — To Do.
+**Backlog:** [TASK-31990](../../../backlog/tasks/task-31990%20-%20Add-recovery-adapters-for-local-research-writing-study-and-evaluation-data.md) — Done.
 
 **Dependencies:** TASK-31986, TASK-31987.
 
@@ -532,7 +532,7 @@ the following exact contracts. Factories return only installed owner declaration
 def recovery_adapters() -> tuple[OwnerAdapter, ...]: ...
 ```
 
-- [ ] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_domain_owners.py`, then add the concrete
+- [x] **Step 1:** Add this first regression to `Tests/Backup_Recovery/test_domain_owners.py`, then add the concrete
   fixtures/scenarios named in the implementation steps as their behavior is built.
 
 ```python
@@ -543,17 +543,17 @@ def test_optional_domain_discovery_does_not_require_engines():
     assert all(adapter.schema_policy() is not None for adapter in adapters)
 ```
 
-- [ ] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_domain_owners.py -q`. Confirm the specified behavior
+- [x] **Step 2:** Run `python -m pytest Tests/Backup_Recovery/test_domain_owners.py -q`. Confirm the specified behavior
   fails; after adding importable structure, confirm a behavioral red assertion before
   proceeding. Do not count a missing optional dependency as the intended failure.
 
-- [ ] **Step 3:** Implement OwnerAdapter for local research/writing/study/quizzes/evaluation stores from the verified census, including secondary benches, custom roots, and persisted outputs. Classify mirrors and server-owned data separately; local durable user data remains baseline even when its feature is disabled.
+- [x] **Step 3:** Implement OwnerAdapter for local research/writing/study/quizzes/evaluation stores from the verified census, including secondary benches, custom roots, and persisted outputs. Classify mirrors and server-owned data separately; local durable user data remains baseline even when its feature is disabled.
 
-- [ ] **Step 4:** Preserve history, attachments, identifiers, relationships, deleted/recovery records and schema metadata. Populate SchemaPolicy with supported installed versions and domain validation; relocate only managed locators. Register checked capture authority without broadening unrelated exports.
+- [x] **Step 4:** Preserve history, attachments, identifiers, relationships, deleted/recovery records and schema metadata. Populate SchemaPolicy with supported installed versions and domain validation; relocate only managed locators. Register checked capture authority without broadening unrelated exports.
 
-- [ ] **Step 5:** Keep discovery import-light: no cloud clients, evaluation runner/model imports, or database constructors that migrate. Capture under existing domain admission and emit explicit unavailable results for unreadable required stores.
+- [x] **Step 5:** Keep discovery import-light: no cloud clients, evaluation runner/model imports, or database constructors that migrate. Capture under existing domain admission and emit explicit unavailable results for unreadable required stores.
 
-- [ ] **Step 6:** Add a fixture for each census owner using the real domain persistence API, capture it, and compare complete domain records and referenced bytes. Include no optional engine installed, schema-too-new, old supported schema, missing asset, and custom path cases.
+- [x] **Step 6:** Add a fixture for each census owner using the real domain persistence API, capture it, and compare complete domain records and referenced bytes. Include no optional engine installed, schema-too-new, old supported schema, missing asset, and custom path cases.
 
 **Implementation invariant:** preserve this control flow while implementing the steps.
 
@@ -564,7 +564,7 @@ for adapter in recovery_adapters():
 # Factories return installed path/schema policies, not live service objects.
 ```
 
-- [ ] **Step 7:** Run focused tests and applicable guards. Expected: named behavior
+- [x] **Step 7:** Run focused tests and applicable guards. Expected: named behavior
   and adversarial cases pass; no skips substituted for required release evidence.
 
 ```bash
@@ -573,11 +573,11 @@ python -m pytest Tests/DB/test_private_sqlite.py Tests/DB/test_private_sqlite_in
 python -m pytest Tests/Architecture/test_backup_owner_inventory.py -q
 ```
 
-- [ ] **Step 8:** Run scoped lint/format checks from Execution discipline, review
+- [x] **Step 8:** Run scoped lint/format checks from Execution discipline, review
   the complete diff and actual filesystem/process evidence, and update owner/user docs
   and this task's Implementation Notes with ADR-126 and exact results.
 
-- [ ] **Step 9:** When all criteria below are demonstrated, check them in Backlog,
+- [x] **Step 9:** When all criteria below are demonstrated, check them in Backlog,
   mark the task Done using the verified CLI/file workflow, and commit only task-owned
   files with subject `feat(backup): add recovery adapters for local research writing study and evaluation data`. Recheck task-ID collisions
   before merge and preserve unrelated work.
