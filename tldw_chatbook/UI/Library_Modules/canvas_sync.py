@@ -300,6 +300,22 @@ def _apply_library_row_toggle(
                 else LIBRARY_REVIEW_SELECTED_TOOLTIP
             )
             _patch_library_disabled_marker_label(review_button)
+            # task-32045 (critique #7 P2): the shared Export/Review/Delete
+            # "nothing selected" reason line flips in place too -- it is
+            # always mounted (never conditionally composed; see the
+            # compose-time comment in ``library_media_canvas.py``) for
+            # exactly this Tier 1 path to find and toggle without a
+            # recompose. ``visibility`` (not ``display``): the media row
+            # list is composed AFTER this whole select-mode toolbar block,
+            # so dropping the line from LAYOUT (``display``) shifted every
+            # row up by one line the instant the first row was checked --
+            # ``visibility: hidden`` reserves the same height while
+            # painting nothing, so rows never move.
+            bulk_reason = screen.query("#library-media-select-bulk-reason")
+            if bulk_reason:
+                bulk_reason.first().styles.visibility = (
+                    "hidden" if selection.count else "visible"
+                )
             # task-28007 AC#4: same in-place flip for "Analyze", with the
             # provider gate still outranking the count -- an unready
             # provider keeps the action off wearing its own reason, however
