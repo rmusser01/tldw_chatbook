@@ -3609,6 +3609,44 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
 
 
 @pytest.mark.asyncio
+async def test_flag_keyword_reason_paints_no_half_flag():
+    """task-32044 (crit #7 P2): a flag keyword never paints a lone indicator.
+
+    A regional-indicator flag is a PAIR painted as one 2-cell glyph. The
+    ten-cell cut could split the pair at the tail, leaving a lone indicator a
+    real terminal paints as a 2-cell box -- the finding's +2 row-frame drift
+    (border at 237 vs 235). (Textual's headless compositor measures cells the
+    way rich does, so it cannot reproduce the terminal-font width itself; what
+    it pins is that the production render path never emits the half-flag that
+    causes the drift.) So the painted reason carries only whole flags: an even
+    number of regional-indicator code points.
+    """
+    flag_jp = "\U0001F1EF\U0001F1F5"
+    flag_us = "\U0001F1FA\U0001F1F8"
+    # "flagx" is five cells, so the ten-cell cut lands mid-pair without the
+    # fix, leaving a lone indicator; the title carries no "flagx" so the row
+    # can only match through the keyword.
+    keyword = "flagx" + (flag_jp + flag_us) * 3
+    items = _match_reason_items()
+    items[0]["keywords"] = [keyword]  # row 1 now matches only via the flag keyword
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=items)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "flagx")
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        reason = "".join(line for line in lines if "keyword: flagx" in line)
+        assert reason, lines
+        ri = sum(1 for ch in reason if 0x1F1E6 <= ord(ch) <= 0x1F1FF)
+        assert ri >= 2, reason  # at least one whole flag actually paints
+        assert ri % 2 == 0, (ri, reason)  # no lone half-flag
+
+
+@pytest.mark.asyncio
 async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone():
     """PR F's restore is CHAINED behind the follow-up, never evicted.
 

@@ -1243,6 +1243,21 @@ def _parse_timestamp(value: str) -> datetime | None:
     return parsed
 
 
+def _trailing_regional_indicators(text: str) -> int:
+    """Count the trailing U+1F1E6..U+1F1FF run.
+
+    A regional-indicator flag is a PAIR of these code points; an odd trailing
+    run means the last one is a dangling half-flag (task-32044).
+    """
+    count = 0
+    for ch in reversed(text):
+        if 0x1F1E6 <= ord(ch) <= 0x1F1FF:
+            count += 1
+        else:
+            break
+    return count
+
+
 def _secondary_text(
     media_type: str, age: str, *, analysed: bool = False, keyword: str = ""
 ) -> str:
@@ -1286,15 +1301,22 @@ def _secondary_text(
         # mid-sequence (task-31955). Rich is already a hard dependency and
         # ``console_prompt_queue`` uses the same module, so this adds
         # nothing to install.
-        # ponytail: rich's splitter is not full UAX #29 -- a regional-
-        # indicator (flag) PAIR can halve at an odd cut offset. The CELL
-        # budget is what holds; pinned as a known ceiling by
-        # ``test_flag_pair_keyword_is_cut_on_a_cell_boundary_not_a_cluster_one``.
         # ``chop_cells`` returns NOTHING for text that paints nothing (a
         # lone ZWJ or combining mark survives the caller's non-empty
         # check), so the whole keyword is the fallback -- a zero-width one
         # has nothing to cut.
         head = next(iter(chop_cells(keyword, _KEYWORD_REASON_CELLS)), keyword)
+        cut = head != keyword
+        # task-32044: rich's splitter is not full UAX #29. A regional-
+        # indicator (flag) PAIR is two code points painted as one 2-cell
+        # glyph, and ``chop_cells`` fills the budget to the tail, so it can
+        # keep just the first indicator of a pair. rich counts that lone half
+        # as one cell but a terminal paints it as a 2-cell box, drifting the
+        # row frame +2. Drop the dangling half so only whole flags -- which
+        # rich and the terminal both measure as 2 cells -- ever paint.
+        if _trailing_regional_indicators(head) % 2:
+            head = head[:-1]
+            cut = True
         # A cut landing on a space would paint "abcdefghi …"; the space is
         # the cut's own artefact, not part of the term.
         term = head.rstrip()
@@ -1302,7 +1324,7 @@ def _secondary_text(
         # spaces) leaves the label introducing nothing -- "keyword: " or,
         # past the cap, "keyword: …". Say nothing instead.
         if cell_len(term.strip()):
-            if head != keyword:
+            if cut:
                 term += "…"
             text = f"{text} · keyword: {term}"
     return text
