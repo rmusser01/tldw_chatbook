@@ -39,6 +39,7 @@ from Tests.UI.test_library_shell import (
     _build_test_app,
     _seed_conversations,
     _two_conversations,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -483,3 +484,71 @@ async def test_query_box_footer_names_the_enter_action() -> None:
                 f"the query box still advertises {sorted(enter_labels)!r}."
             )
         assert "select evidence" not in enter_labels
+
+
+# ---------------------------------------------------------------------------
+# task-32065: below the 64-column floor the Media stage is the LIST, not an
+# empty Reader, and it keeps a named way back to the rail.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_media_below_64_columns_shows_the_items_list_and_a_way_back() -> None:
+    """task-32065: at 60x24 Media painted a placeholder and two grips.
+
+    "Select a media item to read it here." with no list to select from, and
+    no control back to the rail -- the destination could not be used at all.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await _wait_for_condition(
+            pilot,
+            # Re-queried every poll: a background list refresh recomposes the
+            # row Buttons, and a reference captured before that keeps the
+            # detached widget's zero region forever.
+            lambda: bool(screen.query("#library-media-row-0"))
+            and screen.query_one("#library-media-row-0", Button).region.width > 0,
+            message="The Items list never painted at 60 columns.",
+        )
+
+        shell = screen.query_one("#library-media-reader-shell")
+        assert shell.effective_layout.items_open is True
+        assert shell.effective_layout.library_open is False
+
+        back = screen.query_one("#library-media-rail-return", Button)
+        assert back.display is True
+        assert str(back.label) in ("‹ Library", "< Library")
+        assert back in screen.focus_chain
+
+        back.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-reader-shell"
+            ).effective_layout.library_open,
+            message="'‹ Library' did not bring the rail back.",
+        )
+        assert screen.query_one("#library-row-browse-media").region.width > 0
+        assert screen.query_one("#library-media-rail-return", Button).display is False
+
+        # ...and it comes back when the rail is collapsed again. Live at
+        # 60x24 it did not: the collapse recomposes the Items pane, and a
+        # control whose visibility was only patched by the layout sync came
+        # back mounted-but-hidden.
+        screen.query_one("#library-media-library-grip", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one(
+                "#library-media-rail-return", Button
+            ).display,
+            message="'‹ Library' did not return with the collapsed rail.",
+        )
+
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)

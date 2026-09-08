@@ -456,6 +456,7 @@ from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderTargetDialog,
 )
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
+from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
     resolve_database_note_status_channels,
@@ -7485,6 +7486,53 @@ class LibraryScreen(BaseAppScreen):
             return
         shell.sync_layout(layout)
         self._media_state.reader_layout = layout
+        self._sync_library_media_rail_return(layout, shell.region.width)
+
+    def _library_media_rail_return_visible(
+        self, layout: MediaReaderEffectiveLayout, width: int
+    ) -> bool:
+        """Whether the Media stage needs its own named way back to the rail.
+
+        task-32065: below the ordinary single-stage floor the Library pane
+        cannot be co-present, so the rail is otherwise reachable only through
+        a one-cell grip that says nothing about where it leads. Above the
+        floor the rail is one pane away and the control would be noise.
+
+        Args:
+            layout: The layout the shell is showing.
+            width: The shell's width in cells; a not-yet-measured 0 is not an
+                emergency (``ordinary_emergency_required`` rejects it).
+
+        Returns:
+            Whether the "‹ Library" control belongs on screen.
+        """
+        return (
+            width > 0
+            and not layout.library_open
+            and layout.items_open
+            and ordinary_emergency_required(width)
+        )
+
+    def _sync_library_media_rail_return(
+        self, layout: MediaReaderEffectiveLayout, width: int
+    ) -> None:
+        """Patch the "‹ Library" control's visibility in place (task-32065).
+
+        Args:
+            layout: The layout just applied to the shell.
+            width: The shell's settled width in cells.
+        """
+        try:
+            control = self.query_one("#library-media-rail-return", Button)
+        except (NoMatches, QueryError):
+            return
+        control.display = self._library_media_rail_return_visible(layout, width)
+
+    @on(Button.Pressed, "#library-media-rail-return")
+    def handle_library_media_rail_return(self, event: Button.Pressed) -> None:
+        """Reopen the Library pane through the grip's own seam (task-32065)."""
+        event.stop()
+        self.post_message(PaneToggleRequested("library"))
 
     def _sync_library_media_reader_layout_from_shell(
         self,
@@ -7578,6 +7626,7 @@ class LibraryScreen(BaseAppScreen):
             )
         shell.sync_layout(layout)
         self._media_state.reader_layout = layout
+        self._sync_library_media_rail_return(layout, width)
         if layout_changed:
             receipt = self._library_pending_list_entry_media_return
             if self._library_media_return_candidate(receipt):
@@ -14796,7 +14845,24 @@ class LibraryScreen(BaseAppScreen):
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
+            # task-32065: the named way back to the rail for the widths where
+            # the Library pane cannot be co-present. Mounted always, shown by
+            # ``_sync_library_media_rail_return`` -- the layout it reads is
+            # only settled after this compose. A plain Button, NOT
+            # ``LibraryEmergencyReturn``: that widget's visibility belongs to
+            # the ordinary-route emergency stage, which force-hides every one
+            # of them whenever an adaptive reader shell is mounted.
+            media_rail_return = Button(
+                "< Library" if ascii_glyph_mode() else "‹ Library",
+                id="library-media-rail-return",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            media_rail_return.display = self._library_media_rail_return_visible(
+                self._media_state.reader_layout, self.size.width
+            )
             items_host = Vertical(
+                media_rail_return,
                 self._build_library_media_active_child(),
                 id="library-canvas",
                 classes="destination-workbench-pane",

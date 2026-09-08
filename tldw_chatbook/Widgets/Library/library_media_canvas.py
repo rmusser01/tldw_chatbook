@@ -625,8 +625,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Build the "Analyze" bulk action (task-28007 AC#4).
 
         Rides its OWN row rather than joining Clear/Export/Review: those
-        three already measure 33 of the pane's 36 cells (`min_width` above),
-        so a fourth 13-cell action clipped every label on that row. Same
+        three already measure 33 of the ~36 cells a narrow Items pane hands
+        this canvas, so a fourth 13-cell action clipped every label on that
+        row. Same
         multi-row grammar the danger row uses. When no analysis provider is
         configured the resolver's own sentence replaces the F-018 tooltip,
         so the disabled control says WHY, not just that it is off (AC#5's

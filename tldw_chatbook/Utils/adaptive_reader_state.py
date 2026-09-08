@@ -19,6 +19,7 @@ from typing import Any, Literal, Mapping
 
 from .library_rail_width import (
     LIBRARY_CUSTOM_MAX_WIDTH,
+    LIBRARY_EMERGENCY_WIDTH,
     LIBRARY_MIN_WIDTH,
     LIBRARY_REFERENCE_WIDTH,
     project_default_library_width,
@@ -68,6 +69,14 @@ class AdaptiveReaderLayoutProfile:
             Automatic widths only: a custom width is obeyed as typed. Default
             ``False`` (every extra cell goes to the work pane); only Media
             opts in today.
+        list_first_when_empty: When ``True``, a width too narrow to seat the
+            list beside the work pane keeps the LIST and gives the work pane
+            what is left, rather than dropping the list for a work pane that
+            has nothing in it. Only applies while ``reader_has_item`` is
+            ``False``; opening an item hands the stage straight back. Default
+            ``False`` (the pre-task-32065 behaviour); only Media opts in
+            today, where 60x24 painted "Select a media item to read it here."
+            with no list to select from.
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
             never disagree (the resolved layout carries this width to the
@@ -85,6 +94,7 @@ class AdaptiveReaderLayoutProfile:
     work_min_width: int = 44
     work_comfort_width: int = 44
     list_grows: bool = False
+    list_first_when_empty: bool = False
     grip_width: int = PANE_GRIP_WIDTH
 
 
@@ -359,6 +369,41 @@ def resolve_adaptive_reader_layout(
             < required_width(library_open, items_open) + LAYOUT_HYSTERESIS_WIDTH
         ):
             items_open = False
+
+    if (
+        not items_open
+        and not reader_has_item
+        and preferences.items_open
+        and profile.list_first_when_empty
+        and width < LIBRARY_EMERGENCY_WIDTH
+        and width - grip_width >= profile.list_min_width
+    ):
+        # task-32065: below the width that seats a list beside the work pane,
+        # dropping the list leaves a pane with NOTHING in it as the whole
+        # stage -- live at 60x24 Media painted "Select a media item to read
+        # it here." over two collapsed-pane grips, with no list to select
+        # from and no way back to the rail. With nothing to read, the list
+        # wins the stage; opening an item (``reader_has_item=True``) resolves
+        # the ordinary way and hands it straight back.
+        #
+        # Bounded to the ordinary single-stage floor (64 -- the same constant
+        # the rail-and-canvas layouts use) on purpose: at 80x24 the Items
+        # pane is deliberately dropped and focus evacuates to its grip, and
+        # three tests pin that. Below the floor nothing else is on screen at
+        # all, which is the case this branch exists for.
+        items_width = min(
+            max(profile.list_min_width, preferences.items_width),
+            width - grip_width,
+        )
+        return AdaptiveReaderEffectiveLayout(
+            library_open=False,
+            items_open=True,
+            library_width=0,
+            items_width=items_width,
+            reader_width=max(width - grip_width - items_width, 0),
+            priority_pane=None,
+            grip_width=profile.grip_width,
+        )
 
     library_width = requested_library_width if library_open else 0
     items_width = preferences.items_width if items_open else 0
