@@ -521,6 +521,11 @@ footer; TASK-2856 re-critique round 3: the media viewer's Edit/Delete/Edit
 analysis sub-states now document their own graduated two-Escape behavior
 and footer hint ("back a step") instead of implying a single Escape
 reaches the list from any viewer sub-state)*
+*Verified against fix/media-crit6-focus — 2026-09-07 (task-31983: a focused
+list row now carries a distinct left-edge cursor bar, so keyboard focus reads
+apart from the selected/open row even when a row is both — the bar moves with
+↑/↓ and never changes the selection. Applied uniformly to the Media,
+Conversations, Notes, Notes-folder and Prompts row canvases.)*
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4: rail
 glosses/counts follow one rule across visits (LIB-15); the search box
 selects a stale query on click too, not just on a second "/" (LIB-17);
