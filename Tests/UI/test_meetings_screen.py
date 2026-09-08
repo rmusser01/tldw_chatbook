@@ -91,7 +91,8 @@ class FakeOwner:
         self.session: FakeSession | None = None
         self.local_sink = SimpleNamespace(job_id=None, last_submit_error=None)
         self.settings = SimpleNamespace(post_diarize=True, mic_device="", system_source="auto",
-                                        voice_learn_offer=True)
+                                        voice_learn_offer=True, live_diarization=False,
+                                        diarizer_backend="auto", onnx_embedder="titanet_small")
         self.choices: list[tuple[str, str]] = []
         # ---- self-voiceprint surface (TASK-31826) ----
         self.voice_match = VoiceMatchState("off", "no_voiceprint")
@@ -107,6 +108,11 @@ class FakeOwner:
         self.invalidated = 0
         self._pending_offer: LearningOffer | None = None
         self._enrolling = False
+        # ---- live diarizer warm-up (TASK-31827 task 7) ----
+        #: Scripted `diarizer_status()` answers: each poll takes the next and
+        #: the last one stands, so a test can drive the rail through a real
+        #: warm-up sequence on the screen's own timer.
+        self.diarizer_statuses: list[str | None] = []
         self.prepared = PrepareResult(
             tap_mode=TapMode(tap_kind, "Native (macOS tap)" if tap_kind == "native_macos" else "Unavailable, mic only"),
             provider="faster-whisper", model="base.en", diarization_available=False,
@@ -150,6 +156,11 @@ class FakeOwner:
         session.state = "stopped"
         session.emit("state", "stopped")
         return result
+
+    def diarizer_status(self):
+        if len(self.diarizer_statuses) > 1:
+            return self.diarizer_statuses.pop(0)
+        return self.diarizer_statuses[0] if self.diarizer_statuses else None
 
     def apply_device_choice(self, kind, value):
         self.choices.append((kind, value))
@@ -921,25 +932,178 @@ async def test_rail_reports_live_speaker_labels_off_with_a_reason(tmp_path):
 @pytest.mark.asyncio
 async def test_rail_reports_live_speaker_labels_on(tmp_path):
     host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "speechbrain"
     owner.prepared.live_diarization_active = True
     async with host.run_test(size=(160, 45)) as pilot:
         await pilot.pause(0.3)
         screen = host.screen_stack[-1]
         assert _text(screen.query_one("#meetings-live-diarization-status", Static)) == (
-            "Live speaker labels: on"
+            "Live speaker labels: on (SpeechBrain)"
         )
 
 
 @pytest.mark.asyncio
-async def test_rail_names_the_missing_module_when_live_labels_were_wanted(tmp_path):
+async def test_the_two_speaker_label_lines_read_their_own_missing_list(tmp_path):
+    """Task 5 review I3: there are now TWO missing-package lists, and they
+    answer different questions. The post-meeting line stays on the Library's
+    torch-only ingest check (`diarization_missing`); the live line reads the
+    engine's own `diarizer_missing`, and under `auto` says which extra to
+    install rather than naming the last candidate's packages."""
     host, owner = await _boot(tmp_path)
-    owner.settings.live_diarization = True          # asked for, but torch is absent
+    owner.settings.live_diarization = True          # asked for, but no engine resolved
+    owner.prepared.diarizer_missing = ("torch", "torchaudio", "speechbrain", "sklearn")
     async with host.run_test(size=(160, 45)) as pilot:
         await pilot.pause(0.3)
         screen = host.screen_stack[-1]
-        assert "torch missing" in _text(
-            screen.query_one("#meetings-live-diarization-status", Static)
+        assert _text(screen.query_one("#meetings-diarization-status", Static)) == (
+            "Speaker labels after the meeting: off (torch missing)"
         )
+        assert _text(screen.query_one("#meetings-live-diarization-status", Static)) == (
+            "Live speaker labels: off (install the diarization extra)"
+        )
+
+
+# The manifest total the rail rounds, in MB: the segmentation tarball
+# (6_958_444 downloaded bytes) plus the embedder. titanet_small is
+# 40_257_283 -> 47; wespeaker_resnet34 is 26_534_365 -> 33.
+@pytest.mark.parametrize(
+    "live, backend, engine, missing, models_ready, embedder, expected",
+    [
+        # Off, in the precedence the rail decides them in.
+        (False, "auto", "onnx", (), True, "titanet_small", "off (not enabled in settings)"),
+        (True, "server", None, (), False, "titanet_small", "off (unsupported backend: server)"),
+        (True, "onnx", None, ("sherpa_onnx", "numpy"), False, "titanet_small",
+         "off (missing: sherpa_onnx, numpy)"),
+        (True, "speechbrain", None, ("torch", "torchaudio", "speechbrain", "sklearn"), False,
+         "titanet_small", "off (missing: torch, torchaudio, speechbrain, sklearn)"),
+        # `auto` reports the EXTRA, never the last candidate's packages: the
+        # user did not choose that engine, so its module list is not advice.
+        (True, "auto", None, ("torch", "torchaudio", "speechbrain", "sklearn"), False,
+         "titanet_small", "off (install the diarization extra)"),
+        # On, per engine. ONNX warns about the first download until the files
+        # are on disk (they are fetched at Start, they do not gate labels).
+        (True, "auto", "speechbrain", (), True, "titanet_small", "on (SpeechBrain)"),
+        (True, "auto", "onnx", (), True, "titanet_small", "on (ONNX)"),
+        (True, "auto", "onnx", (), False, "titanet_small",
+         "on (ONNX, ~47 MB of models fetched at Start)"),
+        (True, "onnx", "onnx", (), False, "wespeaker_resnet34",
+         "on (ONNX, ~33 MB of models fetched at Start)"),
+    ],
+)
+def test_live_diarization_rail_copy_per_state(
+    tmp_path, live, backend, engine, missing, models_ready, embedder, expected
+):
+    """Spec §4: every state the live engine can be in gets its own static
+    copy, and the repair advice matches the CHOICE the user actually made --
+    a pinned `diarizer_backend = "onnx"` without sherpa-onnx used to read
+    "off (unsupported backend: onnx)" (Task 5 review I3)."""
+    app = _build_test_app()
+    owner = FakeOwner(tmp_path)
+    app.meeting_session_owner = owner
+    screen = MeetingsScreen(app)
+    owner.settings.live_diarization = live
+    owner.settings.diarizer_backend = backend
+    owner.settings.onnx_embedder = embedder
+    owner.prepared.diarizer_engine = engine
+    owner.prepared.diarizer_missing = missing
+    owner.prepared.diarizer_models_ready = models_ready
+    assert screen._live_diarization_copy(owner.prepared) == expected
+
+
+@pytest.mark.parametrize("size", [(160, 45), (100, 30)])
+@pytest.mark.asyncio
+async def test_rail_names_the_engine_and_the_download_at_both_sizes(tmp_path, size):
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "onnx"
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        assert _text(screen.query_one("#meetings-live-diarization-status", Static)) == (
+            "Live speaker labels: on (ONNX, ~47 MB of models fetched at Start)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rail_follows_the_warm_up_from_download_to_the_engine_name(tmp_path):
+    """Spec §3: the models are fetched as the first step of the backend's own
+    warm-up, so the rail's tick reports the download and the warm-up before
+    it can name the engine as running."""
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "onnx"
+    owner.diarizer_statuses = ["downloading 12 / 35 MB", "warming up", "ready"]
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        assert _text(line) == "Live speaker labels: on (ONNX, ~47 MB of models fetched at Start)"
+        screen.query_one("#meetings-start", Button).press()
+        assert await _wait_until(
+            pilot, lambda: _text(line) == "Live speaker labels: downloading 12 / 35 MB"
+        )
+        assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: warming up")
+        assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: on (ONNX)")
+
+
+@pytest.mark.asyncio
+async def test_rail_reports_a_failed_model_fetch(tmp_path):
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "onnx"
+    owner.diarizer_statuses = ["unavailable"]
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        screen.query_one("#meetings-start", Button).press()
+        assert await _wait_until(
+            pilot, lambda: _text(line) == "Live speaker labels: off (models unavailable)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_warm_up_status_is_not_rewritten_every_tick(tmp_path):
+    """The tick runs five times a second for the whole meeting; writing the
+    same sentence into the Static each time is a refresh the rail does not
+    need."""
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "onnx"
+    owner.diarizer_statuses = ["warming up"]
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        writes: list[str] = []
+        original = line.update
+        line.update = lambda copy, _o=original, _w=writes: (_w.append(str(copy)), _o(copy))[1]
+        screen.query_one("#meetings-start", Button).press()
+        assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: warming up")
+        await pilot.pause(0.8)                       # ~4 more ticks, same status
+        assert writes == ["Live speaker labels: warming up"]
+
+
+@pytest.mark.asyncio
+async def test_the_warm_up_status_is_only_polled_while_the_meeting_runs(tmp_path):
+    """Owner addendum: `diarizer_status()` can still answer from the worker
+    retained for a learning offer after Stop. The rail must not repaint a
+    finished meeting's line from it."""
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "speechbrain"
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        owner.diarizer_statuses = ["unavailable"]     # the retained worker answers
+        await pilot.pause(0.6)                        # ~3 ticks
+        assert _text(line) == "Live speaker labels: on (SpeechBrain)"
 
 
 @pytest.mark.asyncio
@@ -1070,6 +1234,29 @@ def test_voice_match_rail_copy_per_reason(tmp_path, reason, expected):
     screen = MeetingsScreen(app)
     assert screen._voice_match_copy(VoiceMatchState("off", reason)) == expected
     assert screen._voice_match_copy(VoiceMatchState("on", None)) == "Voice match: on"
+
+
+@pytest.mark.asyncio
+async def test_the_voice_row_explains_an_engine_switch(tmp_path):
+    """Spec §6: "needs re-enrollment" on its own reads like a corrupt record.
+    When the owner knows the cause was a change of engine it hands over one
+    static sentence, which lands on the same line -- no new widget."""
+    host, owner = await _boot(tmp_path)
+    owner.prepared.voice_match = VoiceMatchState(
+        "off", "needs_reenrollment",
+        detail="Voiceprint was recorded with SpeechBrain; the active engine is ONNX.",
+    )
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        assert _text(screen.query_one("#meetings-voice-match-status", Static)) == (
+            "Voice match: off (needs re-enrollment). "
+            "Voiceprint was recorded with SpeechBrain; the active engine is ONNX."
+        )
+        # A reason with no detail keeps its one sentence.
+        assert screen._voice_match_copy(VoiceMatchState("off", "no_voiceprint")) == (
+            "Voice match: off (no voiceprint)"
+        )
 
 
 @pytest.mark.asyncio
