@@ -1112,7 +1112,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # when the list itself failed to load with nothing to select
                 # (``_gate_failed_action``'s predicate) -- that state already
                 # explains itself via the recovery callout, and "select
-                # items" would be the wrong reason. task-32047 AC#1 (Qodo #7):
+                # items" would be the wrong reason. task-32085 AC#1 (Qodo #7):
                 # also gated on ``rendered_count > 0`` -- select mode surviving
                 # a refresh to a SUCCESSFUL empty list has nothing to select,
                 # so the line paints nothing there too (still mounted, so the

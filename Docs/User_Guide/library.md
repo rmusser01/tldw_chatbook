@@ -440,7 +440,7 @@ inside the File Notes surface's own panels and dialogs — see
 **Continue in Study**), Escape returns to the Study decks staging canvas
 here in Library.
 
-*Verified against fix/media-crit7-qodo — 2026-09-08 (task-32046 + task-32047
+*Verified against fix/media-crit7-qodo — 2026-09-08 (task-32046 + task-32085
 AC#2/#4: `/` focuses the active list canvas's own filter — Media/Prompts share
 the per-canvas route the Conversations and Notes canvases already had — instead
 of the rail's global search two panes away; the fallback wording now names the

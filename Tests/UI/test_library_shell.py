@@ -6909,7 +6909,7 @@ async def test_slash_focuses_the_media_filter_not_the_rail_search(size):
 
 @pytest.mark.asyncio
 async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
-    """task-32047 AC#2: task-32046 routed `/` to the own-canvas filter for
+    """task-32085 AC#2: task-32046 routed `/` to the own-canvas filter for
     BOTH Media and Prompts, but only Media was pinned. On the Prompts list `/`
     must focus ``#library-prompts-filter``, not the rail's global
     ``#library-search-input``. A prompt is seeded so the list (and its filter)
