@@ -55,6 +55,106 @@ class _ControlFlow(BaseException):
     """A test-only control-flow signal."""
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signal_type", [_ControlFlow, asyncio.CancelledError])
+async def test_live_open_control_retains_shared_owner_for_teardown_only_retry(
+    tmp_path, monkeypatch, signal_type
+):
+    from tldw_chatbook.DB import private_sqlite_process as process
+    from tldw_chatbook.TTS import profile_schema
+
+    path = tmp_path / "profiles.sqlite3"
+    profile_schema.open_profile_store(path).close()
+    module = _repository_module()
+    repository = module.TTSProfileRepository(path)
+    signal = signal_type("worker control")
+    used = dict(process.HELPER_ADMISSION._used)
+    real_connect = sqlite3.connect
+    real_worker_open = repository._worker_open
+    owners, worker_errors, close_threads, statements = [], [], [], []
+    fail_close = True
+
+    class RetainedConnection(sqlite3.Connection):
+        def close(self):
+            close_threads.append(threading.get_ident())
+            assert self.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+            if fail_close:
+                raise sqlite3.OperationalError("owned close failure")
+            super().close()
+
+    def connect(database, *args, **kwargs):
+        if database == ":memory:":
+            return real_connect(database, *args, **kwargs)
+        return real_connect(database, *args, **kwargs, factory=RetainedConnection)
+
+    def interrupt_validation(connection, **kwargs):
+        owners.append(connection)
+        connection.set_trace_callback(statements.append)
+        connection.execute("BEGIN")
+        raise signal
+
+    def observed_worker_open():
+        try:
+            real_worker_open()
+        except BaseException as error:
+            worker_errors.append(error)
+            raise
+
+    def unexpected_initialization(*args, **kwargs):
+        pytest.fail("cleanup retry replayed initialization")
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    monkeypatch.setattr(profile_schema, "_validate_schema", interrupt_validation)
+    monkeypatch.setattr(repository, "_worker_open", observed_worker_open)
+    monkeypatch.setattr(
+        repository, "_worker_initialize_store", unexpected_initialization
+    )
+    try:
+        with pytest.raises(BaseException) as caught:
+            await repository.open()
+        assert len(owners) == 1  # The real live opener, past the memory probe.
+        owner = owners[0]
+        lease, executor = repository._lease, repository._executor
+        assert repository._connection is owner
+        assert lease.acquired and lease.mode is ProfileStoreLockMode.SHARED
+        assert executor is not None and not repository._executor_shutdown
+        assert not repository._helper_restart_required and not owner._proof_lost
+        assert not repository._migration_cleanup_owners
+        assert not owner._helper._reaped_child
+        assert owner._helper._child.poll() is None
+        assert process.HELPER_ADMISSION._used == {
+            "transient": used["transient"],
+            "retained": used["retained"] + 1,
+        }
+        assert worker_errors == [signal] and worker_errors[0] is signal
+        if signal_type is _ControlFlow:
+            assert caught.value is signal
+        else:
+            assert isinstance(caught.value, asyncio.CancelledError)
+        with pytest.raises(ProfileRepositoryError):
+            await repository.list_profiles()
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert repository._connection is owner and repository._lease is lease
+        assert lease.acquired and repository._executor is executor
+        assert owner._helper._child.poll() is None
+        assert not owner._sqlite_closed and not owner._proof_lost
+        assert statements == [
+            "BEGIN",
+            "ROLLBACK",
+            "PRAGMA main.wal_checkpoint(PASSIVE)",
+        ]
+    finally:
+        fail_close = False
+        await repository.close()
+    assert len(owners) == 1 and len(close_threads) == 3
+    assert len(set(close_threads)) == 1 and close_threads[0] != threading.get_ident()
+    assert owner._sqlite_closed and owner._helper._reaped_child
+    assert not lease.acquired and repository._lease is None
+    assert repository._connection is None and repository._executor is None
+    assert process.HELPER_ADMISSION._used == used
+
+
 class _RecordingConnection:
     def __init__(
         self,

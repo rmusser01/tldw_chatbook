@@ -97,10 +97,10 @@ from tldw_chatbook.TTS.profile_reference_types import (
 from tldw_chatbook.TTS.profile_schema import (
     CURRENT_PROFILE_SCHEMA_VERSION,
     ExactProfileStoreAuthorityError,
-    ExactProfileStoreCleanupError,
     ExactProfileStoreNotCurrentError,
     ExactProfileStoreProofLostError,
     PostInitProfileStoreAuthority,
+    _exact_profile_store_cleanup_error,
     _ExactCurrentProfileConnection,
     capture_post_init_profile_store_authority,
     decode_assigned_snapshot,
@@ -1594,11 +1594,21 @@ class TTSProfileRepository:
                 self._lease = lease
                 self._active_database_path = active_path
                 self._worker_seal_exact_authority(error)
-            except ExactProfileStoreCleanupError as error:
-                connection = cast(sqlite3.Connection, error.connection)
+            except BaseException as error:
+                cleanup = _exact_profile_store_cleanup_error(error)
+                if cleanup is None:
+                    raise
+                connection = cast(sqlite3.Connection, cleanup.connection)
                 self._worker_retain_failed_connection(connection, active_path)
                 self._lease = lease
                 self._exact_authority_quarantined = True
+                if cleanup.connection._proof_lost:
+                    try:
+                        self._worker_seal_exact_authority(
+                            ExactProfileStoreProofLostError(cleanup.connection)
+                        )
+                    except ProfileRepositoryError as sealed_error:
+                        _raise_with_cleanup_precedence(error, sealed_error)
                 raise
             return lease, connection
         except BaseException as error:

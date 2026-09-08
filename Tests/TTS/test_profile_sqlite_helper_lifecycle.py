@@ -290,6 +290,164 @@ async def test_normal_cleanup_rolls_back_and_checkpoints_once(tmp_path):
         await reopened.close()
 
 
+@pytest.mark.parametrize(
+    ("body_type", "close_type"),
+    [
+        (asyncio.CancelledError, sqlite3.OperationalError),
+        (KeyboardInterrupt, sqlite3.OperationalError),
+        (SystemExit, sqlite3.OperationalError),
+        (ValueError, asyncio.CancelledError),
+        (ValueError, KeyboardInterrupt),
+        (ValueError, SystemExit),
+        (asyncio.CancelledError, SystemExit),
+    ],
+)
+def test_live_open_cleanup_preserves_control_and_charged_owner(
+    tmp_path, monkeypatch, body_type, close_type
+):
+    """Failed native close must not replace control or reap its live proof."""
+    path = tmp_path / "profiles.sqlite3"
+    profile_schema.open_profile_store(path).close()
+    used = dict(process.HELPER_ADMISSION._used)
+    body_error, close_error = body_type("body"), close_type("close")
+    expected = body_error if not isinstance(body_error, Exception) else close_error
+    real_connect = sqlite3.connect
+    owners, native_flags = [], []
+    fail_close = True
+
+    class RetainedConnection(sqlite3.Connection):
+        def close(self):
+            native_flags.append(
+                self.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+            )
+            if fail_close:
+                raise close_error
+            super().close()
+
+    def connect(*args, **kwargs):
+        return real_connect(*args, **kwargs, factory=RetainedConnection)
+
+    def interrupt_validation(connection, **kwargs):
+        owners.append(connection)
+        raise body_error
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    monkeypatch.setattr(profile_schema, "_validate_schema", interrupt_validation)
+    try:
+        with pytest.raises(BaseException) as caught:
+            profile_schema.open_exact_current_profile_store(path)
+        assert len(owners) == 1
+        owner = owners[0]
+        assert not owner._sqlite_closed and not owner._proof_lost
+        assert owner._helper.cleanup_state == "still_owned"
+        assert owner._helper._child.poll() is None
+        assert native_flags == [True]
+        assert process.HELPER_ADMISSION._used == {
+            "transient": used["transient"],
+            "retained": used["retained"] + 1,
+        }
+        assert caught.value is expected
+    finally:
+        fail_close = False
+        for owner in owners:
+            owner.close()
+    assert native_flags == [True, True]
+    assert owner._sqlite_closed and owner._helper.cleanup_state == "reaped"
+    assert process.HELPER_ADMISSION._used == used
+
+
+def test_reused_hostile_live_signal_keeps_prior_owners_without_stale_handoff(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.TTS.profile_errors import (
+        ProfileMigrationCleanupError,
+        _migration_cleanup_owner,
+    )
+
+    class HostileSignal(BaseException):
+        def __getattribute__(self, name):
+            if name.startswith("_profile_") or name == "__dict__":
+                pytest.fail("signal attribute getter ran")
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            if name.startswith("_profile_") or name == "__dict__":
+                pytest.fail("signal attribute setter ran")
+            super().__setattr__(name, value)
+
+    path = tmp_path / "profiles.sqlite3"
+    profile_schema.open_profile_store(path).close()
+    signal = HostileSignal()
+    metadata = BaseException.__dict__["__dict__"].__get__(signal, BaseException)
+    earlier_owner = object()
+    migration = ProfileMigrationCleanupError(earlier_owner)
+    metadata["_profile_migration_cleanup_error"] = migration
+    used = dict(process.HELPER_ADMISSION._used)
+    real_connect = sqlite3.connect
+    owners, carriers = [], []
+    fail_close = True
+
+    class RetainedConnection(sqlite3.Connection):
+        def close(self):
+            if fail_close:
+                raise sqlite3.OperationalError("owned close failure")
+            super().close()
+
+    def connect(*args, **kwargs):
+        return real_connect(*args, **kwargs, factory=RetainedConnection)
+
+    def interrupt(connection, **kwargs):
+        owners.append(connection)
+        raise signal
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    monkeypatch.setattr(profile_schema, "_validate_schema", interrupt)
+    try:
+        for attempt in range(2):
+            with pytest.raises(BaseException) as caught:
+                profile_schema.open_exact_current_profile_store(path)
+            assert caught.value is signal
+            carrier = profile_schema._exact_profile_store_cleanup_error(signal)
+            assert carrier.connection is owners[attempt]
+            carriers.append(carrier)
+            assert metadata["_profile_exact_cleanup_history"] == tuple(carriers[:-1])
+            assert _migration_cleanup_owner(signal) is earlier_owner
+            assert metadata["_profile_migration_cleanup_error"] is migration
+            assert all(not owner._sqlite_closed for owner in owners)
+            assert all(owner._helper._child.poll() is None for owner in owners)
+
+        fail_close = False
+        with pytest.raises(BaseException) as caught:
+            profile_schema.open_exact_current_profile_store(path)
+        assert caught.value is signal and owners[-1]._sqlite_closed
+        assert profile_schema._exact_profile_store_cleanup_error(signal) is None
+        assert metadata["_profile_exact_cleanup_history"] == tuple(carriers)
+
+        # Reset current to a prior carrier to make the early-refusal control
+        # independently sensitive to stale adoption, before a live owner exists.
+        metadata["_profile_exact_cleanup_error"] = carriers[-1]
+
+        def refuse_before_live(*args, **kwargs):
+            raise signal
+
+        monkeypatch.setattr(process.HelperLease, "start", refuse_before_live)
+        with pytest.raises(BaseException) as caught:
+            profile_schema.open_exact_current_profile_store(path)
+        assert caught.value is signal and len(owners) == 3
+        assert profile_schema._exact_profile_store_cleanup_error(signal) is None
+        assert metadata["_profile_exact_cleanup_history"] == tuple(carriers)
+        assert _migration_cleanup_owner(signal) is earlier_owner
+        assert process.HELPER_ADMISSION._used == {
+            "transient": used["transient"],
+            "retained": used["retained"] + 2,
+        }
+    finally:
+        fail_close = False
+        for owner in owners:
+            owner.close()
+    assert process.HELPER_ADMISSION._used == used
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "checkpoint", [(0, 1), (0, "1", 1), (2, 1, 1), (0, 1, 2), (0, -1, 0)]
@@ -1065,7 +1223,7 @@ asyncio.run(main())
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("phase", ["policy", "metadata", "repository"])
+@pytest.mark.parametrize("phase", ["policy", "metadata", "repository", "control"])
 def test_helper_loss_during_repository_publication_retains_owner(tmp_path, phase):
     program = """
 import asyncio, sys
@@ -1074,8 +1232,12 @@ import Tests.conftest
 from tldw_chatbook.TTS import profile_repository as module
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS import profile_schema as schema
+from tldw_chatbook.DB.private_sqlite_process import HELPER_ADMISSION
 repository = module.TTSProfileRepository(Path(sys.argv[1]))
 phase = sys.argv[2]
+class ControlFlow(BaseException):
+    pass
+signal = ControlFlow()
 owners = []
 initialize = schema._ExactCurrentProfileConnection.__init__
 def capture(self, *args, **kwargs):
@@ -1088,9 +1250,11 @@ schema._ExactCurrentProfileConnection.__init__ = capture
 metadata = schema._stream_exact_store_metadata_evidence
 def after_metadata(connection):
     result = metadata(connection)
-    if phase == "metadata":
+    if phase in {"metadata", "control"}:
         connection._helper._child.kill()
         connection._helper._child.wait(timeout=5)
+        if phase == "control":
+            raise signal
     return result
 schema._stream_exact_store_metadata_evidence = after_metadata
 original = module.revalidate_exact_current_profile_store
@@ -1103,7 +1267,10 @@ module.revalidate_exact_current_profile_store = lose
 async def main():
     try:
         await repository.open()
+    except ControlFlow as error:
+        assert phase == "control" and error is signal
     except ProfileRepositoryError as error:
+        assert phase != "control"
         assert error.code == "restart_required", error.code
     else:
         raise AssertionError("partial owner published")
@@ -1113,6 +1280,8 @@ async def main():
     assert repository._helper_restart_required
     assert repository._connection is owners[-1]
     assert not owners[-1]._sqlite_closed
+    assert HELPER_ADMISSION._used == {"retained": 1, "transient": 0}
+    assert HELPER_ADMISSION.tts_proof_lost
     try:
         await repository.close()
     except ProfileRepositoryError as error:
