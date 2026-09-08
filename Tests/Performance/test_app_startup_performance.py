@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -796,6 +797,39 @@ async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
     assert handler is app._tts_handler
     assert handler._profile_service_loader == app._ensure_tts_profile_service
     assert app._tts_profile_service is None
+
+
+@pytest.mark.asyncio
+async def test_tts_profile_open_keeps_helper_startup_off_the_ui_loop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A slow fixed-helper open must not prevent the UI loop from advancing."""
+
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_threads: list[int] = []
+
+    def blocked_worker_open(self) -> None:
+        worker_threads.append(threading.get_ident())
+        worker_started.set()
+        assert release_worker.wait(timeout=3)
+
+    monkeypatch.setattr(TTSProfileRepository, "_worker_open", blocked_worker_open)
+    repository = TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    open_task = asyncio.create_task(repository.open())
+    try:
+        assert await asyncio.to_thread(worker_started.wait, 3)
+        await asyncio.sleep(0)
+        assert open_task.done() is False
+        assert len(worker_threads) == 1
+        assert worker_threads[0] != threading.get_ident()
+    finally:
+        release_worker.set()
+    await open_task
+    await repository.close()
 
 
 @pytest.mark.asyncio
