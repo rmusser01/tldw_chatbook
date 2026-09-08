@@ -7732,8 +7732,7 @@ class TldwCli(
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
         self._tts_profile_repository_path = get_tts_profiles_db_path()
-        # Attribute annotations are evaluated at runtime in this module.
-        self._tts_profile_repository: "TTSProfileRepository | None" = None  # noqa: UP037
+        self._tts_profile_repository: TTSProfileRepository | None = None
         self._tts_profile_repository_close_requested = False
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
