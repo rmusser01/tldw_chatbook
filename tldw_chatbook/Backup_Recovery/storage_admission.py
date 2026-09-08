@@ -8,12 +8,14 @@ re-enrollment. Native-unqualified ordinary use is distinct from recovery admissi
 from __future__ import annotations
 
 import atexit
+import asyncio
 from contextlib import contextmanager
 import sqlite3
 import os
 from pathlib import Path
 import stat
 import threading
+import time
 
 from . import bootstrap
 from .admission import Admission, AdmissionCancelled, _local
@@ -30,8 +32,243 @@ _startups: dict[tuple[int, str], "StorageLease"] = {}
 _forked_with_owners = False
 
 
+# This local gate intentionally covers all roots: an acquisition may still be
+# resolving its root. Native scopes remain individually bound to their holders.
+_pending_acquisitions: set["_Acquisition"] = set()
+_live_leases: set["StorageLease"] = set()
+_operations: set["_Operation"] = set()
+_pause: "_LocalPause | None" = None
+_changed = threading.Condition(_lock)
+_operation_local = threading.local()
+
+
+def _task_identity():
+    try:
+        return asyncio.current_task()
+    except RuntimeError:
+        return None
+
+
+class _Operation:
+    """Live installed producer lifetime with an exact bounded descendant scope."""
+
+    def __init__(self):
+        raise TypeError("operation_is_installed_owner_issued")
+
+    def check(self, path=None):
+        from .participants import _installed_repositories
+
+        if (
+            self not in _operations
+            or self.participant not in _installed_repositories
+            or self.participant.repository() is None
+            or self.participant.repository()._maintenance_participant
+            is not self.participant
+            or self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self.task is not _task_identity()
+            or self.lease is None
+            or self.lease not in _live_leases
+        ):
+            raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+        if path is not None:
+            selected = lexical_path(path)
+            parent = self.path.parent.stat()
+            if (
+                selected != self.path
+                or selected.resolve() != self.resolved_path
+                or (parent.st_dev, parent.st_ino) != self.parent_identity
+                or self.participant.repository().db_path != self.path
+            ):
+                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+        if _pause is not None:
+            hold = _holds.get(self.lease._key)
+            if (
+                hold is None
+                or hold is not self.hold
+                or hold.key != self.key
+                or not hold.ready.is_set()
+                or hold.stop.is_set()
+                or hold.error is not None
+            ):
+                raise bootstrap.RecoveryRequired("operation_native_scope_unqualified")
+
+
+def _check_operation(operation, path=None):
+    # Thread-local discovery is not authority. Never dispatch a caller-supplied
+    # validation callback or an instance-shadowed method.
+    if type(operation) is not _Operation:
+        raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+    _Operation.check(operation, path)
+
+
+@contextmanager
+def _repository_operation(participant):
+    from .participants import _installed_repositories
+
+    previous = getattr(_operation_local, "operation", None)
+    with _changed:
+        if previous is not None:
+            _check_operation(previous, participant.path)
+            if previous.participant is not participant:
+                raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+        else:
+            if (
+                participant not in _installed_repositories
+                or participant.repository() is None
+            ):
+                raise bootstrap.RecoveryRequired("repository_participant_not_installed")
+            if participant.closed or _pause is not None:
+                raise bootstrap.RecoveryRequired("storage_locally_paused")
+            operation = object.__new__(_Operation)
+            operation.participant = participant
+            operation.pid = os.getpid()
+            operation.thread = threading.current_thread()
+            operation.task = _task_identity()
+            operation.lease = None
+            _operations.add(operation)
+    if previous is not None:
+        yield previous
+        return
+    try:
+        operation.path = participant.path
+        operation.resolved_path = participant.path.resolve()
+        parent = participant.path.parent.stat()
+        operation.parent_identity = (parent.st_dev, parent.st_ino)
+        operation.lease = acquire_storage(operation.path)
+        with _changed:
+            if _pause is not None or participant.closed:
+                raise bootstrap.RecoveryRequired("storage_locally_paused")
+            operation.key = operation.lease._key
+            operation.hold = _holds.get(operation.key)
+            _operation_local.operation = operation
+        yield operation
+    finally:
+        # Close the operation's native lifetime before erasing its accounting.
+        # Its descendants keep their own tokens until positive resource close.
+        _operation_local.operation = previous
+        if operation.lease is not None:
+            operation.lease.close()
+        with _changed:
+            _operations.discard(operation)
+            _changed.notify_all()
+
+
+class _Acquisition:
+    def __init__(self):
+        self.cancel = threading.Event()
+        self.operation = getattr(_operation_local, "operation", None)
+        with _lock:
+            if self.operation is not None:
+                _check_operation(self.operation)
+            if _pause is not None and self.operation is None:
+                raise bootstrap.RecoveryRequired("storage_locally_paused")
+            _pending_acquisitions.add(self)
+
+    def check(self, path=None):
+        if self.cancel.is_set():
+            raise bootstrap.RecoveryRequired("storage_locally_paused")
+        if self.operation is not None:
+            if path is None:
+                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+            _check_operation(self.operation, path)
+        elif _pause is not None:
+            raise bootstrap.RecoveryRequired("storage_locally_paused")
+
+    def close(self):
+        with _changed:
+            _pending_acquisitions.discard(self)
+            _changed.notify_all()
+
+
+class _LocalPause:
+    """Private local gate authority, NOT a native maintenance/capture capability.
+
+    Startup retirement is deliberately unavailable until installed runtime
+    composition covers every producer. Neither zero counts nor a source census
+    alone can advance this phase's pause into exclusive maintenance.
+    """
+
+    def __init__(self):
+        raise TypeError("local_pause_is_coordinator_issued")
+
+    def _check(self):
+        if (
+            _pause is not self
+            or self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self.task is not _task_identity()
+        ):
+            raise bootstrap.RecoveryRequired("local_pause_inactive")
+
+    def drain(self, deadline: float) -> bool:
+        """Wait only for observed retirement; never close another thread's owner."""
+        with _changed:
+            _LocalPause._check(self)
+            while True:
+                # Startup stays in place; unsupported-native startup also prevents
+                # any claim that this local cohort has qualified native retirement.
+                startups = set(_startups.values())
+                if (
+                    not _pending_acquisitions
+                    and not _operations
+                    and not (_live_leases - startups)
+                    and not _retiring_holds
+                    and all(lease._key is not None for lease in startups)
+                ):
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                _changed.wait(min(remaining, 0.05))
+                _LocalPause._check(self)
+
+    def require_runtime_coverage(self) -> None:
+        _LocalPause._check(self)
+        raise bootstrap.RecoveryRequired("participant_runtime_coverage_incomplete")
+
+    def resume(self) -> None:
+        global _pause
+        with _changed:
+            _LocalPause._check(self)
+            # No startup was retired in this phase. Later qualified composition
+            # must reacquire its verified startup before reopening this gate.
+            _pause = None
+            _changed.notify_all()
+
+
+def _begin_local_pause() -> _LocalPause:
+    global _pause
+    with _changed:
+        if _pause is not None:
+            raise bootstrap.RecoveryRequired("local_pause_already_active")
+        pause = object.__new__(_LocalPause)
+        pause.pid = os.getpid()
+        pause.thread = threading.current_thread()
+        pause.task = _task_identity()
+        _pause = pause
+        for attempt in _pending_acquisitions:
+            if attempt.operation is None:
+                attempt.cancel.set()
+        _changed.notify_all()
+        return pause
+
+
+def _local_pause_requested() -> bool:
+    """Probe the exact actual holders, including incomplete native retirement."""
+    with _lock:
+        holds = tuple(set(_holds.values()) | _retiring_holds)
+    # Native filesystem probing must never run under the coordinator lock.
+    requested = False
+    for hold in holds:
+        requested = hold.authority.pause_requested(hold.names) or requested
+    return requested
+
+
 class _Hold:
-    def __init__(self, authority: Admission, names: tuple[str, ...]):
+    def __init__(self, authority: Admission, names: tuple[str, ...], key):
+        self.authority = authority
+        self.key = key
         self.names = names
         self.count = 0
         self.ready = threading.Event()
@@ -62,11 +299,25 @@ class StorageLease:
 
     def __init__(self, key: tuple[int, str] | None):
         self._key = key
+        self.resource_policy = None
+        self.resource_path = None
+        self.resource_thread = None
+        self.resource_close_failed = False
+        with _changed:
+            _live_leases.add(self)
+
+    def _attach_sqlite(self, policy, path):
+        # Policy comes from private_sqlite's validated installed registry.
+        self.resource_policy = policy
+        self.resource_path = lexical_path(path)
+        self.resource_thread = threading.current_thread()
 
     def close(self) -> None:
         retired = None
         with _lock:
             key, self._key = self._key, None
+            _live_leases.discard(self)
+            _changed.notify_all()
             if key is None or key[0] != os.getpid():
                 return
             hold = _holds[key]
@@ -81,6 +332,7 @@ class StorageLease:
             with _lock:
                 if retired.error is None or isinstance(retired.error, AdmissionCancelled):
                     _retiring_holds.discard(retired)
+                _changed.notify_all()
 
     def __enter__(self) -> "StorageLease":
         return self
@@ -139,15 +391,18 @@ def _scope(root: Path, selector: Path, path: Path | None) -> tuple[str, ...]:
 
 def acquire_storage(path: Path | None = None) -> StorageLease:
     """Acquire ordinary admission, reporting only bounded refusal codes."""
+    attempt = _Acquisition()
     try:
-        return _acquire_storage(path)
+        return _acquire_storage(path, attempt)
     except bootstrap.RecoveryRequired:
         raise
     except (OSError, ValueError, RuntimeError):
         raise bootstrap.RecoveryRequired("storage_admission_unavailable") from None
+    finally:
+        attempt.close()
 
 
-def _acquire_storage(path: Path | None = None) -> StorageLease:
+def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
     """Check fixed evidence and hold declared scope before any owned open/write.
 
     An ordinary seam used inside maintenance refuses promptly; later capture owners
@@ -157,6 +412,14 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
         raise bootstrap.RecoveryRequired("forked_owner_restart_required")
     root = bootstrap.default_bootstrap_root()
     selector = effective_config_path()
+    with _lock:
+        attempt.check(path)
+        if (
+            attempt.operation is not None
+            and attempt.operation.key is not None
+            and attempt.operation.key != (os.getpid(), str(root))
+        ):
+            raise bootstrap.RecoveryRequired("operation_native_scope_changed")
     allowed, reason = bootstrap.startup_permission(selector, root)
     if not allowed:
         raise bootstrap.RecoveryRequired(reason)
@@ -174,30 +437,36 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
         allowed, reason = bootstrap.startup_permission(selector, root)
         if not allowed:
             raise bootstrap.RecoveryRequired(reason)
-        return StorageLease(None)
+        with _lock:
+            attempt.check(path)
+            return StorageLease(None)
     # Opening existing authority can wait on the registry. Retiring unrelated
     # owners must remain possible while that or a native gate is contended.
     authority = admission_authority(root)
     with _lock:
+        attempt.check(path)
         names = _scope(root, selector, lexical_path(path) if path is not None else None)
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
         if hold is not None and names != hold.names:
             raise bootstrap.RecoveryRequired("close_owners_before_scope_change")
         if hold is None:
-            hold = _Hold(authority, names)
+            hold = _Hold(authority, names, key)
             _holds[key] = hold
         hold.count += 1
         token = StorageLease(key)
     # Count pending acquisitions before dropping the lock: a drain must see
     # them, and another acquiring thread must share this same native hold.
     try:
-        hold.ready.wait()
+        while not hold.ready.wait(0.01):
+            with _lock:
+                attempt.check(path)
         if hold.error is not None:
             raise bootstrap.RecoveryRequired("storage_admission_unavailable")
         # Enrollment races an unbound selection. Revalidate after acquiring its
         # lease; never enter on a stale pre-enrollment decision.
         with _lock:
+            attempt.check(path)
             allowed, reason = bootstrap.startup_permission(selector, root)
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
@@ -214,17 +483,31 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
 
 def admit_startup() -> None:
     """Keep process enrollment from before runtime imports through process exit."""
+    attempt = _Acquisition()
+    try:
+        _admit_startup(attempt)
+    finally:
+        attempt.close()
+
+
+def _admit_startup(attempt: _Acquisition) -> None:
     bootstrap.require_startup_permission()
     key = (os.getpid(), str(bootstrap.default_bootstrap_root()))
     with _lock:
+        attempt.check()
         if key in _startups:
             return
     try:
         lease = acquire_storage()
     except bootstrap.RecoveryRequired as error:
         raise SystemExit("Recovery required: " + str(error)) from None
-    with _lock:
-        selected = _startups.setdefault(key, lease)
+    try:
+        with _lock:
+            attempt.check()
+            selected = _startups.setdefault(key, lease)
+    except BaseException:
+        lease.close()
+        raise
     if selected is not lease:
         lease.close()
 
@@ -239,8 +522,18 @@ def _after_fork() -> None:
     # Forked children cannot inherit a fictitious live lease thread/refcount.
     # Spawn imports establish their own leases before loading runtime modules.
     global _lock, _holds, _retiring_holds, _startups, _forked_with_owners
-    _forked_with_owners = bool(_holds or _retiring_holds)
+    global _pending_acquisitions, _live_leases, _operations, _pause
+    global _changed, _operation_local
+    _forked_with_owners = bool(
+        _holds or _retiring_holds or _pending_acquisitions or _operations or _live_leases
+    )
+    _pending_acquisitions = set()
+    _live_leases = set()
+    _operations = set()
+    _pause = None
+    _operation_local = threading.local()
     _lock = threading.RLock()
+    _changed = threading.Condition(_lock)
     _holds = {}
     _retiring_holds = set()
     _startups = {}

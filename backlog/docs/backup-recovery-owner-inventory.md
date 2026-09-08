@@ -1777,3 +1777,51 @@ Complete backup and replacement remain unavailable. Targeted foundation evidence
 16 focused tests; 79 combined participant/admission/bootstrap checks; 379 required
 SQLite/census/service guards passed, with the existing Windows-only guard skipped
 on this Mac. These overlapping runs do not prove full Task10 owner coverage.
+
+### Task10 phase2: local gate and first native repository cohort
+
+The private process-local pause gate now counts acquisition attempts before root,
+bootstrap and authority lookup, every ordinary StorageLease, live installed
+repository operations, and both active/retiring native holds. A timeout or canceled
+pre-authority wait keeps its reservation until the actual caller returns; late
+allocation cannot pass the closed gate. Actual holders retain their original
+Admission instance and root/key for pause probing. Unresolved pre-root work makes
+the local pause conservatively process-wide, reducing availability across roots.
+
+The installed EventStateRepository and SyncStateRepository transaction scopes now
+bind runtime.event_state/runtime.sync_state to the actual repository object and
+selected path. File contexts commit/rollback and close the native connection on
+its creating thread; memory contexts retain their persistent connection. Direct
+private SQLite handles remain independently counted until native close. The actual
+file seam still uses the existing db.base SQLite policy; no inferred stack/caller
+owner or source-table exemption was added. Existing syntactic source rows remain
+unchanged and the required census guards passed.
+
+An operation's descendant authority is a live registered object bound to PID,
+actual Thread object, asyncio Task identity, exact selected path/parent identity
+and original native scope. Copied/stale tokens and cross-thread/task transfers
+refuse. No ContextVar or caller owner string grants this authority. Ordinary
+factory construction retains admission until final native retirement, including
+constructors that close/reinitialize self or retain a handle then raise. Ambiguous
+allocation/close failure conservatively retains the hold and may require restart.
+
+This is still an incomplete Task10 cohort. No polling responder, startup release,
+all-owner runtime coverage, service-wide pause, or Complete backup capability is
+installed. Local zero counts describe observed cohort drainage only; advancing
+requires participant_runtime_coverage_incomplete refusal and leaves startup
+protection intact. Other retained SQLite owners, raw/cross-store producers,
+app/headless composition, dirty editors, and async/thread handoff remain required
+before any participant_pending promotion or startup retirement. Controller
+rulings52–53 refine ADR-126 without changing capture custom-factory restrictions.
+
+Phase2 verification also exposed a pre-phase2 combined-order lifecycle issue:
+the required service-composition tests followed by core capture/bootstrap tests
+produce recovery_scope_uncertain and late app.py7804 callbacks on both the current
+code and clean phase BASE0f4ff4ba. Isolated core capture passes (62 tests). App7771
+installs process-global ingestion hooks with bound notifiers; ingestion_indexing.py
+provides uninstall_media_ingest_hook/reset_ingestion_indexer, but app has no matching
+calls. The remaining Task10 app/lifecycle cohort must qualify actual callback,
+worker and concurrent bootstrap authority ownership; exact causality is still to
+be resolved. A generic stop/cancel is not a safe drain, and this debt is not moved
+to Task26. Full commands/traces and blocked network-attempt disclosure are in the
+phase2 execution report.

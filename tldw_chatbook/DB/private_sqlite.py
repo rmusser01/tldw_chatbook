@@ -1229,6 +1229,9 @@ def _with_storage_admission(function):
             raise RecoveryRequired("capture_factory_not_qualified")
         if lease is None:
             lease = acquire_storage(Path(database))
+            lease._attach_sqlite(policy, Path(database))
+        allocation_started = False
+        constructing = True
         try:
             if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
                 raise RecoveryRequired("connection_factory_not_qualified")
@@ -1236,13 +1239,26 @@ def _with_storage_admission(function):
             class AdmittedConnection(factory):
                 _admission_close_attempted = False
 
+                def __new__(cls, *args, **options):
+                    nonlocal allocation_started
+                    # A custom __new__ can allocate/retain self before raising.
+                    allocation_started = True
+                    if factory.__new__ is sqlite3.Connection.__new__:
+                        return factory.__new__(cls)
+                    return factory.__new__(cls, *args, **options)
+
                 def close(self):
                     self._admission_close_attempted = True
-                    super().close()
-                    # A pooling/deferred subclass may return with its native handle
-                    # alive. Bypass that override before retiring the owner lease.
-                    sqlite3.Connection.close(self)
-                    lease.close()
+                    try:
+                        super().close()
+                        # Pooling overrides may leave the native handle alive.
+                        sqlite3.Connection.close(self)
+                    except BaseException:
+                        if hasattr(lease, "resource_close_failed"):
+                            lease.resource_close_failed = True
+                        raise
+                    if not constructing:
+                        lease.close()
 
                 def __del__(self):
                     # Match sqlite's abandoned-connection retirement, including rollback.
@@ -1255,11 +1271,21 @@ def _with_storage_admission(function):
 
             kwargs["factory"] = AdmittedConnection
             connection = function(owner_id, database, **kwargs)
+            constructing = False
+            if getattr(connection, "_admission_close_attempted", False):
+                connection._admission_close_attempted = False
             if hasattr(lease, "attach"):
                 lease.attach(connection)
             return connection
         except BaseException:
-            lease.close()
+            constructing = False
+            if allocation_started and hasattr(lease, "resource_close_failed"):
+                # No constructor-time close proves final retirement: a factory
+                # may subsequently reinitialize self, retain it and then raise.
+                # Ambiguous default-init errors also conservatively need restart.
+                lease.resource_close_failed = True
+            else:
+                lease.close()
             raise
     return admitted
 

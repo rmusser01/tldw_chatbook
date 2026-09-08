@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,20 +98,43 @@ class EventStateRepository(BaseDB):
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
         conn = super()._get_connection()
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local event/notification
-        # ledger) and avoids an fsync per commit (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        return conn
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local event/notification
+            # ledger) and avoids an fsync per commit (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            return conn
+        except BaseException:
+            conn.close()
+            raise
 
     def close(self) -> None:
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None
 
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Commit/rollback and retire file handles on their creating thread."""
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+
+        operation = (
+            nullcontext()
+            if self.is_memory_db
+            else _repository_participant(self).operation()
+        )
+        with operation:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    yield conn
+            finally:
+                if not self.is_memory_db:
+                    conn.close()
+
     def _initialize_schema(self) -> None:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -273,7 +298,7 @@ class EventStateRepository(BaseDB):
         event_key = self._event_key(event, dedupe_key=dedupe_key)
         now = _utc_now()
 
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             if self._dedupe_exists(conn, dedupe_key):
                 return EventStateRecordResult(
                     event_key=event_key,
@@ -371,7 +396,7 @@ class EventStateRepository(BaseDB):
             )
 
     def is_duplicate_event(self, event: NormalizedEventRecord) -> bool:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             return self._dedupe_exists(conn, self._dedupe_key(event))
 
     def remember_event(self, event: NormalizedEventRecord) -> DedupeResult:
@@ -382,7 +407,7 @@ class EventStateRepository(BaseDB):
             return DedupeResult(key=dedupe_key, is_duplicate=True)
 
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO event_dedupe_records (
@@ -450,7 +475,7 @@ class EventStateRepository(BaseDB):
             stream_instance_id=cursor.stream_instance_id,
             cursor=None,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             self._upsert_cursor(
                 conn,
                 reset,
@@ -527,7 +552,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             return self._get_cursor_with_connection(
                 conn, cursor, table="event_processed_cursors"
             )
@@ -548,7 +573,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             return self._get_cursor_with_connection(
                 conn, cursor, table="event_presented_high_water"
             )
@@ -562,7 +587,7 @@ class EventStateRepository(BaseDB):
     ) -> NotificationPresentationRecord:
         now = _utc_now()
         presented_at = presented_at or now
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT source_authority, server_profile_id, authenticated_principal_id, stream_name, stream_instance_id
@@ -646,7 +671,7 @@ class EventStateRepository(BaseDB):
             where_clauses.append(f"{field_name} = ?")
             params.append(value)
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
@@ -679,7 +704,7 @@ class EventStateRepository(BaseDB):
             stream_instance_id=stream_instance_id,
         )
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             self._upsert_observer_status(
                 conn,
                 cursor,
@@ -706,7 +731,7 @@ class EventStateRepository(BaseDB):
         stream_instance_id: str,
         authenticated_principal_id: str | None = None,
     ) -> dict[str, Any] | None:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -751,7 +776,7 @@ class EventStateRepository(BaseDB):
         if max_count is None and older_than is None:
             raise ValueError("max_count or older_than is required")
 
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows_by_id: dict[int, sqlite3.Row] = {}
             scope_params = (
                 source_authority,
@@ -847,7 +872,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             return self._get_replay_window_with_connection(conn, cursor)
 
     def get_replay_status(
@@ -867,7 +892,7 @@ class EventStateRepository(BaseDB):
             stream_name=stream_name,
             stream_instance_id=stream_instance_id,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             window = self._get_replay_window_with_connection(conn, cursor)
             if requested_cursor is None:
                 state = (
@@ -910,7 +935,7 @@ class EventStateRepository(BaseDB):
         stream_instance_id: str,
         authenticated_principal_id: str | None = None,
     ) -> EventRetentionPolicy:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT max_age_days, max_count
@@ -963,7 +988,7 @@ class EventStateRepository(BaseDB):
         if max_count <= 0:
             raise ValueError("max_count must be positive")
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO event_retention_policies (
@@ -1020,7 +1045,7 @@ class EventStateRepository(BaseDB):
         if not server_profile_id:
             raise ValueError("server_profile_id is required")
 
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             event_filter, params = self._server_profile_filter(
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,

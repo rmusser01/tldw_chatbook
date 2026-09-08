@@ -9,6 +9,21 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## SQLite closed-handle evidence must run on the creating thread (TASK-31993)
+
+**Incident.** The first Event/Sync maintenance lifetime fixture checked a worker's
+retired SQLite connection from the coordinator thread. SQLite raised its thread
+identity error before checking whether the handle was closed, so the assertion
+incorrectly rejected successful native retirement. Moving the closed-database
+assertion into the same worker after transaction exit proved retirement; a separate
+coordinator assertion still proved that cross-thread access was refused.
+
+**What to do.** Observe native retirement on the owner thread. A thread-affinity
+error is evidence of confinement, not evidence that a native connection remains open
+or has closed. Retain independent native lease observations for exclusion claims.
+
+---
+
 ## Reading a selector can change atime without changing its contents (TASK-31988)
 
 **Incident.** The first recovery binding fingerprint compared whole `fstat` results

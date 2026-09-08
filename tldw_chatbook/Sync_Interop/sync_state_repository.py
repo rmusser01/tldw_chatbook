@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,13 +104,17 @@ class SyncStateRepository(BaseDB):
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
         conn = super()._get_connection()
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local dry-run sync/mirror
-        # store) and avoids an fsync per commit (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        return conn
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local dry-run sync/mirror
+            # store) and avoids an fsync per commit (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            return conn
+        except BaseException:
+            conn.close()
+            raise
 
     def close(self) -> None:
         if self._memory_conn is not None:
@@ -124,12 +128,25 @@ class SyncStateRepository(BaseDB):
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield an atomic repository connection with commit/rollback handling."""
-        with self._get_connection() as conn:
-            yield conn
+        """Commit/rollback and retire file handles on their creating thread."""
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+
+        operation = (
+            nullcontext()
+            if self.is_memory_db
+            else _repository_participant(self).operation()
+        )
+        with operation:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    yield conn
+            finally:
+                if not self.is_memory_db:
+                    conn.close()
 
     def _initialize_schema(self) -> None:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -353,7 +370,7 @@ class SyncStateRepository(BaseDB):
         now = _utc_now()
         status_to_store = mapping_status
 
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conflict_types = self._detect_identity_conflicts(
                 conn,
                 source_scope_key=source_scope_key,
@@ -460,7 +477,7 @@ class SyncStateRepository(BaseDB):
         domain: str | None = None,
         entity_type: str | None = None,
     ) -> list[SyncIdentityMappingRecord]:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT *
@@ -508,7 +525,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
             domain=domain,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
@@ -540,7 +557,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
             domain=domain,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 f"""
                 SELECT COUNT(*) AS count
@@ -571,7 +588,7 @@ class SyncStateRepository(BaseDB):
             entity_type="*",
         )
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO remote_pull_cursors (
@@ -631,7 +648,7 @@ class SyncStateRepository(BaseDB):
             domain=domain,
             entity_type="*",
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT cursor
@@ -672,7 +689,7 @@ class SyncStateRepository(BaseDB):
         dry_run = bool(report.get("dry_run", True))
         write_enabled = bool(report.get("write_enabled", False))
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO mirror_reports (
@@ -715,7 +732,7 @@ class SyncStateRepository(BaseDB):
         }
 
     def list_mirror_reports(self, *, domain: str | None = None) -> list[dict[str, Any]]:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT *
@@ -750,7 +767,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
             domain=domain,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 f"""
                 SELECT *
@@ -783,7 +800,7 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id,
         )
 
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 DELETE FROM sync_conflict_reports
@@ -1014,7 +1031,7 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT receipt.*
@@ -1084,7 +1101,7 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT *
@@ -1146,7 +1163,7 @@ class SyncStateRepository(BaseDB):
         now = _utc_now()
         dispatched = 0
         retained = 0
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             for client_envelope_id in sorted(accepted_ids):
                 cursor = conn.execute(
                     """
@@ -1231,7 +1248,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
         )
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO sync_v2_conflict_reviews (
@@ -1349,7 +1366,7 @@ class SyncStateRepository(BaseDB):
             domain_clause = f" AND domain IN ({placeholders})"
             params.extend(domain_values)
         params.append(limit)
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 f"""
                 SELECT *
@@ -1377,7 +1394,7 @@ class SyncStateRepository(BaseDB):
         last_error: str | None = None,
     ) -> dict[str, Any]:
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO sync_profile_state (
@@ -1430,7 +1447,7 @@ class SyncStateRepository(BaseDB):
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
     ) -> dict[str, Any] | None:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -1484,7 +1501,7 @@ class SyncStateRepository(BaseDB):
             allowed = ", ".join(sorted(_SYNC_V2_PROFILE_MODES))
             raise ValueError(f"profile_mode must be one of: {allowed}")
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO sync_profile_state (
@@ -1553,7 +1570,7 @@ class SyncStateRepository(BaseDB):
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
     ) -> dict[str, Any] | None:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -1703,7 +1720,7 @@ class SyncStateRepository(BaseDB):
             workspace_scope=workspace_scope,
         )
         summary = _empty_outbox_summary()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT status, domain, COUNT(*) AS count
@@ -1736,7 +1753,7 @@ class SyncStateRepository(BaseDB):
         workspace_scope: str | None,
     ) -> dict[str, Any]:
         summary: dict[str, Any] = {"total": 0, "by_domain": {}}
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT mapping_status, domain, COUNT(*) AS count
@@ -1787,7 +1804,7 @@ class SyncStateRepository(BaseDB):
                 "",
             )
         )
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT *
@@ -1854,7 +1871,7 @@ class SyncStateRepository(BaseDB):
     def _get_mirror_report_by_id(self, report_id: int | None) -> dict[str, Any] | None:
         if report_id is None:
             return None
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT *
@@ -1885,7 +1902,7 @@ class SyncStateRepository(BaseDB):
         details: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         now = _utc_now()
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO domain_sync_eligibility (
@@ -1918,7 +1935,7 @@ class SyncStateRepository(BaseDB):
         return self.get_domain_eligibility(domain)
 
     def get_domain_eligibility(self, domain: str) -> dict[str, Any]:
-        with self._get_connection() as conn:
+        with self.transaction() as conn:
             row = conn.execute(
                 """
                 SELECT *
