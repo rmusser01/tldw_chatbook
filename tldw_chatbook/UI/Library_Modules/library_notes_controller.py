@@ -289,7 +289,7 @@ the RED tuple"):
    - ``_sync_library_canvas`` -> **LATENT, kept** (33 sites across 10
      files; "site" per the ingest controller's own definition -- one match,
      one line, of the 3-shape pattern set, deduplicated by line number
-     within a file). 31 movers forward bare ``self`` into this dispatcher.
+     within a file). 31 call sites in 26 movers pass bare ``self`` here.
      Every one of the 33 sites was mapped to its enclosing test function;
      none patches the dispatcher in a way a notes mover's own call path
      observes. Same systemic shape and same verdict every sibling
@@ -441,7 +441,7 @@ walk cannot see**, for **102**, every one pinned in
 precedent that already knew about two of them.**
 ``_library_canvas_projection_depth`` and ``_library_canvas_resync_pending``
 appear in NO moved body. They are read and written by the SHARED
-``_sync_library_canvas`` dispatcher, off the bare ``self`` 31 movers hand it
+``_sync_library_canvas`` dispatcher, off the bare ``self`` 26 movers hand it
 -- so on the controller they resolve against the CONTROLLER, not the screen.
 The first is read as ``getattr(screen,
 "_library_canvas_projection_depth", 0)``: unbound, it returns 0 forever,
@@ -963,10 +963,10 @@ class LibraryNotesController:
         generated shim loop at the bottom of this file, and that is how the
         byte-for-byte canon keeps them unedited. This accessor exists for the
         SHARED dispatchers in ``canvas_sync.py``, which are handed a bare
-        ``self`` by 31 of this cluster's methods and therefore have to resolve
-        the notes state on EITHER receiver: the screen (``LibraryScreen.
-        _notes_state``) or this controller. Without it, the dotted spellings
-        the notes cleanup introduced there (``_notes_state.row_selection`` in
+        ``self`` by 26 of this cluster's methods (31 call sites), and so have
+        to resolve the notes state on EITHER receiver: the screen
+        (``LibraryScreen._notes_state``) or this controller. Without it, the
+        dotted spellings the cleanup introduced (``_notes_state.row_selection`` in
         ``_apply_library_row_toggle``, ``_notes_state.focus_intent_generation``
         in ``_sync_library_canvas``) resolve on the screen and raise on the
         controller -- an ``AttributeError`` the dispatcher's own

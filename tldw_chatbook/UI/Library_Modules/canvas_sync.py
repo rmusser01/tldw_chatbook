@@ -463,9 +463,9 @@ def _sync_library_canvas(
             sync_kwargs["deferred_guard"] = deferred_guard
             # (wave-8 task 3) `focus_intent_generation` moved to
             # `LibraryNotesState`; the receiver here is the screen OR the
-            # notes controller (31 movers forward a bare `self`), and
-            # `operator.attrgetter` re-reads BOTH hops on every call, exactly
-            # as the `partial(getattr, screen, "<flat>")` it replaces did.
+            # notes controller (26 movers at 31 call sites forward a bare
+            # `self`), and `operator.attrgetter` re-reads BOTH hops on every
+            # call, exactly as the `partial(getattr, screen, …)` it replaces.
             sync_kwargs["focus_intent_generation"] = partial(
                 operator.attrgetter("_notes_state.focus_intent_generation"),
                 screen,

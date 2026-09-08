@@ -423,7 +423,7 @@ def test_notes_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
 
     **Why this one is parametrized over the RECEIVER, unlike its two
     siblings.** Notes' cluster hands the sibling ``_sync_library_canvas``
-    dispatcher a bare ``self`` from 31 moved bodies, so a shared dispatcher's
+    dispatcher a bare ``self`` from 26 moved bodies (31 call sites), so a
     ``screen`` argument is a ``LibraryNotesController`` as often as it is a
     ``LibraryScreen``. A dotted spelling that resolves only on the screen is
     therefore only half a fix, and a screen-only guard would pass while the

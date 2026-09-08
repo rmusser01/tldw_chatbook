@@ -344,7 +344,7 @@ _BUDGETS: dict[str, int] = {
     # moved body spells `self._notes_state` either: they all read the flat
     # `_library_notes_<field>` properties from the generated shim loop, which
     # is what keeps them byte-for-byte. The accessor exists for the SHARED
-    # `canvas_sync.py` dispatchers, which 31 of this cluster's methods hand a
+    # `canvas_sync.py` dispatchers, which 26 of this cluster's methods hand a
     # bare `self`, so their dotted spellings have to resolve on EITHER
     # receiver. Mutation-verified: removing it reds
     # `test_notes_row_toggle_resolves_the_dotted_state_path[controller]` and

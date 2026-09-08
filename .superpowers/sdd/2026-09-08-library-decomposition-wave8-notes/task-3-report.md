@@ -75,11 +75,17 @@ enclosing expression. The 196 exclusion hits are the population that shape
 lives in, and they are exactly why 19 of task 2's 100 exclusions exist.
 
 **The field `def` row is 4, not 0**, and all four are on OTHER subsystems'
-controllers: `library_media_controller.py` declares `_library_notes_compact`,
-`_library_notes_focus_intent_generation` and `_library_notes_source` as
-accessor `@property` names, and `library_conversation_reader_controller.py`
-declares the third. Those PROPERTY NAMES do not change; what changed is the
-screen-side lambda each one calls (§2).
+controllers: `library_media_controller.py` declares three accessor
+`@property` names — `_library_notes_compact`,
+`_library_notes_focus_intent_generation` and `_library_notes_source` — and
+`library_conversation_reader_controller.py` declares a fourth that REPEATS
+media's second, `_library_notes_focus_intent_generation`. *(Corrected at
+review: this shipped saying the reader controller "declares the third", i.e.
+`_library_notes_source`. It does not; measured by an `ast` sweep of both class
+bodies against the 100-name set, the reader controller's only such property is
+the focus-intent one. The 4 is right; the attribution was not.)* Those PROPERTY
+NAMES do not change; what changed is the screen-side lambda each one calls
+(§2).
 
 ### 1.2 The six spellings, AFTER — 467 hits, every one accounted for
 
@@ -112,9 +118,18 @@ framing, and the framing needed correcting:
   sits inside `handle_library_notes_row` — a task-2 EXCLUSION, so its `self`
   is a real `LibraryScreen`. It is also driven with an `App` double from
   `test_library_multiselect_notes.py`.
-- **`_sync_library_canvas` is handed a bare CONTROLLER `self` by 31 of the 185
-  movers**, and its notes leg reads `_library_notes_focus_intent_generation`
-  off that receiver (`canvas_sync.py:456`'s `partial(getattr, screen, …)`).
+- **`_sync_library_canvas` is handed a bare CONTROLLER `self` at 31 call
+  sites, spread across 26 of the 185 movers**, and its notes leg reads
+  `_library_notes_focus_intent_generation` off that receiver
+  (`canvas_sync.py:456`'s `partial(getattr, screen, …)`). *(Corrected at
+  review: "31 movers" is a call-SITE count wearing a method count's clothes.
+  Re-derived by an `ast` walk of the controller class body for
+  `_sync_library_canvas(self, …)` calls: **31 sites, 26 distinct enclosing
+  methods, every one a mover, every one with `kind="notes"`.** The
+  dual-receiver conclusion is unchanged — 26 is still "most of the cluster's
+  DOM-touching half" — but a site count and a method count are different
+  measurements and the smaller one is the load-bearing one here, because what
+  needs a resolvable receiver is the METHOD's `self`.)*
 
 So the dual-receiver requirement is real, but its mechanism is the inverse of
 "the flat name stops resolving": on a controller the flat name KEEPS resolving
@@ -340,8 +355,14 @@ cannot be applied), TWO items, both in `3d670ee38`'s own message:**
    miscounted the per-file call list. Re-derived from the landed tree by an
    `ast` sweep for `_notes_state=` keywords: 12 across 6 files. 61 is right.
 
-Both are recorded here rather than amended, because `.git-blame-ignore-revs`
-records that hash and amending would orphan the entry (§10).
+3. It says the notes cluster hands the shared dispatchers a bare `self` "from
+   31 of the 185 movers". **31 is a call-SITE count**; re-derived by an `ast`
+   walk it is **31 sites across 26 distinct movers** (all `kind="notes"`).
+
+All three are recorded here rather than amended, because
+`.git-blame-ignore-revs` records that hash and amending would orphan the entry
+(§10). Every live copy of all three claims is corrected in the fix-round
+commit.
 
 ### 3.1 Fixture restructuring — 9 mechanical, 3 hand-reordered
 
@@ -449,7 +470,7 @@ and the reason recipe §7's pairing is not optional evidence.
 | File | Site | Fix |
 |---|---|---|
 | `test_library_adaptive_reader_closeout.py` | `DESTINATION_CONTRACT["notes"]`'s two attribute names | → `"_notes_state.reader_preferences"` / `"_notes_state.reader_layout"`. **Notes is the EIGHTH and last destination** to take the dotted form, so every entry in that contract is dotted now and the `operator.attrgetter` reads that made the passthrough possible are no longer load-bearing for any of them |
-| `test_screen_navigation.py` | `test_files_back_navigation_workspace_contract_matches_real_workspace`'s AST visitor matches its receiver by the literal string `"_library_file_notes_workspace"` | → `"file_notes_workspace"`, because the four seams it walks now spell `self._notes_state.file_notes_workspace.<name>`. Left alone the visitor matches nothing and the pinned contract set goes EMPTY — a LOUD red at the retarget commit, not a vacuous pass, which is why it belongs in this commit rather than deferred |
+| `test_screen_navigation.py` | `test_files_back_navigation_workspace_contract_matches_real_workspace`'s AST visitor matches its receiver by the literal string `"_library_file_notes_workspace"` | → `"file_notes_workspace"`, because the four seams it walks now spell `self._notes_state.file_notes_workspace.<name>`. Left alone the guard goes LOUDLY red at the retarget commit rather than passing vacuously, which is why it belongs in this commit rather than deferred. *(Corrected at review: this shipped as "the contract set goes EMPTY". Mutation-measured live, the stale string yields a **3-element** set — `{cancel_path_task, cancel_reload_confirmation, display}` — because the visitor's OTHER branch (`isinstance(v, ast.Name) and v.id == "workspace"`, the local-variable form) is independent of the receiver string and keeps matching. It is still an unambiguous red: the pinned contract is `{flush_pending_work, acquire_transition, cancel_reload_confirmation}`, so the assertion fails on two missing names and two extra ones. "Loud, not vacuous" holds; "empty" was an assumption I never ran.)* |
 | `test_library_screen_reuse.py` | the notes timer name inside `on_screen_suspend`'s two flat-name string loops | §3.4 |
 
 `Tests/Notes/test_notes_sync_cutover.py:82`'s `_library_notes_auto_sync_timer`
@@ -688,16 +709,46 @@ erratum, where they are correct as history.
 
 ## 6. Findings and hand-offs
 
-### MUST-FILE (task 4): the media dotted branch breaks its CONTROLLER receiver
+### TASK-4 MUST **FIX** (coordinator ruling): the media dotted branch breaks its CONTROLLER receiver
 
 §1.4 in full. `canvas_sync.py:437` assigns through
 `screen._media_state.selected_media_id`; `library_media_controller.py:2692`
 and `:2701` hand that dispatcher a controller `self`; `LibraryMediaController`
 has no `_media_state`; the dispatcher's own `except Exception` swallows the
 `AttributeError` into a full-screen recompose. Live, silent, and reached by
-every media "Select all"/"Clear" press. Remedy is four lines plus a
-`[controller]` leg on the media guard. **Not fixed here** — different
-subsystem, behaviour fix, outside §4's whitelist.
+every media "Select all"/"Clear" press. **Not fixed here** — different
+subsystem, behaviour fix, outside §4's whitelist for a cleanup PR.
+
+**Coordinator ruling, recorded: task 4 FIXES this, it does not merely file
+it** — as its own clearly-labeled behaviour-fix commit, separate from any
+pure-move or doc work, because the program CLOSES after task 4 and the defect
+silently fires the exact whole-screen recompose phase C exists to eliminate.
+The reviewer reproduced it end-to-end at runtime, so it ships as a confirmed
+defect rather than a static inference. Remedy ingredients, confirmed by the
+reviewer against the live tree:
+
+1. `LibraryMediaController` gains the accessor property, in the shape its own
+   sibling already uses — the notes analogue is literally
+   `@property def _media_state(self): return self._media_state_accessor()`,
+   and the underlying `_media_state_accessor` **already exists on the
+   instance** (`library_media_controller.py:691`), so the fix adds a property
+   and nothing else.
+2. `test_library_selection_updates.py`'s media guard gains a `[controller]`
+   leg, parametrized exactly like this series'
+   `test_notes_row_toggle_resolves_the_dotted_state_path` — subclass the REAL
+   `LibraryMediaController`, override only the framework-service properties a
+   double cannot assign over, and leave `_media_state` inherited so the
+   accessor under test is the production one.
+3. **Mutation-verify both ways**, as this series did: removing the accessor
+   must red ONLY the `[controller]` leg, and reverting the media branch in
+   `canvas_sync.py` must red ONLY the `[screen]` leg. Without the second
+   direction the new leg could pass for the wrong reason.
+
+The general rule this earns for §3, and which task 4 should write there:
+**when a subsystem's movers forward a bare `self` into a shared dispatcher,
+census the dispatcher's RECEIVERS, not just its spellings** — a dotted
+retarget is only correct for the receiver it was written against, and the
+wrong one fails silently behind that dispatcher's own `except`.
 
 ### The cutover guard's vacuity — final shape, re-verified at THIS tree
 
@@ -749,8 +800,10 @@ it**, per the brief:
 
 ### Hand-offs to task 4 (wave close)
 
-1. **File the media `_media_state`-on-the-controller defect** (§1.4), with the
-   receiver-census lesson for §3.
+1. **FIX the media `_media_state`-on-the-controller defect** (§1.4), per the
+   coordinator ruling recorded above — its own behaviour-fix commit, accessor
+   property + a `[controller]` leg on the media guard, mutation-verified both
+   ways — and write the receiver-census lesson into §3.
 2. **File the cutover-guard decision** (above), including the
    `_library_notes_sync_controller` false positive and the now-permanent
    vacuity.
@@ -764,6 +817,25 @@ it**, per the brief:
 6. The three documented reds this task re-confirmed at the isolated parent are
    already in §7 or in task 1's list; **nothing new was found** (checked
    against §7 BY NAME first, per task 2's meta-lesson).
+7. **Three class-3 prose survivors the ±3-line filter structurally dropped —
+   hand-off, deliberately NOT fixed here.** Each names a DELETED flat field as
+   a live cross-reference with no screen attribution anywhere near it, which is
+   exactly the blind spot §1.5's mechanical narrowing has; widening the filter
+   by hand inside a cleanup PR is how a prose sweep stops being reproducible
+   (the media series' own stated reason for forward-noting its own three). Line
+   numbers read off the live tree at this task's tip:
+
+   | File:line | Prose |
+   |---|---|
+   | `tldw_chatbook/UI/Library_Modules/library_prompts_state.py:297` | "mirroring ``_library_note_editor_armed``" — a DIFFERENT subsystem's state module cross-referencing a deleted notes field |
+   | `tldw_chatbook/UI/Library_Modules/screen_constants.py:167` | "see ``_library_note_pending_blank_gc_id``" |
+   | `tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py:716` | "since the reset flips `_library_notes_view` back to \"list\"" — in a file this task DID edit, which is the sharper half of the point: the retarget fixed the code on that comment's own neighbours and left the comment naming the old spelling |
+
+   All three are one-phrase, line-neutral fixes, and the first two live in
+   files with no notes ownership at all — the same cross-subsystem class
+   §1.5's six fixed defects came from. The wave-close sweep is the right home:
+   per §21 it runs over BOTH name sets and is where two of the prompts series'
+   six defects were found in files no task's ruled scope covered.
 
 ---
 
@@ -849,9 +921,21 @@ could plausibly have broken:
   notes_tree_for_unmount") < .index("await ")`. Measured on both trees:
   **first `"await "` at 1568, name at 3730, IDENTICAL**. (The `"await "` it
   finds is prose inside a docstring — "Say where it stopped BEFORE any await
-  below" — so the guard has been measuring comment position for some time.
-  `on_unmount` contains no notes flat name, so this task did not move a single
-  character of it.)
+  below" — so the guard has been measuring comment position for some time.)
+  *(Corrected at review: this shipped with the supporting claim "`on_unmount`
+  contains no notes flat name, so this task did not move a single character of
+  it." **That is false.** `on_unmount` carries exactly one —
+  `workspace = self._library_file_notes_workspace` — and this task retargeted
+  it to `self._notes_state.file_notes_workspace`, a +2-character edit. The
+  CONCLUSION survives on a different argument, and it is the argument that
+  should have been given: the edited line begins at byte offset **6764** of
+  `inspect.getsource(LibraryScreen.on_unmount)`, i.e. **after both measured
+  offsets (1568 and 3730)**, so no edit past 3730 can move either — which is
+  why the two numbers are identical on both trees, as measured. Recipe §3's
+  own rule applies to a supporting claim exactly as it does to an exclusion's
+  justification: **a wrong reason is worse than a thin one, because the next
+  reader inherits it and re-derives the wrong test.** The right thin reason
+  was "identical on both trees, measured"; the wrong sharp one was "untouched".)*
 - `test_folder_files_reader_authority_scaffold_is_distinct` — asserts
   `set(get_args(LibraryReaderDestination))` equals a 6-member set. The type
   has **7** members on both trees (`collections` is the extra), verified in
@@ -1032,6 +1116,12 @@ errata (§3) are recorded here instead.
   on a controller the FLAT name keeps resolving, so what the dual-receiver
   work protects against is the new DOTTED spelling failing there. Both
   statements are backed by mutation runs (§1.3), not by re-reading the brief.
+  **The brief's "31" is also a call-SITE count, and I propagated it as a
+  method count into seven shipped places** (the controller docstring ×3, the
+  module ratchet comment, the new guard's docstring, the wiring test, and
+  `canvas_sync.py`'s own comment) before re-deriving it. All seven now say 26
+  movers / 31 call sites; the instance in commit `3d670ee38`'s MESSAGE is a
+  third erratum of record (§3), since that hash is blame-ignored.
 - **`Docs/superpowers/reviews/evidence/task-23019/task23019_scenarios.py` (17
   hits) was deliberately left**, on the standing precedent that still leaves
   `screen._library_skill_editor_state` there four waves after the skills

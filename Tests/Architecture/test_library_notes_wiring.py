@@ -846,7 +846,7 @@ THREE of these names appear in NO moved body at all and would be missed by
     ``getattr(screen, "_library_canvas_projection_depth", 0)``),
     ``_library_canvas_resync_pending`` (assigned) and ``is_running`` (read at
     ``canvas_sync.py:535``). All three are reached by the SHARED
-    ``_sync_library_canvas`` dispatcher through the bare ``self`` 31 movers
+    ``_sync_library_canvas`` dispatcher through the bare ``self`` 26 movers
     forward into it -- the unbound-attribute-escape shape one indirection
     further out than the skills series' own ``focused``. The conversations and
     media controllers each bind the first two for the identical reason; the
