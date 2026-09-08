@@ -213,9 +213,9 @@ were moved. Upstream identities and original dates/history remain intact:
 
 | Historical review ID | Current review ID | Subject |
 | --- | --- | --- |
-| TASK-31759 (intermediate TASK-32013) | TASK-32040 | Assistant-turn production stylesheet harness |
-| TASK-31901 | TASK-32014 | Loguru capture sink lifetime |
-| TASK-31902 | TASK-32015 | Deferred Chunking Lab imports |
+| TASK-31759 (intermediate TASK-32013, TASK-32040) | TASK-32110 | Assistant-turn production stylesheet harness |
+| TASK-31901 (intermediate TASK-32014) | TASK-32108 | Loguru capture sink lifetime |
+| TASK-31902 (intermediate TASK-32015) | TASK-32109 | Deferred Chunking Lab imports |
 
 Historical IDs and evidence paths above remain incident references, not current
 task pointers. The task identity check passes all 3,589 task records.
@@ -1319,3 +1319,25 @@ IDs and historical references. Approval has not arrived; no IDs were changed.
 The follow-up is paused rather than repeatedly polling this user decision.
 After approval, revalidate free IDs/references, perform the narrow renumbering,
 publish, and obtain green identity/final-head checks before normal merge.
+
+### 2026-09-08: approved three-record identity repair
+
+The user's subsequent `yes` explicitly authorizes the three-record exception
+above. A fresh fetched-ref and registered-worktree census found maximum
+TASK-32107. Only review records moved: Loguru 32014 to 32108, deferred Chunking
+Lab 32015 to 32109, and Assistant stylesheet harness 32040 to 32110. Upstream
+Meetings and private trace-history IDs and references remain unchanged. Active
+review references use the new IDs; historical mappings, creation dates,
+implementation notes, and literal evidence paths remain intact.
+
+Verification on the identity-only change: all three complete-file identity tests
+pass (two existing dependency warnings); the shared guard reports 3,615 unique,
+Windows-compatible records; Backlog CLI resolves all three exact new paths and
+retains their Done status. All six derived-artifact preflight checks and
+`git diff --check` pass. No runtime or test source changed in this repair.
+
+The refreshed dev ref is now 7e81ed55db, beyond the previously qualified
+a59536eb70 base, with Notes decomposition and TTS/trace/Media changes. Rebase and
+affected-file verification remain required before final-head review and normal
+merge. The earlier 850-case native result remains evidence for its recorded
+source, not for this incoming runtime delta.
