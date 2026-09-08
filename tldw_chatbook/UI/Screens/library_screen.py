@@ -14243,6 +14243,27 @@ class LibraryScreen(BaseAppScreen):
                 )
             ):
                 self._reset_library_media_reader_to_no_selection()
+                # task-32086 (critique #8 gap in 32043): the reset above cleared
+                # the Reader SESSION, but this seam's tail rebuilds ONLY the
+                # Items pane (``_sync_library_canvas``) and leaves the sibling
+                # ``LibraryMediaViewer`` painting the filtered-out document --
+                # "Media (0)" beside a full stale item with "‹ Back" into an
+                # empty list. The delete path clears the identical split-brain
+                # with a whole-screen recompose (``_delete_library_media_
+                # selection``'s tail); mirror it here so the Reader actually
+                # repaints its "Select a media item…" placeholder. This fires
+                # only on a settled 0-result filter that was holding a loaded
+                # Reader -- as rare as a delete, and never on a page turn
+                # (non-empty ``retained_items``) or mid-load (``loading``
+                # short-circuits the whole block), so the recompose cost is
+                # the delete path's own one-shot completion, not a hot path.
+                if self.is_mounted:
+                    self.refresh(recompose=True)
+                    if focus_identity:
+                        self.call_after_refresh(
+                            self._focus_library_control, focus_identity
+                        )
+                return
         if (
             applied_selection_id
             and self._media_state.reader_session.selected_id != applied_selection_id
