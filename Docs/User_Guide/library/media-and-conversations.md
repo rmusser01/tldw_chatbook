@@ -102,12 +102,15 @@ than showing a now-absent item. A filter that still has matches moves the
 Reader to its first result instead. Undoing a delete re-adds the row, which
 opens normally again.
 
-*Verified against fix/media-crit7-readerdesync — 2026-09-08 (task-32043:
-app-test pins at 170x48 — opening an item then applying a 0-result filter, and
-bulk-deleting the open item, both leave the Reader on its no-selection
-placeholder; the crit6 empty-reader widening, three-pane ladder, scroll-
-restore and bulk-delete Undo pins stay green. Confirmed in tests, not
-re-verified live.)*
+*Verified against fix/media-crit8-gaps — 2026-09-08 (task-32086: a 0-result
+filter now repaints the MOUNTED Reader placeholder, not just the session —
+task-32043 cleared the state but the canvas-scoped Items sync left the sibling
+viewer painting the filtered-out document (critique #8 caps 07/65). App-test
+pin at 170x48 drives the live auto-follow path (a filter with a hit, then
+narrowing to zero) and asserts the Reader repaints its empty placeholder;
+the task-32043 session pins, bulk-delete, and filter-restore pins stay green.
+Live-verified in tmux at 235x52: filter to a hit, then narrow to zero — the
+Reader falls back to "Select a media item to read it here.".)*
 
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
