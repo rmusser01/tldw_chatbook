@@ -494,3 +494,34 @@ finite additional-file selection and native uncertainty are not qualified by thi
 lifecycle alone. Independent native tests distinguish the TTS profile lock from the
 shared admission lock and keep diagnostic-child startup evidence separate from
 production startup. No repository, startup, responder or Complete promotion follows.
+
+### Task10 phase14b — outer TTS backup native retention (ruling80)
+
+The actual repository now retains each outer `backup_to` operation before native
+allocation, with its source connection, configured/active path, admitted generation,
+selected destination, temporary inode, parent/file descriptors, destination SQLite
+connection and independent ordinary storage lease. Explicit attempted-close state
+is separate from positive retirement. Before/after-close uncertainty preserves the
+actual resources and local blocker through public terminal close, cancelled callers,
+and unrelated successful backups. Public errors remain sanitized and definitive
+close keeps its existing contract. This is retention, not an installed source binding
+or a new across-pause capability.
+
+Outer cleanup checks original parent/main identity and never removes a substituted
+file or an unproven remaining SQLite sidecar. Normal SQLite backup leaves a journal
+until native close; that existing close remains allowed against the unchanged main
+and parent. Exact delegated journal allocation/substitution/close authority still
+requires the immediate phase14c source/native work. File fsync and parent directory
+fsync descriptors belong to the retained outer record. A completed rename and its
+receipt remain distinct from directory durability, positive native retirement and
+the eventual public result, including an observed rename followed by an exception.
+
+The mandatory next phase owns `validate_profile_candidate`'s source FD, private
+snapshot directory/file, copy FD, upgrade/read SQLite and reference readers, plus
+`_worker_validate_standalone_snapshot`'s additional immutable reader and the checked
+backup helper's native source pins. Existing pause refusal occurs at subordinate
+SQLite admission after validation has already opened/copied files; it is not proof
+of admission before file effects. Finite original source selection must precede
+those effects before any full backup/source qualification. Migration, restore,
+reference BLOB/materializer/bundle and actual app/runtime owners remain Task10 work.
+No startup release, responder, full repository or Complete qualification follows.

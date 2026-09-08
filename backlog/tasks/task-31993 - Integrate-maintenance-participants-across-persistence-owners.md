@@ -88,6 +88,17 @@ ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct approved maintenance lifecycle implementation under ruling79, preserving ADR028/040/051/023 and existing schema/native authority policy.
 
+### Phase14b implementation plan — exact TTS backup native ownership
+
+1. Establish actual public backup native-close and foreign-temporary cleanup REDs on real SQLite/descriptors before production; obtain the controller ruling for any source capability expansion or subdivision.
+2. Retain the actual source/generation, finite selected backup resources, native destination/descriptor/parent/lease references and committed result independently of native uncertainty; do not retry uncertain close or clean foreign namespaces.
+3. Preserve pure construction, definitive public close, the existing serialized worker/owner-loop publication lifecycle and ordinary custom-source behavior. No generic callback, directory-wide authority, second executor or startup release.
+4. Trace and record exact immediate source binding, migration/restore, candidate-validation copy graph, reference BLOB/materializer/bundle and app/runtime safe points; qualify only concretely implemented and verified resources in this phase.
+5. Verify affected native failure/partial allocation/cancellation/publication and ordinary backup cases plus scoped census/static checks, self-review, document exact remaining routes and commit/report. Keep In Progress and all three ACs unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct maintenance native-lifetime implementation; preserve ADR028/040/051/023. Record controller scope ruling before production.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -699,3 +710,41 @@ native lock observations distinguish known diagnostic-child startup from actual
 production startup. No Complete/source qualification, full suite, live generation,
 network, user data, shared environment mutation, merge or publication. Status stays
 In Progress and all three ACs remain unchecked for controller whole-task review.
+
+
+### Task10 phase14b implementation notes — outer TTS backup native retention
+
+Ruling80 bounds this phase to the actual outer backup native resources; immediate
+phase14c retains the source-bound validation-copy/migration/restore/reference graph
+before phase15 voices. Reused ADR126, preserving ADR028/040/051/023 and all existing
+schema/ordinary lifecycle contracts. `_BackupNativeState` and the actual repository
+retain source/generation, destination/temp/inode, native connection/FDs/parent/lease
+and committed receipt separately from uncertain close. No uncertain-close retry,
+foreign-file cleanup, arbitrary sidecar unlink or loss through terminal close,
+cancellation/unrelated success. Actual file/parent fsync resources are represented.
+No source bridge, across-pause authority, extra executor/mutex or startup promotion.
+
+Five actual BASE REDs preceded production: SQLite close-before/after retries,
+foreign temporary deletion, and temporary-FD close-before/after namespace loss.
+Initial implementation conservatively refused the normal SQLite journal before
+close (2 native and 3 ordinary failures); preserving existing native close while
+rejecting outer deletion of remaining unproven sidecars corrected that regression.
+Covering native/ordinary/reference selection45passed, including19 new native tests;
+counts overlap earlier16/17/12 runs. Final exact commands, owner/static verification,
+limitations and commit addendum are in the byte-identical phase14b dual report.
+
+The pause test explicitly observes source FD and snapshot-directory/file effects
+before eventual subordinate SQLite refusal, not admission before file IO. Native
+maintainer tests distinguish known minimal child startup from actual app runtime.
+The source inventory adds exactly two unsupported open rows; no owner is promoted.
+Inherited voice census/diagnostic drift and SemLock failures remain unverified here.
+Task31993 remains In Progress with all three ACs unchecked for wholeTask10 review.
+
+Final changed-source verification:21passed (19 new native cases plus ordinary
+journal publication and reference-BLOB round trip); precise paused-file-effects/
+private SQLite owner2passed; source/private inventories27passed and1 inherited
+Tamagotchi AST failure. The exact BASE failed clause and byte-identical unchanged
+source/test are reproduced in task10-phase14b-base-inventory.log. Controller owns
+its mandatory Task10 correction after native continuation, separately from Task26
+diagnostic debt. Fatal Ruff, new-test format and diff checks passed. All counts
+are overlapping; see phase14b report for exact commands/limits.

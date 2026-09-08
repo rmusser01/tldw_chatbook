@@ -758,6 +758,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | open | 3 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _validate_materialization_sync | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_storage.py | write_reference_blob | write | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | _BackupNativeState.fsync_file | open | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | open | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | connect_private_sqlite | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_create_recovery_backup | backup_connection_to_private | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_exact_schema_version | connect_private_sqlite | 1 | unsupported | tts |
@@ -2456,9 +2458,9 @@ Immediate TTS continuation (phase14b within Task10):
   the actual producer rather than guessed from the default journal constant.
 - `_worker_backup_to` selects its randomized `mkstemp` output inside the worker;
   destination/source/sidecars/parent and temporary must be admitted as one actual
-  operation. Its cleanup currently records a destination close error without
-  retaining that local connection beyond return. Establish a behavioral RED before
-  changing this source. `_worker_create_recovery_backup`, restore candidate/source
+  operation. At the phase14 base, cleanup lost a failed-close destination. Phase14b
+  fixes outer retention below; full source/finite subordinate admission remains
+  immediate phase14c work. `_worker_create_recovery_backup`, restore candidate/source
   readers, publication/rebind, residual cleanup and fsync descriptors also require
   exact native-resource and durable-result qualification.
 - `profile_reference_storage.write_reference_blob/read_reference_blob` hold BLOBs
@@ -2493,3 +2495,63 @@ and the two inherited voice literals. Counts overlap and are not additive. No fu
 suite or live model/voice/network work ran; full commands and limits are in the
 identical external and scratch task-10-phase14-report.md. Task31993 remains In
 Progress with all ACs unchecked; whole Task10 review belongs to the controller.
+
+### Task10 phase14b: outer backup retention, source graph still unsupported
+
+Under ruling80, `TTS/profile_repository.py::_BackupNativeState` represents only the
+outer `_worker_backup_to` resources. The repository registers it before allocation,
+retains the exact source connection/configured path/active path/admitted generation,
+and immediately records the mkstemp FD/path/inode, destination SQLite handle, parent
+pin, file-fsync FD, selected destination and independent ordinary StorageLease.
+Close attempt and positive return are separate; failed resources are not retried
+or forgotten by public close, cancellation, successful later backups or maintenance.
+The existing raw-operation set holds strong pending/failure evidence, not file access
+or native authority. The ordinary lease keeps its native admission until positive
+outer retirement. No installed TTS source binding or across-pause access was added.
+
+`_BackupNativeState.check_namespace` checks parent/main provenance before cleanup
+and publication; outer cleanup does not unlink remaining unproven sidecars. The
+normal native backup journal exists until SQLite close and keeps its original
+ordinary behavior. Full native journal ownership is still unsupported. Successful
+rename consumes the operation's temporary ownership; positively observed publication
+and safe receipt metadata survive subsequent directory-fsync/parent-close failure.
+The outer scope keeps its exact public error and internal source/cleanup outcomes.
+
+The two new `open` census rows are individually unsupported TTS sources: the parent
+pin in `_worker_backup_to` and file-fsync FD in `_BackupNativeState.fsync_file`.
+Existing private-SQLite policy rows and every TTS recovery/participant classification
+remain unchanged. Public `_fsync_file/_fsync_directory` still serve restore and are
+not qualified by the outer backup implementation.
+
+Immediate phase14c, before voice phase15, must cover:
+
+- `_worker_validate_standalone_snapshot` → `profile_schema.validate_profile_candidate`:
+  source FD, random mkdtemp directory, snapshot mkstemp/copy FD, upgrade/read SQLite,
+  schema/domain validation and BLOB readers; then the additional immutable snapshot
+  reader plus integrity/reference scan. Actual pause evidence confirms source-open
+  and copy-file effects before the eventual subordinate SQLite refusal.
+- `DB/private_sqlite.backup_open_connections_to_private`: delegated source pin,
+  destination journal mode/online-copy/native journal and their failure/retirement
+  graph. Outer main/parent checks do not establish native sidecar identity.
+- Exact loaded app/config/profile/repository registration before source selection;
+  finite main/sidecar/lock/migration candidate, rollback and active-specific journal
+  admission; `_worker_create_recovery_backup` and restore stage/rebind/residual/fsync
+  resources, with original schema/lineage/quarantine policy.
+- Real `profile_reference_storage` BLOB closure; `TTSCloneReferenceMaterializer`
+  creation/sweep/opaque handle cleanup; `voice_bundle_service` inspection sessions,
+  stage/commit/export/invalidation/close; concrete profile-service/editor/export and
+  app open/close/result safe points; independently cancelled private legacy lifecycle
+  tasks and executor shutdown. Runtime/model/audio sources retain their own duties.
+
+The two inherited shared-voice literals in `TTS/recovery.py`, diagnostic inventory
+drift and phase14's three host SemLock failures remain explicit; this phase does
+not rerun or relabel those checks. No startup, runtime or Complete promotion.
+
+Phase14b guard follow-up: the private-SQLite inventory has a pre-existing stale
+`test_explicit_exclusions_and_absence_of_async_owner_are_documented` assertion for
+`JSONStorage._create_backup` in `Widgets/Tamagotchi/tamagotchi_storage.py`. It expects
+`shutil.copy2`, but unchanged BASE/current code uses `raw._file`, bounded stream
+copy, `raw._replace` and `raw._remove_temporary`. Exact BASE AST-clause reproduction
+and full source/test byte identity are in the phase14b report. Controller owns the
+mandatory Task10 guard correction after native continuation; this is separate from
+Task26 diagnostic drift and is not a waiver. Source census itself passed.

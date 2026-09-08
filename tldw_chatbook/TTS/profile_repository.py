@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast
@@ -124,7 +124,7 @@ from tldw_chatbook.Utils import private_paths
 
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Backup_Recovery.storage_admission import _Acquisition
+    from tldw_chatbook.Backup_Recovery.storage_admission import StorageLease, _Acquisition
 
 _MaintenanceSource = tuple[Path, Path, tuple[int, int], tuple[int, int]]
 
@@ -193,6 +193,116 @@ class _OperationAdmission(Generic[_T]):
 
     generation: int
     future: Future[_T]
+
+
+@dataclass(eq=False)
+class _BackupNativeState:
+    """Outer backup ownership only; never an across-pause IO capability.
+
+    The repository and local blocker retain this record through any uncertain
+    native outcome. Delegated candidate validation owns a separate resource graph.
+    """
+
+    repository: TTSProfileRepository
+    source_connection: sqlite3.Connection
+    configured_path: Path
+    active_path: Path
+    generation: int
+    destination: _DestinationSnapshot
+    temporary_path: Path | None = None
+    temporary_identity: tuple[int, int] | None = None
+    connection: sqlite3.Connection | None = None
+    connection_close_attempted: bool = False
+    descriptors: dict[str, int] = field(default_factory=dict)
+    attempted_descriptors: set[str] = field(default_factory=set)
+    lease: StorageLease | None = None
+    uncertain: bool = False
+    published: bool = False
+    publication_attempted: bool = False
+    receipt: ProfileBackupReceipt | None = None
+    body_error: BaseException | None = None
+    cleanup_errors: list[BaseException] = field(default_factory=list)
+
+    def check_namespace(self) -> None:
+        try:
+            parent = self.destination.path.parent.stat()
+            if _stat_identity(parent) != self.destination.parent_identity:
+                raise _repository_error("backup_failed")
+            descriptor = self.descriptors.get("parent")
+            if descriptor is not None and _stat_identity(os.fstat(descriptor)) != (
+                self.destination.parent_identity
+            ):
+                raise _repository_error("backup_failed")
+            path = self.destination.path if self.published else self.temporary_path
+            if path is not None:
+                info = path.lstat()
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or _stat_identity(info) != self.temporary_identity
+                ):
+                    raise _repository_error("backup_failed")
+            # SQLite normally retires these itself. No observed pathname gives
+            # this outer owner permission to delete an unproven native sidecar.
+            if (
+                self.connection is None
+                and self.temporary_path is not None
+                and any(
+                    os.path.lexists(str(self.temporary_path) + suffix)
+                    for suffix in _STORE_SIDECAR_SUFFIXES
+                )
+            ):
+                raise _repository_error("backup_failed")
+        except BaseException:
+            self.uncertain = True
+            raise
+
+    def close_descriptor(self, role: str) -> None:
+        if role in self.attempted_descriptors:
+            raise _repository_error("backup_failed")
+        self.attempted_descriptors.add(role)
+        try:
+            os.close(self.descriptors[role])
+        except BaseException:
+            self.uncertain = True
+            raise
+        del self.descriptors[role]
+        self.attempted_descriptors.remove(role)
+
+    def close_connection(self) -> None:
+        if self.connection is None:
+            return
+        if self.connection_close_attempted:
+            raise _repository_error("backup_failed")
+        self.check_namespace()
+        self.connection_close_attempted = True
+        try:
+            self.connection.close()
+        except BaseException:
+            self.uncertain = True
+            raise
+        self.connection = None
+
+    def fsync_file(self) -> None:
+        assert self.temporary_path is not None
+        self.check_namespace()
+        self.descriptors["file_sync"] = os.open(
+            self.temporary_path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        descriptor = self.descriptors["file_sync"]
+        try:
+            if _stat_identity(os.fstat(descriptor)) != self.temporary_identity:
+                self.uncertain = True
+                raise _repository_error("backup_failed")
+            os.fsync(descriptor)
+        except BaseException as error:
+            self.body_error = error
+        try:
+            self.close_descriptor("file_sync")
+        except BaseException as error:
+            self.cleanup_errors.append(error)
+        _raise_with_cleanup_precedence(self.body_error, *self.cleanup_errors)
 
 
 @dataclass(slots=True)
@@ -1238,6 +1348,7 @@ class TTSProfileRepository:
         self._maintenance_failure: BaseException | None = None
         self._maintenance_cleanup_future: Future[None] | None = None
         self._publication_completions: dict[Future[object], asyncio.Future[None]] = {}
+        self._backup_native_operations: set[_BackupNativeState] = set()
 
     @property
     def state(self) -> ProfileRepositoryState:
@@ -2653,13 +2764,16 @@ class TTSProfileRepository:
             raise _repository_error("backup_failed")
         exact_destination = cast(Path, destination)
         active_path = self._active_path_for_operation("backup_failed")
+        generation = self.generation
         return await self._submit_operation(
             lambda connection: self._worker_backup_to(
                 connection,
                 exact_destination,
                 active_path,
                 deadline,
-            )
+                generation=generation,
+            ),
+            expected_generation=generation,
         )
 
     def _worker_backup_to(
@@ -2668,104 +2782,149 @@ class TTSProfileRepository:
         destination_path: Path,
         active_path: Path,
         deadline: float,
+        *,
+        generation: int,
     ) -> ProfileBackupReceipt:
         """Create and atomically publish one worker-owned online backup."""
 
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
         destination = _validate_backup_destination(destination_path, active_path)
-        temporary_path: Path | None = None
-        destination_connection: sqlite3.Connection | None = None
-        body_error: BaseException | None = None
-        cleanup_errors: list[BaseException] = []
-        published = False
-        receipt: ProfileBackupReceipt | None = None
+        operation = _BackupNativeState(
+            self, connection, self._database_path, active_path, generation, destination
+        )
+        with storage._changed:
+            self._backup_native_operations.add(operation)
+            storage._raw_operations.add(operation)
         try:
+            # This ordinary lease preserves native exclusion even when a nested
+            # SQLite close retires its own lease and then reports uncertainty.
+            # It grants no authority to open further files after local pause.
+            operation.lease = storage.acquire_storage(destination.path)
             _require_restore_time(deadline)
             if self._worker_active_path() != active_path:
                 raise _repository_error("backup_failed")
             self._require_configured_path_matches(active_path, "backup_failed")
-            # Validate the clock before any destination publication.
             created_at = self._clock()
             ProfileBackupReceipt(created_at=created_at, byte_count=0)
+            if os.name == "posix":
+                operation.descriptors["parent"] = os.open(
+                    destination.path.parent,
+                    os.O_RDONLY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                )
+            operation.check_namespace()
             descriptor, temporary_name = tempfile.mkstemp(
                 prefix=f".{destination.path.name}.",
                 suffix=".backup",
                 dir=destination.path.parent,
             )
-            temporary_path = Path(temporary_name)
-            os.close(descriptor)
-            destination_connection = connect_private_sqlite(
+            operation.descriptors["temporary"] = descriptor
+            operation.temporary_path = Path(temporary_name)
+            operation.temporary_identity = _stat_identity(os.fstat(descriptor))
+            operation.check_namespace()
+            operation.close_descriptor("temporary")
+            operation.connection = connect_private_sqlite(
                 "tts.profile_backup",
-                temporary_path,
+                operation.temporary_path,
                 must_exist=True,
                 isolation_level=None,
             )
             self._worker_online_backup(
                 connection,
-                destination_connection,
+                operation.connection,
                 deadline=deadline,
             )
-            destination_connection.close()
-            destination_connection = None
+            operation.close_connection()
             self._worker_validate_standalone_snapshot(
-                temporary_path,
+                operation.temporary_path,
                 deadline=deadline,
             )
-            temporary_state = temporary_path.stat()
-            if not stat.S_ISREG(temporary_state.st_mode):
-                raise _repository_error("backup_failed")
-            receipt = ProfileBackupReceipt(
+            operation.check_namespace()
+            temporary_state = operation.temporary_path.stat()
+            operation.receipt = ProfileBackupReceipt(
                 created_at=created_at,
                 byte_count=temporary_state.st_size,
             )
-
             self._require_configured_path_matches(active_path, "backup_failed")
             current_destination = _validate_backup_destination(
-                destination.path,
-                active_path,
+                destination.path, active_path
             )
             if current_destination.parent_identity != destination.parent_identity:
                 raise _repository_error("backup_failed")
             _require_restore_time(deadline)
-            _fsync_file(temporary_path)
+            operation.fsync_file()
+            operation.check_namespace()
             _require_restore_time(deadline)
-            os.replace(temporary_path, destination.path)
-            published = True
-            _fsync_directory(destination.path.parent)
-            # Publication is already committed at this point. A single fsync
-            # syscall cannot be interrupted, so do not report a timeout after
-            # a durable destination has become visible.
-        except BaseException as error:
-            body_error = error
-
-        if destination_connection is not None:
+            operation.publication_attempted = True
             try:
-                destination_connection.close()
-            except BaseException as error:
-                cleanup_errors.append(error)
-        if temporary_path is not None:
-            if not published:
+                os.replace(operation.temporary_path, destination.path)
+            except BaseException:
+                # A native rename may complete before its wrapper reports an
+                # error. Record positively observed publication independently
+                # from durability/retirement and the public failure result.
                 try:
-                    _unlink_path_if_present(temporary_path)
-                except BaseException as error:
-                    cleanup_errors.append(error)
-            for suffix in _STORE_SIDECAR_SUFFIXES:
-                try:
-                    _unlink_path_if_present(
-                        temporary_path.with_name(f"{temporary_path.name}{suffix}")
+                    operation.published = (
+                        _stat_identity(destination.path.parent.stat())
+                        == destination.parent_identity
+                        and not os.path.lexists(operation.temporary_path)
+                        and _stat_identity(destination.path.lstat())
+                        == operation.temporary_identity
                     )
-                except BaseException as error:
-                    cleanup_errors.append(error)
+                except BaseException:
+                    operation.uncertain = True
+                raise
+            operation.published = True
+            operation.check_namespace()
+            if os.name == "posix":
+                os.fsync(operation.descriptors["parent"])
+            # Publication is already committed; preserve the original no-late-
+            # timeout semantics, with native retirement tracked independently.
+        except BaseException as error:
+            if operation.body_error is None:
+                operation.body_error = error
+            if operation.published:
+                operation.uncertain = True
 
-        if body_error is not None or cleanup_errors:
-            for candidate_error in (body_error, *cleanup_errors):
+        if not operation.uncertain:
+            try:
+                operation.check_namespace()
+                operation.close_connection()
+                if operation.temporary_path is not None and not operation.published:
+                    operation.check_namespace()
+                    operation.temporary_path.unlink()
+                    operation.temporary_path = None
+                for role in tuple(operation.descriptors):
+                    operation.close_descriptor(role)
+            except BaseException as error:
+                operation.uncertain = True
+                operation.cleanup_errors.append(error)
+        if not operation.uncertain:
+            try:
+                if operation.lease is not None:
+                    operation.lease.close()
+                    operation.lease = None
+            except BaseException as error:
+                operation.uncertain = True
+                operation.cleanup_errors.append(error)
+        if not operation.uncertain:
+            with storage._changed:
+                self._backup_native_operations.discard(operation)
+                storage._raw_operations.discard(operation)
+                storage._changed.notify_all()
+
+        if operation.body_error is not None or operation.cleanup_errors:
+            for candidate_error in (operation.body_error, *operation.cleanup_errors):
                 if candidate_error is not None and not isinstance(
-                    candidate_error,
-                    Exception,
+                    candidate_error, Exception
                 ):
                     raise candidate_error
             raise _repository_error("backup_failed")
-        assert receipt is not None
-        return receipt
+        assert operation.receipt is not None
+        return operation.receipt
+
 
     def _worker_online_backup(
         self,
@@ -5299,6 +5458,7 @@ class TTSProfileRepository:
             and self._lease is None
             and not self._residual_cleanup_paths
             and not self._exact_authority_quarantined
+            and not self._backup_native_operations
         )
 
     def _worker_maintenance_cleanup(self) -> None:
