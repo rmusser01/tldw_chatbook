@@ -621,6 +621,14 @@ class MeetingsScreen(BaseAppScreen):
         prepared = getattr(self._owner, "prepared", None)
         self._live_labels_requested = bool(getattr(prepared, "live_diarization_active", False))
         self._live_labels_built = getattr(session, "_diarizer", None) is not None
+        # The engine that ACTUALLY ran (Qodo 6): `start()` re-resolves it, so
+        # the meeting can run one engine while the prepare this screen cached
+        # named the other. `meta` is authoritative; it is None when nothing
+        # was built (Qodo 8), and then the prepared answer still describes
+        # what the rail has been showing all along.
+        meta = getattr(session, "meta", None)
+        engine = getattr(meta, "diarizer_engine", None) or getattr(prepared, "diarizer_engine", None)
+        self._live_engine_name = DIARIZER_ENGINE_NAMES.get(engine, engine) if engine else ""
         session.subscribe(self._on_session_event)
         # The verified verdict: `start()` performed the one decrypt, so the
         # provisional "on" the rail may be showing is now settled either way.

@@ -1492,6 +1492,65 @@ def test_start_stamps_no_engine_when_none_resolves(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.parametrize(
+    "why, live, build",
+    [
+        ("live labels off", False, None),
+        ("the backend could not be built", True, lambda settings, **kw: None),
+    ],
+)
+def test_start_stamps_no_engine_when_no_diarizer_was_built(why, live, build, tmp_path, monkeypatch):
+    """Qodo 8 (Bug): `resolve_engine()` answers "which engine COULD run",
+    deliberately independent of `live_diarization`; `build_diarizer()` decides
+    whether one actually did. Stamping between the two attributed a
+    coarse-labelled meeting's labels to an engine and a model id that never
+    ran -- and `diarizer_model_id` is what a later re-enrollment check reads.
+    """
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: ("onnx", ()))
+    if build is not None:
+        monkeypatch.setattr(mo, "build_diarizer", build)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=live, voiceprint_store=_store(tmp_path, enrolled=False),
+    )
+    owner.prepare()
+    session = owner.start()
+    folder = Path(session.meta.folder)
+
+    assert session.meta.diarizer_engine is None, why
+    assert session.meta.diarizer_model_id is None, why
+    owner.stop()
+    payload = json.loads((folder / "meeting.json").read_text())
+    assert payload["diarizer_engine"] is None and payload["diarizer_model_id"] is None
+
+
+def test_start_republishes_the_engine_it_re_resolved_to(tmp_path, monkeypatch):
+    """Qodo 6 (Bug): `start()` deliberately re-resolves the engine -- packages
+    can be installed or removed while a prepared screen sits open -- but the
+    rail names the engine from `PrepareResult`, which kept the OLD answer. So
+    the meeting ran one engine while the "ready" line named the other.
+    """
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: FakeBackend())
+    _resolve_against(monkeypatch, "sherpa_onnx", "numpy")
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, enrolled=False),
+    )
+    prepared = owner.prepare()
+    assert prepared.diarizer_engine == "onnx"
+
+    # The user installs the torch extra and removes sherpa-onnx while the
+    # prepared screen is still open.
+    _resolve_against(monkeypatch, "torch", "torchaudio", "speechbrain", "sklearn")
+    session = owner.start()
+
+    assert session.meta.diarizer_engine == "speechbrain"          # what actually ran
+    assert owner.prepared.diarizer_engine == "speechbrain"        # ... and what the rail reads
+    assert owner.prepared.diarizer_models_ready is True           # re-checked for the new engine
+    owner.stop()
+
+
 def test_voiceprint_load_uses_the_resolved_engines_model_id(tmp_path, monkeypatch):
     from tldw_chatbook.Audio import voiceprint as vp
     from tldw_chatbook.Audio.diarizer_local import model_id_for
@@ -2254,6 +2313,99 @@ def test_start_refuses_while_an_enrollment_holds_the_mic(tmp_path, monkeypatch):
     assert owner.session is None                 # ... and no meeting was opened
     owner.start()                                 # now it is allowed again
     owner.stop()
+
+
+# ---- Qodo 5: an explicit engine that cannot resolve enrolls NOTHING -------
+
+#: The genuine `resolve_engine`, captured at import time -- before the autouse
+#: `_pin_installed_engine_packages` fixture (or a previous `_resolve_against`
+#: in the same test) has wrapped it.
+_REAL_RESOLVE_ENGINE = mo.resolve_engine
+
+
+def _resolve_against(monkeypatch, *installed):
+    """Drive the REAL `resolve_engine` off a pinned installed-package set.
+
+    These tests are about `resolve_engine`'s own rules (an explicit choice
+    never walks on; `auto` walks `AUTO_ORDER`), so they must run the real
+    implementation rather than a lambda that asserts the answer they want.
+    Callable twice in one test -- installing or removing packages mid-test is
+    exactly what Start's re-resolution exists for.
+    """
+    present = frozenset(installed)
+    monkeypatch.setattr(
+        mo, "resolve_engine",
+        lambda settings, find_spec=None: _REAL_RESOLVE_ENGINE(
+            settings, find_spec=lambda name, *a: object() if name in present else None
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "backend, installed",
+    [
+        ("onnx", ("torch", "torchaudio", "speechbrain", "sklearn")),   # the other engine's stack
+        ("speechbrain", ("sherpa_onnx", "numpy")),
+    ],
+)
+def test_enrollment_refuses_when_the_explicit_engine_cannot_resolve(
+    backend, installed, tmp_path, monkeypatch
+):
+    """Qodo 5 (Bug): `resolve_engine` deliberately refuses to walk an EXPLICIT
+    choice on to the other engine, but `_active_engine()` used to undo that
+    with `or AUTO_ORDER[0]` -- so enrollment spawned the OTHER engine's worker
+    and saved its vector under `_active_model_id()`. A voiceprint in the wrong
+    vector space never matches, and the user is never told why.
+
+    Both directions, because `AUTO_ORDER[0]` is a product decision that has
+    already flipped once: whichever engine leads, the explicit choice of the
+    other one must produce no worker and no record.
+    """
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    _resolve_against(monkeypatch, *installed)
+    spawns: list = []
+    monkeypatch.setattr(
+        diarizer_local, "LocalDiarizer",
+        lambda *a, **kw: spawns.append(kw) or FakeBackend(centroid=(3.0, 4.0), seconds=27.0),
+    )
+    PcmRecorder.instances = []
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend=backend, voiceprint_store=store,
+    )
+    owner._mic_factory = PcmRecorder
+    owner._sleep = lambda seconds: None
+
+    res = owner.enroll_from_mic(seconds=1)
+
+    assert res.ok is False and res.reason == "diarizer_unavailable"
+    assert spawns == []                      # no worker for an engine that cannot run
+    assert PcmRecorder.instances == []       # ... and the microphone stays shut
+    assert store.load().voiceprint is None   # ... and nothing was written
+
+
+def test_learning_offer_is_not_merged_when_the_explicit_engine_cannot_resolve(tmp_path, monkeypatch):
+    """The other half of Qodo 5: `accept_learning` merges into the STORED
+    voiceprint under `_active_model_id()`, so the same fallback would have
+    folded a sample embedded by the wrong engine into the user's print."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    merged: list = []
+    store = SimpleNamespace(
+        exists=lambda: True,
+        merge_sample=lambda centroid, weight, model_id: merged.append(model_id),
+    )
+    _resolve_against(monkeypatch, "torch", "torchaudio", "speechbrain", "sklearn")
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: FakeBackend())
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx", voiceprint_store=store,
+    )
+    offer = mo.LearningOffer(kind="matched_cluster", folder=tmp_path / "m", cluster_id="S1")
+    owner._pending_offer = offer
+
+    assert owner.accept_learning(offer) is False
+    assert merged == []
 
 
 def test_enroll_from_mic_refuses_a_second_concurrent_enrollment(tmp_path, monkeypatch):

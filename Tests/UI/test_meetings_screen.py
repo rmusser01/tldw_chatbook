@@ -116,6 +116,11 @@ class FakeOwner:
         #: What `diarizer_coarse_reason()` answers -- the backend's static
         #: reason behind an "unavailable" status (TASK-31827 final review I3).
         self.diarizer_reason: str | None = None
+        #: The engine `start()` stamps onto the session's meta -- what
+        #: ACTUALLY ran, which the real owner re-resolves at Start and can
+        #: differ from `prepared.diarizer_engine` (Qodo 6). None when no live
+        #: diarizer was built, exactly like the real one (Qodo 8).
+        self.started_engine: str | None = None
         self.prepared = PrepareResult(
             tap_mode=TapMode(tap_kind, "Native (macOS tap)" if tap_kind == "native_macos" else "Unavailable, mic only"),
             provider="faster-whisper", model="base.en", diarization_available=False,
@@ -133,6 +138,7 @@ class FakeOwner:
 
     def start(self):
         self.session = FakeSession(self.tmp_path / "2026-09-04_1430", self.mode)
+        self.session.meta.diarizer_engine = self.started_engine
         return self.session
 
     def pause(self):
@@ -1050,6 +1056,45 @@ async def test_rail_follows_the_warm_up_from_download_to_the_engine_name(tmp_pat
             pilot, lambda: _text(line) == "Live speaker labels: downloading 12 / 35 MB"
         )
         assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: warming up")
+        assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: on (ONNX)")
+
+
+@pytest.mark.asyncio
+async def test_the_ready_line_names_the_engine_the_meeting_actually_started(tmp_path):
+    """Qodo 6: `start()` re-resolves the engine (packages can be installed or
+    removed while a prepared screen sits open) and stamps what actually ran
+    onto `session.meta`. The rail cached the engine from `prepare()`, so a
+    meeting that switched engines at Start reported the OLD name as ready.
+    """
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "onnx"          # what prepare() saw
+    owner.started_engine = "speechbrain"             # ... what Start resolved
+    owner.diarizer_statuses = ["ready"]
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        screen.query_one("#meetings-start", Button).press()
+        assert await _wait_until(
+            pilot, lambda: _text(line) == "Live speaker labels: on (SpeechBrain)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_ready_line_falls_back_to_the_prepared_engine(tmp_path):
+    """A meeting whose meta carries no engine (nothing was stamped because no
+    live diarizer was built, Qodo 8) still has the rail's prepared answer --
+    which is where this line came from before Qodo 6."""
+    host, owner = await _boot(tmp_path)
+    owner.settings.live_diarization = True
+    owner.prepared.diarizer_engine = "onnx"
+    owner.diarizer_statuses = ["ready"]
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        line = screen.query_one("#meetings-live-diarization-status", Static)
+        screen.query_one("#meetings-start", Button).press()
         assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: on (ONNX)")
 
 

@@ -809,19 +809,43 @@ class MeetingSessionOwner:
         self._resolved_engine: str | None = None
 
     # ---- engine ------------------------------------------------------------
-    def _active_engine(self) -> str:
-        """The engine this owner's model ids and enrollment belong to.
+    def _active_engine(self) -> str | None:
+        """The engine this owner's model ids and enrollment belong to, or None.
 
-        Falls back to `AUTO_ORDER`'s first candidate when nothing resolves --
-        enrollment can be reached without a `prepare()` (Settings' "Enroll my
-        voice"), and an id that names the engine the enrollment worker would
-        actually spawn is the only honest answer. That worker then degrades
-        to "unavailable" on its own if its packages really are absent.
+        None means "nothing can run": the caller must not enroll, merge or
+        stamp anything (Qodo 5). `AUTO_ORDER`'s first candidate is a fallback
+        ONLY under `auto`, and only before a `prepare()` has answered --
+        enrollment can be reached without one (Settings' "Enroll my voice"),
+        and an id naming the engine the enrollment worker would actually spawn
+        is the honest answer there; that worker then degrades to "unavailable"
+        on its own if its packages really are absent.
+
+        An EXPLICIT `diarizer_backend` never falls back. `resolve_engine`
+        refuses to walk an explicit choice on to the other engine (spec §8),
+        and undoing that here meant enrollment spawned the other engine's
+        worker and saved its vector under this one's model id -- a voiceprint
+        in the wrong space, which never matches and never says why.
         """
-        return self._resolved_engine or resolve_engine(self.settings)[0] or AUTO_ORDER[0]
+        if self._resolved_engine is not None:
+            return self._resolved_engine
+        engine = resolve_engine(self.settings)[0]
+        if engine is not None:
+            return engine
+        if self.settings.diarizer_backend == "auto" and self.prepared is None:
+            return AUTO_ORDER[0]
+        return None
 
     def _active_model_id(self) -> str:
-        """The voiceprint model id of the active engine (spec §6)."""
+        """The voiceprint model id of the active engine (spec §6).
+
+        Only valid when `_active_engine()` resolved: every caller either runs
+        behind a guard that already gave up (`_embedding_diarizer`,
+        `_load_voiceprint`) or stamps a diarizer that was actually built.
+
+        Raises:
+            ValueError: `_active_engine()` is None -- a caller that skipped
+                its guard, never a state a meeting can reach.
+        """
         from .diarizer_local import model_id_for
 
         return model_id_for(self._active_engine(), self.settings.onnx_embedder)
@@ -911,6 +935,12 @@ class MeetingSessionOwner:
         cached = self._cached_voice_load()
         if cached is not None:
             return cached
+        if self._active_engine() is None:
+            # No engine, so no model id to check a stored record against and no
+            # live diarizer to match with either (Qodo 5). Deliberately NOT
+            # cached: installing the missing packages changes this answer, and
+            # only a real read is worth remembering.
+            return None, VoiceMatchState("off", "live_labels_off")
         outcome: list[Any] = [None]
         # An Event, not `thread.is_alive()` (review M1): a read that finished
         # in the window between the join returning and the liveness check was
@@ -1166,6 +1196,13 @@ class MeetingSessionOwner:
             # user against noise. Re-read under the new id instead (the very
             # switch `_switch_detail` exists to explain).
             self._cache_voice_load(None)
+        if self.prepared is not None and self.prepared.diarizer_engine != self._resolved_engine:
+            # Republished, not just re-resolved (Qodo 6): the rail names the
+            # engine from `PrepareResult`, so a Start that switched engines
+            # under a screen prepared minutes ago used to run one engine while
+            # the "ready" line went on naming the other.
+            self.prepared.diarizer_engine = self._resolved_engine
+            self.prepared.diarizer_models_ready = self._models_ready(self._resolved_engine)
         # Held for the whole body, OUTSIDE `self._lock`: a Start landing
         # during an in-flight stop() blocks here until that stop has fully
         # finalised the old session, instead of racing it to open a second
@@ -1214,11 +1251,11 @@ class MeetingSessionOwner:
                     user_display_name=meeting_user_display_name(),
                     diarize_mic_channel=self.settings.diarize_mic_channel,
                     # Which engine produced this meeting's labels, and the
-                    # vector space its centroids live in (spec §4/§6): None
-                    # when none resolved, so a coarse-labelled meeting says so
-                    # rather than claiming an engine that never ran.
-                    diarizer_engine=self._resolved_engine,
-                    diarizer_model_id=self._active_model_id() if self._resolved_engine else None,
+                    # vector space its centroids live in (spec §4/§6): stamped
+                    # below, once `build_diarizer()` has said whether a live
+                    # backend was actually created. They stay None otherwise,
+                    # so a coarse-labelled meeting says so rather than
+                    # claiming an engine that never ran (Qodo 8).
                 )
                 # Two independent mechanisms, deliberately NOT conflated
                 # (Qodo Q12): the live backend's authoritative Stop pass is
@@ -1237,6 +1274,15 @@ class MeetingSessionOwner:
                 if self.prepared is not None:
                     self.prepared.voice_match = self.voice_match
                 diarizer = build_diarizer(self.settings, voiceprint=voiceprint)
+                # Only a diarizer that EXISTS gets its identity stamped (Qodo
+                # 8): `resolve_engine()` answers "which engine could run",
+                # independently of `live_diarization` and of whether the
+                # backend could be constructed at all, and `meta
+                # .diarizer_model_id` is what a later re-enrollment check
+                # compares the stored voiceprint against.
+                if diarizer is not None and self._resolved_engine is not None:
+                    meta.diarizer_engine = self._resolved_engine
+                    meta.diarizer_model_id = self._active_model_id()
                 # The learning offer needs this worker alive AFTER Stop to
                 # export the matched cluster's centroid, so the owner takes
                 # over the close whenever an offer could plausibly follow.
@@ -1624,6 +1670,13 @@ class MeetingSessionOwner:
         diarizer = self._retained_diarizer if borrow else None
         if diarizer is not None and hasattr(diarizer, "enroll_from_pcm"):
             return diarizer, False
+        engine = self._active_engine()
+        if engine is None:
+            # The configured engine cannot run (Qodo 5). Spawning the other
+            # one would embed the sample in a different vector space and
+            # store it under `_active_model_id()` -- silently unusable. The
+            # callers report "diarizer_unavailable" and write nothing.
+            return None, False
         try:
             from .diarizer_local import MODELS_DOWNLOAD_BUDGET_S, READY_TIMEOUT_S, LocalDiarizer
 
@@ -1632,7 +1685,7 @@ class MeetingSessionOwner:
             # `_active_model_id()`, so a mismatch here would label an ECAPA
             # vector as an ONNX one and silently poison the voiceprint.
             spawned = LocalDiarizer(
-                engine=self._active_engine(),
+                engine=engine,
                 max_speakers=self.settings.max_speakers,
                 embedder=self.settings.onnx_embedder,
                 models_dir_override=self.settings.onnx_models_dir,
