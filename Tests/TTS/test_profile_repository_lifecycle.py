@@ -2635,6 +2635,92 @@ def test_constructor_rejects_non_path_without_exposing_value(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_unsupported_runtime_refuses_before_store_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "not-created" / "profiles.sqlite3"
+    admission = private_sqlite.HELPER_ADMISSION
+    with admission._condition:
+        admission_before = (dict(admission._used), len(admission._owners))
+
+    real_preflight = getattr(
+        module,
+        "require_native_close_policy_support",
+        lambda: None,
+    )
+    real_canonicalize = module._canonical_database_path
+    real_lease = module.ProfileStoreLease
+    real_initialize = module.TTSProfileRepository._worker_initialize_store
+    real_open_current = module.TTSProfileRepository._worker_open_if_proven_current
+
+    def refuse_runtime() -> None:
+        raise ProfileRepositoryError("runtime_unsupported")
+
+    def unexpected_boundary(*_args: object, **_kwargs: object) -> Any:
+        pytest.fail("unsupported runtime crossed the store initialization boundary")
+
+    monkeypatch.setattr(
+        module,
+        "require_native_close_policy_support",
+        refuse_runtime,
+        raising=False,
+    )
+    monkeypatch.setattr(module, "_canonical_database_path", unexpected_boundary)
+    monkeypatch.setattr(module, "ProfileStoreLease", unexpected_boundary)
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_initialize_store",
+        unexpected_boundary,
+    )
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_open_if_proven_current",
+        unexpected_boundary,
+    )
+
+    repository = module.TTSProfileRepository(database_path)
+    with pytest.raises(ProfileRepositoryError) as failure:
+        await repository.open()
+    assert type(failure.value) is ProfileRepositoryError
+    assert failure.value.code == "runtime_unsupported"
+    assert str(failure.value) == (
+        "TTS profile repository unavailable: SQLite runtime lacks required "
+        "close-policy support."
+    )
+    assert str(database_path) not in repr(failure.value)
+    assert not database_path.parent.exists()
+    await asyncio.wait_for(repository.close(), timeout=1.0)
+
+    monkeypatch.setattr(
+        module,
+        "require_native_close_policy_support",
+        real_preflight,
+    )
+    monkeypatch.setattr(module, "_canonical_database_path", real_canonicalize)
+    monkeypatch.setattr(module, "ProfileStoreLease", real_lease)
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_initialize_store",
+        real_initialize,
+    )
+    monkeypatch.setattr(
+        module.TTSProfileRepository,
+        "_worker_open_if_proven_current",
+        real_open_current,
+    )
+
+    database_path.parent.mkdir()
+    fresh = module.TTSProfileRepository(database_path)
+    await fresh.open()
+    await fresh.close()
+    with admission._condition:
+        admission_after = (dict(admission._used), len(admission._owners))
+    assert admission_after == admission_before
+
+
+@pytest.mark.asyncio
 async def test_open_uses_one_worker_for_lease_connection_sql_and_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

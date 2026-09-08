@@ -544,6 +544,10 @@ def _assert_raw_connection_census(
     seam_exists: bool,
 ) -> None:
     seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
+    runtime_probe_site = (
+        "tldw_chatbook/TTS/profile_sqlite_policy",
+        "require_native_close_policy_support",
+    )
     if not seam_exists:
         assert sum(current.values()) == 31
         assert current == documented_legacy
@@ -553,7 +557,42 @@ def _assert_raw_connection_census(
     # the exclusive descriptor view. The ordinary file open keeps sqlite3's
     # factory seam; only descriptor views use the captured original callable.
     assert current[seam_site] == 3
-    assert current == Counter({seam_site: 3})
+    # The TTS runtime probe is a separate, fixed, argument-free capability
+    # check. Its one raw call is admitted only by the strict source guard below.
+    assert current[runtime_probe_site] == 1
+    assert current == Counter({seam_site: 3, runtime_probe_site: 1})
+
+
+def _assert_runtime_probe_is_literal_memory_only(source_path: Path) -> None:
+    tree = _parse_source(source_path)
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "require_native_close_policy_support"
+    ]
+    assert len(functions) == 1
+    function = functions[0]
+    arguments = function.args
+    assert arguments.posonlyargs == []
+    assert arguments.args == []
+    assert arguments.kwonlyargs == []
+    assert arguments.vararg is None
+    assert arguments.kwarg is None
+
+    visitor = _QualifiedCallNodeVisitor(_is_sqlite3_connect)
+    visitor.visit(tree)
+    calls = [
+        call
+        for symbol, call in visitor.calls
+        if symbol == "require_native_close_policy_support"
+    ]
+    assert len(calls) == 1
+    call = calls[0]
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ast.Constant)
+    assert call.args[0].value == ":memory:"
+    assert call.keywords == []
 
 
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
@@ -627,6 +666,10 @@ def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
 def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
     legacy_site = ("tldw_chatbook/DB/legacy", "Owner.connect")
     seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
+    runtime_probe_site = (
+        "tldw_chatbook/TTS/profile_sqlite_policy",
+        "require_native_close_policy_support",
+    )
     documented = Counter({legacy_site: 31})
 
     _assert_raw_connection_census(
@@ -643,19 +686,19 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 3}),
+        Counter({seam_site: 3, runtime_probe_site: 1}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 4}),
+            Counter({seam_site: 4, runtime_probe_site: 1}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 3}),
+            Counter({legacy_site: 7, seam_site: 3, runtime_probe_site: 1}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -665,11 +708,79 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
                 {
                     legacy_site: 7,
                     seam_site: 1,
+                    runtime_probe_site: 1,
                     ("tldw_chatbook/new_owner", "open_database"): 1,
                 }
             ),
             seam_exists=True,
         )
+    with pytest.raises(AssertionError):
+        _assert_raw_connection_census(
+            documented,
+            Counter({seam_site: 3, runtime_probe_site: 2}),
+            seam_exists=True,
+        )
+
+
+def test_runtime_capability_probe_is_one_literal_memory_only_raw_call() -> None:
+    _assert_runtime_probe_is_literal_memory_only(
+        PROJECT_ROOT / "tldw_chatbook/TTS/profile_sqlite_policy.py"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        'return sqlite3.connect("profiles.sqlite3")',
+        'return sqlite3.connect("file:profiles.sqlite3", uri=True)',
+        'return sqlite3.connect(target)',
+        'first = sqlite3.connect(":memory:")\n    return sqlite3.connect(":memory:")',
+    ),
+    ids=("file", "uri", "variable-target", "duplicate-call"),
+)
+def test_runtime_capability_probe_guard_rejects_nonliteral_or_duplicate_calls(
+    tmp_path: Path,
+    body: str,
+) -> None:
+    source_path = tmp_path / "profile_sqlite_policy.py"
+    source_path.write_text(
+        "import sqlite3\n\n"
+        "def require_native_close_policy_support():\n"
+        f"    {body}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_probe_is_literal_memory_only(source_path)
+
+
+def test_runtime_capability_probe_guard_accepts_argument_free_literal_memory(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "profile_sqlite_policy.py"
+    source_path.write_text(
+        "import sqlite3\n\n"
+        "def require_native_close_policy_support():\n"
+        '    return sqlite3.connect(":memory:")\n',
+        encoding="utf-8",
+    )
+
+    _assert_runtime_probe_is_literal_memory_only(source_path)
+
+
+def test_runtime_capability_probe_guard_rejects_forwarded_input(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "profile_sqlite_policy.py"
+    source_path.write_text(
+        "import sqlite3\n\n"
+        "def require_native_close_policy_support(target):\n"
+        '    return sqlite3.connect(":memory:")\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_probe_is_literal_memory_only(source_path)
 
 
 def test_private_sqlite_seam_calls_use_literal_module_owned_ids() -> None:

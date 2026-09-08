@@ -60,6 +60,7 @@ _REPOSITORY_CODES = frozenset(
         "reference_unavailable",
         "restore_failed",
         "restoring",
+        "runtime_unsupported",
         "schema_corrupt",
         "schema_partial",
         "schema_unsupported",
@@ -114,7 +115,13 @@ class ProfileRepositoryError(_ProfileError, RuntimeError):
             if type(code) is str and code in _REPOSITORY_CODES
             else "operation_failed"
         )
-        super().__init__(safe_code, f"TTS profile repository failed: {safe_code}")
+        message = (
+            "TTS profile repository unavailable: SQLite runtime lacks required "
+            "close-policy support."
+            if safe_code == "runtime_unsupported"
+            else f"TTS profile repository failed: {safe_code}"
+        )
+        super().__init__(safe_code, message)
 
     def __reduce__(self) -> tuple[type["ProfileRepositoryError"], tuple[str]]:
         return (ProfileRepositoryError, (self.code,))
