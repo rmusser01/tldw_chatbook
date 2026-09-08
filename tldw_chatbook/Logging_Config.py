@@ -267,7 +267,7 @@ class PrivateRotatingFileHandler(RotatingFileHandler):
 
 
 class RedactingFileFormatter(logging.Formatter):
-    """Formatter that redacts recognised credentials from every line it emits.
+    """Formatter that masks recognized credentials and PII in every record.
 
     TASK-23190. Redaction here is a property of the *sink*, not of the caller:
     a record is sanitized on the way to disk whoever logged it and whether or
@@ -288,26 +288,16 @@ class RedactingFileFormatter(logging.Formatter):
       embedded in ``str(exc)`` -- the exact shape TASK-23108 was filed about --
       untouched in the ``exc_info`` block appended after it.
 
-    Cost is paid only on records that are actually written. ``Handler.handle``
-    runs the handler's filters *before* ``emit``, so
-    :class:`PersistentDiagnosticFilter` rejects a record long before this
-    formatter is reached -- and it admits only schema-validated metadata
-    events, a handful per session. Measured on a typical metadata line:
-    33.6 us/record versus 1.4 us for the plain formatter it replaces.
-
     ``redact_log_line`` is reused verbatim -- the same function the in-app Logs
-    buffer applies -- so the two sinks cannot drift on what counts as a secret.
+    buffer applies -- so file and clipboard diagnostics share the same policy.
     Its ``MAX_REDACTED_LINE_CHARS`` cap is kept rather than disabled: the cap
-    only ever keeps *less* data than the raw line, its cut is token-aligned so
-    it cannot slice a credential into an unmatchable fragment, and it is what
-    bounds that 32 us on whichever thread emitted the record. The cost of
-    keeping it is that a single record longer than 2,000 characters is
-    truncated on disk as well as in the Logs screen; nothing that reaches this
-    sink today comes close.
+    cuts on a token boundary before redaction, preserving credential detection
+    while bounding sanitizer work. A record longer than 2,000 characters is
+    truncated on disk as well as in the Logs screen.
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        """Return the fully formatted record with recognised secrets removed."""
+        """Return formatted diagnostics with recognized credentials/PII masked."""
 
         return redact_log_line(super().format(record))
 
@@ -336,11 +326,11 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             None,
         )
         if existing_handler is not None:
-            if not any(
-                isinstance(item, PersistentDiagnosticFilter)
-                for item in existing_handler.filters
-            ):
-                existing_handler.addFilter(PersistentDiagnosticFilter())
+            # Reconcile handlers installed under the former metadata-only
+            # policy; the formatter masks credentials and PII in log text.
+            for item in tuple(existing_handler.filters):
+                if isinstance(item, PersistentDiagnosticFilter):
+                    existing_handler.removeFilter(item)
             # TASK-23190. Reconciled for the same reason the filter above is:
             # a handler installed by an earlier revision (or by any other
             # caller that built one) would otherwise keep writing unredacted
@@ -369,7 +359,6 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             )
             file_handler.setLevel(file_log_level)
             file_handler.setFormatter(_private_file_formatter())
-            file_handler.addFilter(PersistentDiagnosticFilter())
             root_logger.addHandler(file_handler)
             root_logger.info(
                 "Private rotating file logging installed at level %s.",

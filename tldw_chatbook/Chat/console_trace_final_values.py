@@ -189,7 +189,7 @@ class VerifiedSurfaceReplacementRange:
 
 @dataclass(frozen=True, slots=True)
 class CompletedToolTurnWitness:
-    """Completed-run evidence for its source, response and project-context range."""
+    """Durable source, response or discard evidence for a bounded turn range."""
 
     origin_call_id: str
     terminal_call_id: str
@@ -199,6 +199,9 @@ class CompletedToolTurnWitness:
     # None preserves the tool/source-only transition. Zero explicitly renews a
     # project turn whose next request no longer contains project context.
     project_context_count: int | None = field(default=None, kw_only=True)
+    # Rechecked against durable message ownership; never supplies response text.
+    discarded_assistant_message_id: str | None = field(default=None, kw_only=True)
+    discarded_followups: tuple[tuple[str, str], ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         for identity in (
@@ -211,8 +214,29 @@ class CompletedToolTurnWitness:
             SemanticRevisionRef(self.source_revision_id)
         if self.assistant_revision_id is not None:
             SemanticRevisionRef(self.assistant_revision_id)
-        elif self.source_revision_id is None:
+        elif (
+            self.source_revision_id is None
+            and self.discarded_assistant_message_id is None
+        ):
             raise ValueError("completed_turn_source")
+        if self.discarded_assistant_message_id is not None:
+            SemanticRevisionRef(self.discarded_assistant_message_id)
+            if self.assistant_revision_id is not None:
+                raise ValueError("completed_turn_discard_owner")
+        if (
+            type(self.discarded_followups) is not tuple
+            # The bounded lookup window also includes the original user.
+            or len(self.discarded_followups) >= MAX_SURFACE_REPLACEMENT_SPAN
+            or (
+                self.discarded_followups and self.discarded_assistant_message_id is None
+            )
+        ):
+            raise ValueError("completed_turn_discard_chain")
+        for pair in self.discarded_followups:
+            if type(pair) is not tuple or len(pair) != 2:
+                raise ValueError("completed_turn_discard_chain")
+            for identity in pair:
+                SemanticRevisionRef(identity)
         if self.project_context_count is not None and (
             type(self.project_context_count) is not int
             or not 0 <= self.project_context_count <= MAX_SURFACE_REPLACEMENT_SPAN
@@ -226,6 +250,7 @@ class CompletedToolTurnWitness:
             1
             + int(self.assistant_revision_id is not None)
             + int(self.source_revision_id is not None)
+            + len(self.discarded_followups)
             + (self.project_context_count or 0)
         )
 
@@ -235,6 +260,10 @@ class CompletedToolTurnWitness:
             ()
             if self.source_revision_id is None
             else (SavedRevisionTraceProvenance(self.source_revision_id),)
+        )
+        source_prefix += tuple(
+            SavedRevisionTraceProvenance(revision_id)
+            for revision_id, _assistant_id in self.discarded_followups
         )
         user_index = len(source_prefix) + int(self.assistant_revision_id is not None)
         return (

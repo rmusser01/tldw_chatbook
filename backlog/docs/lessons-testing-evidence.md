@@ -12472,3 +12472,38 @@ Process exit status, nonzero RMS and a first spoken word do not establish that
 the entire response survived encoding. Keep inference, codec, device and content
 evidence distinct; these checks used real ONNX inference and codecs, while
 PyTorch coverage replaced only inference and voice loading.
+
+## Successful tool discovery changes the rendered system row (TASK-32048, 2026-09-08)
+
+The reported third-request `unsupported_surface_change` was reproduced only
+when llama.cpp successfully ran `find_tools` then `load_tools`. Repeated
+calculator calls and a discovery run whose load failed its token budget were
+passing controls: neither changed the advertised tool schemas. The successful
+load changed the leading system row while adding tool traffic, exceeding the
+trace ledger's bounded history replacement shape.
+
+Verify the successful tool transition through the real controller, agent,
+gateway and SQLite trace factory, then read every captured request and send
+again. Assert the raw HTTP input separately from credential/PII-filtered trace
+content. Header changes must preserve earlier calls and survive a cold factory;
+a passing isolated trace helper does not establish those properties.
+
+## Discard settlement and trace settlement are separate (TASK-32075, 2026-09-08)
+
+Recreating the third-request capture rejection, reopening the conversation and
+discarding its pending response reproduced the later generic `validation` error
+as `surface_replacement_checkpoint_unavailable`. With project instructions on,
+the same successor failed as `unsupported_surface_change`. The first two HTTP
+responses had returned, but their trace calls remained `response_started`; only
+the saved assistant had durable `discarded` state. HTTP completion and controller
+completion were not evidence of trace settlement. Preserve those separate facts
+when testing recovery, and compare the earlier request snapshots and call rows.
+Also reproduce already-failed follow-ups: they may have committed user messages
+without provider calls, so testing only the first recovery can miss a second
+blocker in conversations that already contain repeated failed sends.
+
+Review also caught a false-positive dictionary-transform control: the fixture
+had no persisted conversation when the transform ran, so the applier returned
+unchanged text. Persist first, assert transformed wire content, and verify the
+origin's `active_request` row and exact source pin before claiming transform
+coverage. Both corrected controls passed with the discard fix.

@@ -45,6 +45,88 @@ def _iter_leaf_key_names(mapping):
             yield key
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "api_key_count",
+        "api_key_source",
+        "auth_token_present",
+        "server_key",
+        "attempt_token",
+    ],
+)
+def test_diagnostic_redaction_preserves_noncredential_fields(field):
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    line = f"{field}=diagnostic-value status=failed"
+    assert redact_log_line(line) == line
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "api_key",
+        "OPENAI_API_KEY",
+        "x-session-key",
+        "password",
+        "api_token",
+        "provider_api_token",
+        "full_name",
+        "email_address",
+    ],
+)
+def test_diagnostic_redaction_removes_private_fields_and_keeps_following_status(field):
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    line = f"{field}=PRIVATE_VALUE status=failed phase=trace_reservation"
+    expected = f"{field}=***REDACTED*** status=failed phase=trace_reservation"
+    assert redact_log_line(line) == expected
+    assert redact_log_line(expected) == expected
+
+
+def test_logging_change_preserves_legacy_trace_credential_projection():
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    value = {"content": "key=messages status=failed"}
+    assert CredentialSanitizer().sanitize(value).value == {
+        "content": "key=[credential omitted]"
+    }
+
+
+def test_log_helpers_keep_diagnostic_fields_before_the_sink():
+    fields = {
+        "server_key": "llama_cpp",
+        "attempt_token": "run-42",
+        "api_key": "PRIVATE_VALUE",
+    }
+    assert sanitize_dict(fields) == {
+        "server_key": "llama_cpp",
+        "attempt_token": "run-42",
+        "api_key": "***REDACTED***",
+    }
+    assert create_safe_log_message("api_key={} status=failed", "PRIVATE_VALUE") == (
+        "api_key=***REDACTED*** status=failed"
+    )
+
+
+def test_private_key_material_is_redacted_but_its_configured_file_path_is_readable():
+    key = "-----BEGIN PRIVATE KEY-----\nPRIVATE_BODY\n-----END PRIVATE KEY-----"
+    assert sanitize_string(f"TLS failed: {key}; status=failed") == (
+        "TLS failed: ***REDACTED***; status=failed"
+    )
+    assert sanitize_dict({"tls_private_key": "/etc/certs/server.pem"}) == {
+        "tls_private_key": "/etc/certs/server.pem"
+    }
+
+
+@pytest.mark.parametrize("field", ["database_url", "dsn", "connection_string"])
+def test_connection_diagnostics_keep_host_and_database_but_remove_credentials(field):
+    values = {field: "postgresql://elise:PRIVATE_VALUE@localhost:5432/chatbook"}
+    assert sanitize_dict(values) == {
+        field: "postgresql://***REDACTED***@localhost:5432/chatbook"
+    }
+
+
 def test_real_shipped_sensitive_key_names_are_redacted() -> None:
     """Redact every real secret-bearing default key using the shared policy."""
     default_config = tomllib.loads(CONFIG_TOML_CONTENT)
@@ -64,7 +146,13 @@ def test_real_shipped_sensitive_key_names_are_redacted() -> None:
     result = sanitize_dict(sentinels)
 
     assert set(result) == set(sentinels)
-    assert all(value == "***REDACTED***" for value in result.values())
+    # These are a keystroke toggle, a cache toggle and a certificate-file path.
+    benign = {"auto_save_on_every_key", "openai_cache_key", "tls_private_key"}
+    assert {
+        key: value for key, value in result.items() if value != "***REDACTED***"
+    } == {key: sentinels[key] for key in benign}, {
+        key for key, value in result.items() if value != "***REDACTED***"
+    }
 
 
 @pytest.mark.parametrize(
@@ -76,9 +164,6 @@ def test_real_shipped_sensitive_key_names_are_redacted() -> None:
         "Set-Cookie",
         "credential",
         "credentials",
-        "database_url",
-        "connection-string",
-        "dsn",
     ],
 )
 def test_log_protocol_fields_are_redacted_without_expanding_config_policy(
@@ -152,7 +237,7 @@ def test_sensitive_container_value_is_redacted_before_recursion(value) -> None:
             "max_tokens=42 api_key=PRIVATE_LATER",
             "max_tokens=42 api_key=***REDACTED***",
         ),
-        ("api_key=PRIVATE_QUERY&safe=visible", "api_key=***REDACTED***"),
+        ("api_key=PRIVATE_QUERY&safe=visible", "api_key=***REDACTED***&safe=visible"),
         (
             "api_key=\nrefresh_token=PRIVATE_NEXT",
             "api_key=\nrefresh_token=***REDACTED***",
@@ -218,6 +303,11 @@ def test_all_config_derived_sensitive_labels_redact_quoted_and_unquoted_values()
     for index, label in enumerate(sorted(labels)):
         quoted = f'{label}="PRIVATE_QUOTED_{index}"'
         unquoted = f"{label}=PRIVATE_UNQUOTED_{index}"
+
+        if label in {"auto_save_on_every_key", "openai_cache_key", "tls_private_key"}:
+            assert sanitize_string(quoted) == quoted
+            assert sanitize_string(unquoted) == unquoted
+            continue
 
         assert sanitize_string(quoted) == f'{label}="***REDACTED***"'
         assert sanitize_string(unquoted) == f"{label}=***REDACTED***"
@@ -332,6 +422,32 @@ def test_safe_log_calls_callback_once_with_sanitized_final_message() -> None:
     safe_log(calls.append, "api_key={}", "PRIVATE_CALLBACK")
 
     assert calls == ["api_key=***REDACTED***"]
+
+
+def test_diagnostic_redaction_preserves_nonsecret_keys_and_following_fields() -> None:
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    raw = (
+        "2026-09-08 09:35:26,775 provider=llama_cpp model=qwen3.7-27b "
+        "server_key=local key=messages attempt_token=68092c648f674162a19c88e6c12d0a4c "
+        "api_key=not-a-real-key status=failed phase=trace_reservation "
+        "python_version=3.14.7 sqlite_version=3.51.2"
+    )
+    assert redact_log_line(raw) == raw.replace("not-a-real-key", "***REDACTED***")
+
+
+@pytest.mark.parametrize(
+    "pii", ["elise@example.test", "123-45-6789", "+1 (415) 555-0123"]
+)
+def test_diagnostic_redaction_masks_pii_without_erasing_the_error(pii: str) -> None:
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    rendered = redact_log_line(
+        f"Lookup failed for {pii}; phase=provider_entry status=failed"
+    )
+    assert pii not in rendered
+    assert "Lookup failed for " in rendered
+    assert "phase=provider_entry status=failed" in rendered
 
 
 def test_long_non_matching_text_remains_unchanged() -> None:
@@ -499,26 +615,17 @@ class TestSinkRedaction:
         line = f"{header}: DONOTUSEEXAMPLEONLYzz9911"
         assert "DONOTUSEEXAMPLEONLYzz9911" not in sanitize_string(line)
 
-    def test_a_bare_key_label_is_treated_as_secret_bearing(self) -> None:
-        """The third probe key, and the one still live at TASK-19558.
-
-        A bare `key` matches none of `is_sensitive_config_key`'s rules --
-        its `_key` rule is an underscore-SUFFIX match and `api-key` a
-        containment one -- and bare `key` is exactly how Google's Custom
-        Search credential travels (`?key=<API key>`). Probed before the fix:
-        the whole URL passed through `sanitize_string` unchanged. Fixed in
-        `_LOG_ONLY_SENSITIVE_FIELDS` rather than in the shared config
-        predicate, which also drives config encryption.
-        """
+    def test_url_key_credentials_are_removed_without_hiding_ordinary_keys(self) -> None:
+        """URL query credentials and recognizable tokens remain protected."""
         url = (
             "https://www.googleapis.com/customsearch/v1"
             "?key=AIzaSyDONOTUSEEXAMPLEONLY12345&cx=abc"
         )
         sanitized = sanitize_string(url)
         assert "AIzaSyDONOTUSEEXAMPLEONLY12345" not in sanitized
-        assert sanitize_dict({"key": "AIzaSyDONOTUSEEXAMPLEONLY12345"}) == {
-            "key": "***REDACTED***"
-        }
+        credential = _synthetic("AI", "za", "a" * 35)
+        assert sanitize_dict({"key": credential}) == {"key": "***REDACTED***"}
+        assert sanitize_dict({"key": "messages"}) == {"key": "messages"}
 
     def test_the_bare_key_rule_did_not_leak_into_config_encryption(self) -> None:
         """Scope of the fix, pinned.
@@ -628,6 +735,64 @@ class TestSinkRedaction:
 # ---------------------------------------------------------------------------
 # TASK-19555 Qodo round: two security defects in the first cut of the above.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Cookie: theme=light; session_id=PRIVATE_SESSION; csrftoken=PRIVATE_CSRF",
+        'Authorization: Digest username="alice", realm="example", nonce="PRIVATE_NONCE", response="PRIVATE_RESPONSE"',
+    ],
+)
+def test_nested_authentication_fields_remain_inside_the_credential(header):
+    redacted = sanitize_string(header + "\nphase=provider_entry status=failed")
+    assert "PRIVATE_" not in redacted
+    assert redacted.endswith("\nphase=provider_entry status=failed")
+
+
+@pytest.mark.parametrize(
+    "key", ["aws_secret_access_key", "secret_access_key", "secret_key", "bearer_token"]
+)
+def test_explicit_credential_aliases_are_masked(key):
+    assert "PRIVATE_VALUE" not in sanitize_string(f"{key}=PRIVATE_VALUE status=failed")
+    assert sanitize_dict({key: "PRIVATE_VALUE", "server_key": "messages"}) == {
+        key: "***REDACTED***",
+        "server_key": "messages",
+    }
+
+
+@pytest.mark.parametrize("label", ["connection_string", "connection-string", "dsn"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Server=localhost;Uid=alice;Pwd=PRIVATE_PASSWORD;Database=chatbook",
+        'Server=localhost;User ID="alice";Password="PRIVATE PASSWORD";Database=chatbook',
+        "Server=localhost;Uid=alice;Pwd={PRIVATE_PREFIX;Mode=PRIVATE_SUFFIX};Database=chatbook",
+    ],
+)
+def test_database_connection_fields_preserve_host_and_database(label, value):
+    redacted = sanitize_string(f"{label}={value}")
+    assert "alice" not in redacted
+    assert "PRIVATE" not in redacted
+    assert "Server=localhost" in redacted
+    assert "Database=chatbook" in redacted
+    structured = sanitize_dict({label: value})[label]
+    assert "alice" not in structured
+    assert "PRIVATE" not in structured
+    assert "Server=localhost" in structured
+    assert "Database=chatbook" in structured
+
+
+@pytest.mark.parametrize("fragment", ["a.", "a%"])
+def test_nonmatching_address_candidates_do_not_rescan_prefixes(fragment):
+    import time
+
+    # These 32KB no-match inputs took seconds with overlapping regex starts.
+    # A generous ceiling avoids machine-speed-sensitive microbenchmarks.
+    value = fragment * 16_000
+    started = time.monotonic()
+    assert sanitize_string(value) == value
+    assert time.monotonic() - started < 0.5
 
 
 class TestRedactionOrderAndPathBoundaries:

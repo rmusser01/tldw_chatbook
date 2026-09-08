@@ -2097,7 +2097,7 @@ async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
 
 @pytest.mark.asyncio
 async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
-    """task-32047 AC#1 (Qodo #7): the zero-selection reason must not paint on a
+    """task-32085 AC#1 (Qodo #7): the zero-selection reason must not paint on a
     SUCCESSFUL empty list.
 
     task-32045 made ``Select items to enable.`` visible whenever

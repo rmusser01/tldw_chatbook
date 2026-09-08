@@ -187,7 +187,7 @@ def test_unsafe_file_sink_is_omitted_without_removing_other_handlers(
     assert max(map(len, collecting.messages)) < 200
 
 
-def test_existing_private_handler_is_reconciled_with_metadata_filter(
+def test_existing_private_handler_removes_the_legacy_metadata_filter(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -209,16 +209,12 @@ def test_existing_private_handler_is_reconciled_with_metadata_filter(
     )
     root_logger.addHandler(handler)
     try:
-        assert not any(
-            isinstance(item, PersistentDiagnosticFilter)
-            for item in handler.filters
-        )
+        handler.addFilter(PersistentDiagnosticFilter())
 
         assert _configure_private_file_logging(root_logger) is True
 
-        assert any(
-            isinstance(item, PersistentDiagnosticFilter)
-            for item in handler.filters
+        assert not any(
+            isinstance(item, PersistentDiagnosticFilter) for item in handler.filters
         )
     finally:
         handler.close()
@@ -273,22 +269,9 @@ def test_successful_install_writes_its_own_first_event(
 
 # --- TASK-23190: redaction at the private file sink ------------------------
 #
-# The sink has two independent layers and these tests pin both.
-#
-# 1. `PersistentDiagnosticFilter` decides *whether* a record is written. Today
-#    it admits only schema-validated ADR-029 metadata events, so an ordinary
-#    `logger.error("Authorization: Bearer sk-...")` never reaches disk at all
-#    (`test_unmarked_secret_bearing_record_is_not_written_at_all` pins that).
-# 2. `RedactingFileFormatter` decides *what a written record says*. That is the
-#    layer TASK-23190 adds, and the layer that survives any future change to
-#    layer 1 -- including a caller marking its own record, which is the only
-#    way a message body can reach this sink today and therefore how these
-#    tests drive it.
-#
-# Driving layer 2 through the marker is deliberate, not a way around the
-# admission rule: an on-disk assertion made with a record that layer 1 drops
-# would be green with the formatter deleted, which is the "test that cannot
-# fail" trap in backlog/docs/lessons-testing-evidence.md.
+# The formatter masks credential/PII values for both ordinary records and
+# schema-marked events. Exercise both paths through the installed sink so a
+# dropped record cannot make a missing redactor appear to pass.
 
 _METADATA_MARKED = {_PERSISTENT_METADATA_MARKER: True}
 
@@ -423,15 +406,10 @@ def test_file_sink_leaves_secret_free_records_intact(private_sink: Path) -> None
     assert "***REDACTED***" not in written
 
 
-def test_unmarked_secret_bearing_record_is_not_written_at_all(
+def test_unmarked_secret_bearing_record_keeps_context_without_the_secret(
     private_sink: Path,
 ) -> None:
-    """Layer 1: the admission filter drops an ordinary caller's record entirely.
-
-    Pinned so that a future widening of ``PersistentDiagnosticFilter`` is a
-    visible, deliberate change rather than a silent one -- the redaction layer
-    above is what keeps such a widening from also being a disclosure.
-    """
+    """Ordinary records receive the same credential/PII redaction as metadata."""
     logging.getLogger("tldw_chatbook.tests.sink").error(
         "Authorization: Bearer sk-live-abc123"
     )
@@ -441,7 +419,23 @@ def test_unmarked_secret_bearing_record_is_not_written_at_all(
 
     assert "sk-live-abc123" not in written
     assert "AIzaSyLIVE0123" not in written
-    assert "Authorization" not in written
+    assert "Authorization" in written
+    assert "GET https://svc/v1?key=***REDACTED***" in written
+
+
+def test_installed_sink_preserves_diagnostic_text_and_masks_private_values(
+    private_sink: Path,
+) -> None:
+    target = logging.getLogger("tldw_chatbook.Chat.console_trace_service")
+    target.error(
+        "Trace continuation rejected: unsupported_surface_change "
+        "api_key=not-a-real-key email=elise@example.test phase=trace_reservation"
+    )
+    written = private_sink.read_text()
+    assert "Trace continuation rejected: unsupported_surface_change" in written
+    assert "phase=trace_reservation" in written
+    assert "not-a-real-key" not in written
+    assert "elise@example.test" not in written
 
 
 def test_installed_sink_uses_the_redacting_formatter(private_sink: Path) -> None:
