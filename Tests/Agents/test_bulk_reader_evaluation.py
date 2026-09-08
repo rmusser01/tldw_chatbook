@@ -11,9 +11,22 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "evaluate_bulk_reader.py"
 TEST_PYTHON = Path(sys.executable)
+
+
+@pytest.fixture(autouse=True)
+def synthetic_model_capacity(monkeypatch):
+    # The recording models have no provider catalog entry. Give them a known
+    # context capacity so the real schema-budget policy can disclose four tools.
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.agent_service.get_model_token_limit",
+        lambda *_args: 128_000,
+    )
 
 
 def _load_evaluator():
@@ -286,7 +299,18 @@ def test_real_runtime_comparison_records_delegation_reads_models_and_worker_cost
     gateway = _RecordingGateway()
     evaluator, report = _run_evaluation(tmp_path, gateway)
 
-    assert report["status"] == "complete"
+    assert report["status"] == "complete", {
+        "status_reasons": {
+            arm: report["cases"][0][arm]["status_reasons"]
+            for arm in ("direct", "delegated")
+        },
+        "tool_results": [
+            row["content"]
+            for call in gateway.calls
+            for row in call["messages"]
+            if str(row.get("content", "")).startswith("Tool result for fs_read:")
+        ],
+    }
     assert report["quality_review"] == {
         "status": "pending",
         "rubric": {
@@ -546,19 +570,17 @@ def test_real_console_gateway_fence_path_exposes_length_to_call_recorder():
             request_retry_delay=0.0,
         )
 
-        class Store:
-            def append_stream_chunk(self, _message_id, _chunk) -> None:
-                return None
-
-            def reset_stream_content(self, _message_id) -> None:
-                return None
-
+        store = ConsoleChatStore()
+        session = store.ensure_session()
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
         signals = ConsoleProviderStreamSignals()
         adapter = _StreamingModelAdapter(
-            store=Store(),
+            store=store,
             provider_gateway=gateway,
             resolution=resolution,
-            assistant_message_id="assistant",
+            assistant_message_id=assistant.id,
             should_cancel=lambda: False,
             loop=asyncio.get_running_loop(),
             native_tools=False,
@@ -596,12 +618,23 @@ def test_real_console_gateway_fence_path_exposes_length_to_call_recorder():
 
 
 def test_model_turn_and_recorded_output_caps_make_arms_incomplete(tmp_path):
+    looping_gateway = _RecordingGateway(loop_direct=True)
     evaluator, looped = _run_evaluation(
         tmp_path / "looped",
-        _RecordingGateway(loop_direct=True),
+        looping_gateway,
     )
     direct = looped["cases"][0]["direct"]
-    assert len(direct["calls"]) == evaluator.MAX_PROVIDER_CALLS_PER_ARM
+    # Current runtime asks for a final summary after budget exhaustion. The
+    # evaluator records its refusal without dispatching a ninth provider call.
+    assert len(direct["calls"]) == evaluator.MAX_PROVIDER_CALLS_PER_ARM + 1
+    assert direct["calls"][-1]["failure"] == "provider_call_limit_exceeded"
+    direct_gateway_calls = [
+        call
+        for call in looping_gateway.calls
+        if not call["is_worker"]
+        and "spawn_subagent" not in call["messages"][0]["content"]
+    ]
+    assert len(direct_gateway_calls) == evaluator.MAX_PROVIDER_CALLS_PER_ARM
     assert direct["runtime_status"] == "stuck"
     assert direct["status"] == "incomplete"
 

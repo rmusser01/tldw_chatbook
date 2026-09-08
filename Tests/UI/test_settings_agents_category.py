@@ -211,10 +211,7 @@ async def test_panel_selection_round_trip_updates_in_place(runs_db):
         await pilot.pause()
 
         assert panel.query_one("#agents-name-input").value == "researcher"
-        assert (
-            panel.query_one("#agents-description-input").value
-            == "Searches sources."
-        )
+        assert panel.query_one("#agents-description-input").value == "Searches sources."
         assert panel.query_one("#agents-instructions-area").text == "Cite sources."
 
         panel.query_one(

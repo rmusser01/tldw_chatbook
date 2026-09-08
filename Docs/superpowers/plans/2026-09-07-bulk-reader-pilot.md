@@ -168,3 +168,23 @@ BULK_READER_PRESET = AgentDefinition(
 - [x] Add task implementation notes and test/live evidence; check only satisfied
   ACs. Mark Done only when all required work including chosen live evaluation
   is actually complete; otherwise keep live model selection explicit.
+
+### PR integration against dev (2026-09-08)
+
+ADR required: no
+ADR path: N/A
+Reason: adapt the existing pilot to current Console and workspace-tool contracts.
+
+- [x] Apply only the nine pilot commits onto current dev, preserving its trace,
+  thinking, redirect, and stream-stall behavior.
+- [x] Use the current pinned WorkspaceToolExecutor and an in-memory
+  ConsoleChatStore in the evaluator and its runtime tests.
+- [x] Verify call-local model selection with capture enabled and disabled,
+  including isolation of the parent's continuation and thinking sidecars.
+- [x] Run the scoped regression checks and review the integration before
+  pushing the PR branch. Preserve the historical live reports unchanged.
+
+Integration also records synthetic read paths at invocation because current
+run-step metadata omits arguments, gives recording-only test models a known
+context capacity for schema disclosure, disables runtime retries, and verifies
+the call cap blocks the runtime's extra budget-summary attempt before dispatch.

@@ -6,19 +6,24 @@ import threading
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT
 from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_prepared_request import build_console_request
 from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
     ConsoleProviderResolution,
     ProviderToolCalls,
     ProviderTurnMetadata,
 )
-
-
-class _Store:
-    def append_stream_chunk(self, _message_id, _chunk) -> None:
-        return None
-
-    def reset_stream_content(self, _message_id) -> None:
-        return None
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    TraceProvenanceSource,
+    request_route_provenance,
+)
+from tldw_chatbook.Chat.provider_continuation import ContinuationRestoreTarget
 
 
 class _ConcurrentRecordingGateway:
@@ -73,16 +78,26 @@ def test_concurrent_worker_override_is_call_local_and_keeps_parent_continuation(
         execution_key="openai",
         continuation_protocol="responses",
     )
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     adapter = _StreamingModelAdapter(
-        store=_Store(),
+        store=store,
         provider_gateway=gateway,
         resolution=parent_resolution,
-        assistant_message_id="assistant",
+        assistant_message_id=assistant.id,
         should_cancel=lambda: False,
         loop=loop,
         native_tools=False,
         continuation_sidecar=("parent-sidecar",),
-        continuation_target="parent-target",
+        continuation_target=ContinuationRestoreTarget(
+            provider="openai",
+            model="parent-model",
+            protocol="responses",
+            api_base_url="https://example.invalid/v1",
+        ),
         continuation_owner_key="_owner",
     )
     usage_identities: list[tuple[str, str]] = []
@@ -147,3 +162,102 @@ def test_concurrent_worker_override_is_call_local_and_keeps_parent_continuation(
     ]
     assert responses["parent"]["usage"]["total_tokens"] == 3
     assert responses["child"]["usage"]["total_tokens"] == 3
+
+
+def test_capture_on_worker_uses_its_model_and_keeps_parent_private_history(monkeypatch):
+    async def exercise():
+        resolution = ConsoleProviderResolution(
+            provider="OpenAI",
+            base_url="https://example.invalid/v1",
+            model="parent-model",
+            ready=True,
+            readiness_key="openai",
+            execution_key="openai",
+            continuation_protocol="responses",
+        )
+        target = ContinuationRestoreTarget(
+            provider="openai",
+            model="parent-model",
+            protocol="responses",
+            api_base_url=resolution.base_url,
+        )
+        policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+        messages = [
+            {"role": "system", "content": SUBAGENT_SYSTEM_PROMPT},
+            {"role": "user", "content": "Read the supplied synthetic source."},
+        ]
+        admitted = build_console_request(
+            messages,
+            message_provenance=(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.RENDERED_SYSTEM, policy
+                ),
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST, policy
+                ),
+            ),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+        store = ConsoleChatStore()
+        session = store.ensure_session()
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        gateway = ConsoleProviderGateway(environ={})
+        prepared_options = []
+        dispatched = []
+        prepare = gateway.prepare_chat_request
+
+        def record_prepare(call_resolution, request, **kwargs):
+            prepared_options.append(kwargs)
+            return prepare(call_resolution, request, **kwargs)
+
+        async def record_stream(call_resolution, request, **kwargs):
+            dispatched.append((call_resolution, request, kwargs))
+            yield "Worker evidence."
+
+        monkeypatch.setattr(gateway, "prepare_chat_request", record_prepare)
+        monkeypatch.setattr(gateway, "stream_chat", record_stream)
+        adapter = _StreamingModelAdapter(
+            store=store,
+            provider_gateway=gateway,
+            resolution=resolution,
+            assistant_message_id=assistant.id,
+            should_cancel=lambda: False,
+            loop=asyncio.get_running_loop(),
+            native_tools=False,
+            continuation_target=target,
+            continuation_sidecar=("parent-continuation",),
+            continuation_owner_key="_owner",
+            thinking_sidecar=("parent-thinking",),
+            thinking_owner_key="_thinking_owner",
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            trace_request=admitted,
+        )
+        try:
+            response = await asyncio.to_thread(
+                adapter.chat_call,
+                messages_payload=messages,
+                model="budget-reader-model",
+            )
+        finally:
+            await gateway.aclose()
+        assert response["choices"][0]["message"]["content"] == "Worker evidence."
+        assert len(dispatched) == 1
+        call_resolution, request, options = dispatched[0]
+        assert call_resolution.model == request.model == "budget-reader-model"
+        assert options["capture_mode"] is ConsoleTraceCaptureMode.CAPTURE_ON
+        assert options["route"] is ConsoleRequestRoute.AGENT_FIRST
+        assert prepared_options[0]["thinking_sidecar"] == ()
+        assert not prepared_options[0].get("continuation_sidecar")
+        assert prepared_options[0]["continuation_target"].model == "budget-reader-model"
+        assert adapter._resolution is resolution
+        assert adapter._continuation_target is target
+        assert target.model == "parent-model"
+
+    asyncio.run(exercise())

@@ -50,7 +50,9 @@ class AgentsSettingsPanel(Vertical):
 
     def __init__(self, app_instance, runs_db: AgentRunsDB | None = None, **kwargs):
         super().__init__(**kwargs)
-        self._runs_db = runs_db if runs_db is not None else _derive_runs_db(app_instance)
+        self._runs_db = (
+            runs_db if runs_db is not None else _derive_runs_db(app_instance)
+        )
         self._selected_id: str | None = None
         self._rows: list[dict] = []
 
@@ -85,8 +87,10 @@ class AgentsSettingsPanel(Vertical):
                     id="agents-description-input",
                     classes="settings-compact-input",
                 )
-            yield Static("Instructions (appended to the sub-agent prompt)",
-                         classes="settings-input-label")
+            yield Static(
+                "Instructions (appended to the sub-agent prompt)",
+                classes="settings-input-label",
+            )
             yield TextArea(id="agents-instructions-area")
             with Horizontal(classes="settings-input-row"):
                 yield Static("Model override", classes="settings-input-label")
@@ -129,9 +133,7 @@ class AgentsSettingsPanel(Vertical):
         self._rows = self._runs_db.list_agent_definitions()
         for row in self._rows:
             marker = "" if row["enabled"] else " (disabled)"
-            await lv.append(
-                ListItem(Static(f"{row['name']}{marker}"), name=row["id"])
-            )
+            await lv.append(ListItem(Static(f"{row['name']}{marker}"), name=row["id"]))
         enabled_count = sum(1 for r in self._rows if r["enabled"])
         if enabled_count > ENABLED_DEFINITIONS_SOFT_CAP:
             self._set_status(
@@ -201,7 +203,9 @@ class AgentsSettingsPanel(Vertical):
         tools = tuple(
             dict.fromkeys(
                 name.strip()
-                for name in self.query_one("#agents-tools-input", Input).value.split(",")
+                for name in self.query_one("#agents-tools-input", Input).value.split(
+                    ","
+                )
                 if name.strip() and name.strip() not in RUNTIME_TOOL_NAMES
             )
         )

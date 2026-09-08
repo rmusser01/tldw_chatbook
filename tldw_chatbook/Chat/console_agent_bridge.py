@@ -2965,7 +2965,9 @@ class _StreamingModelAdapter:
         route_actor_id = getattr(self._thread_loop, "route_actor_id", None)
         route_chain_id = getattr(self._thread_loop, "route_chain_id", None)
         if route_actor_id is None or route_chain_id is None:
-            recover_route = getattr(self._gateway, "_trace_recovery_route_identity", None)
+            recover_route = getattr(
+                self._gateway, "_trace_recovery_route_identity", None
+            )
             recovered = (
                 recover_route(self._provider_stream_signals)
                 if request_count == 0 and not is_subagent and callable(recover_route)
@@ -2984,6 +2986,11 @@ class _StreamingModelAdapter:
         call_resolution = self._resolution
         if model and model != self._resolution.model:
             call_resolution = dataclass_replace(self._resolution, model=model)
+        call_continuation_target = self._continuation_target
+        if is_subagent and call_continuation_target is not None:
+            call_continuation_target = dataclass_replace(
+                call_continuation_target, model=call_resolution.model or ""
+            )
         gate = StreamGate()
         any_streamed = False
         native_calls: list[dict] = []
@@ -3016,10 +3023,7 @@ class _StreamingModelAdapter:
             prepare_request = getattr(self._gateway, "prepare_chat_request", None)
             semantic_messages = transport_messages
             if continuation_groups:
-                if (
-                    self._continuation_target is None
-                    or not self._continuation_owner_key
-                ):
+                if call_continuation_target is None or not self._continuation_owner_key:
                     raise ValueError("Provider continuation request is not pinned.")
                 owner_ids = {group.owner_message_id for group in continuation_groups}
                 rewritten_messages: list[dict[str, Any]] = []
@@ -3029,7 +3033,8 @@ class _StreamingModelAdapter:
                     if type(owner_id) is str and owner_id in owner_ids:
                         row[CONTINUATION_OWNER_KEY] = owner_id
                     if (
-                        not self._thinking_sidecar
+                        is_subagent
+                        or not self._thinking_sidecar
                         or self._thinking_owner_key != self._continuation_owner_key
                     ):
                         row.pop(self._continuation_owner_key, None)
@@ -3051,7 +3056,7 @@ class _StreamingModelAdapter:
                     route=route,
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
-                    continuation_target=self._continuation_target,
+                    continuation_target=call_continuation_target,
                     thinking_sidecar=() if is_subagent else self._thinking_sidecar,
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=self._thinking_owner_key,
@@ -3070,7 +3075,7 @@ class _StreamingModelAdapter:
                     route=route,
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
-                    continuation_target=self._continuation_target,
+                    continuation_target=call_continuation_target,
                     thinking_sidecar=() if is_subagent else self._thinking_sidecar,
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=self._thinking_owner_key,
@@ -3091,7 +3096,7 @@ class _StreamingModelAdapter:
                     route=route,
                     route_actor_id=route_actor_id,
                     route_chain_id=route_chain_id,
-                    continuation_target=self._continuation_target,
+                    continuation_target=call_continuation_target,
                     continuation_sidecar=self._continuation_sidecar,
                     continuation_owner_key=self._continuation_owner_key,
                     thinking_sidecar=self._thinking_sidecar,

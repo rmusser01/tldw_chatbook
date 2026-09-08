@@ -37,6 +37,10 @@ absent. No private corpus import is supported.
 Choose the model pair before running. The command refuses to call a provider
 without the explicit billable flag and refuses to replace an existing report:
 
+Use an environment with this checkout installed (`python -m pip install -e .`).
+Workspace file tools launch an isolated Python helper, so an environment
+installed from another checkout would run that checkout's helper code.
+
 ```bash
 python scripts/evaluate_bulk_reader.py \
   --provider Moonshot \
@@ -81,6 +85,10 @@ label. The report retains answers, child output, tool-read traces, per-call
 models, finish reasons, latency, usage buckets, costs, and failures for
 inspection.
 
+Read traces record actual local-tool invocations against the synthetic corpus.
+Calls refused before invocation do not count as file reads; the evaluator does
+not recover arguments from privacy-filtered run-step metadata.
+
 Costs are calculated one provider call at a time with the existing pricing
 catalog, so worker calls remain in their own model bucket. Missing or partial
 usage, unknown model pricing, or a used cache/audio/transcription bucket with
@@ -98,6 +106,11 @@ cache-weighted control values and are never used for billing. Moonshot/ZAI
 transport uses the 60-second timeout with zero retries. The report repeats the
 effective limits and provider resolution.
 
+Runtime model retries are also disabled. If the runtime requests a final
+summary after exhausting the eight-call budget, the report retains the refused
+attempt with `failure: provider_call_limit_exceeded`; it makes no additional
+provider request.
+
 This is one sequential direct-then-delegated pass. Provider caching, warmup,
 and transient latency can favor the second arm, so the output is not a
 statistical comparison. There is no proven quality or cost saving until a live
@@ -111,3 +124,6 @@ used GLM-5.3 and GLM-5.3-Flash. Live verification fixed a pricing-config lookup
 and ZAI stream-control issue. In the corrected repeat, all four delegated arms
 failed to run the named reader, so the pilot does not establish reader quality
 or savings. Keep failures and their spend when interpreting the reports.
+These historical runs precede integration with current `dev`; their JSON
+artifacts remain unchanged. The integration was verified with offline targeted
+checks, without another billable model run.

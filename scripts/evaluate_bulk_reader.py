@@ -463,28 +463,18 @@ def _arm_prompt(case: Mapping[str, Any]) -> str:
     )
 
 
-def _tool_reads(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
-    reads: list[dict[str, str]] = []
-    for row in sorted(rows, key=lambda item: item.get("created_at", "")):
-        kind = str(row.get("agent_kind") or "")
-        for step in row.get("steps") or []:
-            tool = step.get("tool_name")
-            if step.get("kind") != "tool_call" or tool not in {
-                "fs_list",
-                "fs_read",
-                "fs_glob",
-                "fs_grep",
-            }:
-                continue
-            args = step.get("args") or {}
-            reads.append(
-                {
-                    "run_kind": kind,
-                    "tool": str(tool),
-                    "path": str(args.get("path") or "."),
-                }
-            )
-    return reads
+def _tool_reads(
+    rows: Sequence[Mapping[str, Any]], invoked_reads: Sequence[Mapping[str, str]]
+) -> list[dict[str, str]]:
+    kinds = {row["id"]: str(row.get("agent_kind") or "") for row in rows}
+    return [
+        {
+            "run_kind": kinds[read["run_id"]],
+            "tool": read["tool"],
+            "path": read["path"],
+        }
+        for read in invoked_reads
+    ]
 
 
 def _arm_cost(calls: Sequence[Mapping[str, Any]]) -> tuple[str, float | None]:
@@ -515,9 +505,12 @@ def _run_arm(
     from tldw_chatbook.Agents.run_context import current_run_id
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
     with tempfile.TemporaryDirectory(prefix="tldw-bulk-reader-") as temp_name:
         scratch = Path(temp_name)
@@ -527,13 +520,17 @@ def _run_arm(
         try:
             preset = dataclasses.replace(BULK_READER_PRESET, model=worker_model)
             db.create_agent_definition(preset)
+            workspace_executor = WorkspaceToolExecutor(workspace)
             specs = [
                 spec
-                for spec in _default_specs(workspace)
+                for spec in _default_specs(
+                    workspace, workspace_executor=workspace_executor
+                )
                 if spec.name in preset.tool_allowlist
             ]
             provider = LocalToolProvider(
                 workspace_root=workspace,
+                workspace_executor=workspace_executor,
                 specs=specs,
                 resolve_state=lambda _hub: EffectiveToolState(
                     state="allow", origin="tool_override"
@@ -541,15 +538,27 @@ def _run_arm(
                 allow_write=False,
             )
             successful_content_read_runs: set[str] = set()
+            invoked_reads: list[dict[str, str]] = []
             content_read_lock = threading.Lock()
             invoke_local_tool = provider.invoke
 
             def record_local_tool_result(tool_id: str, args: dict):
-                result = invoke_local_tool(tool_id, args)
                 tool_name = tool_id.split(":", 1)[-1]
+                read_run_id = current_run_id()
+                # Capture synthetic read paths at invocation; current run-step
+                # persistence intentionally omits tool arguments with capture off.
+                with content_read_lock:
+                    invoked_reads.append(
+                        {
+                            "run_id": read_run_id,
+                            "tool": tool_name,
+                            "path": str(args.get("path") or "."),
+                        }
+                    )
+                result = invoke_local_tool(tool_id, args)
                 if result.ok and tool_name in {"fs_read", "fs_grep"}:
                     with content_read_lock:
-                        successful_content_read_runs.add(current_run_id())
+                        successful_content_read_runs.add(read_run_id)
                 return result
 
             provider.invoke = record_local_tool_result
@@ -557,18 +566,16 @@ def _run_arm(
             registry.register_provider(provider)
             signals = ConsoleProviderStreamSignals()
 
-            class _Store:
-                def append_stream_chunk(self, _message_id: str, _chunk: str) -> None:
-                    return None
-
-                def reset_stream_content(self, _message_id: str) -> None:
-                    return None
-
+            store = ConsoleChatStore()
+            session = store.ensure_session()
+            assistant = store.append_message(
+                session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+            )
             adapter = _StreamingModelAdapter(
-                store=_Store(),
+                store=store,
                 provider_gateway=gateway,
                 resolution=resolution,
-                assistant_message_id=f"{case['id']}-{arm}",
+                assistant_message_id=assistant.id,
                 should_cancel=lambda: False,
                 loop=loop,
                 native_tools=False,
@@ -589,8 +596,8 @@ def _run_arm(
                 max_steps=3 * MAX_PROVIDER_CALLS_PER_ARM,
                 max_wall_seconds=MAX_WALL_SECONDS_PER_ARM,
                 max_subagents=1 if delegated else 0,
-                max_active_tools=len(preset.tool_allowlist),
                 max_model_turns=MAX_PROVIDER_CALLS_PER_ARM,
+                max_model_retries=0,
                 max_total_tokens=MAX_TOTAL_TOKENS_PER_ARM,
                 max_tool_call_seconds=MAX_TOOL_CALL_SECONDS,
             )
@@ -686,7 +693,7 @@ def _run_arm(
             "answer": outcome.final_text,
             "delegation_occurred": delegation_occurred,
             "calls": recorded.calls,
-            "tool_reads": _tool_reads(rows),
+            "tool_reads": _tool_reads(rows, invoked_reads),
             "child_runs": [
                 {
                     "run_id": row["id"],

@@ -17,6 +17,7 @@ from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
 
 def _fence(name: str, arguments: dict) -> str:
@@ -80,11 +81,13 @@ def test_bulk_reader_worker_model_and_reader_only_tools_reach_runtime(tmp_path):
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
     db.create_agent_definition(replace(BULK_READER_PRESET, model="budget-reader-model"))
+    workspace_executor = WorkspaceToolExecutor(workspace)
     local = LocalToolProvider(
         workspace_root=workspace,
+        workspace_executor=workspace_executor,
         specs=[
             item
-            for item in _default_specs(workspace)
+            for item in _default_specs(workspace, workspace_executor=workspace_executor)
             if item.name in {"fs_read", "fs_write"}
         ],
         resolve_state=lambda _tool: EffectiveToolState(

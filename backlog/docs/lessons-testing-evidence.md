@@ -12336,3 +12336,17 @@ loopback tests preserved fragments and private continuation metadata. Keep raw
 live captures immutable and put repricing/review in separate artifacts. The
 corrected repeat still failed to invoke the reader in all four delegated arms;
 fixing the harness did not establish a model-quality or savings benefit.
+
+
+## An isolated helper must import the checkout being verified (TASK-32026, 2026-09-08)
+
+**Incident.** Preparing the bulk-reader pilot PR against current dev moved file
+reads onto WorkspaceToolExecutor. Parent-process tests imported the PR worktree,
+but the shared virtual environment was installed from the older user checkout;
+the real helper starts with `python -I` and could not import workspace_tool_worker.
+A dedicated validation interpreter exposing the PR checkout to isolated imports
+restored real reads without changing the user environment.
+
+**What to do.** For subprocess-backed tests, verify package provenance inside
+the child interpreter with its actual isolation flags. A passing parent import
+from the working directory does not prove the helper will execute that code.
