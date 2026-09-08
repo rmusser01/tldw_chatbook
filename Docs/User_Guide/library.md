@@ -398,7 +398,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 | Key | Action |
 |---|---|
-| / | Focus the **Search Library…** box when the full rail is visible (unless a text field already has focus). Get started has no hidden search target; use **Explore all tools** or a direct route. |
+| / | Focus the filter of the list you're on — the Media, Conversations, Prompts, or Notes canvas's own **Title/keyword…** / filter box — so the footer's "/ focus search" lands where you're looking. On the landing (and any canvas with no filter of its own) it focuses the rail's **Search Library…** box instead. Never fires while a text field already has focus. Get started has no hidden search target; use **Explore all tools** or a direct route. |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 | ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
@@ -439,6 +439,12 @@ inside the File Notes surface's own panels and dialogs — see
 [File Notes](library/file-notes.md). On the Study screen (reached via
 **Continue in Study**), Escape returns to the Study decks staging canvas
 here in Library.
+
+*Verified against fix/media-crit7-keyboard — 2026-09-08 (task-32046: `/`
+now focuses the active list canvas's own filter — Media/Prompts share the
+per-canvas route the Conversations and Notes canvases already had — instead
+of the rail's global search two panes away; pinned at 235x52 and 100x30 in
+`test_slash_focuses_the_media_filter_not_the_rail_search`).*
 
 ## Related settings & docs
 
