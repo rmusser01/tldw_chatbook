@@ -11,6 +11,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+from tldw_chatbook.UI.Console_Modules import (
+    settings_durability as settings_durability_module,
+)
 from loguru import logger as loguru_logger
 from textual import events
 
@@ -1306,7 +1310,7 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     )
     screen._context_cost._console_context_control_state_for_session = lambda *args, **kwargs: None
     screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
@@ -1385,7 +1389,7 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
     screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     resolution_started = asyncio.Event()
     release_resolution = asyncio.Event()
 
@@ -1491,7 +1495,7 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
@@ -1559,7 +1563,7 @@ async def test_open_console_settings_returns_false_when_mount_awaitable_fails(
     screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
@@ -1632,7 +1636,7 @@ async def test_open_console_settings_unwinds_exact_modal_after_mutating_failed_m
     screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
@@ -1684,7 +1688,7 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
     screen._context_cost._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
     screen._provider_selection._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(*_args, **_kwargs):
@@ -1760,7 +1764,7 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
     screen._provider_selection._provider_readiness_app_config = lambda: {
         "api_settings": {"openai": {}, "vllm": {}}
     }
-    screen._global_chat_display_name = lambda: "Ada"
+    screen._settings_durability._global_chat_display_name = lambda: "Ada"
     screen._console_run_active = lambda: False
 
     async def provider_models(provider, *, current_model):
@@ -8242,7 +8246,7 @@ def test_console_settings_result_applies_name_override_without_losing_prompt_sou
         lambda coroutine, **_kwargs: coroutine.close(),
     )
 
-    console._apply_console_settings_result(
+    console._settings_durability._apply_console_settings_result(
         ConsoleSettingsResult(
             settings=ConsoleSessionSettings(
                 provider="llama_cpp", model="model-a", temperature=0.5
@@ -8311,9 +8315,14 @@ async def test_console_global_name_refresh_coalesces_and_respects_session_overri
 
     app.app_config["chat_defaults"]["user_display_name"] = "Default Two"
     store.switch_session(inherited.id)
-    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh() is True
+    )
     assert surface_syncs == [inherited.id]
-    assert console._dispatch_active_console_roleplay_refresh() is False
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh()
+        is False
+    )
     assert queued == []
 
     assert store.presentation_context(inherited.id, "Default Two").user_name == (
@@ -8322,7 +8331,9 @@ async def test_console_global_name_refresh_coalesces_and_respects_session_overri
     assert store.session_settings(inherited.id).system_prompt == "Protect Default Two."
 
     store.switch_session(overridden.id)
-    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh() is True
+    )
     assert surface_syncs[-1] == overridden.id
     assert queued == []
     assert store.presentation_context(overridden.id, "Default Two").user_name == (
@@ -8416,21 +8427,23 @@ async def test_real_inactive_console_tab_activation_dispatches_identity_refresh(
             f"#console-session-tab-{first.id}",
         )
         dispatches = []
-        original_dispatch = console._dispatch_active_console_roleplay_refresh
+        original_dispatch = (
+            console._settings_durability._dispatch_active_console_roleplay_refresh
+        )
 
         def audited_dispatch():
             result = original_dispatch()
             dispatches.append(
                 (
                     store.active_session_id,
-                    console._global_chat_display_name(),
+                    console._settings_durability._global_chat_display_name(),
                     result,
                 )
             )
             return result
 
         monkeypatch.setattr(
-            console,
+            console._settings_durability,
             "_dispatch_active_console_roleplay_refresh",
             audited_dispatch,
         )
@@ -8527,7 +8540,9 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     )
 
     app.app_config["chat_defaults"]["user_display_name"] = "Bravo"
-    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh() is True
+    )
     assert store.session_settings(session.id).system_prompt == "Speak with Bravo."
     assert store.get_message(greeting.id).content == "Hello Bravo."
     provider_system = controller._provider_messages_for_session(session.id)[0][
@@ -8545,8 +8560,14 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     names = [f"Commander {index}" for index in range(25)]
     for name in names:
         app.app_config["chat_defaults"]["user_display_name"] = name
-        assert console._dispatch_active_console_roleplay_refresh() is True
-    assert console._dispatch_active_console_roleplay_refresh() is False
+        assert (
+            console._settings_durability._dispatch_active_console_roleplay_refresh()
+            is True
+        )
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh()
+        is False
+    )
     assert store.session_settings(session.id).system_prompt == (
         "Speak with Commander 24."
     )
@@ -8631,11 +8652,11 @@ async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None
     assert plan_b is not None and plan_c is not None
     console._sync_console_identity_surfaces = lambda: None
 
-    await console._refresh_console_roleplay_projections(plan_b)
+    await console._settings_durability._refresh_console_roleplay_projections(plan_b)
     assert persistence.system_writes == []
     assert persistence.message_writes == []
 
-    await console._refresh_console_roleplay_projections(plan_c)
+    await console._settings_durability._refresh_console_roleplay_projections(plan_c)
     assert persistence.system_writes == ["Speak with Cecelia."]
     assert persistence.message_writes == ["Hello Cecelia."]
 
@@ -8686,7 +8707,7 @@ async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
     future = asyncio.get_running_loop().create_future()
     future.set_result(result)
 
-    chat_screen_module._release_console_roleplay_transition_after_writer(
+    settings_durability_module._release_console_roleplay_transition_after_writer(
         future,
         store=store,
         plan=plan,
@@ -8771,7 +8792,7 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
     assert threading.Thread is real_thread
 
     with pytest.raises(RuntimeError, match=f"thread {failure_point} failed"):
-        await console._refresh_console_roleplay_projections(plan)
+        await console._settings_durability._refresh_console_roleplay_projections(plan)
 
     assert store._fork_source_transitions == {}
     assert store._roleplay_fork_transition_leases == {}
@@ -8834,7 +8855,9 @@ async def test_cancelled_unmounted_drain_finishes_latest_plan(
     )
 
     app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
-    assert console._dispatch_active_console_roleplay_refresh() is True
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh() is True
+    )
     assert await asyncio.to_thread(persistence.started.wait, 5)
     drain = console._console_roleplay_persistence_task
     assert drain is not None
@@ -8901,10 +8924,16 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
         assert greeting is not None
 
         app.app_config["chat_defaults"]["user_display_name"] = "Bravo"
-        assert console._dispatch_active_console_roleplay_refresh() is True
+        assert (
+            console._settings_durability._dispatch_active_console_roleplay_refresh()
+            is True
+        )
         assert await asyncio.to_thread(persistence.started.wait, 5)
         app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
-        assert console._dispatch_active_console_roleplay_refresh() is True
+        assert (
+            console._settings_durability._dispatch_active_console_roleplay_refresh()
+            is True
+        )
         console.workers.cancel_group(console, "console-roleplay-refresh")
         await pilot.pause(0.05)
         persistence.release.set()
@@ -9022,7 +9051,10 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         )
 
         app.app_config["chat_defaults"]["user_display_name"] = "Cecelia"
-        assert hung._dispatch_active_console_roleplay_refresh() is True
+        assert (
+            hung._settings_durability._dispatch_active_console_roleplay_refresh()
+            is True
+        )
         assert await asyncio.to_thread(hung_persistence.started.wait, 5)
         writer_task = hung._console_roleplay_writer_task
         assert writer_task is not None
@@ -9233,8 +9265,13 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     )
 
     app.app_config["chat_defaults"]["user_display_name"] = "Captain Rowan"
-    assert console._dispatch_active_console_roleplay_refresh() is True
-    assert console._dispatch_active_console_roleplay_refresh() is False
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh() is True
+    )
+    assert (
+        console._settings_durability._dispatch_active_console_roleplay_refresh()
+        is False
+    )
     assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
     assert store.get_message(greeting.id).content == "Hello Captain Rowan."
     provider_system = controller._provider_messages_for_session(session.id)[0][

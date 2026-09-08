@@ -172,7 +172,7 @@ def test_console_settings_apply_warns_when_llamacpp_endpoint_not_persisted(
         base_url="http://192.168.1.50:8080",
         source="user",
     )
-    console._apply_console_settings_result(session_only)
+    console._settings_durability._apply_console_settings_result(session_only)
 
     endpoint_warnings = [
         message

@@ -924,7 +924,7 @@ def build_console_settings_controllers(screen: Any) -> None:
             screen._ensure_console_provider_gateway(*args, **kwargs)
         ),
         _global_chat_display_name=lambda *args, **kwargs: (
-            screen._global_chat_display_name(*args, **kwargs)
+            screen._settings_durability._global_chat_display_name(*args, **kwargs)
         ),
         _handle_console_default_recovery=lambda request: (
             screen._settings_durability._handle_console_default_recovery(request)
@@ -962,14 +962,14 @@ def build_console_settings_controllers(screen: Any) -> None:
 
     screen._settings_durability = ConsoleSettingsDurabilityController(
         app_instance_accessor=lambda: screen.app_instance,
+        app_accessor=lambda: screen.app,
+        is_mounted_accessor=lambda: screen.is_mounted,
+        current_console_chat_store_accessor=lambda: screen._console_chat_store,
         _ensure_console_chat_controller=lambda *args, **kwargs: (
             screen._ensure_console_chat_controller(*args, **kwargs)
         ),
         _ensure_console_chat_store=lambda *args, **kwargs: (
             screen._ensure_console_chat_store(*args, **kwargs)
-        ),
-        _global_chat_display_name=lambda *args, **kwargs: (
-            screen._global_chat_display_name(*args, **kwargs)
         ),
         _provider_readiness_app_config=lambda *args, **kwargs: (
             screen._provider_selection._provider_readiness_app_config(*args, **kwargs)
@@ -2302,7 +2302,9 @@ def build_console_controllers(
         active_native_console_session=(
             lambda: screen._session._active_native_console_session()
         ),
-        global_chat_display_name=lambda: screen._global_chat_display_name(),
+        global_chat_display_name=lambda: (
+            screen._settings_durability._global_chat_display_name()
+        ),
         console_transcript_style=lambda: screen._console_transcript_style(),
         current_console_conversation_id=(
             lambda: screen._session._current_console_conversation_id()
