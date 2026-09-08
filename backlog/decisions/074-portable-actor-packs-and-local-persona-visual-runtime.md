@@ -91,6 +91,30 @@ server contract is a compatibility source only.
 
 ## Context
 
+### Artwork attribution amendment (TASK-32024, 2026-09-07)
+
+Shared Visual Identity may carry a versioned public attribution record in the
+`tldw/artwork` source-context namespace. Actor Packs preserve these records in
+`shared-visual-identity/attribution.json`, covered by the ordinary member inventory
+and digest, with required feature `visual-artwork-attribution/v1`. The exact bounded
+record and compatibility contract is in the
+[implementation plan](../../Docs/superpowers/plans/2026-09-07-artwork-attribution.md).
+Older importers reject the feature rather than drop notices. Existing packs without
+attribution retain their existing wire format. Native visual manifests are unchanged.
+
+These records are inert public data, never runtime authority, instructions, or a
+license grant. Only known fields leave the profile; local identifiers and arbitrary
+source context do not. Image records bind to output SHA-256. Edits preserve retained
+image records and the existing manifest license; replacement images lose stale
+records. Profile forks preserve public attribution beside new local bookkeeping.
+
+This enables the provenance prerequisite for a later explicitly reviewed independent
+Buddy snapshot conversion. The two runtimes remain separate; this amendment neither
+introduces live cross-bindings nor claims server-side sidecar support. Putting notices
+in existing display-summary strings was rejected because those strings truncate and
+do not bind attribution to image content. Expanding the native visual schema was
+rejected because a portable notice carrier need not alter rendering contracts.
+
 ADR-067 established Shared Visual Identity as an immutable expression runtime and
 kept Persona Visual Packs separate. The programme now needs a local Persona operational
 runtime, an app-wide Buddy, and a portable actor format without weakening that boundary
