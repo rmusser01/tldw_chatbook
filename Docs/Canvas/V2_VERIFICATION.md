@@ -422,3 +422,74 @@ platform/optional coverage and final affected-selection/benchmark qualification
 remain unresolved. No full suite, host cleanup, dependency repair, external PR
 action or Canvas admission was performed in this wave. TASK-31942 remains
 In Progress with all seven final acceptance criteria unchecked; V2 is disabled.
+
+## Separately authorized inventory and host diagnosis — 2026-09-08
+
+After the prior review-fix checkpoint `50a5700422`, the user approved repairs for
+the three inventory failures and read-only diagnosis of the semaphore failure,
+without deleting host resources. SQLite Task9 records this bounded continuation;
+it does not reopen the completed Task8 review wave or authorize Canvas admission.
+
+The exact three inventory nodes reproduced their failures: an unqualified legacy
+Collections read-only connection, a trace-maintenance connection using another
+module's owner ID, and the existing quiescent backup override missing from the
+coarse call census. Commit `a6388ed5c4` fixes the two module-owned connections,
+preserves legacy recovery's lexical no-follow/read-only source boundary and
+transaction-setup cleanup, and qualifies the exact existing native backup
+delegation with real reservation tests. C55/C56 are appended without reusing
+retired IDs or adding backup authority. Existing ADR-029/113/125 apply.
+
+Current targeted evidence on macOS arm64, CPython 3.12.11 / SQLite 3.49.1:
+
+- New legacy RED: 5 failed, 2 passed; focused GREEN: 7 passed. Backup/inventory
+  RED: 1 failed, 8 passed; GREEN: 9 passed. Unchanged backup behavior has real
+  success/abort coverage plus five scanner-mutation controls.
+- Original exact three inventory nodes: 3 passed, 1 warning, 39.16s.
+- Seven-file covering selection: **426 passed, 2 skipped, 26 failed**, 75.11s.
+  This is not all-green. All 26 reproduce with identical assertions on immutable
+  BASE `50a5700422`: 26 failed, 1 warning, 4.95s. Twenty-two are core-owner tests
+  with stale kwargs/parent-process assumptions or global path tripwires reached
+  by helper startup; four compaction/admission cases return `vacuum_failed`.
+  The import-verified BASE archive is preserved at
+  `/private/tmp/task9-base-control.wN9FIV`. They remain qualification gaps.
+- Final implementation smoke: 12 passed, 1 warning, 40.96s. Independent root
+  committed smoke: 8 passed, 1 warning, 40.54s, covering all original failures
+  and critical real privacy/cleanup/backup behavior.
+- Fresh unchanged startup guards: 3 passed, 4 warnings, 12.70s. Counts remain
+  625/660 at import, 963/972 at UI readiness, 499/500 on preload;
+  364325/378740 total LOC and 110163/123319 largest-route LOC.
+- Current and BASE each have the same 58 Ruff diagnostics and one inherited
+  formatter-dirty console file; no introduced diagnostics. Whitespace checks pass.
+  Aggregate lint/format are not green. Warnings are the inherited Requests
+  version mismatch and intentional startup-headroom notices.
+
+These are separate scoped runs, not a summed whole-suite result. Independent
+task review approves spec compliance and quality with no Critical/Important
+finding; the two Minors are the documented inherited warning and static debt,
+not permission for shared-dependency repair or broad formatting. Exact commands,
+RED/GREEN, BASE comparison and root
+checks are preserved in this plan's `task-9-report.md` and
+`task-9-root-verification.md`. No broadening into the 26 baseline failures was
+performed.
+
+The host diagnosis completed independently of Chatbook. An isolated stdlib
+spawn-lock allocation failed with errno 28 both inside and outside the sandbox.
+The exposed named-semaphore maximum is 10000; the observed 48 open handles do not
+measure cached names or identify which process created the exhausted capacity.
+Disk space was low but still had about 21 GiB available. No processes, semaphore
+names, kernel limits, dependencies or user files were changed. Exact commands,
+primary-source interpretation and attribution limits are in
+`Docs/superpowers/reviews/2026-09-08-semaphore-allocation-diagnosis.md`.
+
+The eleven spawned tests remain unqualified. Resume them only after the isolated
+allocation control passes on a clean runner or after a user-coordinated host
+restart. No restart or cleanup is authorized here. Platform/optional coverage
+and final affected-selection/benchmark evidence remain outstanding; V2 stays
+disabled and TASK-31942 stays In Progress.
+
+Task9 and the read-only diagnosis close only the separately approved scope.
+TASK-31942 AC8 (three inventory checks) and AC9 (host diagnosis without resource
+mutation) are checked; the original seven final ACs remain unchecked. The 26
+baseline failures, eleven host-blocked cases, platform/optional qualification and
+final affected-selection/benchmark remain open. No full suite, cleanup, reboot,
+dependency change, PR action or V2 admission was performed by this continuation.

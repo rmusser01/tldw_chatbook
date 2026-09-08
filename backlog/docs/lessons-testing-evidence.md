@@ -11972,6 +11972,18 @@ remained required rather than calling the local selection green.
 Rule: identify the failing allocation and compare the unchanged baseline before
 interpreting an OS resource message. Retain environmental qualifications; do not
 delete unrelated files, weaken gates or infer resource ownership from errno alone.
+
+**Follow-up, TASK-31942, 2026-09-08.** One isolated stdlib spawn-lock allocation
+failed errno 28 both inside and outside the sandbox; the host exposed a 10,000-name
+semaphore limit and 21 GiB free disk. A read-only handle census found only 48 visible
+POSIX semaphore handles, and the inspected long-running orphaned Python processes
+had none visible. Kernel name-cache capacity and process open-handle counts are
+different evidence: this did not identify the creator of exhausted capacity or
+justify terminating old processes. Preserve that attribution limit and use a
+clean qualification host or a coordinated restart, not arbitrary name deletion.
+Exact commands and source references are in
+`Docs/superpowers/reviews/2026-09-08-semaphore-allocation-diagnosis.md`.
+
 ## A "dead key" report can be an invisible open-then-undo toggle
 
 **task-31820 release UAT, 2026-09-05.** A live walkthrough reported Escape
