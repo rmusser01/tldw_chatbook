@@ -94,6 +94,21 @@ but names both items until the new detail settles. Late or failed loads cannot
 replace a newer selection. Conversations retains its existing paged
 list-and-preview layout.
 
+**The Reader tracks the visible set.** When the item open in the Reader
+leaves the list — a filter that matches nothing, or deleting the loaded item
+(from the viewer or as the sole item in a bulk delete) — the Reader stops
+painting it and falls back to "Select a media item to read it here." rather
+than showing a now-absent item. A filter that still has matches moves the
+Reader to its first result instead. Undoing a delete re-adds the row, which
+opens normally again.
+
+*Verified against fix/media-crit7-readerdesync — 2026-09-08 (task-32043:
+app-test pins at 170x48 — opening an item then applying a 0-result filter, and
+bulk-deleting the open item, both leave the Reader on its no-selection
+placeholder; the crit6 empty-reader widening, three-pane ladder, scroll-
+restore and bulk-delete Undo pins stay green. Confirmed in tests, not
+re-verified live.)*
+
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
 see what is worth generating without opening anything (`document · 5m ·

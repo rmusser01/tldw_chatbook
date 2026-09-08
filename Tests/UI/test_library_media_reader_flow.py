@@ -884,6 +884,78 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
 
 
 @pytest.mark.asyncio
+async def test_zero_result_filter_clears_the_reader_it_was_painting():
+    """task-32043 Pin A: a 0-result filter stops the Reader painting the open item.
+
+    Before this, a filter that matched nothing emptied ``selected_media_id``
+    but never touched the Reader session, so the Reader kept painting the
+    previously loaded document beside an empty Items list.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0_id = await _load_row_0(screen, service, pilot)
+        assert screen._media_state.reader_session.loaded_id == row_0_id
+
+        media_filter = screen.query_one("#library-media-filter", Input)
+        media_filter.value = "no-media-matches-this-query-xyzzy"
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_scope is not None
+                and screen._library_media_browse_controller.applied_scope.query
+                == "no-media-matches-this-query-xyzzy"
+                and not screen._library_media_browse_controller.loading
+            ),
+            message="Zero-result filter did not apply.",
+        )
+        assert len(screen._library_media_browse_controller.retained_items) == 0
+
+        # The Reader no longer paints the now-absent item.
+        assert screen._media_state.reader_session.loaded_id is None
+        assert screen._media_state.reader_session.selected_id is None
+        assert screen._media_state.view == "list"
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_bulk_deleting_the_open_reader_item_clears_the_reader():
+    """task-32043 Pin B: bulk-deleting the loaded item stops the Reader painting it.
+
+    The single-item viewer delete already reconciled the Reader, but the bulk
+    path never touched the Reader session, so the just-trashed item kept
+    painting beside the Items list that had already dropped its row.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0_id = await _load_row_0(screen, service, pilot)
+        assert screen._media_state.reader_session.loaded_id == row_0_id
+
+        screen._media_state.bulk_delete_in_flight = True
+        screen._begin_library_media_mutation()
+        await LibraryScreen._delete_library_media_selection(screen, (row_0_id,))
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.delete_receipt_ids == (row_0_id,),
+            message="Bulk delete did not settle its receipt.",
+        )
+
+        # The Reader stops painting the deleted item; the Undo receipt survives.
+        assert screen._media_state.reader_session.loaded_id is None
+        assert screen._media_state.reader_session.selected_id is None
+        assert screen._media_state.view == "list"
+        assert screen._media_state.delete_receipt_ids == (row_0_id,)
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
 async def test_entering_select_mode_cancels_pending_single_item_settlement():
     app, service = _flow_app()
     host = LibraryProductionCSSHarness(app)
