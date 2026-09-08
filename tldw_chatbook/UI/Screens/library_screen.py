@@ -9263,6 +9263,29 @@ class LibraryScreen(BaseAppScreen):
                     event.stop()
                     event.prevent_default()
                 return
+            # task-32046: on any list canvas that owns its own filter input,
+            # `/` focuses THAT filter -- the footer's "/ focus search" then
+            # lands where the user is looking, not on the rail's global
+            # search two panes away (the lead critique-#7 P1). Mirrors the
+            # Conversations branch above and the notes action below; Notes
+            # keeps its own check_action-gated path (it adds scroll-visible
+            # and a navigator-region gate). A lookup miss -- or an absent
+            # widget, e.g. the Media viewer sub-view where no list filter is
+            # mounted -- falls through to the rail-search grab, the prior
+            # behaviour.
+            canvas_filter = {
+                LIBRARY_ROW_BROWSE_MEDIA: "#library-media-filter",
+                LIBRARY_ROW_BROWSE_PROMPTS: "#library-prompts-filter",
+            }.get(self._library_selected_row_id)
+            if canvas_filter is not None:
+                try:
+                    self.query_one(canvas_filter, Input).focus()
+                except (NoMatches, QueryError):
+                    pass
+                else:
+                    event.stop()
+                    event.prevent_default()
+                    return
             # task-3315: this screen-wide rail-search grab predates the
             # notes-adaptive "/" binding (library_notes_focus_filter, PR
             # #1439) and runs BEFORE bindings dispatch, so the notes-scoped
