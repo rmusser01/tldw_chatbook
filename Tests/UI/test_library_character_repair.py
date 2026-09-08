@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_library_shell import LibraryHarness
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterRepairCandidate,
@@ -156,7 +156,7 @@ async def test_repair_continuation_reaches_every_candidate_and_restarts_after_mu
         )
         # The production Library provides the active source revision as well.
         controller._source_revision = db.get_character_conversation_search_revision
-        app = App()
+        app = ConsolidatedCSSApp()
         async with app.run_test(size=size) as pilot:
             dialog = LibraryCharacterRepairDialog(controller, context)
             await app.push_screen(dialog)
@@ -307,7 +307,7 @@ async def test_candidate_change_revokes_armed_repair_in_real_dialog(
         )
     )
     controller, *_ = _controller(service)
-    app = App()
+    app = ConsolidatedCSSApp()
     async with app.run_test() as pilot:
         await app.push_screen(LibraryCharacterRepairDialog(controller, CONTEXT))
         await app.workers.wait_for_complete()
@@ -356,7 +356,7 @@ async def test_real_textual_pilot_shows_explicit_repair_and_stale_refresh(
     controller, *_ = _controller(
         _Service((candidate,), CharacterRepairResult.STALE_VERSION)
     )
-    app = App()
+    app = ConsolidatedCSSApp()
     async with app.run_test(size=size) as pilot:
         await app.push_screen(LibraryCharacterRepairDialog(controller, CONTEXT))
         await pilot.pause()
@@ -493,7 +493,7 @@ async def test_delayed_cas_disables_cancel_and_unmount_blocks_ui_side_effects() 
             return CharacterRepairResult.APPLIED
 
     controller, invalidations, returns, _ = _controller(_DelayedService((candidate,)))
-    app = App()
+    app = ConsolidatedCSSApp()
     async with app.run_test(size=(120, 50)) as pilot:
         await app.push_screen(LibraryCharacterRepairDialog(controller, CONTEXT))
         await pilot.pause()
@@ -524,7 +524,7 @@ async def test_cas_exception_restores_retry_controls() -> None:
             raise RuntimeError("database unavailable")
 
     controller, *_ = _controller(_RaisingService((candidate,)))
-    app = App()
+    app = ConsolidatedCSSApp()
     async with app.run_test(size=(120, 50)) as pilot:
         await app.push_screen(LibraryCharacterRepairDialog(controller, CONTEXT))
         await pilot.pause()

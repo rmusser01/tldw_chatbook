@@ -2265,6 +2265,109 @@
     }
 
 
+/* ===== WIDGET: ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py) ===== */
+
+
+
+    ConsoleAppearancePickerModal #console-appearance-picker-modal {
+        width: 64;
+        max-width: 100%;
+        height: 29;
+        max-height: 100%;
+        border: tall $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-filter {
+        width: 100%;
+        height: 3;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-preview {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-emoji {
+        width: 100%;
+        height: 1fr;
+        min-height: 6;
+        background: $surface-darken-1;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-colors {
+        /* task-31209: a scrollable strip -- the 22-swatch palette (plus
+           "none") no longer fits one modal row, and shrinking swatches to
+           two cells left no content width under a selection border. */
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-hex {
+        width: 1fr;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleAppearancePickerModal .console-appearance-swatch {
+        width: 3;
+        min-width: 3;
+        max-width: 3;
+        height: 3;
+        min-height: 3;
+        margin: 0;
+        padding: 0;
+        border: none;
+        text-align: center;
+        content-align: center middle;
+    }
+
+    ConsoleAppearancePickerModal .console-appearance-swatch-selected {
+        /* Background highlight, not a border: the 2-cell swatch has no room
+           for a 2-cell border (zero content width crashed cell chopping). */
+        background: $accent 25%;
+        text-style: bold;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-swatch-none {
+        width: 5;
+        min-width: 5;
+        max-width: 5;
+    }
+
+    ConsoleAppearancePickerModal .console-appearance-emoji-selected {
+        background: $accent 25%;
+        text-style: bold;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-actions {
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-actions Button.console-appearance-action {
+        width: 1fr;
+        height: 3;
+        border: none;
+        margin: 0 1 0 0;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-apply {
+        background: $primary;
+        color: $text;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-clear,
+    ConsoleAppearancePickerModal #console-appearance-picker-cancel {
+        background: $surface;
+        color: $text;
+    }
+
+
 /* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
 
 
