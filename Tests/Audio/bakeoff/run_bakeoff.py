@@ -377,6 +377,109 @@ def _fmt(value, digits=3) -> str:
     return f"{value:.{digits}f}"
 
 
+#: spec §7's go/no-go, as (name, comparison) pairs. All must hold for the
+#: chosen embedder before `AUTO_ORDER` may put ONNX first.
+LATENCY_CEILING_MS = 150.0      # M-series; the runner's own ceiling is 300 ms
+RTF_CEILING = 0.15
+DER_SLACK = 0.02
+PURITY_SLACK = 0.03
+SEPARATION_SLACK = 0.05
+
+
+def _cell_summary(cell: dict) -> dict:
+    """The per-cell aggregates the gate table compares."""
+    rows = [r for r in cell["rows"] if "error" not in r]
+    latencies = [v for r in rows for v in r.get("latency_ms", [])]
+    separations = [
+        r["separation"]["separation"] for r in rows
+        if isinstance(r.get("separation"), dict) and isinstance(r["separation"].get("separation"), (int, float))
+    ]
+    cluster_errors = [
+        abs(r["clusters"] - r["ref_speakers"]) for r in rows
+        if isinstance(r.get("clusters"), int) and isinstance(r.get("ref_speakers"), int)
+    ]
+    return {
+        "der": _aggregate(rows, "der"),
+        # How far the live pass's cluster count sits from the reference's
+        # speaker count: purity saturates at 1.0 well before the clusterer
+        # stops over-splitting, so it is the tie-break, not decoration.
+        "cluster_error": statistics.mean(cluster_errors) if cluster_errors else None,
+        "rtf": _aggregate(rows, "rtf"),
+        "purity": _aggregate(rows, "purity"),
+        "coverage": _aggregate(rows, "coverage"),
+        "latency_median_ms": statistics.median(latencies) if latencies else None,
+        "latency_p95_ms": statistics.quantiles(latencies, n=20)[18] if len(latencies) >= 20 else None,
+        "separation": statistics.mean(separations) if separations else None,
+        "peak_rss_mb": cell.get("peak_rss_mb"),
+        "cluster_threshold": cell["spec"].get("cluster_threshold"),
+        "live_threshold": cell["spec"].get("live_threshold"),
+    }
+
+
+def _best_cells(results: dict) -> dict:
+    """`{(engine, embedder): {"stop": summary, "live": summary}}`.
+
+    "Best" is the lowest mean DER over the cluster-threshold sweep and the
+    highest mean live purity over the live-threshold sweep -- the two knobs
+    the harness sweeps independently.
+    """
+    best: dict[tuple[str, str], dict] = {}
+    for cell in results["cells"]:
+        spec = cell["spec"]
+        if spec.get("segmentation", "float") != "float" or spec.get("via", "worker") != "worker":
+            continue
+        key = (spec["engine"], spec["embedder"])
+        summary = _cell_summary(cell)
+        slot = best.setdefault(key, {})
+        if spec["kind"] == "stop" and summary["der"] is not None:
+            if slot.get("stop") is None or summary["der"] < slot["stop"]["der"]:
+                slot["stop"] = summary
+        if spec["kind"] == "live" and summary["purity"] is not None:
+            current = slot.get("live")
+            better = current is None or summary["purity"] > current["purity"] or (
+                summary["purity"] == current["purity"]
+                and (summary["cluster_error"] or 0.0) < (current["cluster_error"] or 0.0)
+            )
+            if better:
+                slot["live"] = summary
+    return best
+
+
+def _gate_rows(results: dict) -> list[list[str]]:
+    """One row per ONNX embedder: each spec §7 gate, PASS/FAIL against ECAPA."""
+    best = _best_cells(results)
+    baseline = best.get(("speechbrain", ECAPA), {})
+    base_stop, base_live = baseline.get("stop"), baseline.get("live")
+    rows: list[list[str]] = []
+    for (engine, embedder), slot in sorted(best.items()):
+        if engine != "onnx":
+            continue
+        stop, live = slot.get("stop"), slot.get("live")
+
+        def verdict(value, limit, better_is_lower=True):
+            if value is None or limit is None:
+                return "n/a"
+            return "PASS" if (value <= limit if better_is_lower else value >= limit) else "FAIL"
+
+        der_limit = None if base_stop is None or base_stop["der"] is None else base_stop["der"] + DER_SLACK
+        purity_floor = None if base_live is None or base_live["purity"] is None else base_live["purity"] - PURITY_SLACK
+        sep_floor = (
+            None if base_stop is None or base_stop["separation"] is None
+            else base_stop["separation"] - SEPARATION_SLACK
+        )
+        rows.append([
+            embedder,
+            f"{_fmt(stop and stop['der'])} ({verdict(stop and stop['der'], der_limit)})",
+            f"{_fmt(live and live['purity'])} ({verdict(live and live['purity'], purity_floor, False)})",
+            f"{_fmt(stop and stop['rtf'])} ({verdict(stop and stop['rtf'], RTF_CEILING)})",
+            f"{_fmt(live and live['latency_median_ms'], 1)} ms "
+            f"({verdict(live and live['latency_median_ms'], LATENCY_CEILING_MS)})",
+            f"{_fmt(stop and stop['separation'])} ({verdict(stop and stop['separation'], sep_floor, False)})",
+            f"cluster {_fmt(stop and stop['cluster_threshold'], 2)} / live {_fmt(live and live['live_threshold'], 2)}",
+        ])
+    return rows
+
+
 def _report(results: dict) -> str:
     lines: list[str] = []
     add = lines.append
@@ -400,6 +503,28 @@ def _report(results: dict) -> str:
         add(f"| {name} | `{digest}` | {size} |")
     add("")
 
+    gate_rows = _gate_rows(results)
+    if gate_rows:
+        best = _best_cells(results)
+        base = best.get(("speechbrain", ECAPA), {})
+        add("## Go/no-go (spec §7) -- best cell per embedder vs the ECAPA baseline")
+        add("")
+        add(f"Baseline (SpeechBrain/ECAPA): DER {_fmt(base.get('stop', {}).get('der'))}, "
+            f"purity {_fmt(base.get('live', {}).get('purity'))}, "
+            f"RTF {_fmt(base.get('stop', {}).get('rtf'))}, "
+            f"latency {_fmt(base.get('live', {}).get('latency_median_ms'), 1)} ms, "
+            f"separation {_fmt(base.get('stop', {}).get('separation'))}.")
+        add("")
+        add(f"Gates: DER within {DER_SLACK} absolute, purity within {PURITY_SLACK}, "
+            f"RTF <= {RTF_CEILING}, embed latency <= {LATENCY_CEILING_MS:.0f} ms (M-series) / 300 ms (runner), "
+            f"separation within {SEPARATION_SLACK}.")
+        add("")
+        add("| embedder | DER | live purity | RTF | embed latency | separation | best thresholds |")
+        add("| --- | --- | --- | --- | --- | --- | --- |")
+        for row in gate_rows:
+            add("| " + " | ".join(row) + " |")
+        add("")
+
     add("## Stop-pass DER, RTF and peak worker RSS")
     add("")
     add("| engine | embedder | segmentation | via | cluster threshold | DER | RTF | peak RSS (MB) | files |")
@@ -417,8 +542,9 @@ def _report(results: dict) -> str:
 
     add("## Live purity / coverage and per-window embed latency")
     add("")
-    add("| engine | embedder | live threshold | purity | coverage | latency median (ms) | p95 (ms) | windows |")
-    add("| --- | --- | --- | --- | --- | --- | --- | --- |")
+    add("| engine | embedder | live threshold | purity | coverage | clusters vs speakers | "
+        "latency median (ms) | p95 (ms) | windows |")
+    add("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for cell in results["cells"]:
         spec = cell["spec"]
         if spec["kind"] != "live":
@@ -429,6 +555,7 @@ def _report(results: dict) -> str:
         p95 = statistics.quantiles(latencies, n=20)[18] if len(latencies) >= 20 else None
         add(f"| {spec['engine']} | {spec['embedder']} | {_fmt(spec.get('live_threshold'), 2)} | "
             f"{_fmt(_aggregate(rows, 'purity'))} | {_fmt(_aggregate(rows, 'coverage'))} | "
+            f"+{_fmt(_cell_summary(cell)['cluster_error'], 2)} | "
             f"{_fmt(median, 1)} | {_fmt(p95, 1)} | {len(latencies)} |")
     add("")
 
