@@ -1266,6 +1266,15 @@ the app or modifying the shared environment. Preserve these setup failures and
 label source-path diagnostics; do not silently rewrite nested gates or install
 into a shared environment as part of read-only qualification.
 
+After explicit user approval, this incident was repaired by building the same
+local package version as a non-editable wheel from an archived commit and
+installing with `--no-index --no-deps`. The wheel and old metadata were retained;
+261 distribution names/versions stayed unchanged, and an unrelated-cwd isolated
+import resolved from the venv. The five exact Canvas nodes then passed without
+an override. The previously blocked startup guard exposed a real 979/972 budget
+failure (973/972 on the pre-correction archive): repairing setup enables the
+measurement, not an assumption that the measured behavior will pass.
+
 ## A DB append is invisible to a live Console *and* to the next mount — the STORE is what the transcript and the payload are built from (task-15860, Task 0 probe P1)
 
 **What happened.** Two of the three designs for headless wake rested on
