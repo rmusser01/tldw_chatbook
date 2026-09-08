@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Union, Any, Tuple, Set
 from loguru import logger
 
 # Local Imports
+from ..Backup_Recovery import dictionary_file_participants as _dictionary_files
 from ..Utils.input_validation import validate_text_input
 from ..Utils.path_validation import validate_path
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
@@ -278,6 +279,7 @@ class ChatDictionary:
         )
 
 
+@_dictionary_files.parser
 def parse_user_dict_markdown_file(
     file_path: str, base_directory: Optional[str] = None
 ) -> Dict[str, str]:
@@ -329,7 +331,7 @@ def parse_user_dict_markdown_file(
     termination_pattern = re.compile(r"^\s*---@@@---\s*$")
 
     try:
-        with open(validated_path, "r", encoding="utf-8") as file:
+        with _dictionary_files.opened(validated_path, "r", encoding="utf-8") as file:
             for line_number, line_content_original in enumerate(file, 1):
                 line_for_logic = (
                     line_content_original.strip()
@@ -1742,14 +1744,10 @@ def delete_chat_dictionary(
 
 def get_chat_dicts_folder() -> Path:
     """Get the chat dictionaries folder path, creating it if needed."""
-    from ..Utils.paths import get_user_data_dir
-
-    chat_dicts_folder = get_user_data_dir() / "chat_dicts"
-    chat_dicts_folder.mkdir(parents=True, exist_ok=True)
-
-    return chat_dicts_folder
+    return _dictionary_files.folder()
 
 
+@_dictionary_files.importing
 def import_dictionary_from_file(
     db: CharactersRAGDB,
     file_path: str,
@@ -1787,7 +1785,7 @@ def import_dictionary_from_file(
             name = Path(file_path).stem
 
         # Read the raw content for storage
-        with open(file_path, "r", encoding="utf-8") as f:
+        with _dictionary_files.opened(file_path, "r", encoding="utf-8") as f:
             raw_content = f.read()
 
         # Copy file to chat_dicts folder if not already there
@@ -1795,9 +1793,7 @@ def import_dictionary_from_file(
         dest_path = chat_dicts_folder / Path(file_path).name
 
         if Path(file_path).resolve() != dest_path.resolve():
-            import shutil
-
-            shutil.copy2(file_path, dest_path)
+            _dictionary_files.copy_file(file_path, dest_path)
             file_path = str(dest_path)
 
         # Save to database
@@ -1815,6 +1811,7 @@ def import_dictionary_from_file(
         return None
 
 
+@_dictionary_files.exporting
 def export_dictionary_to_file(
     db: CharactersRAGDB, dict_id: int, export_path: Optional[str] = None
 ) -> Optional[str]:
@@ -1831,7 +1828,7 @@ def export_dictionary_to_file(
     """
     try:
         # Load dictionary
-        dict_data = load_chat_dictionary(db, dict_id)
+        dict_data = _dictionary_files.export_record(db, dict_id)
         if not dict_data:
             logger.error(f"Dictionary {dict_id} not found")
             return None
@@ -1864,7 +1861,7 @@ def export_dictionary_to_file(
             export_path = str(chat_dicts_folder / f"{safe_name}.md")
 
         # Write file
-        with open(export_path, "w", encoding="utf-8") as f:
+        with _dictionary_files.opened(export_path, "w", encoding="utf-8") as f:
             f.write(content)
 
         logger.info(f"Exported dictionary to {export_path}")
@@ -1875,6 +1872,7 @@ def export_dictionary_to_file(
         return None
 
 
+@_dictionary_files.listing
 def list_available_dictionary_files() -> List[Dict[str, str]]:
     """
     List all dictionary files in the chat_dicts folder.

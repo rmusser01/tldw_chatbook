@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 23:53'
-updated_date: '2026-09-08 15:58'
+updated_date: '2026-09-08 17:38'
 labels:
   - backup-recovery
 dependencies:
@@ -43,6 +43,17 @@ Deliver the approved local recovery behavior for this independently reviewable s
 ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: direct implementation of approved persistence, admission and recovery lifecycle contract.
+
+### Phase10 implementation plan (before production)
+
+1. Reproduce real Persona/dictionary/citation core-file and cached-state pause gaps using actual SQLite/files and independent native observation.
+2. Obtain controller ruling on exact installed source binding and simultaneous existing core/raw scopes before implementing the new compound interface.
+3. Bind actual canonical app-created source relationships, preselect every core/file/temp member before effects, preserve ordinary custom/no-file/memory behavior and source-thread native borrower retirement.
+4. Cover source reads/mutations/cache rollback/publication and concrete dictionary threaded scope dispatch through actual completion, including repeated cancellation.
+5. Run targeted behavioral/domain/shared/census and scoped static checks, self-review, update exact source handoffs and evidence, and commit only this phase. Preserve all unchecked ACs and unavailable runtime/startup/Complete coverage.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct source-lifetime implementation; any approved compound interface decision will amend ADR126. ADR024 citation provenance and ADR037 persona separation remain unchanged.
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -487,3 +498,38 @@ Configuration persistence now binds the exact loaded config module and fixed cur
 Behavioral config/native/interprocess and affected shared checks cover normal, paused and uncertain outcomes. The covering run had 228 passed and one stale config-module fixture failure; the corrected actual theme/app fixture plus private-path/runtime-store subset passed83. The isolated source fixture imports a fresh actual config module before selecting app consumers; it never clears registries. The original serialization association RED is supplemental introspection; actual pause-during-serialization and two-process write-lock tests provide behavioral evidence. Final affected config/native/persistence rerun passed37; retained actual startup+pending composition passed1 after the same narrow fixture correction. Scoped Ruff/new-module format/diff checks passed. Exact commands are in the phase9 report.
 
 ADR126 applies with ADR004 restart, ADR012 credentials and ADR033 commit models unchanged. Task10 remains In Progress and all three ACs unchecked. Remaining cohorts and actual Settings/app/headless gates, dirty/error drain, startup release/reacquire, plus independent whole-task review remain required. Inherited phase2 combined-order app/RAG and phase8 TTS profile-census debt are unchanged.
+
+### Phase10 implementation notes — concrete chat source continuation
+
+Implemented exact configured Persona/dictionary/citation core-sidecar pairs and
+actual Chat_Dictionary_Lib parser/import/export/listing lifetimes. Existing scopes
+are preadmitted and rechecked before simultaneous same-PID/Thread/Task discovery;
+no generic callback/owner token or post-pause widening. Seven Persona cache groups,
+dictionary history and compatibility citation cache preserve prior usable state on
+failure; possible mixed effects and known native uncertainty retain sticky drain
+blockers without claiming durable rollback or restart repair. Citation companion
+binding preserves actual canonical generation fencing and ordinary concurrency.
+Library IO fixes external input/output/temp identities without widening inventory,
+materializes default exports before writes, preserves copy metadata using retained
+FDs (including Darwin libc.fchflags), and keeps unsupported operations unqualified.
+The real dictionary scope executor waits for actual completion under cancellation
+and closes only a newly opened worker-native connection on its source thread.
+
+ADR126 is amended for approved concrete compound semantics; ADR024/037 and schema
+formats remain unchanged. Behavioral RED/GREEN includes real committed-row versus
+history pause, cached-state refusal, optimistic no-change conflicts, actual citation
+read, running/queued/repeated/executor cancellation, native close before/after,
+external metadata/preflight/identity, missing-input/listing behavior and late worker
+outcome/sidecar replacement defects found during self-review. Targeted covering
+cohort231 and shared raw/native/startup/census84 passed; later changed-boundary
+checks and exact logs are in the phase10 report (counts overlap, not additive).
+Fixture corrections use only fresh actual config modules, actual descriptor fault
+selection and isolated child observer import paths; no registry clearing or user IO.
+
+Task10 remains In Progress with all three ACs unchecked. Actual app/headless safe
+points, remaining UI Textual jobs/cohorts, startup release/reacquire, responder and
+Complete qualification remain required. Sticky mixed-source recovery needs explicit
+validated reconciliation; none is invented. Existing phase2 app callbacks, phase8
+TTS literals, Task13 Media historical fixture and Task26 diagnostics remain pending.
+Controller performs independent whole-Task10 review. Exact APIs, source-only native
+versus startup evidence, commands and limitations are in task-10-phase10-report.md.

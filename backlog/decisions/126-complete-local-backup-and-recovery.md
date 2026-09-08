@@ -260,3 +260,54 @@ safe extraction remain available.
 - [ADR-069](069-console-project-instruction-local-state-and-preflight.md): imported/local context state does not grant tool authority.
 - [ADR-051](051-private-tts-clone-reference-assets.md): private voice reference assets and repository-owned validation.
 - [age v1 format](https://age-encryption.org/v1) and [official implementation](https://github.com/FiloSottile/age): standard encrypted-container boundary selected here.
+
+## Concrete chat source compound lifetimes (Task10 phase10)
+
+An admitted dictionary mutation can commit its core row before a pause refuses its
+history publication. Independent raw and SQLite scopes therefore do not establish
+a coherent source boundary. The actual installed Persona/dictionary/citation source
+pairs may preadmit their existing core and raw scopes and expose both discoveries
+on the same PID, Thread and Task only after exact source/config/profile/DB/sidecar
+identity and both gates are rechecked. Acquisition races unwind before body effects.
+No transferable token, owner-string flag, arbitrary callback or post-pause member
+addition is introduced. Factories bind the actual configured services before their
+constructor loads; custom/no-file/memory/subclass sources remain ordinary and
+unqualified. Existing native borrowers retain their actual owner-thread lifetime.
+
+Dictionary history RLock and the narrow Persona/compatibility-cache path lock cover
+body, result/cache restoration and native retirement. Canonical citation migration
+retains its existing SQL claim/generation fencing and concurrent behavior: a new
+shared citation lock deadlocked the real stale-generation test and was rejected.
+That SQL fencing does not serialize unrelated raw cache writes. Exact service and
+migration companions are preselected together without changing ADR-024 provenance,
+ADR-037 persona identity, schema or migration/replay policy.
+
+A failed mixed publication restores usable prior cache and retains sticky process
+failure evidence; it does not roll back a committed DB. Native total_changes is
+conservative evidence of possible effects (including rolled-back statements), not
+proof of durable commit. Benign no-change optimistic conflicts remain usable.
+Unrelated later reads/successes never clear mixed uncertainty. No new journal or
+automatic reconciliation is added; restart is not proof of repair, and subsequent
+source/archive validation must assess actual durable consistency.
+
+The exact Chat_Dictionary_Lib parser/import/export/listing routes may finish fixed
+external file IO across pause only through actual qualified ordinary native leases
+and checked lexical/resolved/parent identities. Default export reads/materializes
+its record under retained core admission before fixing its output name; no write
+precedes complete member admission. External paths never enlarge capture ownership
+and uncooperative external editors are outside the maintenance guarantee. Ordinary
+unsupported platforms stay explicitly unqualified. No None lease grants paired
+pause authority. Copy metadata uses retained descriptors; Darwin's missing Python
+fchflags binding is filled narrowly by libc.fchflags(int, uint32_t), with explicit
+ctypes signatures/use_errno and checked results. Only EOPNOTSUPP/ENOTSUP is ignored,
+as in shutil.copystat; missing descriptor support cannot silently qualify fallback
+path IO. Owned temporary/native uncertainty remains retained on failed retirement.
+
+The concrete dictionary scope executor job reserves pending work before dispatch,
+uses actual worker-thread admission, cancels queued entry atomically, and waits for
+actual completion under running/repeated or independent executor cancellation.
+Only a newly opened native worker connection is closed on its source thread;
+preexisting worker borrowers remain live. Startup plus pending/result bookkeeping
+composition remains distinct from source-only native retirement evidence. Full
+application safe points, startup release/reacquire, responder and Complete product
+qualification remain unavailable until the rest of Task10 is implemented/reviewed.

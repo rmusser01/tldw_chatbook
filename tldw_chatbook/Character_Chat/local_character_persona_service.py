@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
 from ..Chat.chat_conversation_service import ChatConversationService
 from .world_book_manager import WorldBookManager
 
@@ -46,11 +47,13 @@ class LocalCharacterPersonaService:
         self._character_memories: list[dict[str, Any]] = []
         self._load_personas()
 
+    @_chat_sources.guarded
     def _require_db(self) -> Any:
         if self.db is None:
             raise ValueError("Local character/persona backend is unavailable.")
         return self.db
 
+    @_chat_sources.guarded
     def _require_world_book_manager(self) -> WorldBookManager:
         if self.world_books is None:
             self.world_books = WorldBookManager(self._require_db())
@@ -95,11 +98,12 @@ class LocalCharacterPersonaService:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    @_chat_sources.guarded
     def _load_personas(self) -> None:
         if self.persona_store_path is None or not self.persona_store_path.exists():
             return
         try:
-            payload = json.loads(self.persona_store_path.read_text(encoding="utf-8"))
+            payload = json.loads(_chat_sources.read_text(self))
         except (OSError, json.JSONDecodeError):
             self._persona_profiles = []
             return
@@ -168,14 +172,12 @@ class LocalCharacterPersonaService:
             else []
         )
 
+    @_chat_sources.guarded
     def _persist_personas(self) -> None:
         if self.persona_store_path is None:
             return
-        self.persona_store_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.persona_store_path.with_suffix(
-            self.persona_store_path.suffix + ".tmp"
-        )
-        temp_path.write_text(
+        _chat_sources.write_text(
+            self,
             json.dumps(
                 {
                     "profiles": self._persona_profiles,
@@ -185,13 +187,9 @@ class LocalCharacterPersonaService:
                     "chat_greeting_selections": self._chat_greeting_selections,
                     "chat_presets": self._chat_presets,
                     "character_memories": self._character_memories,
-                },
-                indent=2,
-                sort_keys=True,
+                }, indent=2, sort_keys=True,
             ),
-            encoding="utf-8",
         )
-        temp_path.replace(self.persona_store_path)
 
     @staticmethod
     def _persona_profile_view(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -204,6 +202,7 @@ class LocalCharacterPersonaService:
         normalized["version"] = int(normalized.get("version", 1) or 1)
         return normalized
 
+    @_chat_sources.guarded
     def _find_persona_profile(
         self, persona_id: str, *, include_deleted: bool = False
     ) -> dict[str, Any]:
@@ -238,6 +237,7 @@ class LocalCharacterPersonaService:
         normalized["version"] = int(normalized.get("version", 1) or 1)
         return normalized
 
+    @_chat_sources.guarded
     def _find_persona_exemplar(
         self,
         persona_id: str,
@@ -268,6 +268,7 @@ class LocalCharacterPersonaService:
         normalized["deleted"] = bool(normalized.get("deleted", False))
         return normalized
 
+    @_chat_sources.guarded
     def _find_character_exemplar(
         self,
         character_id: int,
@@ -289,6 +290,7 @@ class LocalCharacterPersonaService:
             f"local_character_exemplar_not_found:{character_id}:{exemplar_id}"
         )
 
+    @_chat_sources.guarded
     def _require_character(self, character_id: int) -> None:
         if self.get_character(int(character_id)) is None:
             raise ValueError(f"local_character_not_found:{character_id}")
@@ -316,6 +318,7 @@ class LocalCharacterPersonaService:
         normalized.setdefault("source", "local")
         return normalized
 
+    @_chat_sources.guarded
     def _find_chat_preset(
         self, preset_id: str, *, include_deleted: bool = False
     ) -> dict[str, Any]:
@@ -341,6 +344,7 @@ class LocalCharacterPersonaService:
         )
         return normalized
 
+    @_chat_sources.guarded
     def _find_character_memory(
         self,
         character_id: str,
@@ -360,12 +364,14 @@ class LocalCharacterPersonaService:
             return record
         raise ValueError(f"local_character_memory_not_found:{character_id}:{memory_id}")
 
+    @_chat_sources.guarded
     def _require_chat_session(self, chat_id: str) -> dict[str, Any]:
         session = self.get_character_chat_session(str(chat_id))
         if session is None:
             raise ValueError(f"Local character chat session '{chat_id}' was not found.")
         return session
 
+    @_chat_sources.guarded
     def _character_for_session(
         self, session: Mapping[str, Any]
     ) -> dict[str, Any] | None:
@@ -393,6 +399,7 @@ class LocalCharacterPersonaService:
                 greetings.append(text)
         return greetings
 
+    @_chat_sources.guarded
     def _chat_greeting_items(
         self, chat_id: str
     ) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
@@ -407,18 +414,22 @@ class LocalCharacterPersonaService:
             warning = "Local chat is not attached to a character card."
         return session, greetings, warning
 
+    @_chat_sources.guarded
     def list_characters(self, limit: int = 100, offset: int = 0) -> Any:
         return self._require_db().list_character_cards(limit=limit, offset=offset)
 
+    @_chat_sources.guarded
     def search_characters(self, query: str, limit: int = 10) -> Any:
         return self._require_db().search_character_cards(query, limit=limit)
 
+    @_chat_sources.guarded
     def get_character(self, character_id: int) -> Any:
         record = self._require_db().get_character_card_by_id(int(character_id))
         if record is None:
             raise ValueError(f"Local character '{character_id}' not found")
         return record
 
+    @_chat_sources.guarded
     def create_character(self, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import CharacterCreateRequest
@@ -432,6 +443,7 @@ class LocalCharacterPersonaService:
             raise ValueError("Created local character could not be loaded.")
         return record
 
+    @_chat_sources.guarded
     def update_character(
         self,
         character_id: int,
@@ -460,6 +472,7 @@ class LocalCharacterPersonaService:
             )
         return record
 
+    @_chat_sources.guarded
     def delete_character(
         self, character_id: int, *, expected_version: int
     ) -> dict[str, Any]:
@@ -470,6 +483,7 @@ class LocalCharacterPersonaService:
             raise ValueError(f"Local character '{character_id}' could not be deleted.")
         return {"deleted": True, "id": str(character_id)}
 
+    @_chat_sources.guarded
     def restore_character(
         self, character_id: int, *, expected_version: int
     ) -> dict[str, Any]:
@@ -490,6 +504,7 @@ class LocalCharacterPersonaService:
         payload = _model_payload(request_data, exclude_none=False)
         return {key: value for key, value in payload.items() if value is not None}
 
+    @_chat_sources.guarded
     def list_character_world_books(
         self, *, include_disabled: bool = False, **_: Any
     ) -> dict[str, Any]:
@@ -498,12 +513,14 @@ class LocalCharacterPersonaService:
         )
         return {"world_books": items, "total": len(items)}
 
+    @_chat_sources.guarded
     def get_character_world_book(self, world_book_id: int, **_: Any) -> dict[str, Any]:
         record = self._require_world_book_manager().get_world_book(int(world_book_id))
         if record is None:
             raise ValueError(f"Local character world book '{world_book_id}' not found")
         return record
 
+    @_chat_sources.guarded
     def create_character_world_book(
         self, request_data: Any, **_: Any
     ) -> dict[str, Any]:
@@ -518,6 +535,7 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_world_book(world_book_id)
 
+    @_chat_sources.guarded
     def update_character_world_book(
         self,
         world_book_id: int,
@@ -550,6 +568,7 @@ class LocalCharacterPersonaService:
             )
         return self.get_character_world_book(world_book_id)
 
+    @_chat_sources.guarded
     def delete_character_world_book(
         self,
         world_book_id: int,
@@ -567,6 +586,7 @@ class LocalCharacterPersonaService:
             )
         return {"deleted": True, "id": str(world_book_id)}
 
+    @_chat_sources.guarded
     def _get_character_world_book_entry(self, entry_id: int) -> dict[str, Any] | None:
         query = """
         SELECT id, world_book_id, keys, content, enabled, position, insertion_order,
@@ -595,6 +615,7 @@ class LocalCharacterPersonaService:
             "last_modified": row[12],
         }
 
+    @_chat_sources.guarded
     def list_character_world_book_entries(
         self,
         world_book_id: int,
@@ -608,12 +629,14 @@ class LocalCharacterPersonaService:
         )
         return {"entries": entries, "total": len(entries)}
 
+    @_chat_sources.guarded
     def get_character_world_book_entry(self, entry_id: int, **_: Any) -> dict[str, Any]:
         entry = self._get_character_world_book_entry(int(entry_id))
         if entry is None:
             raise ValueError(f"Local character world book entry '{entry_id}' not found")
         return entry
 
+    @_chat_sources.guarded
     def create_character_world_book_entry(
         self,
         world_book_id: int,
@@ -635,6 +658,7 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_world_book_entry(entry_id)
 
+    @_chat_sources.guarded
     def update_character_world_book_entry(
         self,
         entry_id: int,
@@ -666,6 +690,7 @@ class LocalCharacterPersonaService:
             )
         return self.get_character_world_book_entry(entry_id)
 
+    @_chat_sources.guarded
     def delete_character_world_book_entry(
         self, entry_id: int, **_: Any
     ) -> dict[str, Any]:
@@ -678,6 +703,7 @@ class LocalCharacterPersonaService:
             )
         return {"deleted": True, "id": str(entry_id)}
 
+    @_chat_sources.guarded
     def attach_character_world_book_to_session(
         self,
         chat_id: str,
@@ -704,6 +730,7 @@ class LocalCharacterPersonaService:
             "priority": priority,
         }
 
+    @_chat_sources.guarded
     def detach_character_world_book_from_session(
         self, chat_id: str, world_book_id: int, **_: Any
     ) -> dict[str, Any]:
@@ -716,6 +743,7 @@ class LocalCharacterPersonaService:
             "world_book_id": int(world_book_id),
         }
 
+    @_chat_sources.guarded
     def list_session_world_books(
         self,
         chat_id: str,
@@ -729,11 +757,13 @@ class LocalCharacterPersonaService:
         )
         return {"world_books": items, "total": len(items)}
 
+    @_chat_sources.guarded
     def export_character_world_book(
         self, world_book_id: int, **_: Any
     ) -> dict[str, Any]:
         return self._require_world_book_manager().export_world_book(int(world_book_id))
 
+    @_chat_sources.guarded
     def import_character_world_book(
         self,
         request_data: Any,
@@ -747,6 +777,7 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_world_book(world_book_id)
 
+    @_chat_sources.guarded
     def list_persona_profiles(
         self,
         *,
@@ -766,9 +797,11 @@ class LocalCharacterPersonaService:
         )
         return records[offset : offset + limit]
 
+    @_chat_sources.guarded
     def get_persona_profile(self, persona_id: str) -> dict[str, Any]:
         return self._persona_profile_view(self._find_persona_profile(persona_id))
 
+    @_chat_sources.guarded
     def create_persona_profile(self, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import LocalPersonaProfileCreate
@@ -796,6 +829,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._persona_profile_view(payload)
 
+    @_chat_sources.guarded
     def update_persona_profile(
         self,
         persona_id: str,
@@ -822,6 +856,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._persona_profile_view(record)
 
+    @_chat_sources.guarded
     def delete_persona_profile(
         self,
         persona_id: str,
@@ -836,6 +871,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return {"status": "deleted", "persona_id": persona_id}
 
+    @_chat_sources.guarded
     def restore_persona_profile(
         self, persona_id: str, expected_version: int
     ) -> dict[str, Any]:
@@ -847,6 +883,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._persona_profile_view(record)
 
+    @_chat_sources.guarded
     def list_persona_exemplars(
         self,
         persona_id: str,
@@ -872,12 +909,14 @@ class LocalCharacterPersonaService:
         )
         return records[offset : offset + limit]
 
+    @_chat_sources.guarded
     def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> dict[str, Any]:
         self._find_persona_profile(persona_id)
         return self._persona_exemplar_view(
             self._find_persona_exemplar(persona_id, exemplar_id)
         )
 
+    @_chat_sources.guarded
     def create_persona_exemplar(
         self, persona_id: str, request_data: Any
     ) -> dict[str, Any]:
@@ -914,6 +953,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._persona_exemplar_view(payload)
 
+    @_chat_sources.guarded
     def import_persona_exemplars(
         self, persona_id: str, request_data: Any
     ) -> dict[str, Any]:
@@ -945,6 +985,7 @@ class LocalCharacterPersonaService:
         ]
         return {"persona_id": persona_id, "created": len(items), "items": items}
 
+    @_chat_sources.guarded
     def update_persona_exemplar(
         self, persona_id: str, exemplar_id: str, request_data: Any
     ) -> dict[str, Any]:
@@ -961,6 +1002,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._persona_exemplar_view(record)
 
+    @_chat_sources.guarded
     def review_persona_exemplar(
         self, persona_id: str, exemplar_id: str, request_data: Any
     ) -> dict[str, Any]:
@@ -982,6 +1024,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._persona_exemplar_view(record)
 
+    @_chat_sources.guarded
     def delete_persona_exemplar(
         self, persona_id: str, exemplar_id: str
     ) -> dict[str, Any]:
@@ -997,6 +1040,7 @@ class LocalCharacterPersonaService:
             "exemplar_id": exemplar_id,
         }
 
+    @_chat_sources.guarded
     def search_character_exemplars(
         self, character_id: int, request_data: Any
     ) -> dict[str, Any]:
@@ -1037,6 +1081,7 @@ class LocalCharacterPersonaService:
         page = records[request.offset : request.offset + request.limit]
         return {"items": page, "total": total}
 
+    @_chat_sources.guarded
     def get_character_exemplar(
         self,
         character_id: int,
@@ -1051,6 +1096,7 @@ class LocalCharacterPersonaService:
             )
         )
 
+    @_chat_sources.guarded
     def create_character_exemplar(
         self, character_id: int, request_data: Any
     ) -> dict[str, Any]:
@@ -1079,6 +1125,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._character_exemplar_view(payload)
 
+    @_chat_sources.guarded
     def update_character_exemplar(
         self, character_id: int, exemplar_id: str, request_data: Any
     ) -> dict[str, Any]:
@@ -1099,6 +1146,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._character_exemplar_view(record)
 
+    @_chat_sources.guarded
     def delete_character_exemplar(
         self, character_id: int, exemplar_id: str
     ) -> dict[str, Any]:
@@ -1113,6 +1161,7 @@ class LocalCharacterPersonaService:
             "exemplar_id": exemplar_id,
         }
 
+    @_chat_sources.guarded
     def select_character_exemplars_debug(
         self, character_id: int, request_data: Any
     ) -> dict[str, Any]:
@@ -1152,6 +1201,7 @@ class LocalCharacterPersonaService:
             "scores": [],
         }
 
+    @_chat_sources.guarded
     def create_character_chat_session(
         self, request_data: Any, **_: Any
     ) -> dict[str, Any]:
@@ -1191,6 +1241,7 @@ class LocalCharacterPersonaService:
             )
         return record
 
+    @_chat_sources.guarded
     def list_character_chat_sessions(
         self,
         *,
@@ -1244,6 +1295,7 @@ class LocalCharacterPersonaService:
             "offset": offset,
         }
 
+    @_chat_sources.guarded
     def get_character_chat_session(
         self,
         chat_id: str,
@@ -1263,6 +1315,7 @@ class LocalCharacterPersonaService:
             return None
         return self._session_record(record)
 
+    @_chat_sources.guarded
     def update_character_chat_session(
         self,
         chat_id: str,
@@ -1295,6 +1348,7 @@ class LocalCharacterPersonaService:
             )
         return updated
 
+    @_chat_sources.guarded
     def delete_character_chat_session(
         self,
         chat_id: str,
@@ -1311,6 +1365,7 @@ class LocalCharacterPersonaService:
         )
         return {"status": "deleted", "chat_id": chat_id}
 
+    @_chat_sources.guarded
     def restore_character_chat_session(
         self,
         chat_id: str,
@@ -1334,6 +1389,7 @@ class LocalCharacterPersonaService:
             )
         return restored
 
+    @_chat_sources.guarded
     def list_character_chat_messages(
         self,
         chat_id: str,
@@ -1358,9 +1414,11 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def list_character_messages(self, chat_id: str, **kwargs: Any) -> dict[str, Any]:
         return self.list_character_chat_messages(chat_id, **kwargs)
 
+    @_chat_sources.guarded
     def get_character_chat_message(self, message_id: str, **_: Any) -> dict[str, Any]:
         message = self.conversations.normalize_message_row(
             self._require_db().get_message_by_id(message_id)
@@ -1370,9 +1428,11 @@ class LocalCharacterPersonaService:
         self._require_chat_session(str(message["conversation_id"]))
         return message
 
+    @_chat_sources.guarded
     def get_character_message(self, message_id: str, **kwargs: Any) -> dict[str, Any]:
         return self.get_character_chat_message(message_id, **kwargs)
 
+    @_chat_sources.guarded
     def create_character_chat_message(
         self, chat_id: str, request_data: Any, **_: Any
     ) -> dict[str, Any]:
@@ -1390,11 +1450,13 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_chat_message(str(message_id))
 
+    @_chat_sources.guarded
     def create_character_message(
         self, chat_id: str, request_data: Any, **kwargs: Any
     ) -> dict[str, Any]:
         return self.create_character_chat_message(chat_id, request_data, **kwargs)
 
+    @_chat_sources.guarded
     def update_character_chat_message(
         self,
         message_id: str,
@@ -1429,11 +1491,13 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_chat_message(message_id)
 
+    @_chat_sources.guarded
     def update_character_message(
         self, message_id: str, request_data: Any, **kwargs: Any
     ) -> dict[str, Any]:
         return self.update_character_chat_message(message_id, request_data, **kwargs)
 
+    @_chat_sources.guarded
     def delete_character_chat_message(
         self,
         message_id: str,
@@ -1452,11 +1516,13 @@ class LocalCharacterPersonaService:
         )
         return {"status": "deleted", "message_id": message_id}
 
+    @_chat_sources.guarded
     def delete_character_message(
         self, message_id: str, **kwargs: Any
     ) -> dict[str, Any]:
         return self.delete_character_chat_message(message_id, **kwargs)
 
+    @_chat_sources.guarded
     def search_character_messages(
         self,
         chat_id: str,
@@ -1481,11 +1547,13 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def search_character_chat_messages(
         self, chat_id: str, query: str, **kwargs: Any
     ) -> dict[str, Any]:
         return self.search_character_messages(chat_id, query, **kwargs)
 
+    @_chat_sources.guarded
     def export_chat_history(
         self,
         chat_id: str,
@@ -1523,6 +1591,7 @@ class LocalCharacterPersonaService:
             "messages": messages,
         }
 
+    @_chat_sources.guarded
     def get_chat_settings(self, chat_id: str, **_: Any) -> dict[str, Any]:
         self._require_chat_session(chat_id)
         settings = dict(self._chat_settings.get(str(chat_id), {}))
@@ -1532,6 +1601,7 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def update_chat_settings(
         self, chat_id: str, request_data: Any, **_: Any
     ) -> dict[str, Any]:
@@ -1546,16 +1616,19 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self.get_chat_settings(chat_id)
 
+    @_chat_sources.guarded
     def get_character_chat_settings(
         self, chat_id: str, **kwargs: Any
     ) -> dict[str, Any]:
         return self.get_chat_settings(chat_id, **kwargs)
 
+    @_chat_sources.guarded
     def update_character_chat_settings(
         self, chat_id: str, request_data: Any, **kwargs: Any
     ) -> dict[str, Any]:
         return self.update_chat_settings(chat_id, request_data, **kwargs)
 
+    @_chat_sources.guarded
     def list_character_memories(
         self,
         character_id: str,
@@ -1583,6 +1656,7 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def create_character_memory(
         self, character_id: str, request_data: Any, **_: Any
     ) -> dict[str, Any]:
@@ -1608,6 +1682,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._character_memory_view(record)
 
+    @_chat_sources.guarded
     def update_character_memory(
         self,
         character_id: str,
@@ -1629,6 +1704,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._character_memory_view(record)
 
+    @_chat_sources.guarded
     def archive_character_memory(
         self,
         character_id: str,
@@ -1644,6 +1720,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._character_memory_view(record)
 
+    @_chat_sources.guarded
     def delete_character_memory(
         self, character_id: str, memory_id: str, **_: Any
     ) -> dict[str, Any]:
@@ -1654,6 +1731,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return {"deleted": True}
 
+    @_chat_sources.guarded
     def extract_character_memories(
         self, character_id: str, request_data: Any, **_: Any
     ) -> dict[str, Any]:
@@ -1704,6 +1782,7 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def export_lorebook_diagnostics(
         self, chat_id: str, **kwargs: Any
     ) -> dict[str, Any]:
@@ -1727,6 +1806,7 @@ class LocalCharacterPersonaService:
             },
         }
 
+    @_chat_sources.guarded
     def list_chat_greetings(self, chat_id: str) -> dict[str, Any]:
         session, greetings, warning = self._chat_greeting_items(chat_id)
         current_selection = self._chat_greeting_selections.get(str(chat_id))
@@ -1748,6 +1828,7 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def select_chat_greeting(self, chat_id: str, index: int) -> dict[str, Any]:
         _, greetings, _ = self._chat_greeting_items(chat_id)
         normalized_index = int(index)
@@ -1763,6 +1844,7 @@ class LocalCharacterPersonaService:
             "source": "local",
         }
 
+    @_chat_sources.guarded
     def list_chat_presets(self) -> dict[str, Any]:
         presets = [self._builtin_chat_preset()]
         presets.extend(
@@ -1772,6 +1854,7 @@ class LocalCharacterPersonaService:
         )
         return {"presets": presets, "source": "local"}
 
+    @_chat_sources.guarded
     def create_chat_preset(self, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PresetCreate
@@ -1798,6 +1881,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._chat_preset_view(record)
 
+    @_chat_sources.guarded
     def update_chat_preset(self, preset_id: str, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PresetUpdate
@@ -1816,6 +1900,7 @@ class LocalCharacterPersonaService:
         self._persist_personas()
         return self._chat_preset_view(record)
 
+    @_chat_sources.guarded
     def delete_chat_preset(self, preset_id: str) -> dict[str, Any]:
         if str(preset_id) == "default":
             raise ValueError("local_builtin_chat_preset_read_only:default")

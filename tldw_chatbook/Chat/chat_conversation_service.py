@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 
+from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
@@ -287,18 +288,21 @@ class ChatConversationService:
         self._rag_context_store: dict[str, Any] | None = None
         self.citation_legacy_migration = citation_legacy_migration
 
+    @_chat_sources.guarded
     def set_citation_legacy_migration(
         self,
         migration: "CitationLegacyMigrationService | None",
     ) -> None:
         """Attach the canonical/legacy read boundary after repository wiring."""
 
+        _chat_sources.check_citation_attachment(self, migration)
         self.citation_legacy_migration = migration
 
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    @_chat_sources.guarded
     def _load_rag_context_store(self) -> dict[str, Any]:
         if self._rag_context_store is not None:
             return self._rag_context_store
@@ -310,7 +314,7 @@ class ChatConversationService:
             return self._rag_context_store
         try:
             payload = json.loads(
-                self.rag_context_store_path.read_text(encoding="utf-8")
+                _chat_sources.read_text(self)
             )
         except (OSError, json.JSONDecodeError):
             payload = {}
@@ -323,13 +327,12 @@ class ChatConversationService:
         }
         return self._rag_context_store
 
+    @_chat_sources.guarded
     def _save_rag_context_store(self) -> None:
         if self.rag_context_store_path is None or self._rag_context_store is None:
             return
-        self.rag_context_store_path.parent.mkdir(parents=True, exist_ok=True)
-        self.rag_context_store_path.write_text(
-            json.dumps(self._rag_context_store, indent=2, sort_keys=True),
-            encoding="utf-8",
+        _chat_sources.write_text(
+            self, json.dumps(self._rag_context_store, indent=2, sort_keys=True),
         )
 
     def derive_conversation_title(
@@ -971,6 +974,7 @@ class ChatConversationService:
             "depth_cap": depth_cap,
         }
 
+    @_chat_sources.guarded
     def record_message_rag_context(
         self,
         conversation_id: str,
@@ -1012,6 +1016,7 @@ class ChatConversationService:
         self._save_rag_context_store()
         return dict(record)
 
+    @_chat_sources.guarded
     def record_imported_legacy_citation_context(
         self,
         conversation_id: str,
@@ -1046,6 +1051,7 @@ class ChatConversationService:
             raise ValueError(result.reason_code or "legacy_package_citation_failed")
         return record
 
+    @_chat_sources.guarded
     def get_messages_with_context(
         self,
         conversation_id: str,
@@ -1099,6 +1105,7 @@ class ChatConversationService:
             messages.append(normalized)
         return messages
 
+    @_chat_sources.guarded
     def get_citations(self, conversation_id: str) -> dict[str, Any]:
         migration = self.citation_legacy_migration
         state = "legacy_fallback"

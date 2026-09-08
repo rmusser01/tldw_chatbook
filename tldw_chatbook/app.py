@@ -6346,16 +6346,17 @@ class TldwCli(
         return result
 
     def _wire_character_persona_services(self) -> None:
+        from .Backup_Recovery.chat_source_participants import (
+            build_persona_service, build_dictionary_service,
+        )
+
         self.server_character_persona_service = (
             ServerCharacterPersonaService.from_server_context_provider(
                 self.server_context_provider,
                 policy_enforcer=self.service_policy_enforcer,
             )
         )
-        self.local_character_persona_service = LocalCharacterPersonaService(
-            self.chachanotes_db,
-            persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
-        )
+        self.local_character_persona_service = build_persona_service(self.chachanotes_db)
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,
@@ -6367,11 +6368,7 @@ class TldwCli(
                 policy_enforcer=self.service_policy_enforcer,
             )
         )
-        self.local_chat_dictionary_service = LocalChatDictionaryService(
-            self.chachanotes_db,
-            history_store_path=get_user_data_dir()
-            / "tldw_chatbook_chat_dictionary_history.json",
-        )
+        self.local_chat_dictionary_service = build_dictionary_service(self.chachanotes_db)
         self.chat_dictionary_scope_service = ChatDictionaryScopeService(
             local_service=self.local_chat_dictionary_service,
             server_service=self.server_chat_dictionary_service,
@@ -6429,6 +6426,10 @@ class TldwCli(
             local_service = None
             repository = None
             migration = None
+        if local_service is not None and migration is not None:
+            from .Backup_Recovery.chat_source_participants import bind_citation_services
+
+            bind_citation_services(local_service, migration)
         self.local_chat_conversation_service = local_service
         self.citation_trace_repository = repository
         self.citation_legacy_migration_service = migration

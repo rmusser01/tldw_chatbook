@@ -14,6 +14,7 @@ from pathlib import Path
 import stat
 from typing import Any, Callable, Mapping
 
+from tldw_chatbook.Backup_Recovery import chat_source_participants as _chat_sources
 from tldw_chatbook.Chat.citation_evidence_models import CitationRef
 from tldw_chatbook.Chat.citation_trace_adapters import (
     synthesize_legacy_citation_refs,
@@ -531,6 +532,7 @@ class CitationLegacyMigrationService:
             return self._codec.fingerprint(domain, *parts)
         return self.repository.legacy_migration_fingerprint(domain, *parts)
 
+    @_chat_sources.guarded
     def _raw_sidecar(self) -> tuple[bytes, Mapping[str, Any]]:
         try:
             path_before = os.stat(self.sidecar_path, follow_symlinks=False)
@@ -540,10 +542,27 @@ class CitationLegacyMigrationService:
             raise _LegacyInputError("legacy_sidecar_unreadable") from None
         if stat.S_ISLNK(path_before.st_mode):
             raise _LegacyInputError("legacy_sidecar_symlink")
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(self.sidecar_path, flags)
+            with _chat_sources.sidecar_descriptor(self) as descriptor:
+                opened_before = os.fstat(descriptor)
+                if not stat.S_ISREG(opened_before.st_mode):
+                    raise _LegacyInputError("legacy_sidecar_not_regular")
+                if opened_before.st_size > LEGACY_SIDECAR_BYTES_MAX:
+                    raise _LegacyInputError("legacy_sidecar_too_large")
+                chunks: list[bytes] = []
+                remaining = LEGACY_SIDECAR_BYTES_MAX + 1
+                while remaining:
+                    chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                opened_after = os.fstat(descriptor)
+                try:
+                    path_after = os.stat(self.sidecar_path, follow_symlinks=False)
+                except OSError:
+                    raise _LegacyInputError("legacy_sidecar_changed") from None
         except OSError as exc:
             reason = (
                 "legacy_sidecar_symlink"
@@ -551,28 +570,6 @@ class CitationLegacyMigrationService:
                 else "legacy_sidecar_unreadable"
             )
             raise _LegacyInputError(reason) from None
-        try:
-            opened_before = os.fstat(descriptor)
-            if not stat.S_ISREG(opened_before.st_mode):
-                raise _LegacyInputError("legacy_sidecar_not_regular")
-            if opened_before.st_size > LEGACY_SIDECAR_BYTES_MAX:
-                raise _LegacyInputError("legacy_sidecar_too_large")
-            chunks: list[bytes] = []
-            remaining = LEGACY_SIDECAR_BYTES_MAX + 1
-            while remaining:
-                chunk = os.read(descriptor, min(1024 * 1024, remaining))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            raw = b"".join(chunks)
-            opened_after = os.fstat(descriptor)
-            try:
-                path_after = os.stat(self.sidecar_path, follow_symlinks=False)
-            except OSError:
-                raise _LegacyInputError("legacy_sidecar_changed") from None
-        finally:
-            os.close(descriptor)
         stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
         if any(
             getattr(opened_before, field) != getattr(opened_after, field)
@@ -623,6 +620,7 @@ class CitationLegacyMigrationService:
             records[message_id] = record if isinstance(record, Mapping) else {}
         return records
 
+    @_chat_sources.guarded
     def _source_snapshot(
         self,
         conversation_id: str,
@@ -632,6 +630,7 @@ class CitationLegacyMigrationService:
         canonical = _canonical_json(records)
         return records, self._fingerprint(conversation_id, canonical)
 
+    @_chat_sources.guarded
     def _fallback_snapshot(
         self,
         conversation_id: str,
@@ -639,6 +638,7 @@ class CitationLegacyMigrationService:
         _, payload = self._raw_sidecar()
         return self._conversation_records(payload, conversation_id)
 
+    @_chat_sources.guarded
     def get_journal(self, conversation_id: str) -> LegacyMigrationJournal | None:
         identity = self.repository.identity_context
         if identity is None:
@@ -671,6 +671,7 @@ class CitationLegacyMigrationService:
             completed_at=row["completed_at"],
         )
 
+    @_chat_sources.guarded
     def _record_terminal_state(
         self,
         conversation_id: str,
@@ -786,6 +787,7 @@ class CitationLegacyMigrationService:
             )
         return LegacyMigrationBatchResult(state=state, reason_code=reason_code)
 
+    @_chat_sources.guarded
     def _resolve_source_mismatch(
         self,
         conversation_id: str,
@@ -827,6 +829,7 @@ class CitationLegacyMigrationService:
             expected_journal=current,
         )
 
+    @_chat_sources.guarded
     def _resolve_unavailable_source(
         self,
         conversation_id: str,
@@ -869,6 +872,7 @@ class CitationLegacyMigrationService:
             expected_journal=current,
         )
 
+    @_chat_sources.guarded
     def migrate_next_batch(
         self,
         conversation_id: str,
@@ -1124,6 +1128,7 @@ class CitationLegacyMigrationService:
             processed_messages=processed,
         )
 
+    @_chat_sources.guarded
     def persist_package_record(
         self,
         *,
@@ -1215,6 +1220,7 @@ class CitationLegacyMigrationService:
             processed_messages=1,
         )
 
+    @_chat_sources.guarded
     def migrate_idle_unit(self) -> LegacyMigrationBatchResult:
         """Run at most one conversation batch after application readiness."""
 
@@ -1264,6 +1270,7 @@ class CitationLegacyMigrationService:
             return result
         return LegacyMigrationBatchResult(state=LegacyMigrationState.COMPLETE)
 
+    @_chat_sources.guarded
     def read_conversation(
         self,
         conversation_id: str,
@@ -1328,6 +1335,7 @@ class CitationLegacyMigrationService:
             records=records,
         )
 
+    @_chat_sources.guarded
     def _has_active_legacy_rows(self, conversation_id: str) -> bool:
         identity = self.repository.identity_context
         if identity is None:
@@ -1348,6 +1356,7 @@ class CitationLegacyMigrationService:
         )
         return row is not None
 
+    @_chat_sources.guarded
     def _canonical_records(
         self,
         conversation_id: str,
@@ -1467,6 +1476,7 @@ class CitationLegacyMigrationService:
             )
         return records
 
+    @_chat_sources.guarded
     def retry_diverged(self, conversation_id: str) -> None:
         """Explicitly clear hidden staging before rebuilding changed legacy data."""
 

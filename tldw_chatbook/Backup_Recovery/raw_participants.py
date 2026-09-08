@@ -19,6 +19,8 @@ from . import bootstrap, storage_admission as storage
 from .profile_paths import lexical_path
 from . import settings_file_participants as settings_files
 from . import config_participants as config_files
+from . import chat_source_participants as chat_sources
+from . import dictionary_file_participants as dictionary_files
 from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
 
 
@@ -66,6 +68,10 @@ class _RawParticipant:
                 storage._changed.wait(min(remaining, 0.05))
             state = _participant_state(self)
             source = state.source()
+            if state.owner == "chat.dictionaries":
+                return dictionary_files.drain_ready(source)
+            if chat_sources.binding(source) is not None:
+                return chat_sources.drain_ready(source)
             if state.owner == "config":
                 return (
                     source._CONFIG_PERSISTENCE_ERROR is None
@@ -98,6 +104,14 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    if state.owner == "chat.dictionaries":
+        binding = dictionary_files.binding(source)
+        if binding is None or binding[1] != state.selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+    if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+        binding = chat_sources.binding(source)
+        if binding is None or binding[1] != state.selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner == "config":
         binding = config_files.binding(source)
         if binding is None or binding[1] != state.selected:
@@ -187,7 +201,12 @@ def _raw_participant(source):
     """Only installed actual sources; this does not qualify capture inventory."""
     if not _pinned_io_available():
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
-    settings_binding = config_files.binding(source) or settings_files.binding(source)
+    settings_binding = (
+        dictionary_files.binding(source)
+        or chat_sources.binding(source)
+        or config_files.binding(source)
+        or settings_files.binding(source)
+    )
     if settings_binding is not None:
         owner, selected, installed = settings_binding
         if not installed:
@@ -365,6 +384,10 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route == dictionary_files.ROUTE:
+        return dictionary_files.selection(source)
+    if route in chat_sources.ROUTES:
+        return chat_sources.selection(source, route, selected_read)
     if route in config_files.ROUTES:
         return config_files.selection(source, route, selected_read)
     if route in settings_files.ROUTES:
@@ -451,12 +474,14 @@ def _scope(
             "runtime_state",
             "runtime_read",
             "config",
-        }:
+        } | chat_sources.ROUTES:
             selected = (
                 source.store_path
                 if route == "service"
                 else (
-                    config_files.selection(source, route, selected_read)[0]
+                    chat_sources.selection(source, route, selected_read)[0]
+                    if route in chat_sources.ROUTES
+                    else config_files.selection(source, route, selected_read)[0]
                     if route == "config"
                     else settings_files.selection(source, route, selected_read)[0]
                     if route in settings_files.ROUTES | {"config"}
@@ -488,7 +513,7 @@ def _scope(
             source, route, template, user_template, selected_read
         )
         if (
-            route in config_files.ROUTES
+            route in config_files.ROUTES | chat_sources.ROUTES | {dictionary_files.ROUTE}
             and source in _source_participants
             and not pinned
         ):
@@ -505,10 +530,12 @@ def _scope(
                 "note_templates",
                 "theme_file",
                 "theme_export",
-            }
+            } | chat_sources.ROUTES
             and writing
         ):
             paths += (selected.with_suffix(selected.suffix + ".tmp"),)
+        if route == dictionary_files.ROUTE:
+            paths = dictionary_files.members(source)
         temporaries = {}
         if route in {"config", "config_snapshot"}:
             paths, temporaries = config_files.members(
@@ -571,7 +598,9 @@ def _scope(
             participant = _raw_participant(source)
             binding = _participant_state(participant)
             if (
-                binding.owner not in {"chunking.templates", "ui.themes", "config"}
+                binding.owner not in {
+                    "chunking.templates", "ui.themes", "config", "chat.dictionaries"
+                }
                 and binding.selected != selected
             ):
                 raise bootstrap.RecoveryRequired("raw_source_selection_changed")
@@ -584,7 +613,11 @@ def _scope(
                 ).resolve()
             )
             if route
-            in {"service", "prompt_history", "sidebar_state"} | settings_files.ROUTES
+            in (
+                {"service", "prompt_history", "sidebar_state"}
+                | settings_files.ROUTES
+                | (chat_sources.ROUTES - {"citation_sidecar"})
+            )
             else None
         )
         if route in config_files.ROUTES:
@@ -660,6 +693,8 @@ def _scope(
             # Ordinary path IO cannot prove a pinned recovery/source boundary.
             # Keep the actual admission result, even if native exclusion exists.
             state.identities[anchor] = anchor_identity
+        if route == dictionary_files.ROUTE:
+            dictionary_files.pin_inputs(state)
         if route == "theme_directory" or (route == "pet" and writing):
             settings_files.preflight(state, route, attempt)
         if any(

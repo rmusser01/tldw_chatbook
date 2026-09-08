@@ -207,7 +207,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The refreshed census contains 978 rows. Its qualified symbol is the locator-consumer
+The refreshed census contains 1027 rows. Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -222,6 +222,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Audio/recording_service.py | AudioRecordingService._save_audio_file | open | 1 | process_artifact | process |
 | tldw_chatbook/Audio_Services_Interop/local_audio_services_service.py | LocalAudioServicesService._persist_history | mkdir | 1 | unsupported | files |
 | tldw_chatbook/Audio_Services_Interop/local_audio_services_service.py | LocalAudioServicesService._persist_history | write_text | 1 | unsupported | files |
+| tldw_chatbook/Backup_Recovery/chat_source_participants.py | sidecar_descriptor | open | 2 | generic_boundary | concrete chat source lifetime; runtime/capture validation pending |
+| tldw_chatbook/Backup_Recovery/chat_source_participants.py | write_text | write | 1 | generic_boundary | concrete chat source lifetime; runtime/capture validation pending |
 | tldw_chatbook/Backup_Recovery/crypto.py | _open_regular | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/crypto.py | _write_all | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
@@ -233,22 +235,15 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | load_character_and_image | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | load_character_card_from_file | open | 2 | unsupported | files |
 | tldw_chatbook/Character_Chat/Character_Chat_Lib.py | load_chat_history_from_file_and_save_to_db | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | export_dictionary_to_file | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | export_dictionary_to_file | write | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | get_chat_dicts_folder | mkdir | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | import_dictionary_from_file | copy2 | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | import_dictionary_from_file | open | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | parse_user_dict_markdown_file | open | 1 | unsupported | files |
+| tldw_chatbook/Character_Chat/Chat_Dictionary_Lib.py | export_dictionary_to_file | write | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _candidate_pairs | ZipFile | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _detect_ext | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _resolve_vpack_expression_set | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | _valid_image | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | build_expression_set_zip | ZipFile | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/expression_set_io.py | resolve_local_expression_set | ZipFile | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/local_character_persona_service.py | LocalCharacterPersonaService._persist_personas | mkdir | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/local_character_persona_service.py | LocalCharacterPersonaService._persist_personas | write_text | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/local_chat_dictionary_service.py | LocalChatDictionaryService._persist_history | mkdir | 1 | unsupported | files |
-| tldw_chatbook/Character_Chat/local_chat_dictionary_service.py | LocalChatDictionaryService._persist_history | write_text | 1 | unsupported | files |
+| tldw_chatbook/Character_Chat/local_character_persona_service.py | LocalCharacterPersonaService._persist_personas | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
+| tldw_chatbook/Character_Chat/local_chat_dictionary_service.py | LocalChatDictionaryService._persist_history | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
 | tldw_chatbook/Character_Chat/visual_identity.py | _inspect_image_bytes | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/visual_identity.py | _open_publication_chain | open | 2 | unsupported | files |
 | tldw_chatbook/Character_Chat/visual_identity.py | _read_builtin_asset | open | 1 | unsupported | files |
@@ -267,9 +262,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | open | 1 | unsupported | files |
 | tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | secure_private_directory | 2 | unsupported | files |
 | tldw_chatbook/Chat/attachment_core.py | process_attachment_bytes | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Chat/chat_conversation_service.py | ChatConversationService._save_rag_context_store | mkdir | 1 | unsupported | chat.rag_context; participant-task10 |
-| tldw_chatbook/Chat/chat_conversation_service.py | ChatConversationService._save_rag_context_store | write_text | 1 | unsupported | chat.rag_context; participant-task10 |
-| tldw_chatbook/Chat/citation_legacy_migration.py | CitationLegacyMigrationService._raw_sidecar | open | 1 | unsupported | chat.rag_context; participant-task10 |
+| tldw_chatbook/Chat/chat_conversation_service.py | ChatConversationService._save_rag_context_store | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
+
 | tldw_chatbook/Chat/citation_trace_identity.py | KeyringCitationFingerprintKeyProvider.provision_key | set_password | 1 | unsupported | runtime.credentials; task14 |
 | tldw_chatbook/Chat/console_chat_store.py | ConsoleChatStore._persist_existing_message | to_json | 3 | memory | serialization-into-db.chachanotes.primary; no-independent-file |
 | tldw_chatbook/Chat/console_chat_store.py | ConsoleChatStore._persist_metadata_only | to_json | 2 | memory | serialization-into-db.chachanotes.primary; no-independent-file |
@@ -1562,11 +1556,11 @@ release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
 | Installed owner | Exact selector / bytes policy | Actual source producer or selector; participant obligation |
 | --- | --- | --- |
 | config; config.history | Active config plus exact `.toml.bak` and `config_backup_YYYYMMDD_HHMMSS.toml` siblings; corrupt histories retained as bytes | `config._get_effective_config_path`, `config._write_serialized_config_artifact_unlocked`; existing checked config save admission remains. Credential policy applies equally to history in task14. |
-| personas | data/tldw_chatbook_personas.json | `app._wire_character_persona_services`, `LocalCharacterPersonaService._persist_personas`; participant pending. |
-| chat.dictionary_history | data/tldw_chatbook_chat_dictionary_history.json | `LocalChatDictionaryService._persist_history`; participant pending. |
-| chat.rag_context | data/tldw_chatbook_chat_rag_context.json | `ChatConversationService._save_rag_context_store`; participant pending. |
+| personas | data/tldw_chatbook_personas.json | `app._wire_character_persona_services`, `build_persona_service` and whole cached/core operations; exact source participant installed, runtime/capture validation pending. |
+| chat.dictionary_history | data/tldw_chatbook_chat_dictionary_history.json | `build_dictionary_service`, whole core/history operations and concrete local scope jobs; exact source participant installed, runtime/capture validation pending. |
+| chat.rag_context | data/tldw_chatbook_chat_rag_context.json | `ChatConversationService` compatibility writer/readers and actual bound citation migration companion; source participants installed, runtime/capture validation pending. |
 | chat.grammars; feedback; audio.history | data/tldw_chatbook_chat_grammars.json; tldw_chatbook_feedback.json; tldw_chatbook_audio_history.json | `LocalChatGrammarsService._persist`, `LocalFeedbackService._persist`, `LocalAudioServicesService._persist_history`; participant pending. |
-| chat.dictionaries | data/chat_dicts, including all retained files and empty topology | `config.load_settings` and installed dictionary writers; actual core `chat_dictionaries.file_path` remains a required group when present. Participant pending. |
+| chat.dictionaries | data/chat_dicts, including all retained files and empty topology | `config.load_settings` and exact `Chat_Dictionary_Lib` parser/import/export/listing operations; actual core `chat_dictionaries.file_path` remains a required group when present. Source participants installed, runtime/capture validation pending; caller files never widen this root. |
 | chunking.templates | data/chunking_templates | `ChunkingTemplateManager._get_user_templates_dir`, `ChunkingTemplateManager.save_template`; participant pending. |
 | notes.templates | config-parent/note_templates.json | `Notes.template_store` effective config selector and shared RMW; actual CLI and `_import_template_files` worker use phase8 source lifetime; runtime composition pending. |
 | chat.prompts | installed package/Chat/prompt_templates | `Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR`, `load_template`; inert internal definitions. |
@@ -2231,3 +2225,46 @@ must precede reopened gates. No app responder, runtime completeness, startup rel
 `config.history` capture adapter or Complete capability is enabled by this cohort.
 
 Phase9 generation clarification: derived operations fix and recheck `_CONFIG_GENERATION` as well as the canonical path. Existing process RLock excludes concurrent publication, and a real reentrant publication from a derived scope is already refused by fixed config-member checks before either config bytes or the model directory changes. The explicit generation check is supplemental defense, not evidence of a previously demonstrated race.
+
+### Task10 phase10 — actual chat core/sidecar sources and dictionary files
+
+`chat_source_participants.build_persona_service/build_dictionary_service` bind the
+actual app sources to the exact configured registered CharactersRAGDB and canonical
+sidecar before load. `bind_citation_services` validates the real app's service,
+repository and migration relationship. `operation` simultaneously exposes the
+existing validated core/raw discoveries only for that same fixed pair and execution
+identity. Other source instances, companion changes, path/DB/profile retarget and
+foreign Tasks cannot inherit it. The seven Persona cache categories, dictionary
+history and compatibility citation cache retain prior usable state on failure;
+known possible mixed effects keep a sticky drain blocker. No durable rollback,
+automatic reconciliation or restart-as-repair claim is made. Ordinary custom,
+subclass and explicit-memory sources remain unqualified.
+
+`dictionary_source_job._DictionaryJob` covers the actual local scope service's
+queued/running worker and creator outcome lifetime. Exact methods acquire their
+own source-thread scopes; queued cancellation prevents source code, running and
+repeated cancellation waits for the actual callback, and independently cancelled
+executor wrappers are not completion evidence. A newly opened worker connection
+is positively closed there; an existing worker borrower remains live. No caller
+DB is closed by synchronous service cleanup. Actual app startup remains necessary
+through creator pending bookkeeping and is not retired by this source slice.
+
+`dictionary_file_participants` fixes actual module/config/DB, all input/output/temp
+members and parent identities before parser/import/export/listing effects. Export
+uses its materialized preflight record; folder setup reuses phase9 config behavior,
+without new config mkdir/scope inside a paused combined operation. Copy preserves
+bytes, mode/times, platform xattr semantics and BSD flags on retained descriptors;
+Darwin libc.fchflags is the bounded compatibility binding. Unsupported primitives
+keep ordinary unqualified behavior. A copied sidecar followed by core failure is
+sticky despite later success. Caller export/input paths are ordinary admitted IO,
+not new `chat.dictionaries` roots. External editors do not cooperate by implication.
+
+Canonical citation migrations retain actual concurrent claim/generation fencing;
+compatibility cache writers retain their actual source lock. Inventory/capture does
+not invoke migration. Whole runtime safe points, dirty/error handling and startup
+release/reacquire still need real app/headless integration. Persona/dictionary UI
+import/export Textual workers (`UI/Screens/personas_screen.py`), visual authoring, other
+remaining persistence cohorts and aggregate app shutdown are not retired here.
+Source participants do not qualify payload validation or a Complete archive. The
+phase2 app callback/bootstrap, phase8 TTS profile literals, Task13 Media historical
+fixture and Task26 diagnostic census obligations remain explicit outstanding work.
