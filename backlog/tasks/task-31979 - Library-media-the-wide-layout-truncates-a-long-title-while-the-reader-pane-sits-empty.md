@@ -41,7 +41,7 @@ Critique #6 P2, both assessors. At 235x52 a 98-character title is cut to 47 char
 <!-- SECTION:NOTES:BEGIN -->
 Added a reader_has_item flag (default True = unchanged) to resolve_adaptive_reader_layout: when the work/Reader pane has no item open and the Items list is open (automatic widths only, matching the list_grows gate), the freed Reader columns go to the list down to work_min_width. Threaded through resolve_media_reader_layout; the Media call site (_sync_library_media_reader_layout_from_shell) passes reader_has_item = (_library_media_view == viewer).
 
-Widths at 235x52: item open 34/56/143 (unchanged pin); no item open 34/153/46 -> a 98-char title paints in full (ellipsized at the pane edge, cap 120) instead of ~56 cells. 100x30 is width-starved (freed=0) so it is byte-for-byte unchanged.
+Widths at 235x52: item open 34/56/143 (unchanged pin); no item open 34/153/46 -> a 98-char title paints in full (ellipsized at the pane edge, floored at work_min_width (list otherwise uncapped)) instead of ~56 cells. 100x30 is width-starved (freed=0) so it is byte-for-byte unchanged.
 
 Opening restores the split via a new side-effect-free _restore_library_media_reader_width_on_open (shell.sync_layout only, NO presentation-epoch advance / NO return-settlement re-arm) because the full sync's epoch machinery corrupted the media-return fence mid-open. Because list-view and viewer-view Media layouts now differ, _library_media_layout_signature was made invariant to the widening (derived from the canonical item-open reader width) so an exact scroll return survives the list<->viewer transition.
 
