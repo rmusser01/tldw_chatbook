@@ -7,6 +7,14 @@ ADR: [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validatio
 
 ## Purpose and evidence
 
+Implementation checkpoint: Tasks1–4 are independently reviewed. Task5 is paused
+at the explicitly required orderly-shutdown safety gate; the actual retained-owner
+experiment, including helper-shaped ownership, unlinks foreign sidecar names after
+an atexit observation and before normal interpreter exit completes. See the preserved
+[gate evidence](../reviews/2026-09-07-sqlite-orderly-exit-gate.md). The terminal-loss
+design must be revisited before implementation continues; no alternative policy
+or weakened preservation requirement is approved by this checkpoint.
+
 Repair private-file inspection without canceling locks held by live SQLite
 connections. Keep Canvas Mermaid disabled until the corrective work is reviewed
 and its release qualification is rerun successfully.

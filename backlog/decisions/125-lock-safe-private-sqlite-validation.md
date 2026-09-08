@@ -110,6 +110,18 @@ regressions. Normal leak-free cycles and terminal quarantine are reported
 separately.
 Canvas Mermaid stays disabled until its independent release gate passes.
 
+## Implementation qualification stop (2026-09-07)
+
+Task5's required orderly-exit gate failed in an owned actual-repository experiment,
+including a helper-shaped retained-owner control: foreign WAL/SHM names survived
+an atexit observation but were unlinked before ordinary interpreter exit completed.
+Abrupt owned exit preserved them. The live SQLite retention/shutdown contract
+therefore requires reconsideration before Task5 implementation; this is not an
+authorization to force application exit or weaken foreign-cohort preservation.
+Tasks1–4 remain reviewed. See the preserved
+[gate evidence](../../Docs/superpowers/reviews/2026-09-07-sqlite-orderly-exit-gate.md)
+for precise scope, limitations and independent review status.
+
 ## Links
 
 - [Detailed design](../../Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md)

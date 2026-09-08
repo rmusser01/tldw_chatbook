@@ -360,6 +360,13 @@ Attribute historical evidence separately from fresh runs.
 
 ### Task 5: Migrate live TTS authority, restore handoff and terminal cleanup
 
+**Stopped at approved design gate:** the early owned-process qualification fails
+foreign WAL/SHM preservation during orderly interpreter teardown, including
+helper-shaped ownership; abrupt exit controls pass. No Task5 product changes.
+Read [gate evidence](../reviews/2026-09-07-sqlite-orderly-exit-gate.md) before any
+resumption. User direction on a revised terminal-loss ownership/shutdown contract
+is required; do not proceed to implementation or Task6 from this checkpoint.
+
 **Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`, and `TTS/profile_migration_namespace.py` only for the required validated metadata adaptation; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py` and focused namespace comparison tests as needed. Exclusive finalizer behavior remains Task 6.
 
 **Interfaces:**
