@@ -1,7 +1,7 @@
 # ADR-125: Isolate private SQLite file checks from live lock ownership
 
 Status: Accepted
-Amendment status: Native-close integration proposed; Python >=3.12 baseline approved
+Amendment status: Native-close integration and Python >=3.12 baseline approved
 Date: 2026-09-07
 Related Task: TASK-31942
 Extends: ADR-029
@@ -123,7 +123,7 @@ Tasks1–4 remain reviewed. See the preserved
 [gate evidence](../../Docs/superpowers/reviews/2026-09-07-sqlite-orderly-exit-gate.md)
 for precise scope, limitations and independent review status.
 
-## Native-close amendment proposed after qualification spike
+## Approved native-close amendment after qualification spike
 
 The user approved Python >=3.12 on 2026-09-07 after an isolated native-policy
 spike passed all 25 configured cases; eight default ordinary-exit controls
@@ -131,7 +131,7 @@ reproduced foreign-file deletion. This is a compatibility decision, not an
 assertion that package metadata or production behavior has already changed.
 See the [archived probe](../../Docs/superpowers/reviews/2026-09-07-sqlite-native-close-policy-spike.md).
 
-The proposed refinement keeps live SQLite in Chatbook and raw proof in helpers.
+The approved refinement keeps live SQLite in Chatbook and raw proof in helpers.
 Every live exact-current TTS handle sets and verifies the public
 SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE option before first SQL and keeps it enabled.
 TTS admission checks runtime capability before initializing a store and refuses
@@ -153,12 +153,13 @@ native policy addresses eventual finalization without forced app exit. All
 supported shutdown paths and actual wrapper integration remain unqualified until
 the original gates pass. No general database service is selected.
 
-This amendment is **proposed for written user review** in the linked detailed
-design. It would narrowly supersede the earlier unchanged-WAL-behavior statement
+The user approved this written amendment in the linked detailed design after
+approving the runtime baseline. It narrowly supersedes the earlier unchanged-WAL-behavior statement
 for live TTS close/checkpoint policy only. The core helper decision, reviewed
 Tasks1–4, no-follow/privacy guarantees and Canvas release gates are unchanged.
-Task5 remains stopped until written approval and an updated implementation plan;
-the probe is not implementation or merge authorization.
+The updated implementation plan resumes at Task5a (runtime admission), then
+Task5b (live ownership and close-policy integration). The probe is not production
+qualification or merge authorization; the original safety gates remain required.
 
 ## Links
 

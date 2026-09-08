@@ -4,9 +4,9 @@
 
 **Goal:** Preserve SQLite lock ownership while retaining private-file validation, backup identity checks and TTS lifecycle safety, then unblock the existing Canvas qualification task.
 
-**Architecture:** Run original-inode file inspection in fresh exec'd, operation-owned helpers. Keep SQL transactions and connection factories in the parent; use a fixed metadata-only helper proof for live TTS, explicit repository authority handoffs, and bounded terminal retention when live proof is lost. Closed, exclusively owned migration artifacts retain local descriptor validation with corrected close-failure ownership.
+**Architecture:** Run original-inode file inspection in fresh exec'd, operation-owned helpers. Keep SQL transactions and connection factories in the parent; use fixed metadata-only helper proof for live TTS, explicit authority handoffs, and bounded terminal retention after live proof loss. Live exact-current TTS handles verify the public native no-checkpoint-on-close policy before SQL; healthy close explicitly checkpoints under proof, while exclusive migration/evidence artifacts retain their separate ownership rules.
 
-**Tech Stack:** Python >=3.11, standard-library subprocess/pipe/JSON/SQLite facilities, existing Textual workers, pytest and real SQLite. No new dependency.
+**Tech Stack:** Python >=3.12, public SQLite Connection.setconfig/getconfig and SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, standard-library subprocess/pipe/JSON, existing Textual workers, pytest and real SQLite. No new dependency or custom SQLite build.
 
 **Spec:** [Approved design](../specs/2026-09-07-sqlite-lock-safe-private-validation-design.md).
 
@@ -14,11 +14,11 @@
 
 ADR required: yes
 ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md
-Reason: This implements the accepted cross-process privacy/proof boundary and terminal-retention contract. Preserve ADR-028, ADR-029 and ADR-051; no duplicate ADR is needed.
+Reason: This implements the accepted cross-process privacy/proof boundary, terminal-retention contract and approved native-close/runtime amendment. Preserve ADR-028, ADR-029 and ADR-051; no duplicate ADR is needed.
 
 ## Global Constraints
 
-- Work only in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/canvas-v1`, branch `codex/canvas-v2-mermaid-design`; implementation baseline is `9bc73ffb3` plus this documentation checkpoint. Preserve unrelated changes.
+- Work only in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/canvas-v1`, branch `codex/canvas-v2-mermaid-design`. Original baseline is `9bc73ffb3`; Tasks1–4 remain reviewed through `8b4e5c1d4`. The amendment resumes from documentation checkpoint `f202b8090` plus this plan update. Preserve unrelated changes.
 - Read the spec, TASK-31942, ADR-028/029/051/125, and `backlog/docs/lessons-testing-evidence.md`, `lessons-live-verification.md` and `lessons-backlog-hygiene.md` before implementation.
 - Protocol version 1; length-prefixed JSON; maximum of 64 KiB per request or response; closed fields, one outstanding request per lease. No database contents, exception messages or raw traceback are returned.
 - General launch/control waits: five seconds maximum; initial fixed TTS validation: 30-second maximum. Close: one second, then a further two-second terminate/kill/reap bound. Earlier operation deadlines govern admission and IPC together; cleanup has its separately reported bound.
@@ -27,6 +27,8 @@ Reason: This implements the accepted cross-process privacy/proof boundary and te
 - No parent opens, duplicates or receives original database/sidecar FDs for live inspection. Parent directory FDs are permitted. No pool, daemon, listener, generic SQL RPC, caller-selected import/executable, new dependency or global all-SQLite registry.
 - Preserve owner registration, target-kind admission, custom factories, read-only source-mode exceptions, optional-sidecar generation policy, no-follow/type/owner/link/mode/identity checks and expected-identity semantics. Windows remains explicitly unverified; memory databases bypass helpers.
 - Preserve WAL, transactions, restore safety snapshots and indeterminate reporting. No schema/mmap/journal-mode workaround or user-data/environment mutation.
+- Python >=3.12 is approved. Before TTS initialization/admission, probe public native close-policy support on an owned in-memory handle; refuse with source-free `runtime_unsupported` if absent/rejected. Configure and verify again on each live exact-current TTS handle before first SQL. Never use a numeric fallback, private ABI, global factory toggle or runtime installation.
+- Keep the live handle's native flag enabled through finalization. Healthy serialized cleanup rolls back pending work, revalidates each phase, settles tombstones and attempts one PASSIVE checkpoint. Valid partial/exact BUSY leaves WAL intact; other errors retain the cleanup owner and worker for guarded retry. Restore retains its stricter existing checkpoint and must not acquire a duplicate PASSIVE checkpoint. Initialization/exclusive evidence/publication/recovery are outside this live flag policy.
 - Lost live TTS proof requires explicit restart-required terminal quarantine, including partial setup after a live SQLite handle exists. Do not force-close or remint proof. Healthy siblings remain usable; new TTS admission is latched off. Terminal owners retain their permits and resources until process exit.
 - Canceling an async waiter does not abandon its shielded worker. Worker-observed cancellation stops new work and enters owned cleanup.
 - Use repository pytest pre-import isolation for all app imports. Only owned temporary databases, subprocesses and browsers. Do not run ad hoc application imports against user configuration.
@@ -35,7 +37,7 @@ Reason: This implements the accepted cross-process privacy/proof boundary and te
 
 ## Evidence and file map
 
-The untracked `Tests/DB/test_private_sqlite_lock_diagnosis.py` contains intentional failures: raw SHM close, actual private SHM preparation and the actual private connection seam release an existing writer lock. Preserve it until its cases have been promoted; it is not a completed green test file.
+The original untracked `Tests/DB/test_private_sqlite_lock_diagnosis.py` contained intentional failures: raw SHM close, actual private SHM preparation and the actual private connection seam released an existing writer lock. Its existence after worktree recovery is not assumed. Promoted committed regressions and preserved evidence below are the source of current claims; do not recreate or blanket-stage a historical diagnostic as a green test.
 
 Historical evidence lives under `.superpowers/sdd/2026-09-06-chatbook-canvas-v2-mermaid-implementation/`: `sqlite-crash-diagnosis.md`, corrected `sqlite-descriptor-design-inventory.md` and `sqlite-lock-*.log`. Existing SIGBUS captures live under `output/playwright/mermaid-release/native-db/`. Do not claim this proves every historical crash's exact interleaving.
 
@@ -49,12 +51,14 @@ Historical evidence lives under `.superpowers/sdd/2026-09-06-chatbook-canvas-v2-
 | Existing `tldw_chatbook/DB/private_sqlite.py` | Registered policy, public connection/backup seams and exclusive candidate ownership; delegate live file inspection. |
 | New `tldw_chatbook/TTS/profile_validation.py` | Extract shared schema/domain codecs and metadata validators without live opener, migration orchestration or app initialization. |
 | New `tldw_chatbook/TTS/profile_sqlite_proof.py` | Fixed child TTS evidence initializer and retained-cohort operations. |
+| New `tldw_chatbook/TTS/profile_sqlite_policy.py`; new `Tests/TTS/test_profile_sqlite_policy.py` | Public runtime capability/configuration checks; no file access, helper launch, checkpoint or app/config import. |
 | Existing `tldw_chatbook/TTS/profile_schema.py` | Live SQLite wrapper/admission and compatibility exports for extracted validators. |
 | Existing `tldw_chatbook/TTS/profile_repository.py` | Restore export, directory authority, shielded lifecycle and terminal quarantine ownership. |
-| Existing `tldw_chatbook/TTS/profile_errors.py` | Bounded restart-required repository error. |
+| Existing `tldw_chatbook/TTS/profile_errors.py` | Distinct bounded runtime-unsupported and restart-required repository errors. |
 | Existing `tldw_chatbook/DB/sql_validation.py`; new `tldw_chatbook/DB/sql_identifier_core.py` | Preserve public logging wrappers while extracting the exact identifier grammar/escaping needed by isolated schema checks. |
 | Existing `tldw_chatbook/TTS/profile_migration_publication.py`, `profile_migration_recovery.py`, `profile_migration_namespace.py` | Exclusive ownership audit and close-failure retention. |
-| Existing `pyproject.toml`; new `Tests/Packaging/test_private_sqlite_helper_distribution.py` | Installed-wheel entry and import-isolation verification; change packaging only if package discovery omits required files. |
+| Existing `pyproject.toml`, active runtime docs/scripts and CI contracts enumerated in Task5a; new `Tests/Packaging/test_python_runtime_floor.py` | Consistent approved Python floor without rewriting independent packages or historical evidence. |
+| New `Tests/Packaging/test_private_sqlite_helper_distribution.py` | Installed-wheel entry/import isolation; further package discovery changes only if the wheel omits required files. |
 | New `Tests/DB/test_private_sqlite_protocol.py`, `test_private_sqlite_process.py`, `test_private_sqlite_lock_preservation.py` | Frame/admission/process tests and actual lock regressions. |
 | New `Tests/TTS/test_profile_sqlite_proof.py`, `test_profile_sqlite_helper_lifecycle.py` | Fixed proof and real repository/helper lifecycle tests. |
 
@@ -358,29 +362,105 @@ ignored logs are not assumed available. Current correction records belong to
 external recovery artifacts remain under `/private/tmp/sqlite-task4-evidence.RSZgc4/`.
 Attribute historical evidence separately from fresh runs.
 
-### Task 5: Migrate live TTS authority, restore handoff and terminal cleanup
+### Task 5a: Adopt the approved runtime floor and fail-closed TTS capability admission
 
-**Stopped at approved design gate:** the early owned-process qualification fails
-foreign WAL/SHM preservation during orderly interpreter teardown, including
-helper-shaped ownership; abrupt exit controls pass. No Task5 product changes.
-Read [gate evidence](../reviews/2026-09-07-sqlite-orderly-exit-gate.md) before any
-resumption. User direction on a revised terminal-loss ownership/shutdown contract
-is required; do not proceed to implementation or Task6 from this checkpoint.
+**Approval and evidence:** The user approved Python >=3.12 and then the written
+native-close amendment. The old [orderly-exit gate](../reviews/2026-09-07-sqlite-orderly-exit-gate.md)
+remains a required production regression. The [native spike](../reviews/2026-09-07-sqlite-native-close-policy-spike.md)
+passed 25 configured cases; eight default controls still reproduced deletion.
+This task establishes runtime compatibility/admission, not live shutdown safety.
+Task5b integrates that policy with the reviewed helper and owns the shutdown gate.
 
-Subsequent checkpoint: the native-close spike passed all 25 configured cases
-while eight default ordinary-exit controls reproduced deletion. Python >=3.12
-is now approved. The native-close amendment in the linked design awaits written
-user review; these implementation steps have NOT yet been updated or unblocked.
-After approval, use writing-plans to add runtime compatibility/capability checks,
-scoped native policy, guarded healthy checkpoint behavior and integrated lifecycle
-qualification before resuming Task5. Do not execute the old close instructions
-as if the probe had satisfied the production gate.
+**Files:**
+
+- Create `tldw_chatbook/TTS/profile_sqlite_policy.py`, `Tests/TTS/test_profile_sqlite_policy.py`, `Tests/Packaging/test_python_runtime_floor.py`.
+- Modify `tldw_chatbook/TTS/profile_errors.py` and the pre-initialization admission point in `tldw_chatbook/TTS/profile_repository.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py` for preflight refusal only. Do not replace live ownership in this task.
+- Modify `pyproject.toml` (requires-python, classifiers, mypy target); `README.md`, `AGENTS.md`, `CLAUDE.md`, `Packaging/README.md`, `Packaging/windows/build_windows.py`, `scripts/preflight.sh`, `run_all_tests_with_report.py`, and active examples in `scripts/terminal_qualification/README.md`.
+- Modify `.github/workflows/derived-artifacts.yml`, `.github/workflows/test.yml`, `.github/workflows/nightly-deep.yml`, `.github/workflows/css-bundle-guard.yml`; corresponding `Tests/CI/test_github_actions_test_workflow.py`, `test_ci_queue_pressure_contract.py`, `test_derived_artifacts_workflow.py` only where their qualification contracts change.
+- Modify `Tests/Architecture/test_python_floor_syntax.py`; preserve the explicitly legacy 3.11 detector in `Tests/floor_syntax.py` unless a small docstring clarification is necessary. No general syntax-parser rewrite.
+
+**Interfaces:**
+
+- `require_native_close_policy_support() -> None` creates, configures, verifies and closes one owned `sqlite3.connect(":memory:")` probe. Check that the public methods and named constant exist before connecting; do not cache success across actual handles. Use no app/config imports, file paths, pragma, helper or numeric constant fallback.
+- `configure_native_close_policy(connection: sqlite3.Connection) -> None` borrows the caller's handle, calls `setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)`, then requires `getconfig(...) is True`. It executes no SQL and never closes the borrowed handle. Task5b's opener owns its failure cleanup.
+- Missing/rejected public capability maps to `ProfileRepositoryError("runtime_unsupported") from None`. Add that closed code and fixed public text: `TTS profile repository unavailable: SQLite runtime lacks required close-policy support.` Preserve bounded error serialization; do not include SQLite exception text or paths. Do not translate unrelated programming errors with an indiscriminate catch-all.
+- `_worker_open` performs the probe after any already-owned cleanup and before canonicalizing/initializing a new store or acquiring new store/helper ownership. Preserve existing cleanup owners and normal error propagation. A failed probe does not latch terminal proof loss.
+
+- [ ] Add the new policy tests with a real native handle and missing-capability negative control:
+
+```python
+import sqlite3
+import pytest
+from tldw_chatbook.TTS import profile_sqlite_policy as policy
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+
+def test_configure_native_policy_verifies_flag_without_sql():
+    connection = sqlite3.connect(":memory:")
+    statements = []
+    connection.set_trace_callback(statements.append)
+    try:
+        policy.configure_native_close_policy(connection)
+        assert connection.getconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE) is True
+        assert statements == []
+        connection.execute("SELECT 1")  # The borrowed handle remains open.
+    finally:
+        connection.close()
+
+def test_missing_constant_refuses_before_opening_probe(monkeypatch):
+    monkeypatch.delattr(policy.sqlite3, "SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE")
+    def unexpected_connect(*args, **kwargs):
+        pytest.fail("unsupported runtime opened a handle")
+    monkeypatch.setattr(policy.sqlite3, "connect", unexpected_connect)
+    with pytest.raises(ProfileRepositoryError) as failure:
+        policy.require_native_close_policy_support()
+    assert failure.value.code == "runtime_unsupported"
+    assert "SQLite runtime lacks required close-policy support" in str(failure.value)
+```
+
+Native positive tests require the declared supported capability; report an unavailable build as an explicit qualification gap, not a fake pass. Add focused proxies for missing methods, rejected `setconfig`, rejected/false `getconfig`, and source-text sentinel suppression. Verify the owned probe closes on configuration failure and success; the borrowed configuration helper never closes. Test the closed code survives pickling and unknown codes still map to `operation_failed`.
+- [ ] Run `../../.venv/bin/python -m pytest -q Tests/TTS/test_profile_sqlite_policy.py` and record RED for the absent API.
+- [ ] Implement the leaf policy and closed error mapping. Keep configuration equivalent to the following, with explicit capability checks and the specified bounded mapping around SQLite's public capability refusals:
+
+```python
+option = sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE
+connection.setconfig(option, True)
+if connection.getconfig(option) is not True:
+    raise ProfileRepositoryError("runtime_unsupported")
+```
+
+- [ ] Add `test_unsupported_runtime_refuses_before_store_initialization` to the lifecycle tests. Patch the repository's imported preflight function to raise `runtime_unsupported`, then open a repository under a nonexistent `tmp_path / "not-created" / "profiles.sqlite3"`. Assert that exact error, no parent/store/lease/helper creation and bounded `close()`. Restore preflight and prove a fresh owned repository can open/close, with admission counters unchanged. Run that exact node RED before inserting the probe; run GREEN afterward.
+- [ ] Add runtime-floor metadata tests before changing metadata. Parse TOML with `tomllib` and assert `requires-python == ">=3.12"`, no Python3.11 classifier and mypy target `3.12`. Check the named active build/preflight floors and qualification CI jobs, not every historical 3.11 string in the repository. Run `Tests/Packaging/test_python_runtime_floor.py` RED.
+- [ ] Update the named metadata/docs/scripts and CI contracts. Minimum package/AST qualification jobs move to 3.12. Remove the unsupported Ubuntu3.11 nightly row instead of duplicating the existing Ubuntu3.12 row. Preserve Ubuntu3.12/3.13, macOS3.12 and Windows3.12/cp1252 rows, existing triggers, concurrency, sequencing and budgets. Leave standalone backlog guard and standalone CI-shape-only Python3.11 jobs unchanged because they do not install/parse Chatbook. Do not bump `packages/tldw_profile_core`, vendored projects, backend-specific environments or dependencies; retain historical Windows3.11 evidence.
+- [ ] Correct the syntax guard's coupling to the old floor. Keep historical PEP701 verdicts explicitly labeled Python3.11, including an optional comparison with an actual 3.11 interpreter. The supported-floor guard must compile every shipped module on the actual declared interpreter, including when pytest itself is running on 3.12 (remove that early skip). On newer test runtimes, report missing 3.12 explicitly; minimum-runtime CI must execute the real compile check. Do not use `ast.parse(feature_version=...)` as tokenizer evidence or keep applying the legacy PEP701 detector as a 3.12 rejection rule.
+- [ ] Add real-floor positive and negative controls to that guard: `x = f"{ {"k": 1}["k"] }"` compiles on 3.12; `def broken(: pass` does not. Feed these through the same subprocess compile harness used by the shipped-module check. This protects the guard when accepting now-valid PEP701 source; no runtime download during tests.
+- [ ] Run the bounded selection below and `zsh -n scripts/preflight.sh`; syntax-check the two changed Python entry scripts without executing their build/full-suite bodies. Run static checks on the touched files and inspect the full active-runtime diff for accidental historical/vendor/dependency changes.
+
+```bash
+../../.venv/bin/python -m pytest -q --tb=short \
+  Tests/TTS/test_profile_sqlite_policy.py \
+  Tests/TTS/test_profile_repository_lifecycle.py::test_unsupported_runtime_refuses_before_store_initialization \
+  Tests/Packaging/test_python_runtime_floor.py \
+  Tests/Packaging/test_release_metadata.py \
+  Tests/Architecture/test_python_floor_syntax.py \
+  Tests/CI/test_github_actions_test_workflow.py \
+  Tests/CI/test_ci_queue_pressure_contract.py \
+  Tests/CI/test_derived_artifacts_workflow.py
+```
+
+- [ ] Commit only the enumerated changed files as `feat(tts): require native SQLite close-policy capability`; obtain independent spec and quality review. Document unavailable interpreter/platform evidence and existing unrelated failures. This task alone does not claim the live flag is applied or foreign-cohort finalization is fixed.
+
+### Task 5b: Migrate live TTS authority, native close policy and terminal cleanup
+
+**Depends on:** reviewed Tasks1–4 and Task5a. Resume the production shutdown gate,
+not the discarded default-close approach. Read both preserved gate and native
+spike reports before implementing. All new steps below remain unchecked.
 
 **Files:** Modify `TTS/profile_schema.py`, `TTS/profile_repository.py`, `TTS/profile_errors.py`, `DB/private_sqlite_process.py`, and `TTS/profile_migration_namespace.py` only for the required validated metadata adaptation; create `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`; extend `Tests/TTS/test_profile_repository_lifecycle.py` and focused namespace comparison tests as needed. Exclusive finalizer behavior remains Task 6.
 
 **Interfaces:**
 
 - `_ExactCurrentProfileConnection` owns parent live SQLite, helper lease, verified directory-only FD, identity metadata and retained admission permit. It owns no original main/WAL/SHM raw FD or parent immutable evidence SQL connection.
+- Consume Task5a's `configure_native_close_policy(connection: sqlite3.Connection) -> None` immediately after the exact live factory returns and before query-only/version/WAL/metadata SQL. Do not call it through the generic or shared initialization factory. The wrapper's `close() -> None` rechecks proof, closes SQLite with the flag still set, then reaps/releases helper/directory/permit ownership; it does not perform PASSIVE SQL. Repository normal cleanup owns that explicit checkpoint, so restore's existing TRUNCATE sequence is not duplicated.
 - `export_restore_authority(*, deadline: OperationDeadline) -> TTSRestoreAuthority` revalidates helper and local directory, then returns immutable metadata. `verified_parent_fd(*, deadline: OperationDeadline) -> int` borrows the wrapper-owned directory FD for immediate existing tombstone settlement; callers do not close it.
 - Add `ExactProfileStoreProofLostError` as an `ExactProfileStoreAuthorityError` subtype in `profile_schema.py`; distinguish terminal helper loss from a healthy-helper namespace mismatch. Add closed repository code `restart_required` with user-facing text stating restart is required, without paths.
 - The process-owned admission object exposes `latch_tts_proof_loss() -> None`; subsequent retained admissions refuse. It records no database paths/connections. Existing repository/application ownership retains terminal objects and permits; it does not use a generic SQLite registry.
@@ -408,6 +488,8 @@ async def test_closing_one_repository_preserves_sibling_writer(tmp_path):
 Define the strict contender in this test module from Task 3's diagnostic algorithm, or import a shared test-only support module after explicitly moving it there. Never import another test module just to acquire fixtures. Include partial sidecar-pin failure while a sibling owns a real transaction.
 
 - [ ] Run the new test and record behavioral RED. Replace local pins/evidence SQL with the fixed helper. Preserve query-only-before-admission, exact version, metadata validation, post-init binding and named/parent/sidecar checks at every existing guarded use. Pass the live opener's absolute deadline through both helper and normal private seam, using the initial reserved capacity.
+- [ ] Add `test_exact_live_policy_precedes_first_sql` using the actual live opener and a tracing factory proxy: record successful set/get and require it before the first execute, including `PRAGMA query_only`. Add rejected actual-handle set/get after successful memory preflight: assert no SQL, no usable publication and ordinary close/reap/release. Inject a first native close failure and assert `ExactProfileStoreCleanupError.connection` retains the complete owner for retry. An already-open but unused handle cannot be dropped merely because configuration failed.
+- [ ] Add `test_live_policy_does_not_change_initialization_or_immutable_evidence`: observe exact-live handles configured, with creation/migration/evidence handles still following their existing ownership/checkpoint rules. Exercise fresh store, supported legacy-schema migration, completed schema publication and two real reopen cycles with committed residual WAL. Run these focused nodes RED, apply the scoped policy, then GREEN. No factory-wide monkeypatch is the product implementation.
 - [ ] Replace both descriptor-field consumers explicitly. `_worker_close_for_restore` captures `TTSRestoreAuthority` before checkpoint and revalidates afterward; it installs generation-bound parent/sidecar identities before closing. `_worker_cleanup` calls `verified_parent_fd` for required reusable-tombstone settlement. Remove their permissive missing-field `getattr` branches. Preserve exact namespace removal under exclusive restore ownership; metadata export never authorizes a replacement cohort.
 
 ```python
@@ -421,6 +503,26 @@ self._restore_sidecar_identities = {
 ```
 
 - [ ] Add real restore-with-retained-sidecars, failed export before close, migration/restore tombstones through final close, and integer parent gid/mode/identity substitution tests. Preserve the existing healthy-helper exact-namespace restoration and close-retry behavior.
+- [ ] Add real healthy-cleanup tests before changing `_worker_cleanup`: pending writes are rolled back, committed writes recover after reopen, a pinned reader yields a valid partial PASSIVE checkpoint, and a live sibling writer remains excluded from an external contender after this repository closes. Observe exactly one `PRAGMA main.wal_checkpoint(PASSIVE)` on normal cleanup and none on restore's guarded TRUNCATE close path. Inject exact `sqlite_errorcode == sqlite3.SQLITE_BUSY` separately from IOERR/LOCKED/malformed results: only exact BUSY or a valid three-integer checkpoint result can continue under valid proof. A busy/partial result never authorizes unlinking remaining WAL/SHM.
+- [ ] Implement normal cleanup on its existing serialized worker: proof check, roll back its pending transaction, proof check, verified-directory tombstone settlement, proof check, one PASSIVE checkpoint, post-proof check, wrapper native close, then normal remaining ownership release. Preserve deadlines/progress cancellation; do not add a retry loop or alter auto-checkpoint. On non-BUSY checkpoint or close failure retain the connection/lease/helper/worker for the existing guarded retry. Update `_finish_close` so an error with a retained cleanup owner cannot shut down its executor. Keep this separate from terminal proof-loss handling.
+
+```python
+# Within serialized normal cleanup, with the surrounding phase proof checks:
+if connection.in_transaction:
+    connection.rollback()  # Never commit merely to close.
+try:
+    checkpoint = connection.execute("PRAGMA main.wal_checkpoint(PASSIVE)").fetchone()
+except sqlite3.Error as error:
+    if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY:
+        raise
+else:
+    # Require SQLite's three integer fields: busy in {0, 1}, and either
+    # nonnegative log/checkpoint counts with checkpointed <= log or (-1, -1).
+    # Invalid results are operation_failed with the owner retained, not BUSY.
+    busy, log_frames, checkpointed_frames = checkpoint
+```
+
+The result-shape checks occur before unpacking; tests cover wrong length/types/ranges. Use existing deadline/progress machinery rather than an unbounded new SQL path. A newly lost helper at any phase switches to terminal retention, with no subsequent rollback/checkpoint/close.
 - [ ] Add helper-loss tests in isolated owned processes, not the main pytest process, so retained SQLite handles/workers cannot contaminate later tests. Kill only the captured helper; assert use and close yield `restart_required`, no SQL/finalizer cleanup occurs in-process, repeated new repository construction cannot acquire retained capacity, and healthy sibling work continues. Include helper loss between live SQLite open and wrapper publication.
 - [ ] Implement terminal handling before ordinary authority failure handling:
 
@@ -432,8 +534,10 @@ except ExactProfileStoreProofLostError:
     raise ProfileRepositoryError("restart_required") from None
 ```
 
-`_helper_restart_required` is initialized false on repository construction and never reset in-process. Keep references through the existing app-owned repository; do not release its SHARED lease, live SQLite, worker or retained permit. Reap the dead helper independently. Healthy-helper close failure retains the ordinary retry path. Pre-live helper failure releases ordinary ownership and does not latch.
+`_helper_restart_required` is initialized false on repository construction and never reset in-process. Keep references through the existing app-owned repository; do not release its SHARED lease, live SQLite, worker or retained permit. Reap the dead helper independently. Healthy-helper close failure retains the ordinary retry path. Pre-live helper failure releases ordinary ownership and does not latch. Admission latching checks existing waiters inside the reservation loop and wakes them; unrelated transient reservations and already-healthy siblings remain usable. Bound terminal owners by the existing four retained permits, not a new global connection registry.
 - [ ] Qualify normal application shutdown and abrupt exit separately with private namespaces and externally held observer handles. During terminal retention, exclusive store acquisition must remain blocked. After owned process exit it must succeed, with foreign substituted cohorts unchanged. If orderly interpreter finalizers close SQLite unsafely or ownership cannot be retained without hanging shutdown, STOP: report the failed approved-design gate. Do not substitute `os._exit`, force-kill product behavior, restore foreign paths in the fixture to hide failure, or silently weaken the contract.
+- [ ] Use an actual app-owned repository/worker for ordinary shutdown, not only a module-global sqlite handle. Seed stores in a separate child so the live parent never acquires legacy raw main/WAL/SHM descriptors. Exercise idle/read/write states, helper loss during partial publication, one/two live owners, outstanding statements and large transactions that actually spill pages. Audit whether production can expose a BLOB handle; test its real lifetime if reachable, otherwise document the concrete API boundary rather than inventing a new BLOB API.
+- [ ] Keep foreign-cohort preservation and original-data recovery as separate observations: compare foreign names/inodes/link counts/bytes through external observer handles after exit, then recover the original owned store in a separately owned namespace without letting fixture cleanup mutate the observed foreign cohort. Verify committed values, rollback of uncommitted/spilled writes and integrity after ordinary native finalization. Retain default-close failure only as a diagnostic control, not a deliberately failing normal-suite test. Report unsupported platform coverage explicitly.
 - [ ] Cancel an async waiter while its repository worker is paused at a barrier. Assert the worker retains its reservation/helper until settlement and no later operation reuses its capacity early. Verify deadline exhaustion prevents publication but permits bounded owned cleanup.
 - [ ] Run the new lifecycle file plus `Tests/TTS/test_profile_repository_lifecycle.py` and `Tests/TTS/test_profile_repository.py`. Confirm all terminal tests are process-contained and normal repeated open/close cycles are leak-free.
 - [ ] Commit only the named TTS/process/test files with message `fix(tts): preserve remote proof authority across repository lifecycle`; obtain independent ownership/security review before final qualification.
@@ -442,7 +546,7 @@ except ExactProfileStoreProofLostError:
 
 **Files:** Modify `DB/private_sqlite.py`, `TTS/profile_migration_publication.py`, `profile_migration_recovery.py`, `profile_errors.py`, and affected namespace ownership code; extend `Tests/DB/test_private_sqlite.py`, `Tests/TTS/test_profile_migration_publication.py`, `test_profile_migration_recovery.py`, `test_profile_repository_lifecycle.py`.
 
-**Interfaces:** Preserve `connect_private_sqlite_descriptor(owner_id, descriptor_fd, **kwargs)` for the remaining registered exclusive owners. Borrow the verified FD during SQLite open; no `os.dup`/immediate raw close. Remove only the obsolete live `tts.profile_store_descriptor` owner after Task 5 no longer uses it. Public caller-owned descriptors remain borrowed.
+**Interfaces:** Preserve `connect_private_sqlite_descriptor(owner_id, descriptor_fd, **kwargs)` for the remaining registered exclusive owners. Borrow the verified FD during SQLite open; no `os.dup`/immediate raw close. Remove only the obsolete live `tts.profile_store_descriptor` owner after Task5b no longer uses it. Public caller-owned descriptors remain borrowed.
 
 Add `ProfileMigrationCleanupError` in `profile_errors.py`, carrying a source-free retained `owner` whose `close() -> None` retries teardown only. Propagate that owner through existing migration/recovery callers to the repository; no broad error mapper may discard it. This is a specific operation owner, not a connection registry or permission to resume failed publication.
 
@@ -535,7 +639,7 @@ assert completed.stderr == b""
 ```
 
 The test defines `installed_entry` by inspecting the built wheel's installed files, and creates `hostile_cwd` under `tmp_path`. Exercise a real prepare and fixed TTS initialization too; successful close alone does not prove the full import closure is packaged. Instrument imports in the test-owned child harness, not through a new production diagnostics operation.
-- [ ] Run installed-wheel RED/GREEN tests and verify no imports of app/config/providers/keyring/loguru/Textual startup or user files. Confirm Python 3.11 compatibility and actual macOS POSIX behavior; report unavailable OS/interpreter coverage explicitly, never as passing Windows/Linux qualification.
+- [ ] Run installed-wheel RED/GREEN tests and verify no imports of app/config/providers/keyring/loguru/Textual startup or user files. Confirm the approved Python3.12 minimum, native policy availability and actual macOS POSIX behavior; report unavailable OS/interpreter coverage explicitly, never as passing Windows/Linux qualification.
 - [ ] Run the complete affected storage selection:
 
 ```bash
@@ -550,6 +654,7 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
   Tests/Utils/test_private_paths.py \
   Tests/Utils/test_private_persistent_artifacts.py \
   Tests/TTS/test_profile_sqlite_proof.py \
+  Tests/TTS/test_profile_sqlite_policy.py \
   Tests/TTS/test_profile_sqlite_helper_lifecycle.py \
   Tests/TTS/test_profile_schema.py \
   Tests/TTS/test_profile_repository.py \
@@ -557,6 +662,11 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
   Tests/TTS/test_profile_migration_publication.py \
   Tests/TTS/test_profile_migration_recovery.py \
   Tests/Packaging/test_private_sqlite_helper_distribution.py \
+  Tests/Packaging/test_python_runtime_floor.py \
+  Tests/Architecture/test_python_floor_syntax.py \
+  Tests/CI/test_github_actions_test_workflow.py \
+  Tests/CI/test_ci_queue_pressure_contract.py \
+  Tests/CI/test_derived_artifacts_workflow.py \
   Tests/Performance/test_app_startup_performance.py \
   Tests/Performance/test_app_import_weight.py \
   Tests/Performance/test_ui_ready_module_census.py \
@@ -586,12 +696,15 @@ Preserve the existing source-free child fault/lifecycle captures. Do not reinter
 | --- | --- |
 | Existing privacy checks, isolated fixed helper and installed code | 1, 3, 7 |
 | Framing, failure classification, limits, parent identity, cleanup | 1, 2, 7 |
-| Whole-operation reservations and deadline/cancellation ownership | 2, 3, 5 |
+| Whole-operation reservations and deadline/cancellation ownership | 2, 3, 5b |
 | Normal SQLite, factories, memory/Windows and borrowed backup handles | 3 |
 | Fixed metadata-only TTS evidence and no payload transfer | 4 |
-| Restore export, directory handoff and exact cohort checks | 5 |
-| Terminal proof loss, bounded retention, healthy siblings, both exit modes | 5, 7 |
+| Approved Python floor, supported native API, source-free pre-init refusal | 5a, 7 |
+| Pre-SQL actual-handle policy; initialization/exclusive scope and retained failure cleanup | 5b, 6 |
+| Healthy rollback/PASSIVE partial/BUSY/error, residual WAL and restore checkpoint distinction | 5b, 7 |
+| Restore export, directory handoff and exact cohort checks | 5b |
+| Terminal proof loss, bounded retention, healthy siblings, both exit modes and finalizer data recovery | 5b, 7 |
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
-| Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5, 7 |
+| Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review must check every interface name across tasks, all approved spec sections, exact existing test node names, source-free error handling and unchecked work status. Execution has not begun when this plan is committed. Choose subagent-driven execution or inline checkpointed execution before Task 1 starts.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4 have already passed their independent gates; do not restart them. Task5a then Task5b resume the user's selected subagent-driven workflow, with separate spec/quality gates before Task6/7. None of the amendment implementation is complete at this plan checkpoint. Preserve the known semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for host cleanup/unrelated repairs.
