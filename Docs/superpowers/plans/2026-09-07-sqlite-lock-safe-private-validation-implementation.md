@@ -729,7 +729,7 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
 ```
 
 - [ ] Benchmark identical synthetic workloads against the immutable baseline in a separate temporary checkout, never move this worktree's HEAD. Measure full helper launch/batch, threaded app startup, TTS metadata-only open, repeated proof rechecks, peak live helpers/FDs and real child readiness. Keep existing performance ceilings unchanged, including the 972-module UI-ready ceiling governed by ADR-097 (`backlog/decisions/097-boot-budget-ratchets.md`); read its measurement/exception rules before interpreting a breach. The earlier 21.34ms bare-interpreter median is only a historical launch floor.
-- [ ] Run the exact previously failed actual-child nodes using their existing candidate fixtures:
+- [x] Run the exact previously failed actual-child nodes using their existing candidate fixtures:
 
 ```bash
 ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no \
@@ -777,6 +777,25 @@ TASK-31942 In Progress; do not change budgets or treat dependency/host/unrelated
 repairs as implicitly authorized. See `Docs/Canvas/V2_VERIFICATION.md` and the
 preserved Task 7 report/review/re-review for exact accounting.
 
+**Subsequent authorized environment repair — 2026-09-08:** User approved
+replacing only the stale `tldw_profile_core` editable install with a locally built
+0.1.0 wheel, without dependency resolution or other dependency changes. Archived
+source from `033c5a949` was built outside the checkout; fresh isolated import and
+byte comparisons confirm the installed copy no longer relies on a worktree.
+All 261 distribution names/versions remain unchanged. Repair artifacts and prior
+metadata are preserved at `/private/tmp/tldw-core-repair.fNKBoL/`.
+
+Fresh interop/performance selection without overrides: 56 passed, 1 failed,
+4 warnings, 33.57s. Missing-package errors are cleared; the reached UI-ready
+assertion measures 979/972. The unchanged guard on the immutable original
+`9bc73ffb3` archive measures 973/972: a six-module correction increase over an
+already one-module-over baseline. No threshold or snapshot change. Exact five
+Canvas nodes now pass without overrides (5 passed, 1 warning, 134.49s); the
+corresponding checklist item is complete. Whole affected-selection, budget and
+final-review gates remain incomplete, with semaphore/inventory failures still
+unresolved. No production-source or host cleanup was included in this repair.
+See `task-7-environment-repair.md` in the preserved SDD evidence directory.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -794,4 +813,4 @@ preserved Task 7 report/review/re-review for exact accounting.
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership and the macOS actual-app shutdown gates have passing scoped evidence; the full correction remains unqualified. Preserve stale editable-install, semaphore ENOSPC and strict-inventory gaps as unqualified evidence, not passing tests or permission for shared-environment/host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Current startup-budget, semaphore ENOSPC and strict-inventory failures are not passing tests or permission for host cleanup/unrelated repairs.

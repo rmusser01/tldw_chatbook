@@ -290,3 +290,31 @@ isolation and produced no metric; its bounded audit is preserved separately,
 not promoted into qualification. The full command/result/failure accounting is
 in the ignored Task 7 report. Whole-correction review, Backlog completion, and
 the Task 8 candidate/admitted rerun remain separate controller decisions.
+
+### Authorized environment repair and fresh checks — 2026-09-08
+
+The user subsequently approved replacing only the stale `tldw_profile_core`
+editable install with a locally built wheel. Committed source at `033c5a949`
+was archived into an owned temporary directory and built with the existing
+offline toolchain. Pip installed version 0.1.0 using `--no-index --no-deps`;
+all 261 distribution names/versions remained unchanged. The installed package
+and schema/fixture files match the archived source, and a fresh isolated import
+resolves from `.venv` rather than a worktree. Old installation metadata and the
+wheel are retained at `/private/tmp/tldw-core-repair.fNKBoL/`.
+
+Without a `PYTHONPATH` workaround, the interop file and four performance files
+returned **56 passed, 1 failed, 4 warnings in 33.57s**. The missing-package
+failures are resolved; the UI-ready guard now reaches its assertion and measures
+**979 modules against 972**. A fresh run of that unchanged guard on the immutable
+pre-correction `9bc73ffb3` archive measured **973 against 972** (1 failed,
+1 warning, 14.28s). Six newly loaded SQLite/proof modules account for the observed
+correction delta, on top of the baseline's one-module breach. No limit or pinned
+snapshot was changed. Boot-import weight passed at 641/660 modules; screen
+pre-import passed at 500/500 modules and 366176/378740 LOC.
+
+The **exact five Canvas nodes now pass without a source-path override**:
+5 passed, 1 existing dependency warning, 134.49s. This supersedes their earlier
+environment-blocked qualification, not the complete affected-selection gate.
+Known semaphore/inventory failures and the measured startup-budget breach remain;
+whole-correction review and V2 admission are still pending. The repair report and
+raw Canvas/baseline logs are preserved with the Task 7 evidence.
