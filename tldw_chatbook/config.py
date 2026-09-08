@@ -5217,18 +5217,19 @@ post_diarize = true
 # install ships one; see diarizer_backend below for the choice.
 live_diarization = false
 # Which engine assigns the live speaker ids when live_diarization is on:
-#   "auto"        - the first engine whose packages are installed, SpeechBrain
-#                   before ONNX (default; "local" is the old name for it)
+#   "auto"        - the first engine whose packages are installed, ONNX before
+#                   SpeechBrain (default; "local" is the old name for it).
+#                   ONNX ships with the base install, so "auto" means ONNX
+#                   unless that package is broken.
 #   "onnx"        - sherpa-onnx; ships with the base install, no torch needed
 #   "speechbrain" - needs the "diarization" extra (torch, torchaudio,
 #                   speechbrain, scikit-learn)
 #   "server"      - reserved; not available yet
-# ONNX measures better on accuracy, live purity and speed; SpeechBrain
-# separates one enrolled voice from others better, which is why "auto" still
-# prefers it (Docs/STT_Evaluation/task-31827/report.md). Switching engines
-# invalidates an enrolled voiceprint (the two produce different kinds of
-# vector), so pin this if you do not want "auto" to change it for you when you
-# add or remove the torch extra.
+# ONNX measures better on accuracy, live purity and speed; SpeechBrain keeps a
+# wider margin between one enrolled voice and everyone else's
+# (Docs/STT_Evaluation/task-31827/report.md). The two produce different kinds
+# of voiceprint vector, so switching engines means enrolling your voice again
+# -- an existing SpeechBrain voiceprint reads "needs re-enrollment" until you do.
 diarizer_backend = "auto"
 # Which speaker embedder the "onnx" engine uses: titanet_small,
 # wespeaker_resnet34, eres2net_en or campplus_en. Also part of the voiceprint

@@ -277,15 +277,16 @@ def test_live_diarization_active_true_for_local_backend_with_deps(tmp_path, monk
 
 # ---- engine resolution (31827 task 5, spec §4) ---------------------------
 def test_auto_order_records_the_bakeoff_outcome(tmp_path):
-    """Task 9 (31827, spec §10): the bake-off FAILED its separation gate, so
-    `auto` still prefers SpeechBrain on an install that has both.
+    """Spec §10: ONNX-first is the recorded product decision (2026-09-08) --
+    the bake-off's separation gate was overridden as not the right
+    cross-space test, and ONNX won every other gate.
 
     Pinned as a value, not read off `AUTO_ORDER[0]` like the walk test below:
-    flipping the default engine invalidates every enrolled voiceprint on an
-    install that has the torch extra (spec §6), so it must be a deliberate
-    edit here and in `Docs/User_Guide/meetings.md`, never a drive-by.
+    flipping the default engine invalidates every enrolled voiceprint made
+    with the other one (spec §6), so it must be a deliberate edit here and
+    in `Docs/User_Guide/meetings.md`, never a drive-by.
     """
-    assert mo.AUTO_ORDER == ("speechbrain", "onnx")
+    assert mo.AUTO_ORDER == ("onnx", "speechbrain")
 
 
 def test_resolve_engine_walks_auto_order_by_find_spec(tmp_path):

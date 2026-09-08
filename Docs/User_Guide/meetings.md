@@ -252,12 +252,14 @@ records normally and picks up speaker ids when the engine is ready.
 - **`onnx_embedder` picks the ONNX voice model**: `titanet_small` (default),
   `eres2net_en`, `wespeaker_resnet34`, or `campplus_en`. It is part of your
   voiceprint's identity, so changing it means enrolling your voice again.
-- **`auto` is not sticky.** It re-decides on every Start, so installing or
-  removing the `diarization` extra silently changes which engine labels your
-  meetings — and the two produce different kinds of vector, so an enrolled
-  voiceprint made with the other one reports "Voice match: off (needs
-  re-enrollment)". Pin `diarizer_backend = "onnx"` or `"speechbrain"` if you
-  would rather it never moved.
+- **`auto` means ONNX.** It re-decides on every Start and tries ONNX first;
+  since sherpa-onnx ships with the base install, `auto` only ever falls back
+  to SpeechBrain when the ONNX package itself is broken. To use SpeechBrain
+  set `diarizer_backend = "speechbrain"` explicitly. The two engines produce
+  different kinds of vector, so an enrolled voiceprint made with the other
+  one reports "Voice match: off (needs re-enrollment)" until you enroll again
+  — a voiceprint you enrolled before this release, when SpeechBrain was the
+  engine, will ask for that once.
 
 **Which engine is better?** They were measured against each other over 188
 minutes of labelled conversation (VoxConverse + AMI) — see
@@ -269,10 +271,12 @@ for `titanet_small`, against 0.941) and the per-window latency (11.8 ms for
 `titanet_small`, against 27.6 ms), and it needs no torch at all. What it does
 *not* win is voice-match separation — how far your enrolled voice sits from
 everyone else's — where SpeechBrain's margin is 0.734 and the best ONNX
-embedder's (`titanet_small` again) is 0.640. That is the one number
-"Remember my voice" depends on, so `auto` still prefers SpeechBrain when the
-torch extra is installed. If you do not use voice matching,
-`diarizer_backend = "onnx"` is the better pick.
+embedder's (`titanet_small` again) is 0.640. That margin compares two
+different kinds of vector on one absolute scale, and both leave the shipped
+`voice_match_threshold` of 0.2 comfortably inside them (your own voice sits
+at a distance of about 0.07 from its ONNX voiceprint, everyone else at about
+0.70), so ONNX is the default engine. Set `diarizer_backend = "speechbrain"`
+if you want the wider margin and have the `diarization` extra.
 
 **Model attribution.** `nemo_en_titanet_small.onnx` is NVIDIA's TitaNet-small,
 licensed **CC-BY-4.0** (© NVIDIA), redistributed through the sherpa-onnx

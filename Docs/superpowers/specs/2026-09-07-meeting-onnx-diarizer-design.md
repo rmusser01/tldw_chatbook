@@ -262,9 +262,15 @@ at cluster 0.95, is 0.094 short against a 0.05 allowance. Live purity additional
 `wespeaker_resnet34` and `campplus_en`. DER, RTF and latency pass everywhere, three of them
 by a wide margin (ONNX's best DER is 3× better than ECAPA's).
 
-Result, per §7's fail branch: **`AUTO_ORDER` stays `("speechbrain", "onnx")`** — ONNX is the
-base-install engine when the torch extra is absent, and the alternative when it is present.
-`DEFAULT_EMBEDDER` stays `titanet_small` (best overall of the four). The measured thresholds
+Result, per §7's fail branch as written: `AUTO_ORDER` would stay `("speechbrain", "onnx")`.
+**Product decision (2026-09-08, the user):** the separation gate compares an absolute cosine
+margin across two embedding spaces and is not the right cross-space test; ONNX won every
+other gate, ships in the base install, and its own margin leaves the shipped
+`voice_match_threshold` (0.2) far inside it (self ≈ 0.07 distance, others ≈ 0.70). Therefore
+**`AUTO_ORDER = ("onnx", "speechbrain")`** — ONNX is the default engine; SpeechBrain runs only
+when `diarizer_backend = "speechbrain"`. A voiceprint enrolled with SpeechBrain reads
+"needs re-enrollment" once (§6). `DEFAULT_EMBEDDER` stays `titanet_small` (best overall of
+the four). The measured thresholds
 are pinned anyway, since an explicit `diarizer_backend = "onnx"` should run at them:
 `CLUSTER_THRESHOLD` = titanet_small 0.95 / eres2net_en 0.90 / wespeaker_resnet34 0.60 /
 campplus_en 0.80; `LIVE_THRESHOLD` = 0.45 / 0.45 / 0.10 / 0.15. The shipped 0.5 / 0.25 were

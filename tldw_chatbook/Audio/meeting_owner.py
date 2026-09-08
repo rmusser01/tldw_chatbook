@@ -49,14 +49,15 @@ ENGINE_MODULES: dict[str, tuple[str, ...]] = {
     "onnx": ("sherpa_onnx", "numpy"),
     "speechbrain": DIARIZATION_MODULES,
 }
-#: The order `diarizer_backend = "auto"` tries engines in. SpeechBrain-first
-#: is the bake-off's recorded outcome (task 9: 31827, spec §10): ONNX won DER,
-#: purity, RTF and latency but no candidate met the self-match separation gate
-#: (best titanet_small 0.640 against ECAPA's 0.734, allowance 0.05), so an
-#: install that has the torch extra keeps the engine its voiceprint was
-#: enrolled with. Flipping this to `("onnx", "speechbrain")` is a one-line
-#: change here plus the matching passage in `Docs/User_Guide/meetings.md`.
-AUTO_ORDER: tuple[str, ...] = ("speechbrain", "onnx")
+#: The order `diarizer_backend = "auto"` tries engines in. ONNX-first is a
+#: product decision (2026-09-08, spec §10): the bake-off's only failed gate was
+#: self-match separation (titanet_small 0.640 against ECAPA's 0.734, allowance
+#: 0.05), judged not to be the right cross-embedding-space test, while ONNX won
+#: DER (3x), live purity, RTF and latency and ships in the base install. An
+#: install whose voiceprint was enrolled with SpeechBrain reads "needs
+#: re-enrollment" once (spec §6); pin `diarizer_backend = "speechbrain"` to keep
+#: the old engine instead.
+AUTO_ORDER: tuple[str, ...] = ("onnx", "speechbrain")
 #: Accepted `[meetings] diarizer_backend` values. "local" is the pre-31827
 #: spelling and maps to "auto"; "server" is reserved (spec §4).
 DIARIZER_BACKENDS = ("auto", "onnx", "speechbrain", "server")
