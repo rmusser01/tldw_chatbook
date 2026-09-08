@@ -12507,3 +12507,16 @@ had no persisted conversation when the transform ran, so the applier returned
 unchanged text. Persist first, assert transformed wire content, and verify the
 origin's `active_request` row and exact source pin before claiming transform
 coverage. Both corrected controls passed with the discard fix.
+
+
+### TASK-32076: A zero player exit does not prove full playback
+
+The TTS backend parity audit produced a valid 5.717-second Opus clip that
+FFmpeg decoded and Whisper transcribed completely. macOS `afplay` returned
+exit code 0 after approximately 2.0 seconds, while `afinfo` could not open the
+file. Switching Opus playback to the existing FFplay path took 6.13 seconds
+and retained the complete transcript. For playback evidence, check decoded
+frames/content **and** player elapsed time/completion; a nonempty file and a
+successful process exit can both conceal an unsupported format. Also retain
+the exact process in completion callbacks: a late previous monitor must not
+finish the next clip.

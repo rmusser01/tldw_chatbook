@@ -10,6 +10,8 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.base_backends import APITTSBackend
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:7851"
@@ -19,6 +21,7 @@ _HTTP_LOGGER_NAMES = ("httpx", "httpcore")
 class _AllTalkHTTPPrivacyFilter(logging.Filter):
     def filter(self, _record: logging.LogRecord) -> bool:
         return False
+
 
 #######################################################################################################################
 #
@@ -80,9 +83,7 @@ class AllTalkTTSBackend(APITTSBackend):
         self._http_log_suppression_users += 1
         if self._http_log_suppression_users == 1:
             for logger_name in _HTTP_LOGGER_NAMES:
-                logging.getLogger(logger_name).addFilter(
-                    self._http_privacy_filter
-                )
+                logging.getLogger(logger_name).addFilter(self._http_privacy_filter)
         try:
             yield
         finally:
@@ -192,10 +193,33 @@ class AllTalkTTSBackend(APITTSBackend):
                     response.raise_for_status()
 
                     chunk_size = 8192
+                    buffered = bytearray()
+                    received_bytes = 0
                     async for chunk in response.aiter_bytes(chunk_size=chunk_size):
-                        yield chunk
+                        received_bytes += len(chunk)
+                        if request.response_format == "pcm":
+                            check_buffered_audio_size(len(buffered) + len(chunk))
+                            buffered.extend(chunk)
+                        else:
+                            yield chunk
+
+                    if not received_bytes:
+                        raise ValueError("TTS service returned no audio.")
+
+                    if request.response_format == "pcm":
+                        from tldw_chatbook.TTS.audio_service import get_audio_service
+
+                        yield await get_audio_service().convert_audio(
+                            bytes(buffered),
+                            "pcm",
+                            source_format="wav",
+                            sample_rate=24000,
+                        )
 
             logger.info("AllTalk generation completed (provider=alltalk)")
+
+        except TTSOperationError:
+            raise
 
         except httpx.ConnectError:
             logger.error("AllTalk connection failed (provider=alltalk)")
