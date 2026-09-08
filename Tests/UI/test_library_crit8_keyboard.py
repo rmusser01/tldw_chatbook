@@ -182,3 +182,117 @@ async def test_escape_still_belongs_to_the_surface_that_already_owns_it():
         await pilot.pause()
         assert screen.check_action("library_ingest_back", ()) is True
         assert screen.check_action("library_blur_text_field", ()) is False
+
+
+# --- task-32052: the New-note canvas is keyboard-complete -------------------
+
+
+@pytest.mark.asyncio
+async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
+    """AC#1/#2: entry parks focus on Blank note; Down/Up walk the templates."""
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await pilot.press("n")
+        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        for _ in range(60):
+            if screen.focused is blank:
+                break
+            await pilot.pause(0.02)
+        assert screen.focused is blank, (
+            "Entering the New-note canvas left focus elsewhere, so Enter "
+            "cannot create a note."
+        )
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+
+        await pilot.press("down")
+        await pilot.pause()
+        first_template = screen.query_one("#library-notes-template-0", Button)
+        assert screen.focused is first_template
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert screen.focused is blank
+
+
+@pytest.mark.asyncio
+async def test_tab_from_a_library_canvas_never_reaches_the_nav_bar():
+    """AC#3: Tab cycles inside the Library screen content, not the app chrome."""
+    from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await pilot.press("n")
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await pilot.pause()
+
+        nav_bar = screen.query_one(MainNavigationBar)
+        seen = []
+        for _ in range(30):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = screen.focused
+            assert focused is not None
+            seen.append(focused.id)
+            assert nav_bar not in focused.ancestors, (
+                f"Tab escaped the Library screen into the nav bar at {focused.id!r}; "
+                f"walk so far: {seen}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_new_note_footer_enter_hint_follows_the_focused_control():
+    """AC#4: "enter create note" only while a create row genuinely has focus."""
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await pilot.press("n")
+        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        blank.focus()
+        await pilot.pause()
+        assert ("enter", "create note") in screen._library_notes_footer_shortcuts()
+
+        screen.query_one("#library-notes-create-back", Button).focus()
+        await pilot.pause()
+        labels = dict(screen._library_notes_footer_shortcuts())
+        assert labels.get("enter") != "create note", (
+            "The footer promised Enter creates a note while the Back button "
+            "had focus, where Enter goes back."
+        )
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_into_new_note_also_focuses_blank_note():
+    """AC#1 covers *entering the canvas*, not one route into it.
+
+    Ctrl+N from the Notes list takes the retained-shell route
+    (``_try_switch_retained_library_notes_route``), which is a different
+    code path from the landing's ``n``; live, it left focus behind.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        await pilot.pause()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+        await pilot.press("ctrl+n")
+        blank = await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        for _ in range(80):
+            if screen.focused is blank:
+                break
+            await pilot.pause(0.02)
+        assert screen.focused is blank, (
+            f"Ctrl+N left focus on {getattr(screen.focused, 'id', None)!r}, "
+            "so Enter does not create a note."
+        )

@@ -888,6 +888,17 @@ class LibraryScreen(BaseAppScreen):
     ]
 
     BINDINGS = [
+        # task-32052 AC#3: Tab must stay inside the Library screen. Textual's
+        # ``Screen`` binds tab/shift+tab to the "app."-namespaced actions,
+        # which always dispatch to ``App.action_focus_next`` and walk the
+        # WHOLE focus chain -- the nav bar comes first there, so the first
+        # Tab out of any Library canvas landed on "Home" (where Enter left
+        # Library entirely). ``DOMNode._merge_bindings`` lets a subclass's
+        # entry for a key REPLACE the inherited one, so re-declaring the two
+        # keys un-namespaced routes them to this screen's own actions below.
+        # Same shape as ``ChatScreen``'s region-scoped Tab (TASK-2154.11).
+        Binding("tab", "focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
         Binding(
             "shift+f6",
             "focus_previous_workbench_pane",
@@ -4047,13 +4058,62 @@ class LibraryScreen(BaseAppScreen):
         directly overwrote the Notes editor footer). Flip-gated so
         ordinary focus moves cause zero footer churn.
 
+        task-32053 AC#3 / task-32052 AC#4: the gate is now the pair
+        (typing, the focused control's own Enter action) rather than the
+        typing flag alone. On Search/RAG and the New-note canvas the footer
+        has to follow focus WITHIN the canvas -- Enter runs the search in
+        the query box, toggles a source on a scope button, and selects the
+        card it is on -- and a bool-only flip gate never fired for a move
+        between two non-text controls. Still gated, so a focus move that
+        changes neither still costs zero footer churn.
+
         Args:
             focused: The newly focused widget.
         """
         typing = isinstance(focused, (Input, TextArea))
-        if typing != getattr(self, "_library_footer_typing_context", False):
+        context = (typing, self._library_focus_enter_label(focused))
+        if context != getattr(self, "_library_footer_focus_context", None):
+            self._library_footer_focus_context = context
             self._library_footer_typing_context = typing
             self._apply_library_notes_footer_context()
+
+    def _library_focus_enter_label(self, focused: Widget | None = None) -> str:
+        """The Enter action of the focused control, for the footer's hint.
+
+        One owner for both surfaces whose footer follows focus: Search/RAG
+        (task-32053 AC#3 -- the set used to advertise "enter select
+        evidence" on every control, including the query box, where Enter
+        runs the search, and the source toggles, where it empties the
+        results) and the New-note canvas (task-32052 AC#4 -- "enter create
+        note" is only true on a create row, not on its Back button).
+
+        Args:
+            focused: The widget to describe; defaults to the screen's own
+                focused widget.
+
+        Returns:
+            A verb-phrase label for Enter, or ``""`` when the focused
+            control has no Enter action worth advertising.
+        """
+        if focused is None:
+            focused = self.focused
+        widget_id = str(getattr(focused, "id", "") or "")
+        if not widget_id:
+            return ""
+        if widget_id in ("library-rag-query-input", "library-rag-run-query"):
+            return "run search"
+        if widget_id == "library-rag-mode-toggle":
+            return "switch mode"
+        if widget_id.startswith("library-rag-scope-toggle-"):
+            source = widget_id.removeprefix("library-rag-scope-toggle-")
+            return f"toggle {source.replace('-', ' ').capitalize()}"
+        if widget_id.startswith("library-rag-result-card-"):
+            return "select evidence"
+        if widget_id == "library-notes-create-blank" or widget_id.startswith(
+            "library-notes-template-"
+        ):
+            return "create note"
+        return ""
 
     @staticmethod
     def _review_footer_entries(
@@ -5392,6 +5452,16 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             None.
         """
+        # task-32052 AC#1: never replay an identity captured on a DIFFERENT
+        # surface. ``_sync_library_canvas`` already tries to skip the capture
+        # on a surface transition, but it only watches the WORK pane's mode,
+        # so a list -> create switch slipped through: the navigator identity
+        # was replayed over the create canvas and Ctrl+N (and the rail's
+        # "New note" pressed from the notes list) landed on a notes-tree row
+        # instead of Blank note. A region mismatch IS the transition this
+        # restore is documented not to serve.
+        if identity.region and identity.region != self._library_notes_focus_region():
+            return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
         # it could be seen sitting outside the canvas.
@@ -8739,6 +8809,15 @@ class LibraryScreen(BaseAppScreen):
         if region == "create":
             if self._library_note_create_running:
                 return ()
+            # task-32052 AC#4: "enter create note" is true on Blank note and
+            # the template rows -- where entry focus now lands -- but not on
+            # the canvas's "‹ Notes" button, where Enter goes back. The
+            # honest-footer rule the sibling tiers already follow.
+            if self._library_focus_enter_label() != "create note":
+                return self._notes_footer_tier(
+                    (("esc", "back to notes"),),
+                    (("esc", "notes"),),
+                )
             return self._notes_footer_tier(
                 (("enter", "create note"), ("esc", "back to notes")),
                 (("enter", "create"), ("esc", "notes")),
@@ -9375,6 +9454,39 @@ class LibraryScreen(BaseAppScreen):
             self._library_workbench_focus_targets(),
             direction=1,
         )
+
+    #: task-32052 AC#3: the Tab region. ``#screen-content`` is
+    #: ``BaseAppScreen.compose``'s wrapper around every screen's own content
+    #: -- everything except the nav bar above it and the footer below.
+    _LIBRARY_TAB_REGION = "#screen-content, #screen-content *"
+
+    def action_focus_next(self) -> None:
+        """Tab: move focus to the next control inside the Library content.
+
+        task-32052 AC#3: the inherited ``app.focus_next`` walks the whole
+        screen focus chain, which starts with the fifteen nav-bar buttons --
+        so one Tab from the New-note canvas landed on "Home", where Enter
+        left Library. Tab now cycles within ``#screen-content``; the nav bar
+        keeps its own documented keys (Ctrl+digit / F-keys) and stays
+        traversable once focus is genuinely in it (mirrors ``ChatScreen``).
+        """
+        self._move_library_screen_focus(1)
+
+    def action_focus_previous(self) -> None:
+        """Shift+Tab: the reverse of ``action_focus_next``."""
+        self._move_library_screen_focus(-1)
+
+    def _move_library_screen_focus(self, direction: int) -> None:
+        """Cycle focus within the Library content, or app-wide from chrome."""
+        focused = self.focused
+        inside = focused is not None and any(
+            node.id == "screen-content" for node in focused.ancestors
+        )
+        selector = self._LIBRARY_TAB_REGION if inside or focused is None else "*"
+        if direction >= 0:
+            self.focus_next(selector)
+        else:
+            self.focus_previous(selector)
 
     def action_focus_previous_workbench_pane(self) -> None:
         """Shift+F6: move focus to the previous Library workbench pane."""
@@ -22477,6 +22589,17 @@ class LibraryScreen(BaseAppScreen):
             # CREATE_PROMPT/CREATE_SKILL entry-focus branches below use.
             self.call_after_refresh(self._focus_library_ingest_path)
             self.call_after_refresh(self._sync_library_ingest_rail_from_shell)
+        if row_id == LIBRARY_ROW_CREATE_NOTE and self.is_mounted:
+            # task-32052 AC#1: the New-note canvas opened with NOTHING
+            # focused, so its advertised "enter create note" was dead and
+            # the first note was mouse-only. The retained-shell route
+            # (``_try_switch_retained_library_notes_route``) already restores
+            # this exact control, but it only handles Notes list -> Create;
+            # arriving from the landing's ``n`` (or any other row) fell
+            # through to this legacy route, which restored nothing.
+            self.call_after_refresh(
+                self._focus_library_note_control, "#library-notes-create-blank"
+            )
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
@@ -25617,6 +25740,14 @@ class LibraryScreen(BaseAppScreen):
             else:
                 continue
             if not action:
+                continue
+            if action in ("focus_next", "focus_previous"):
+                # task-32052: Tab/Shift+Tab are app-wide keyboard chrome
+                # this screen only re-declares to scope (see
+                # ``action_focus_next``), not Library shortcuts. Listing
+                # them would put two universally-true rows at the top of
+                # every surface's panel -- the same contamination LIB-09
+                # cleaned out.
                 continue
             try:
                 gate_state = self.check_action(action, ())

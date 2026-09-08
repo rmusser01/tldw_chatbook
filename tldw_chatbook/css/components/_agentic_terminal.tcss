@@ -2197,6 +2197,22 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
+/* task-32052 AC#2: entering the New-note canvas now parks focus on Blank
+   note and Up/Down walk the templates, so these rows need the same
+   focus-only left-edge cue the other Library list rows carry
+   (.library-notes-row:focus, task-31983). The border replaces the row's
+   1-column left padding so the label never shifts or is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (the task-2041 label-eating trap on a compact row). */
+.library-notes-create-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
 .library-prompt-row {
     width: 100%;
