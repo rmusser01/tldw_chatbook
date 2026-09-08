@@ -164,6 +164,8 @@ class TestConnectionsAreHeldPerThread:
                         conn.execute("SELECT 1").fetchone()
             except Exception as exc:  # noqa: BLE001 - reported below
                 errors.append(exc)
+            finally:
+                db.close()
 
         threads = [threading.Thread(target=worker) for _ in range(4)]
         for thread in threads:

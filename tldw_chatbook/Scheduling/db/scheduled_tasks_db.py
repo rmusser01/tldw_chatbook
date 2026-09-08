@@ -19,6 +19,14 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_getter,
+    _core_operation,
+    _core_transaction,
+    _register_core_connection,
+)
+
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_identifier
 
@@ -136,18 +144,35 @@ class ScheduledTasksDB(BaseDB):
     ):
         super().__init__(db_path, client_id, check_integrity_on_startup)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         conn = super()._get_connection()
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local reminder/automation
-        # store) and avoids an fsync per commit. This DB opens a fresh
-        # connection per operation (`closing(self._get_connection())` /
-        # `transaction()` throughout this file), so synchronous must be
-        # re-applied on every open, not just the first (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            if not self.is_memory_db:
+                conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local reminder/automation
+            # store) and avoids an fsync per commit. This DB opens a fresh
+            # connection per operation (`closing(self._get_connection())` /
+            # `transaction()` throughout this file), so synchronous must be
+            # re-applied on every open, not just the first (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
+
+    @_core_transaction
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """Hold one admitted read scope through its actual native close."""
+        with closing(self._get_connection()) as conn:
+            yield conn
 
     def _initialize_schema(self) -> None:
         """Create tables, indexes, and schema version row, migrating forward.
@@ -174,17 +199,19 @@ class ScheduledTasksDB(BaseDB):
             migrate as migrate_v2_to_v3,
         )
 
-        migrate_v0_to_v1(self)
-        migrate_v1_to_v2(self)
-        migrate_v2_to_v3(self)
+        with _core_operation(self):
+            migrate_v0_to_v1(self)
+            migrate_v1_to_v2(self)
+            migrate_v2_to_v3(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Run a block inside a SQLite transaction.
@@ -673,7 +700,7 @@ class ScheduledTasksDB(BaseDB):
 
     def get_reminder_task(self, task_id: str) -> Optional[dict[str, Any]]:
         """Fetch a reminder task by local id."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 "SELECT * FROM reminder_tasks WHERE id = ?", (task_id,)
             )
@@ -687,7 +714,7 @@ class ScheduledTasksDB(BaseDB):
         server_id: str,
     ) -> Optional[dict[str, Any]]:
         """Fetch a reminder task by owner and server-side identifier."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             return self._get_reminder_task_by_server_id_conn(
                 conn, owner_id, server_id
             )
@@ -714,7 +741,7 @@ class ScheduledTasksDB(BaseDB):
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 f"SELECT * FROM reminder_tasks {where_clause} ORDER BY created_at",
                 params,
@@ -736,7 +763,7 @@ class ScheduledTasksDB(BaseDB):
     def reminders_due_before(self, now: datetime) -> list[dict[str, Any]]:
         """Return enabled reminders whose next_run_at is at or before ``now``."""
         now_iso = self._to_utc_iso(now)
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 """
                 SELECT * FROM reminder_tasks
@@ -956,7 +983,7 @@ class ScheduledTasksDB(BaseDB):
 
     def get_automation_definition(self, definition_id: str) -> Optional[dict[str, Any]]:
         """Fetch an automation definition by local id."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 "SELECT * FROM automation_definitions WHERE id = ?", (definition_id,)
             )
@@ -986,7 +1013,7 @@ class ScheduledTasksDB(BaseDB):
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 f"SELECT * FROM automation_definitions {where_clause} ORDER BY created_at",
                 params,
@@ -1117,7 +1144,7 @@ class ScheduledTasksDB(BaseDB):
 
         Returns the matching mapping row, or ``None`` if no mapping exists.
         """
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 """
                 SELECT * FROM sync_mapping
@@ -1137,7 +1164,7 @@ class ScheduledTasksDB(BaseDB):
 
         Returns the matching mapping row, or ``None`` if no mapping exists.
         """
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 """
                 SELECT * FROM sync_mapping
@@ -1172,7 +1199,7 @@ class ScheduledTasksDB(BaseDB):
 
     def get_sync_state(self, owner_id: str) -> Optional[dict[str, Any]]:
         """Fetch the sync state row for ``owner_id``, or ``None`` if absent."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 "SELECT * FROM sync_state WHERE owner_id = ?",
                 (owner_id,),
@@ -1248,7 +1275,7 @@ class ScheduledTasksDB(BaseDB):
             params.append(primitive)
 
         where_clause = " AND ".join(conditions)
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 f"""
                 SELECT * FROM pending_mutations
@@ -1315,7 +1342,7 @@ class ScheduledTasksDB(BaseDB):
             params.append(primitive)
 
         where_clause = " AND ".join(conditions)
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 f"""
                 SELECT * FROM sync_tombstones
@@ -1333,7 +1360,7 @@ class ScheduledTasksDB(BaseDB):
         owner_id: str,
     ) -> Optional[dict[str, Any]]:
         """Return a single tombstone row if it exists."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 """
                 SELECT * FROM sync_tombstones
@@ -1392,7 +1419,7 @@ class ScheduledTasksDB(BaseDB):
             params.append(primitive)
 
         where_clause = " AND ".join(conditions)
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 f"""
                 SELECT * FROM sync_conflicts
@@ -1407,7 +1434,7 @@ class ScheduledTasksDB(BaseDB):
 
     def get_conflict_by_id(self, conflict_id: str) -> Optional[dict[str, Any]]:
         """Fetch a single conflict row by id."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 "SELECT * FROM sync_conflicts WHERE id = ?",
                 (conflict_id,),
@@ -1439,7 +1466,7 @@ class ScheduledTasksDB(BaseDB):
 
     def increment_conflict_retry_count(self, conflict_id: str) -> bool:
         """Increment the retry count on a conflict."""
-        with closing(self._get_connection()) as conn:
+        with self.connection() as conn:
             cursor = conn.execute(
                 """
                 UPDATE sync_conflicts

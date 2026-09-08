@@ -61,18 +61,24 @@ class LibraryIngestJobsDB(BaseDB):
         _core_access(self)
         self._conn = _core_cached_connection(self, self._conn)
         if self._conn is None:
-            self._conn = connect_private_sqlite(
+            conn = connect_private_sqlite(
                 "db.library_ingest_jobs",
                 self.db_path_str,
                 check_same_thread=False,
             )
-            _register_core_connection(self, self._conn)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            # NORMAL is safe under WAL and avoids an fsync per commit -- writes
-            # are per-mutation on the UI thread (a bulk drop = many small
-            # commits), so FULL's per-commit fsync would add avoidable latency.
-            self._conn.execute("PRAGMA synchronous=NORMAL")
+            _register_core_connection(self, conn)
+            try:
+                _core_access(self)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                # NORMAL is safe under WAL and avoids an fsync per commit.
+                conn.execute("PRAGMA synchronous=NORMAL")
+                _core_access(self)
+            except BaseException:
+                # Close this allocation, never a concurrently replaced cache.
+                conn.close()
+                raise
+            self._conn = conn
         return self._conn
 
     def close(self) -> None:

@@ -51,9 +51,18 @@ class LibraryCollectionsDB(BaseDB):
         self._thread_local = threading.local()
         super().__init__(db_path, client_id)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
         conn = super()._get_connection()
         _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         conn.execute("PRAGMA foreign_keys = ON")
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL")
@@ -75,6 +84,11 @@ class LibraryCollectionsDB(BaseDB):
         # `transaction()`; the only DML outside it is `_initialize_schema`'s
         # `executescript`, which self-commits under either mode.
         conn.isolation_level = None
+        try:
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     @_core_getter

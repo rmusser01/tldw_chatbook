@@ -140,7 +140,23 @@ def _repository_operation(participant):
         _operation_local.operation = None
         operation.path = participant.path
         operation.resolved_path = participant.path.resolve()
-        parent = participant.path.parent.stat()
+        try:
+            parent = participant.path.parent.stat()
+        except FileNotFoundError:
+            # Preserve the ordinary SQLite private-parent refusal contract.
+            from tldw_chatbook.Utils.private_paths import (
+                PrivatePathError,
+                PrivatePathResult,
+                PrivatePathStatus,
+            )
+
+            raise PrivatePathError(
+                PrivatePathResult(
+                    participant.path,
+                    PrivatePathStatus.UNSAFE_PARENT,
+                    reason="missing_parent",
+                )
+            ) from None
         operation.parent_identity = (parent.st_dev, parent.st_ino)
         operation.lease = acquire_storage(operation.path)
         with _changed:

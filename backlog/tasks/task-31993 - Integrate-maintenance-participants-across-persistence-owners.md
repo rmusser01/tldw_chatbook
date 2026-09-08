@@ -238,3 +238,67 @@ commands, overlapping run counts, scoped static/self-review checks, platform lim
 and remaining full Task10 integration are recorded in task-10-phase4-report.md.
 Task31993 remains In Progress, all ACs unchecked, pending remaining cohorts and
 independent whole-task review; ADR-126/design references are preserved.
+
+### Phase5 implementation plan (before code)
+
+1. Establish behavioral RED on actual Workspace, AgentRuns and ClientNotifications cached getters, native close/reference failures and active-work retirement refusal; extend to actual ScheduledTasks, Research and Writing scopes.
+2. Extend only the exact installed repository declarations and native policy associations. Preserve independent nested admission and actual wrapper/lease/path/Thread/Task association; leave BaseDB and ordinary subclasses unqualified.
+3. Gate/register fresh and cached native getter routes. Count the three cached sources' existing read/transaction scopes; reserve explicit source-thread close and retain live/uncertain caches. Count ScheduledTasks lexical read/transaction lifetimes through native close, AgentRuns' explicit fresh-read route, and Research/Writing path-backed lexical native contexts. Setup failures positively close or retain native evidence; memory/external injection behavior stays ordinary.
+4. Run focused behavioral cases with independent native observers for gates, pending/native setup, exact source association, nested scopes, threads, escaped native objects, close failures and reopening. Run only affected six-source/domain and shared participant/admission/private-SQLite/census guards; no full suite or collection sweep.
+5. Update exact owner/census and concrete caller handoffs, scoped fatal lint/new-test format/diff checks, self-review, report and scoped commit. Keep Task31993 In Progress with all three ACs unchecked; startup/native-unqualified holds and runtime coverage refusal remain.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of the approved native storage lifetime contract with existing ADR-004/036 boundaries; no schema/migration or new subsystem decision.
+
+### Phase5 implementation notes
+
+Under existing ADR-126, the six actual operational/domain SQLite sources now bind
+exact installed instances, selected paths, native policies and real handles to
+existing participant lifetimes. Workspace/AgentRuns/ClientNotifications managed
+read/transaction scopes retain per-thread caches through exit and preserve them on
+failed close/live probe; source-thread explicit close remains the retirement route.
+ScheduledTasks retains fresh closing read/transaction boundaries and counts its
+actual migration sequence. AgentRuns get_run_fresh retains its separate finally
+close. Research/Writing add counted lexical native contexts, preserve file close-on-
+exit and retained memory/external injection behavior, and bind relative files once.
+Native setup failure positively closes or leaves registered uncertainty; raw handles
+remain native APIs and independently block drain until explicit retirement.
+
+Controller-directed extension reproduced raw allocation and setup participant-gate
+races in the five earlier core owners plus Event/Sync. Their exact concrete source
+routes now recheck new allocations before returning; Event/Sync and Collections
+raw getters are gated and Event/Sync native file policy remains db.base. Ingest
+cleanup keeps the exact allocated handle local so mutable cache replacement cannot
+redirect refusal close to a pre-existing borrower. No BaseDB-wide authority or
+cross-store grant was added. Shared pre-admission missing-parent lookup preserves
+the existing typed PrivatePathError/UNSAFE_PARENT/missing_parent refusal; no parent
+is created and alias/trust checks are unchanged.
+
+Behavioral REDs: initial cached9, scope9, setup-close6, raw-allocation gate6,
+previous-owner gate7, all-source PRAGMA/setup gate13, and Ingest native-identity1.
+Final focused96 cases are included in the final222-case affected lifetime/interop/
+Ingest run (all passed). Earlier same-source domain167 passed; owning-thread fixture
+cleanup97 passed; previous-owner domain195 passed; Media55 passed with only its
+independently baselined malformed historical-schema case explicitly deselected.
+Shared guards452 passed/1 existing Windows skip/2 missing-parent failures; both
+failures were fixed and their complete interop file passed in the final222 run.
+No inflated sum of overlapping runs or full-suite claim. Exact commands/raw logs,
+initial wrong Scheduled first-row-vs-MAX test oracle and corrections are retained
+in task-10-phase5-report.md. The initial domain run's +371-descriptor warning exposed
+GC-dependent fixtures and worker tests; real owning-thread finalizers/close calls
+were added in five affected test files. The97-case cleanup run emitted no such
+threshold warning; this is not a zero-growth or production lifecycle claim.
+
+Self-review checked exact source/native associations, pending and nested gate races,
+Thread/Task identity, ambiguous closure retention, native borrowers, memory/external
+compatibility and concrete source callers. Scoped fatal lint, new-test/helper format
+and diff checks pass. Owner inventory records six-source lifetimes plus the earlier
+race corrections, with no producer-count/schema/capture promotion. Testing lesson
+records actual fixture-native retention evidence. Startup/native-unqualified holds,
+participant_pending rows and incomplete runtime coverage remain; no responder or
+Complete/replacement exposure. Task31993 stays In Progress, all three ACs unchecked.
+Required next work includes Console/settings/retention AgentRuns callers, Workspace
+service and Home notification pool jobs, notification/scheduler/research execution
+and cross-store followups, multi-scope Writing jobs, remaining storage cohorts,
+app/headless lifecycle and one independent whole-task review. The clean-BASE app
+callback/bootstrap issue remains Task10; Media historical-fixture debt stays Task13.

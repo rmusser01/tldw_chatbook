@@ -2968,6 +2968,12 @@ UPDATE db_schema_version
                     timeout=15,  # Maybe slightly increase timeout?
                 )
                 _register_core_connection(self, conn)
+                try:
+                    _core_access(self)
+                except BaseException:
+                    # Retire only this unpublished allocation; live borrowers stay.
+                    conn.close()
+                    raise
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode=WAL;")
@@ -2980,6 +2986,11 @@ UPDATE db_schema_version
                 conn.execute("PRAGMA synchronous=NORMAL;")
 
                 conn.execute("PRAGMA foreign_keys = ON;")
+                try:
+                    _core_access(self)
+                except BaseException:
+                    conn.close()
+                    raise
                 self._local.conn = conn
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}"

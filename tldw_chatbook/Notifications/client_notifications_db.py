@@ -30,6 +30,16 @@ _CATEGORY_NOTIFICATION_SETTINGS = (
 )
 
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+
+
 class ClientNotificationsDB(BaseDB):
     """Dedicated local queue/inbox store for client notifications.
 
@@ -66,6 +76,7 @@ class ClientNotificationsDB(BaseDB):
         self._thread_local = threading.local()
         super().__init__(db_path, client_id)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
@@ -80,40 +91,52 @@ class ClientNotificationsDB(BaseDB):
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
                 self._memory_conn.isolation_level = None
             return self._memory_conn
+        _core_access(self)
         conn = super()._get_connection()
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local notification inbox)
-        # and avoids an fsync per commit. Unlike journal_mode, which is
-        # persisted in the file, synchronous is per-connection and must be
-        # re-applied on every NEW connection -- which is why this pairing
-        # lives in the one place connections are created (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        # task-3012: a held (long-lived) connection needs true autocommit.
-        # Python's default isolation mode auto-BEGINs on any DML; that
-        # implicit transaction then makes the explicit BEGIN in
-        # `transaction()` raise "cannot start a transaction within a
-        # transaction", and silently ROLLS BACK bare DML on close.
-        # Audited (task-15466) -- every site in this file: `_initialize_
-        # schema` executescript (self-commits either way), single-statement
-        # writes in insert_notification and _update_flags (each its own
-        # autocommit transaction), the multi-statement settings loop in
-        # update_settings (now wrapped in an explicit `transaction()`), and
-        # read-only SELECTs elsewhere.
-        conn.isolation_level = None
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local notification inbox)
+            # and avoids an fsync per commit. Unlike journal_mode, which is
+            # persisted in the file, synchronous is per-connection and must be
+            # re-applied on every NEW connection -- which is why this pairing
+            # lives in the one place connections are created (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            # task-3012: a held (long-lived) connection needs true autocommit.
+            # Python's default isolation mode auto-BEGINs on any DML; that
+            # implicit transaction then makes the explicit BEGIN in
+            # `transaction()` raise "cannot start a transaction within a
+            # transaction", and silently ROLLS BACK bare DML on close.
+            # Audited (task-15466) -- every site in this file: `_initialize_
+            # schema` executescript (self-commits either way), single-statement
+            # writes in insert_notification and _update_flags (each its own
+            # autocommit transaction), the multi-statement settings loop in
+            # update_settings (now wrapped in an explicit `transaction()`), and
+            # read-only SELECTs elsewhere.
+            conn.isolation_level = None
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
         In-memory stores share the single cached connection instead (see
         the class docstring). The liveness probe is a plain no-op
-        statement; a connection another component closed (or that SQLite
-        invalidated) is transparently replaced.
+        statement. Only a positively closed native handle is replaced;
+        a failed probe on a live handle preserves it and propagates the error.
         """
         if getattr(self, "is_memory_db", False):
             return self._get_connection()
+        _core_access(self)
         conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -124,10 +147,13 @@ class ClientNotificationsDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    # A failed probe does not retire a live native borrower.
                     try:
-                        conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Positively closed; failure retains cache.
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -135,6 +161,7 @@ class ClientNotificationsDB(BaseDB):
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield this thread's held connection (no transaction opened).
@@ -144,6 +171,7 @@ class ClientNotificationsDB(BaseDB):
         """
         yield self._held_connection()
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a write transaction.
@@ -180,12 +208,15 @@ class ClientNotificationsDB(BaseDB):
             self._memory_conn.close()
             self._memory_conn = None
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - preserve explicit retirement route
+                    return
+                self._thread_local.conn = None
 
     def _initialize_schema(self) -> None:
         with self.connection() as conn:

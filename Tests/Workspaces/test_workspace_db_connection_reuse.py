@@ -35,10 +35,11 @@ def connection_spy(monkeypatch):
     return opened
 
 
-def test_repeated_reads_open_no_new_connections(tmp_path: Path, connection_spy):
+def test_repeated_reads_open_no_new_connections(tmp_path: Path, connection_spy, request):
     service = LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )
+    request.addfinalizer(service.db.close)
     service.ensure_default_workspace()  # warm-up: schema + first held conn
 
     baseline = len(connection_spy)
@@ -52,9 +53,11 @@ def test_repeated_reads_open_no_new_connections(tmp_path: Path, connection_spy):
 
 
 def test_failed_transaction_rolls_back_and_connection_stays_usable(
+    request,
     tmp_path: Path,
 ):
     db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="ws-a", name="Alpha")
 
@@ -76,8 +79,9 @@ def test_failed_transaction_rolls_back_and_connection_stays_usable(
     )
 
 
-def test_each_thread_gets_its_own_connection(tmp_path: Path):
+def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
     db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     service.ensure_default_workspace()
 
@@ -91,6 +95,8 @@ def test_each_thread_gets_its_own_connection(tmp_path: Path):
                 seen[tag] = conn
         except BaseException as exc:  # noqa: BLE001 - surface to the test
             errors.append(exc)
+        finally:
+            db.close()
 
     threads = [threading.Thread(target=read, args=(f"t{i}",)) for i in range(2)]
     for t in threads:

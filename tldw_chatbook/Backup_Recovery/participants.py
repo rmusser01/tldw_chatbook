@@ -99,7 +99,24 @@ def _repository_types():
     from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
     from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Notifications.client_notifications_db import (
+        ClientNotificationsDB,
+    )
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
+    from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
+
     return {
+        WorkspaceDB: "db.workspaces",
+        AgentRunsDB: "db.agent_runs",
+        ClientNotificationsDB: "notifications.client",
+        ScheduledTasksDB: "db.scheduled_tasks",
+        LocalResearchService: "research.local",
+        LocalWritingService: "writing.local",
         CharactersRAGDB: "db.chachanotes.primary",
         MediaDatabase: "db.media.primary",
         PromptsDatabase: "db.prompts.primary",
@@ -115,7 +132,11 @@ def _repository_participant(repository):
     from . import storage_admission as storage
 
     types = _repository_types()
-    if type(repository) not in types or repository.is_memory_db:
+    if (
+        type(repository) not in types
+        or repository.is_memory_db
+        or repository.db_path is None
+    ):
         raise ValueError("repository_participant_not_installed")
     with storage._lock:
         participant = getattr(repository, "_maintenance_participant", None)
@@ -267,7 +288,16 @@ def _register_core_connection(repository, connection):
             lease = None
         policy_id = (
             "db.base"
-            if participant.owner_id == "db.library_collections"
+            if participant.owner_id
+            in {
+                "db.library_collections",
+                "db.workspaces",
+                "db.agent_runs",
+                "notifications.client",
+                "db.scheduled_tasks",
+                "runtime.event_state",
+                "runtime.sync_state",
+            }
             else participant.owner_id
         )
         if (

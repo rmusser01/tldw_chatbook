@@ -11,6 +11,15 @@ from typing import Iterator, Union
 
 from .base_db import BaseDB
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+
 
 class WorkspaceDB(BaseDB):
     """Database wrapper for local workspace registry state.
@@ -34,43 +43,56 @@ class WorkspaceDB(BaseDB):
         self._thread_local = threading.local()
         super().__init__(db_path, client_id)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         conn = super()._get_connection()
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local registry cache) and
-        # avoids an fsync per commit -- DELETE+FULL's writer-exclusive-locks-
-        # readers behavior was a stall candidate on this held-connection,
-        # query-heavy path (task-15465). Unconditional: synchronous is
-        # per-connection, so every held connection needs it re-applied.
-        conn.execute("PRAGMA synchronous = NORMAL")
-        # task-3012 (missed at task-3011 port time; fixed at task-15480): a
-        # held (long-lived) connection needs true autocommit. Python's
-        # default isolation mode auto-BEGINs on any DML, and an implicit
-        # transaction accumulated outside `transaction()` makes the explicit
-        # `BEGIN` there fail with "cannot start a transaction within a
-        # transaction" -- and silently ROLLS BACK bare DML on close (masked
-        # pre-task-3011 by per-call connections, which committed
-        # explicitly). Audited (task-15480): every `connection()` call site
-        # in `Workspaces/registry_service.py` is read-only -- every write
-        # there already goes through `transaction()` -- and this class's own
-        # `connection()` sites (`_initialize_schema`'s `executescript`,
-        # `get_schema_version`'s read) self-commit or don't write at all.
-        # Latent today, not live; this closes the correctness fuse before
-        # any future bare-DML call site can trip it.
-        conn.isolation_level = None
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.execute("PRAGMA foreign_keys = ON")
+            if not self.is_memory_db:
+                conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local registry cache) and
+            # avoids an fsync per commit -- DELETE+FULL's writer-exclusive-locks-
+            # readers behavior was a stall candidate on this held-connection,
+            # query-heavy path (task-15465). Unconditional: synchronous is
+            # per-connection, so every held connection needs it re-applied.
+            conn.execute("PRAGMA synchronous = NORMAL")
+            # task-3012 (missed at task-3011 port time; fixed at task-15480): a
+            # held (long-lived) connection needs true autocommit. Python's
+            # default isolation mode auto-BEGINs on any DML, and an implicit
+            # transaction accumulated outside `transaction()` makes the explicit
+            # `BEGIN` there fail with "cannot start a transaction within a
+            # transaction" -- and silently ROLLS BACK bare DML on close (masked
+            # pre-task-3011 by per-call connections, which committed
+            # explicitly). Audited (task-15480): every `connection()` call site
+            # in `Workspaces/registry_service.py` is read-only -- every write
+            # there already goes through `transaction()` -- and this class's own
+            # `connection()` sites (`_initialize_schema`'s `executescript`,
+            # `get_schema_version`'s read) self-commit or don't write at all.
+            # Latent today, not live; this closes the correctness fuse before
+            # any future bare-DML call site can trip it.
+            conn.isolation_level = None
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
-        The liveness probe is a plain no-op statement; a connection another
-        component closed (or that SQLite invalidated) is transparently
-        replaced, mirroring `ChaChaNotes_DB._get_thread_connection`.
+        A positively closed native connection is transparently replaced.
+        Probe failure on a still-live handle preserves it and propagates the
+        error, mirroring `ChaChaNotes_DB._get_thread_connection`.
         """
+        _core_access(self)
         conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -81,10 +103,13 @@ class WorkspaceDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    # A failed probe does not retire a live native borrower.
                     try:
-                        conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Positively closed; failure retains cache.
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -92,12 +117,14 @@ class WorkspaceDB(BaseDB):
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield the thread's held connection (row factory, foreign keys on)."""
 
         yield self._held_connection()
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Run a write transaction on the held connection; roll back on failure.
@@ -129,12 +156,15 @@ class WorkspaceDB(BaseDB):
         """Close the current thread's held connection, if any."""
 
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - preserve explicit retirement route
+                    return
+                self._thread_local.conn = None
 
     def _initialize_schema(self) -> None:
         """Initialize the local workspace registry schema."""

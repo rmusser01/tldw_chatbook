@@ -5754,3 +5754,17 @@ native files; a one-process path lock could not reproduce this ownership transfe
 that ownership when publication succeeds. Cleanup may act only on an operation's
 still-owned inode. A successful rename permits the next process to create a new
 same-name file immediately; the filename alone is never cleanup authority.
+
+## Explicit native retention exposes fixture-owned SQLite leaks (TASK-31993)
+
+During phase5 operational lifetime qualification, 167 affected domain tests passed
+but Tests isolation reported 371 additional file descriptors. AgentRunsDB's shared
+fixture returned without close, direct Workspace/Agent/Notification constructors
+relied on GC, and connection-reuse worker tests left thread-affine caches alive.
+The new strong registry correctly retained those actual native handles; removing
+registry entries or closing them from a foreign thread would falsify maintenance
+evidence. Explicit owning-thread fixture finalizers and worker finally.close calls
+preserved the native assertions; the affected 97-case cleanup rerun passed without
+that threshold warning. This is not a zero-descriptor-growth measurement, and it
+does not qualify production worker-pool retirement. Keep source job lifecycle gaps
+separate from missing test-fixture cleanup, and retire actual handles in both.

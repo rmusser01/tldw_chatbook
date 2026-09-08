@@ -5,10 +5,19 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+
+from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 from .migrations import MIGRATIONS
@@ -86,6 +95,9 @@ class LocalResearchService:
         except TypeError:
             self.db = db_path
             self.db_path = None
+        self.is_memory_db = self.db_path is not None and str(self.db_path) == ":memory:"
+        if self.db_path is not None and not self.is_memory_db:
+            self.db_path = lexical_path(self.db_path)
         self.notification_dispatcher = (
             notification_dispatcher or notification_dispatch_service
         )
@@ -106,10 +118,11 @@ class LocalResearchService:
         if self.db_path is not None:
             self._init_schema()
 
+    @_core_getter
     def _connect(self) -> sqlite3.Connection:
         if self.db_path is None:
             raise RuntimeError("Path-backed research database is not configured.")
-        if str(self.db_path) == ":memory:":
+        if self.is_memory_db:
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
                     "research.local",
@@ -121,18 +134,34 @@ class LocalResearchService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
+        _core_access(self)
         conn = connect_private_sqlite(
             "research.local", self.db_path, factory=_OperationConnection
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local research
-        # session/run store) and avoids an fsync per commit. This DB opens a
-        # fresh connection per operation, so synchronous must be re-applied
-        # on every open, not just the first (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local research
+            # session/run store) and avoids an fsync per commit. This DB opens a
+            # fresh connection per operation, so synchronous must be re-applied
+            # on every open, not just the first (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
+
+    @_core_transaction
+    @contextmanager
+    def _connection(self):
+        """Count the lexical file operation through commit/rollback and close."""
+        with self._connect() as conn:
+            yield conn
 
     def close(self) -> None:
         """Close the persistent in-memory connection, when present."""
@@ -266,7 +295,7 @@ class LocalResearchService:
         return json.loads(value)
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS research_sessions (
@@ -374,7 +403,7 @@ class LocalResearchService:
                 apply_step(conn)
 
     def _fetch_one(self, table: str, item_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 f"SELECT * FROM {table} WHERE id = ? AND deleted = 0",
                 (item_id,),
@@ -419,7 +448,7 @@ class LocalResearchService:
         updates["updated_at"] = self._now()
         updates["version"] = int(row["version"]) + 1
         assignments = ", ".join(f"{key} = ?" for key in updates)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE {table} SET {assignments} WHERE id = ?",
                 (*updates.values(), item_id),
@@ -431,7 +460,7 @@ class LocalResearchService:
     ) -> bool:
         row = self._require_one(table, item_id, label)
         self._check_version(row, expected_version)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE {table} SET deleted = 1, updated_at = ?, version = ? WHERE id = ?",
                 (self._now(), int(row["version"]) + 1, item_id),
@@ -493,7 +522,7 @@ class LocalResearchService:
     ) -> dict[str, Any]:
         session_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO research_sessions (
@@ -524,7 +553,7 @@ class LocalResearchService:
             params.append(status)
         sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_session(dict(row)) for row in rows]
 
@@ -626,7 +655,7 @@ class LocalResearchService:
             raise ValueError("query is required")
         run_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO research_runs (
@@ -685,7 +714,7 @@ class LocalResearchService:
             params.append(status)
         sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return self._awaitable_list(self._normalize_run(dict(row)) for row in rows)
 
@@ -761,7 +790,7 @@ class LocalResearchService:
         if lease_id is not None:
             sql += " AND lease_id = ?"
             params.append(lease_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(sql, params)
             landed = cursor.rowcount == 1
             if landed:
@@ -886,7 +915,7 @@ class LocalResearchService:
         expires = self._timestamp_after(lease_seconds)
         next_attempts = attempts + 1
         status_placeholders = ", ".join("?" for _ in TERMINAL_RUN_STATUSES)
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 f"""
                 UPDATE research_runs
@@ -983,7 +1012,7 @@ class LocalResearchService:
             )
         now = self._now()
         expires = self._timestamp_after(lease_seconds)
-        with self._connect() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 """
                 UPDATE research_runs
@@ -1035,7 +1064,7 @@ class LocalResearchService:
         if self._uses_external_db:
             return self._release_lease_external(run_id, lease_id=lease_id)
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT leased_until FROM research_runs WHERE id = ? AND lease_id = ?",
                 (run_id, lease_id),
@@ -1083,7 +1112,7 @@ class LocalResearchService:
         """
         if self._uses_external_db:
             return self._holds_lease_external(run_id, lease_id=lease_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT lease_id, leased_until FROM research_runs WHERE id = ?",
                 (run_id,),
@@ -1254,7 +1283,7 @@ class LocalResearchService:
         self._require_one("research_runs", run_id, "research run")
         checkpoint_id = f"chk-{self._new_id()}"
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO research_checkpoints (
@@ -1283,7 +1312,7 @@ class LocalResearchService:
 
     def list_checkpoints(self, run_id: str) -> list[dict[str, Any]]:
         self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM research_checkpoints WHERE run_id = ? ORDER BY rowid ASC",
                 (run_id,),
@@ -1367,7 +1396,7 @@ class LocalResearchService:
             "version": int(row["version"]) + 1,
         }
         assignments = ", ".join(f"{key} = ?" for key in updates)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE research_checkpoints SET {assignments} WHERE id = ?",
                 (*updates.values(), checkpoint_id),
@@ -1458,7 +1487,7 @@ class LocalResearchService:
         for key in ("phase", "progress_percent"):
             if fields.get(key) is not None:
                 event_data.setdefault(key, fields[key])
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE research_runs SET {assignments} WHERE id = ?",
                 (*updates.values(), run_id),
@@ -1528,7 +1557,7 @@ class LocalResearchService:
             None if isinstance(content, str) else json.dumps(content, sort_keys=True)
         )
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO research_artifacts (
@@ -1556,7 +1585,7 @@ class LocalResearchService:
             except KeyError:
                 return None
         self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM research_artifacts
@@ -1584,7 +1613,7 @@ class LocalResearchService:
                 for name, content in bundle.items()
             )
         self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM research_artifacts
@@ -1624,7 +1653,7 @@ class LocalResearchService:
         if self._uses_external_db:
             return
         self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._connection() as conn:
             self._record_event(conn, run_id, event, data)
 
     def list_run_events(
@@ -1635,7 +1664,7 @@ class LocalResearchService:
                 self._external_run_events(run_id, after_id=after_id)
             )
         self._require_one("research_runs", run_id, "research run")
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM research_run_events

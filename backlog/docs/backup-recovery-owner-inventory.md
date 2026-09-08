@@ -1932,3 +1932,74 @@ capture, runtime coverage or startup retirement. Simulated missing-primitives
 functional tests are not Windows qualification. Existing parent aliases are accepted
 only while the selected path resolves to the same positively checked physical parent;
 changed targets still refuse. Capture link policy is unchanged.
+
+### Task10 phase5 — operational/domain SQLite lifetimes, caller jobs still pending
+
+Exact installed WorkspaceDB (`db.workspaces`), AgentRunsDB (`db.agent_runs`),
+ClientNotificationsDB (`notifications.client`), ScheduledTasksDB
+(`db.scheduled_tasks`), LocalResearchService (`research.local`) and
+LocalWritingService (`writing.local`) now register actual selected-source native
+leases with the existing repository participant. The four BaseDB-backed file
+routes really use native policy `db.base`; Research/Writing use their literal
+service policies. This is an exact installed-type association, not authority for
+BaseDB subclasses. Memory and Research external-DB injection remain unqualified.
+Relative Research/Writing file paths bind once lexically at construction; memory
+sentinels and existing alias/trust refusal stay intact. No schema, migration,
+archive-owner classification or syntactic source count changes in this phase.
+
+Workspace/AgentRuns/Notifications count existing connection and transaction scopes;
+new cached/raw getters are gated. Their per-thread cached native connections remain
+live after scope exit and may only retire through explicit actual source-thread
+close. Close errors and failed live probes retain references. ScheduledTasks counts
+its existing closing read scopes, transaction commit/rollback/finally-close, and
+actual schema migration sequence at the same selected path. AgentRuns
+`get_run_fresh` counts its separate read through its original finally.close.
+Research/Writing count each lexical `_connection` scope through their existing
+file-only `_OperationConnection` commit/rollback/native close. Their public close
+still owns memory only; escaped raw `_connect` objects and uncertain setup/close
+remain blockers. No high-level service method becomes a compound operation merely
+because it calls several such scopes.
+
+Controller-requested consistency checks reproduced the late raw-allocation/setup
+gate race in the five earlier core owners plus Event/Sync. Their concrete getters
+now recheck before returning a new native allocation, with positive close only of
+that exact unpublished allocation on refusal. Collections' direct fresh getter
+and Event/Sync's raw getters are also gated; Event/Sync file handles register their
+actual `db.base` native policy. Existing borrowers are never revoked to make drain
+succeed. Ingest keeps the exact new allocation local until setup completes, so a
+concurrent cache change cannot redirect refusal cleanup to another native handle.
+
+Concrete required next Task10 job/lifecycle boundaries:
+
+- Workspace app composition (`app.py` local_workspace_db),
+  `LocalWorkspaceRegistryService` CRUD/handoff methods, and source-thread callers
+  returning to worker pools must positively retire WorkspaceDB caches after all
+  native consumers finish. `LocalNotificationHomeActiveWorkAdapter.refresh_active_work_cache_async`
+  dispatches `_compute_active_work_fields` with `asyncio.to_thread`; its notification
+  reads likewise require actual worker retirement, not cancellation of the awaiter.
+- `Chat/console_runtime.py` agent bridge construction owns sibling AgentRunsDB;
+  `Agents/agent_service.py::_run_one`, settings_agents_panel `_derive_runs_db`, and
+  `Workspaces/change_retention.py::run_retention_for_app` (constructs sibling AgentRunsDB
+  before pruning) need whole source jobs and explicit cached-handle retirement.
+  Agent DB scopes do not cover run transcripts/change snapshots/publication.
+- `NotificationDispatchService.dispatch` reads settings, writes the inbox, and
+  performs transient delivery as separate steps. ClientNotifications worker caches
+  must close on their worker thread; higher-level research/scheduling/agent jobs
+  must account for required notification followups across stores.
+- `SchedulingService` async CRUD/sync/run_reminder_now and scheduler/automation
+  execution remain full-job cohorts. Fresh SQLite closure does not prove queued
+  dispatch, server followups or cross-store delivery has finished.
+- `LocalResearchService._update_run` reads, writes/event-records, rereads and invokes
+  `_dispatch_terminal_run_notification` in separate scopes. `LocalResearchEngine`
+  execute_run/keepalive/pipeline offloads remain full-job work. External DB injection
+  is never local Research authority. Writing create_version/restore_version,
+  `_version_payload_for`/`_next_version_number` and analysis helpers compose multiple
+  database scopes; service-wide coherence and caller ownership are not granted.
+
+Actual app/headless composition, other persistence cohorts, all-source runtime
+coverage, startup retirement/reacquisition and one independent whole-Task10 review
+remain required. All participant_pending classifications stay; no production
+responder, Complete backup or replacement exposure. The phase2 clean-BASE
+combined-order app callback/bootstrap issue remains Task10 app/lifecycle work.
+The separately baselined malformed Media historical-schema fixture remains Task13
+schema/migration qualification, without a schema-stamp workaround here.

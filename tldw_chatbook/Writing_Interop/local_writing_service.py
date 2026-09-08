@@ -7,10 +7,19 @@ import uuid
 import json
 import hashlib
 import re
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+
+from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 from .writing_normalizers import normalize_writing_record, normalize_writing_structure
@@ -59,12 +68,14 @@ class LocalWritingService:
     """Local-first persistence for projects, manuscripts, chapters, and scenes."""
 
     def __init__(self, db_path: str | Path):
-        self.db_path = Path(db_path)
+        self.is_memory_db = str(db_path) == ":memory:"
+        self.db_path = Path(":memory:") if self.is_memory_db else lexical_path(db_path)
         self._memory_conn: sqlite3.Connection | None = None
         self._init_schema()
 
+    @_core_getter
     def _connect(self) -> sqlite3.Connection:
-        if str(self.db_path) == ":memory:":
+        if self.is_memory_db:
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
                     "writing.local",
@@ -76,18 +87,34 @@ class LocalWritingService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
+        _core_access(self)
         conn = connect_private_sqlite(
             "writing.local", self.db_path, factory=_OperationConnection
         )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit, acceptable for this local writing-suite
-        # store) and avoids an fsync per commit. This DB opens a fresh
-        # connection per operation, so synchronous must be re-applied on
-        # every open, not just the first (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit, acceptable for this local writing-suite
+            # store) and avoids an fsync per commit. This DB opens a fresh
+            # connection per operation, so synchronous must be re-applied on
+            # every open, not just the first (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
+
+    @_core_transaction
+    @contextmanager
+    def _connection(self):
+        """Count the lexical file operation through commit/rollback and close."""
+        with self._connect() as conn:
+            yield conn
 
     def close(self) -> None:
         """Close the persistent in-memory connection, when present."""
@@ -185,7 +212,7 @@ class LocalWritingService:
         return self._normalize_aux_record(kind, row)
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS writing_projects (
@@ -494,7 +521,7 @@ class LocalWritingService:
             conn.execute("ALTER TABLE writing_scenes ADD COLUMN manuscript_id TEXT")
 
     def _fetch_one(self, table: str, item_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 f"SELECT * FROM {table} WHERE id = ? AND deleted = 0",
                 (item_id,),
@@ -520,7 +547,7 @@ class LocalWritingService:
         return row
 
     def _fetch_deleted_one(self, table: str, item_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 f"SELECT * FROM {table} WHERE id = ? AND deleted = 1",
                 (item_id,),
@@ -559,7 +586,7 @@ class LocalWritingService:
         updates["last_modified"] = self._now()
         updates["version"] = int(row["version"]) + 1
         assignments = ", ".join(f"{key} = ?" for key in updates)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE {table} SET {assignments} WHERE id = ?",
                 (*updates.values(), item_id),
@@ -571,7 +598,7 @@ class LocalWritingService:
     ) -> bool:
         row = self._require_one(table, item_id, label)
         self._check_version(row, expected_version)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE {table} SET deleted = 1, last_modified = ?, version = ? WHERE id = ?",
                 (self._now(), int(row["version"]) + 1, item_id),
@@ -662,7 +689,7 @@ class LocalWritingService:
         }
 
     def _next_version_number(self, entity_type: str, entity_id: str) -> int:
-        with self._connect() as conn:
+        with self._connection() as conn:
             current = conn.execute(
                 """
                 SELECT MAX(version_number) AS max_version
@@ -681,7 +708,7 @@ class LocalWritingService:
         now = self._now()
         version_number = self._next_version_number(entity_type, entity_id)
         payload = self._version_payload_for(entity_type, entity_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_versions (
@@ -702,7 +729,7 @@ class LocalWritingService:
 
     def list_versions(self, entity_type: str, entity_id: str) -> list[dict[str, Any]]:
         self._validate_version_entity_type(entity_type)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_versions
@@ -717,7 +744,7 @@ class LocalWritingService:
         self, entity_type: str, entity_id: str, version_number: int
     ) -> dict[str, Any]:
         self._validate_version_entity_type(entity_type)
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM writing_versions
@@ -779,7 +806,7 @@ class LocalWritingService:
             else [(kind, *table_info) for kind, table_info in _ENTITY_TABLES.items()]
         )
         records: list[dict[str, Any]] = []
-        with self._connect() as conn:
+        with self._connection() as conn:
             for kind, table, _label in entity_items:
                 rows = conn.execute(
                     f"SELECT * FROM {table} WHERE deleted = 1 ORDER BY last_modified DESC"
@@ -799,7 +826,7 @@ class LocalWritingService:
         table, label = self._validate_entity_type(entity_type)
         row = self._require_deleted_one(table, entity_id, label)
         self._check_version(row, expected_version)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 f"UPDATE {table} SET deleted = 0, last_modified = ?, version = ? WHERE id = ?",
                 (self._now(), int(row["version"]) + 1, entity_id),
@@ -887,7 +914,7 @@ class LocalWritingService:
     def create_project(self, *, title: str, **kwargs: Any) -> dict[str, Any]:
         project_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_projects (
@@ -924,7 +951,7 @@ class LocalWritingService:
             params.append(status)
         sql += " ORDER BY last_modified DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [normalize_writing_record("local", "project", dict(row)) for row in rows]
 
@@ -957,7 +984,7 @@ class LocalWritingService:
         self._require_one("writing_projects", project_id, "project")
         manuscript_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_manuscripts (
@@ -981,7 +1008,7 @@ class LocalWritingService:
         )
 
     def list_manuscripts(self, project_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_manuscripts
@@ -1034,7 +1061,7 @@ class LocalWritingService:
             self._require_one("writing_manuscripts", manuscript_id, "manuscript")
         chapter_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_chapters (
@@ -1069,7 +1096,7 @@ class LocalWritingService:
             sql += " AND manuscript_id = ?"
             params.append(manuscript_id)
         sql += " ORDER BY sort_order ASC, created_at ASC"
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [normalize_writing_record("local", "chapter", dict(row)) for row in rows]
 
@@ -1126,7 +1153,7 @@ class LocalWritingService:
             project_id = manuscript["project_id"]
         scene_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_scenes (
@@ -1179,7 +1206,7 @@ class LocalWritingService:
                 ORDER BY sort_order ASC, created_at ASC
                 """
             params = (manuscript_id,)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [normalize_writing_record("local", "scene", dict(row)) for row in rows]
 
@@ -1237,7 +1264,7 @@ class LocalWritingService:
         self._require_one("writing_projects", project_id, "project")
         character_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_characters (
@@ -1285,7 +1312,7 @@ class LocalWritingService:
             sql += " AND cast_group = ?"
             params.append(cast_group)
         sql += " ORDER BY sort_order ASC, created_at ASC"
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_aux_record("character", dict(row)) for row in rows]
 
@@ -1332,7 +1359,7 @@ class LocalWritingService:
         )
         relationship_id = fields.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_relationships (
@@ -1358,7 +1385,7 @@ class LocalWritingService:
         )
 
     def list_relationships(self, project_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_relationships
@@ -1387,7 +1414,7 @@ class LocalWritingService:
             )
         item_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_world_info (
@@ -1420,7 +1447,7 @@ class LocalWritingService:
             sql += " AND kind = ?"
             params.append(kind)
         sql += " ORDER BY sort_order ASC, created_at ASC"
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_aux_record("world_info", dict(row)) for row in rows]
 
@@ -1463,7 +1490,7 @@ class LocalWritingService:
         self._require_one("writing_projects", project_id, "project")
         plot_line_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_plot_lines (
@@ -1486,7 +1513,7 @@ class LocalWritingService:
         return self.get_plot_line(plot_line_id)
 
     def list_plot_lines(self, project_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_plot_lines
@@ -1544,7 +1571,7 @@ class LocalWritingService:
         self._validate_plot_event_refs(project_id, kwargs)
         plot_event_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_plot_events (
@@ -1572,7 +1599,7 @@ class LocalWritingService:
         )
 
     def list_plot_events(self, plot_line_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_plot_events
@@ -1630,7 +1657,7 @@ class LocalWritingService:
         self._validate_plot_hole_refs(project_id, kwargs)
         plot_hole_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_plot_holes (
@@ -1669,7 +1696,7 @@ class LocalWritingService:
             sql += " AND status = ?"
             params.append(status)
         sql += " ORDER BY created_at ASC"
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_aux_record("plot_hole", dict(row)) for row in rows]
 
@@ -1710,7 +1737,7 @@ class LocalWritingService:
             "writing_characters", character_id, "character", scene["project_id"]
         )
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_scene_characters (
@@ -1725,7 +1752,7 @@ class LocalWritingService:
         return self.list_scene_characters(scene_id)
 
     def list_scene_characters(self, scene_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT l.scene_id, l.character_id, l.is_pov, c.name, c.role
@@ -1742,7 +1769,7 @@ class LocalWritingService:
         ]
 
     def unlink_scene_character(self, scene_id: str, character_id: str) -> bool:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM writing_scene_characters WHERE scene_id = ? AND character_id = ?",
                 (scene_id, character_id),
@@ -1757,7 +1784,7 @@ class LocalWritingService:
             "writing_world_info", world_info_id, "world info", scene["project_id"]
         )
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_scene_world_info (
@@ -1771,7 +1798,7 @@ class LocalWritingService:
         return self.list_scene_world_info(scene_id)
 
     def list_scene_world_info(self, scene_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT l.scene_id, l.world_info_id, w.name, w.kind
@@ -1788,7 +1815,7 @@ class LocalWritingService:
         ]
 
     def unlink_scene_world_info(self, scene_id: str, world_info_id: str) -> bool:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM writing_scene_world_info WHERE scene_id = ? AND world_info_id = ?",
                 (scene_id, world_info_id),
@@ -1801,7 +1828,7 @@ class LocalWritingService:
         scene = self._require_one("writing_scenes", scene_id, "scene")
         citation_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_citations (
@@ -1829,7 +1856,7 @@ class LocalWritingService:
         )
 
     def list_citations(self, scene_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_citations
@@ -1887,7 +1914,7 @@ class LocalWritingService:
     def _project_corpus(self, project_id: str) -> list[dict[str, Any]]:
         self._require_one("writing_projects", project_id, "project")
         corpus: list[dict[str, Any]] = []
-        with self._connect() as conn:
+        with self._connection() as conn:
             scene_rows = conn.execute(
                 """
                 SELECT id, title, synopsis, content_markdown
@@ -2028,7 +2055,7 @@ class LocalWritingService:
 
     def _analysis_text_for_project(self, project_id: str) -> tuple[str, str, str]:
         self._require_one("writing_projects", project_id, "project")
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT content_markdown
@@ -2120,7 +2147,7 @@ class LocalWritingService:
         metrics = self._analysis_metrics(text)
         summary, findings = self._analysis_summary(scope_type, analysis_type, metrics)
         source_hash = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_analyses (
@@ -2276,7 +2303,7 @@ class LocalWritingService:
         if not include_stale:
             sql += " AND stale = 0"
         sql += " ORDER BY created_at DESC"
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(sql, params).fetchall()
         analyses = [self._normalize_aux_record("analysis", dict(row)) for row in rows]
         return {"analyses": analyses, "total": len(analyses)}

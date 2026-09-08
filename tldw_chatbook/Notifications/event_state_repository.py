@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_getter,
+    _register_core_connection,
+)
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.runtime_policy.server_parity_models import (
@@ -84,6 +89,7 @@ class EventStateRepository(BaseDB):
         self._memory_conn: sqlite3.Connection | None = None
         super().__init__(db_path, client_id)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
@@ -97,13 +103,17 @@ class EventStateRepository(BaseDB):
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
+        _core_access(self)
         conn = super()._get_connection()
+        _register_core_connection(self, conn)
         try:
+            _core_access(self)
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
             # lose the last commit, acceptable for this local event/notification
             # ledger) and avoids an fsync per commit (task-15465).
             conn.execute("PRAGMA synchronous = NORMAL")
+            _core_access(self)
             return conn
         except BaseException:
             conn.close()
