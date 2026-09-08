@@ -10,6 +10,7 @@ from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_media_state import (
     _KEYWORD_REASON_CELLS,
+    _trailing_regional_indicators,
     MediaBrowseScope,
     LibraryMediaRow,
     LibraryMediaCanvasState,
@@ -957,17 +958,6 @@ def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
     value: object, expected: int | None
 ) -> None:
     assert library_media_int_backing_id(value) == expected
-
-
-def _trailing_regional_indicators(text: str) -> int:
-    """Count the trailing U+1F1E6..U+1F1FF run (a flag is one RI pair)."""
-    count = 0
-    for ch in reversed(text):
-        if 0x1F1E6 <= ord(ch) <= 0x1F1FF:
-            count += 1
-        else:
-            break
-    return count
 
 
 def test_flag_pair_keyword_never_paints_a_half_flag() -> None:
