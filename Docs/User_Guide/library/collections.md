@@ -1,185 +1,208 @@
-# Library Collections — named records for content you plan to read and review
+# Library Collections — a reading list of saved web captures
 
 ## What this screen is for
 
-Collections are named containers for saved content. The panel's own status
-line says it plainly: "Collections hold saved items for review — adding
-items is coming; you can create and name collections now." Today, though,
-this surface is early: you can create, rename, and delete Collection
-records, but you cannot yet put items into them or read items from them
-("Available now: create, rename, delete records" is the only action-status
-line shown). Reach for this panel now only to stake out named Collections
-ahead of those features.
+Collections is a **reading list**. You save a web page to it with **Quick
+Capture**, the app extracts the readable article text, and you come back to
+read it, highlight it, note it, and mark it Read — without leaving the
+terminal and without keeping the browser tab open.
+
+It is **not** a folder manager. There is no "create a collection, then put
+things in it" here: nothing else in the Library has an "Add to collection"
+action, and this page does not create named containers. If you are looking
+for grouping, the surfaces that actually group content today are Notes
+folders ([Notes](notes.md)) and Prompt collections
+([Prompts](prompts.md)).
+
+> **This page was rewritten.** Until 2026-09-08 it described a
+> create/rename/delete Collections manager. That surface no longer ships:
+> the generic Collections tables are read-only recovery data (see
+> [Legacy Collections data](#legacy-collections-data) below), and the row
+> opens the captures reading list documented here. Whether the row keeps
+> the name "Collections" or becomes "Captures" is an open product
+> decision (task-32057 AC#1) — the name may change; the surface described
+> here is what ships.
 
 ## Getting there
 
 Press **Ctrl+3** (or click **⌃3 Library** in the nav bar, or **Ctrl+P** →
 "Library"), then in the left rail's **Browse** section click
-**Collections**. The rail row shows the current count.
+**Collections**.
+
+The rail row reads **Collections (N)** — N is the number of captures in the
+currently selected scope, and it is filled in before you ever open the row,
+from the same enumerator the list itself uses (task-32057). At narrow rail
+widths the row abbreviates to **Captures (N)**.
+
+Selecting the row mounts six scope sub-rows underneath it — **All
+Captures**, **Saved**, **Reading**, **Read**, **Archived**,
+**Favorites** — plus one row per saved search. Those sub-rows are part of
+the Collections destination; selecting the row does not change any other
+rail section's open/collapsed state, and nothing about visiting it is
+written to `[library.rail_state]`.
 
 ## Layout tour
 
-![Collections](../images/library/collections.svg)
+Three panes, the standard Library reader topology: the rail on the left,
+the **capture list** in the middle, and a permanent **reader** on the
+right.
 
-The canvas is titled **"Collections (N)"** (task-2859: dropped the
-redundant "Library " prefix and matches the sibling "Name (n)" pattern
-Media/Notes/Prompts/Skills already use). Top to bottom:
+**Capture list (middle):**
 
-- **Delete receipt** (after a confirmed deletion): a persistent
-  `✓ deleted · Collection · name` toolbar with **Undo** and **Dismiss**.
-  It remains visible even when the deleted Collection was the last row.
+- **Quick Capture** — opens the save form (see
+  [Common tasks](#common-tasks)). Disabled with its reason in the tooltip
+  when the active authority cannot capture.
+- **Filters** — a disclosure holding **Domain**, **Tags, comma separated**,
+  **From date (YYYY-MM-DD)**, **To date (YYYY-MM-DD)**, then **Apply
+  filters** and **Clear**.
+- **Sort: saved desc** — one button that cycles the sort: saved desc,
+  saved asc, updated desc, updated asc, title asc, title desc, relevance.
+- **Filter captures** — free-text search over the current scope. Press
+  Enter to apply.
+- **Capture rows**, two lines each: `▸ <title>` on the first, then
+  `<domain> · <date> · <Status>` on the second, with `Favorite` and
+  `Extraction failed` / `Extraction interrupted` appended when they apply.
+  The row you have loaded in the reader is prefixed `Loaded in Reader`; a
+  row you just clicked whose detail is still arriving reads `Selected ·
+  loading`.
+- **Range line** — `1–20 of 57`, or `0–0 of 0` when the scope is empty, or
+  `Page N · total unavailable` when a refresh failed.
+- **Previous** / **Next** — 20 captures per page. Each carries its reason
+  as a tooltip when it is not pressable ("No current next page is
+  available.").
 
-- **Empty state** (before your first Collection) — "No Collections yet.",
-  "Create a local Collection record to start reviewing saved content.",
-  "No stored collection items are available locally yet. Collections are
-  for reading, reviewing, and reusing saved content." (shown once), and
-  "No Collection selected."
-- **Collections** — the list pane. Collections are shown 20 at a time in
-  creation-time order, with name and stable identity breaking ties. Each
-  row reads "name - N items" (item counts are always 0 today); hovering a
-  row shows its sync status as a tooltip. The exact range and page appear
-  below the independently scrolling rows, followed by **Previous** and
-  **Next**. When a server sync profile is present, a short read-only status
-  banner appears above the list.
-- **Stored collection content** — the detail pane for the selected row:
-  "Selected: name", the description (or "No description."), the plain
-  status line quoted above, "Action status" / "Available now: create,
-  rename, delete records", and a collapsed-by-default **Details**
-  disclosure (click to expand) holding the item count, the sync status
-  label, its detail sentence (when there is one), and the "Updated … UTC"
-  line.
-- **Create / Rename** — the form: inputs "Collection name" and "Optional
-  description", then the action buttons. While the typed name can't yet
-  create a Collection, a single guidance sentence appears above the name
-  field explaining why (e.g. "Enter a Collection name." or "A Collection
-  with this name already exists."); it disappears once the name is valid.
+**Reader (right):** empty until you select a capture ("Select a capture to
+read it here."), then:
+
+- **`<Local|Server> Collections · <domain>`**, the capture title, and a
+  byline: author or publication date, estimated `N min read`, the status,
+  and the authority.
+- **Mark Read · Favorite · Move to Archive**, then **Open Original ·
+  More**.
+- **Mode row** — **Read · Highlights · Notes · Info**; the active mode is
+  prefixed `✓`.
+- The mode body. **Read** shows the extracted text (or "No readable
+  content is stored for this capture."); **Highlights** is a quote box, an
+  optional note, **Add highlight**, and the existing highlights each marked
+  `Active` or `Detached · reattach needed` with **Delete highlight**;
+  **Notes** is a free-text **Capture note** with **Save capture note**,
+  then **Linked Notes** with **Unlink** per link and a **Note ID** box with
+  **Link Note**; **Info** lists canonical URL, submitted URL, tags, status,
+  extraction state, word count and authority, plus the backing Media item
+  and its availability when there is one.
+- **More** reveals the lower-frequency actions: **Summarize**, **Listen**,
+  **Save Offline Copy**, **Retry Extraction**, **Delete Permanently…**.
 
 ## Features & controls
 
 | Control | What it does |
 |---|---|
-| "Collection name" | Name for a new Collection, or the new name when renaming. Required; 120 characters max. |
-| "Optional description" | Free-text description shown in the detail pane. |
-| Create Collection | Adds a Collection record. Enabled once a valid, unused name is typed. |
-| Rename Collection | Renames the selected Collection to the typed name. |
-| Delete Collection | First press of the two-press delete: it arms deletion and reveals "Confirm delete". |
-| "Confirm delete" | Second press: deletes the selected Collection. Its items stay in the Library, and the tooltip promises the Undo that appears in this panel. |
-| Undo | Restores the deleted Collection and its existing membership, then selects it again. |
-| Dismiss | Removes the recovery receipt without restoring the Collection. |
-| Collection rows | Click to select; the detail pane fills in. Row tooltip shows the sync status label. |
-| Previous / Next | Loads the adjacent 20-item page. The control that remains available keeps focus when an edge page disables the control you used. |
-| Retry | Reloads the requested page, or repeats stable-ID placement after a follow-up read failed. |
+| Quick Capture | Opens the save form: a URL box, optional Title, optional comma-separated Tags, and a note box, then **Save capture** / **Cancel**. |
+| Filters / Apply filters / Clear | Narrow the scope by domain, tags, and a saved-date range. Applying always returns to page 1. |
+| Sort: … | Cycles the sort order in place; the label always names the order in force. |
+| Filter captures | Free-text search inside the current scope. |
+| Scope sub-rows | All Captures, Saved, Reading, Read, Archived, Favorites, then your saved searches. The selected scope carries the count. |
+| Previous / Next | Move by exact 20-capture pages. |
+| Mark Read / Favorite / Move to Archive | Status actions on the loaded capture. Archiving leaves a `Moved to Archive · was <status>.` receipt with **Undo**. |
+| Open Original | Opens the capture's original URL in your browser. |
+| Read / Highlights / Notes / Info | Reader modes over the one loaded capture. |
+| Summarize / Listen | Produce a summary or an audio rendering, when the active authority supports them. |
+| Save Offline Copy | Stores a managed local copy of the capture. |
+| Retry Extraction | Re-runs article extraction after a failed or interrupted attempt. |
+| Delete Permanently… | Two-step: it reveals a sentence naming the capture, its highlights and its offline copy, then **Delete permanently** / **Cancel**. This cannot be undone. |
 
-Disabled buttons always carry their reason as a tooltip — for example
-"Enter a Collection name.", "A Collection with this name already exists.",
-"Select a Collection before renaming it.", or "Select a Collection before
-deleting it."
+Every disabled action carries a text reason, never colour alone: a leading
+**○** marker plus a tooltip — either the capability's own reason from the
+service, "Availability has not been checked.", or "Wait until the selected
+capture is loaded and current."
 
-**Sync labels** (shown on row tooltips and inside the selected Collection's
-**Details** disclosure) are strictly read-only — every detail sentence ends by promising that no
-writes will be queued:
+### Legacy Collections data
 
-| Label | Detail line |
-|---|---|
-| "Sync: local-only" | "This Collection is local-only. No sync writes will be queued." (the usual state; shown without a detail line in the pane) |
-| "Sync: sync-unavailable" | "Sync dry-run is unavailable for this Collection. No writes will be queued." |
-| "Sync dry-run: ready" | "Read-only mirror check: N mapped records. No writes will be queued." |
-| "Sync dry-run: conflicts" | "Read-only mirror check: N conflicts need review. No writes will be queued." |
-| "Sync dry-run: orphaned mappings" | "Read-only mirror check: orphaned local or remote mappings need review. No writes will be queued." |
-| "Sync dry-run: unsupported" | "Read-only mirror check unavailable: (reasons). No writes will be queued." |
+If your profile still holds records from the superseded generic
+Collections tables, the reader shows:
+
+> Legacy Collections are read-only on this profile · Use the legacy
+> Collections inspector or JSON recovery export.
+
+followed by a **Legacy Collections data… (N)** button. Opening it shows a
+bounded, read-only inspector of those records with **Export complete
+JSON…** and **Close inspector**. Those records cannot be created, renamed,
+deleted, restored, or added to — the local Collections service refuses
+every one of those writes — so read and export are the only two things you
+can do with them (task-32057).
+
+Profiles with no legacy records never see any of this.
 
 ## Common tasks
 
-1. **Create a Collection** — Open Collections from the rail. Type a name
-   into "Collection name" (and a description if you want one); the
-   Create Collection button enables. Press it — the app opens the page
-   that owns the new Collection and selects its "name - 0 items" row.
-2. **Rename a Collection** — Click its row in the Collections list, type
-   the new name into "Collection name", then press Rename Collection. If
-   its ordered position changes, the owning page opens automatically.
-3. **Delete a Collection** — Click its row, press Delete Collection, then
-   press the "Confirm delete" button that appears beside it. Deleting is
-   deliberately two presses; nothing is removed on the first press. After
-   deletion, choose **Undo** to restore the Collection and its membership,
-   or **Dismiss** to leave it deleted and remove the receipt. Undo opens
-   and selects the restored Collection's current owning page.
-4. **Move through a long list** — Use **Previous** and **Next** beneath the
-   rows. The header reports an exact range such as "21-40 of 45" and an
-   exact page such as "Page 2 of 3". Returning to Collections restores the
-   last successfully applied page; an unfinished or failed page request is
-   never saved as your position.
+1. **Save a page to read later** — Open Collections, press **Quick
+   Capture**, paste the URL (a title, tags and a note are optional), then
+   press **Save capture**. The new capture is selected and the app starts
+   extracting its readable text in the background.
+2. **Read something you saved** — Click a row. The reader loads it in
+   **Read** mode. Use **Mark Read** when you are done, or **Move to
+   Archive** to file it away (with **Undo** available on the receipt).
+3. **Keep a quote** — With a capture loaded, switch to **Highlights**,
+   paste or type the quote, add an optional note, and press **Add
+   highlight**.
+4. **Connect a capture to your Notes** — Switch to **Notes**, paste the
+   Note's exact ID into **Note ID**, and press **Link Note**. Links show
+   the Note's availability, and **Unlink** removes one.
+5. **Find one capture among many** — Pick a scope sub-row (or **All
+   Captures**), then either type into **Filter captures** or open
+   **Filters** for domain / tags / date range. **Previous** and **Next**
+   page through the result, 20 at a time.
+6. **Recover legacy Collections records** — See
+   [Legacy Collections data](#legacy-collections-data): open the inspector
+   and use **Export complete JSON…**.
 
 ## Keyboard & commands
 
-None — this panel has no screen-specific keys or slash commands. Global
-keys live in the [guide index](../index.md).
+This canvas has no screen-specific keys. **/** focuses the rail search box
+and **Escape** returns focus to the rail, as on every Library canvas;
+**F6** cycles the panes. Global keys live in the
+[guide index](../index.md).
 
 ## Related settings & docs
 
-- This panel owns no config.toml keys; Collections are stored locally per
-  profile.
-- [Library overview](../library.md) — the rail, the other Browse panels,
-  and the "Server sync WIP · local only" runtime note.
+- Captures are stored per profile in the Library Collections database
+  (`library_collections_db_path`). This canvas owns no other config.toml
+  keys.
+- [Library overview](../library.md) — the rail, the other Browse
+  destinations, and the runtime source note.
 - [Guide index](../index.md) — global keys and navigation.
 
 ## Quirks & troubleshooting
 
-- **Item-level features are not wired yet.** No item reader, no Search/RAG
-  over Collections, no Study or Console handoff, no server sync, and no
-  "Add to collection" affordance anywhere else in the app — exactly as the
-  panel's status line says ("adding items is coming"). Item counts stay
-  at 0 until that lands.
-- **Names are capped at 120 characters** ("Collection names must be 120
-  characters or fewer."); descriptions are capped at 500. Duplicate names
-  are refused ("A Collection with this name already exists.").
-- **A greyed-out button explains itself** — it reads with a leading **○**
-  (the Library's disabled marker, so the state never depends on colour
-  alone), and hovering it gives the exact requirement that is not yet met
-  in its tooltip.
-- **Sync is display-only.** Every sync label describes a read-only check;
-  no state on this panel ever queues a server write.
-- **A stale page is readable but inert.** If a Collection write commits but
-  the follow-up page read fails, the known result remains visible, the
-  exact total/range is hidden, and row, mutation, Previous, and Next actions
-  are disabled. Press **Retry** to recover a current page. A successful
-  create, rename, delete, or restore is not reported as failed merely
-  because that follow-up read failed.
-- If the source shrinks past the current page, Collections probes that page
-  and clamps to the new final page once. If it changes again during that
-  recovery, the last known rows remain visible with Retry instead of
-  walking through more pages or inventing a total.
-- If the Collections storage layer fails to load, actions report
-  "Couldn't load Collections. Check the local Library and retry."; a
-  failed delete reports "Failed to delete Collection."
+- **A stale page is readable but inert.** If a refresh fails, the last good
+  page stays on screen under "Showing the last good page. Refresh failed;
+  totals and page actions are paused.", the exact total is withheld, and
+  the paging controls are disabled. Press **Retry**.
+- **A failed load names its reason.** "Captures could not be loaded:
+  \<reason\>." with **Retry**; the reader's own equivalent is "Capture
+  could not be loaded: \<reason\>." with its own **Retry**.
+- **Switching captures keeps the old one readable.** While a newly selected
+  capture's detail is arriving, the reader says `Loading "<new>"… showing
+  "<old>" until ready.` rather than blanking.
+- **A save whose outcome is unknown does not auto-retry.** The form keeps
+  your draft, says "Save outcome unknown. Refresh before retrying.", and
+  offers **Refresh capture list**; a deliberate retry against a Server
+  first warns that it may reapply Saved status and clear Favorite on an
+  existing canonical URL.
+- **The Chunking Lab strip** above the canvas ("Chunking Lab | Try selected
+  text") is not part of Collections — it is a Library-wide developer tool
+  that paints on every canvas. See [Library overview](../library.md).
 
 —
-*Verified against dev @ e3d0d2c9d — 2026-08-06 (TASK-2855: plain-language
-status line replaces the spec/roadmap block, sync-safety/internal detail
-moved behind a collapsed-by-default Details disclosure, empty-state
-message deduplicated, three enable-Create sentences collapsed into one)*
-*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1, RC-07:
-the three form buttons measured 2.30:1 while disabled — legible now
-(5.91:1 measured live via ANSI decode), with the "○" disabled marker;
-typing a valid name flips Create back in place without the marker).*
-*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
-(task-4023 AC#5/#7: the empty state is two lines — "No Collections yet."
-plus one create-one-below sentence; the selected Collection row carries
-the shared leading "▸ " marker; Escape on the Collections canvas moves
-focus to the rail search box, matching every other list canvas, and the
-footer advertises "esc focus rail".)*
-*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
-(task-14901 / ADR-055: the "Confirm delete" tooltip now states the
-consequence — member items survive, the Collection itself cannot be
-restored from Library.)*
-*Verified against codex/collection-delete-undo-receipt — 2026-08-12
-(TASK-15102 / ADR-055: deleting a Collection now leaves a named receipt
-with Undo and Dismiss actions; Undo restores the Collection and its
-membership, while member items always remain in the Library.)*
-*Verified against codex/task-18916-collections-pagination — 2026-08-28
-(TASK-18916 / ADR-067: exact 20-item pages, deterministic mutation
-placement, one-clamp shrink recovery, applied-page restoration, and stale
-Retry posture.)*
-*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Collections
-reader's two pane grips are one column each, painting `‹`/`›` instead of the
-five-column `<---`/`--->` run; opened live at 235x52, and collapsing the
-Library pane repainted its grip as a one-cell `›`.)*
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32057 /
+task-32073: whole-page rewrite. The previous page described a
+create/rename/delete Collections manager that no longer ships; the row
+opens the Quick Capture reading list documented here. Live at 235x52 and
+100x30 on a seeded profile: the rail read `Collections (0)` before the row
+was ever visited, selecting it mounted the six scope sub-rows and left the
+Create section open with no `[library.rail_state] sections` write, and the
+canvas painted `Quick Capture` / `Filters` / `Sort: saved desc` /
+`Filter captures` / "No captures match this scope. Clear filters or save a
+URL with Quick Capture." / `0–0 of 0`. The `legacy_read_only` reason and
+its recovery path are now on the canvas. AC#1 — what the row should BE —
+is a product decision and is deliberately left open.)*
