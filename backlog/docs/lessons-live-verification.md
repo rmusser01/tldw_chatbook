@@ -2296,3 +2296,18 @@ the assertion while the app is effectively dead to the keyboard.
 **Incident.** Driving the app under tmux with `python -m tldw_chatbook.app 2>log` to catch tracebacks left a blank pane with a live process: Textual renders to stderr here, so the redirect took the UI with it. The pass cost a full relaunch.
 
 **Rule.** Never redirect stderr when driving the TUI; read loguru's file sink (or `[logging]` in the scratch config) for tracebacks instead. A fresh scratch profile's first-run wizard also does not reliably take Escape (PR O, same day) — set `[first_run] setup_completed = true` in the scratch config before the first launch.
+
+
+## A mounted avatar can be hidden behind a same-screen setup overlay
+
+**TASK-32023, 2026-09-07.** Internal frame-pixel assertions passed, but the first
+three Console screenshots were identical: the setup overlay covered the rail.
+Textual's `is_on_screen` reported that the underlying avatar had a layout region;
+it did not prove that its pixels were the topmost visible content. Entering a
+conversation through the real store removed setup guidance, and the captured SVGs
+then contained red/blue/red avatar pixels for Dynamic frame one, frame two, and
+Static respectively. Playback now checks the topmost widget at its center and a
+mounted overlay test proves hidden time is excluded.
+
+**What to do.** Pair mounted-state assertions with actual screen pixels. Check
+same-screen overlays as well as screen-stack visibility when gating animation.

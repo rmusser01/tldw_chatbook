@@ -8410,6 +8410,8 @@ class SettingsScreen(BaseAppScreen):
             return "density"
         if message.startswith("Transcript style"):
             return "console_transcript_style"
+        if message.startswith("Character expressions"):
+            return "character_expression_mode"
         if message.startswith("Animations"):
             return "animations_enabled"
         if message.startswith("Reduce motion"):
@@ -8446,6 +8448,7 @@ class SettingsScreen(BaseAppScreen):
             "font_size": "#settings-appearance-font-size",
             "density": "#settings-appearance-density",
             "console_transcript_style": "#settings-appearance-transcript-style",
+            "character_expression_mode": "#settings-appearance-character-expression-mode",
             "animations_enabled": "#settings-appearance-animations-enabled",
             "smooth_scrolling": "#settings-appearance-smooth-scrolling",
             "reduce_motion": "#settings-appearance-reduce-motion",
@@ -8475,6 +8478,7 @@ class SettingsScreen(BaseAppScreen):
             "font_size",
             "density",
             "console_transcript_style",
+            "character_expression_mode",
             "animations_enabled",
             "smooth_scrolling",
             "reduce_motion",
@@ -14847,6 +14851,16 @@ class SettingsScreen(BaseAppScreen):
                     "neutral, role accents, or immersive RP",
                 ),
             )
+        if field_id == "settings-appearance-character-expression-mode":
+            return (
+                ("Focused setting", "Character expressions"),
+                ("Purpose", self._character_expression_motion_help()),
+                ("Saved as", "appearance.character_expression_mode"),
+                (
+                    "Validation",
+                    "Dynamic or Static; global motion preferences take precedence",
+                ),
+            )
         if field_id == "settings-appearance-animations-enabled":
             return (
                 ("Focused setting", "Animations"),
@@ -19354,6 +19368,22 @@ class SettingsScreen(BaseAppScreen):
                         compact=True,
                     )
                 yield Static("Motion and scrolling", classes="destination-section")
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static(
+                        "Character expressions", classes="settings-input-label"
+                    )
+                    yield Select(
+                        [("Dynamic", "dynamic"), ("Static", "static")],
+                        value=str(values["character_expression_mode"]),
+                        id="settings-appearance-character-expression-mode",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                yield Static(
+                    self._character_expression_motion_help(),
+                    id="settings-appearance-character-expression-help",
+                )
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Animations", classes="settings-input-label")
                     yield Checkbox(
@@ -19368,7 +19398,7 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-appearance-reduce-motion",
                         tooltip=(
                             "Render the splash screen and Console setup backdrop "
-                            "as static frames instead of animations."
+                            "and character expressions as static frames instead of animations."
                         ),
                     )
                 with Horizontal(classes="settings-input-row"):
@@ -22433,6 +22463,33 @@ class SettingsScreen(BaseAppScreen):
         )
         self._mark_appearance_settings_staged()
 
+    def _character_expression_motion_help(self) -> str:
+        values = self._appearance_setting_values()
+        if values["reduce_motion"]:
+            return "Motion is suppressed by Reduce motion. Expressions still change."
+        if not values["animations_enabled"]:
+            return "Motion is suppressed because Animations is disabled. Expressions still change."
+        if values["character_expression_mode"] == "static":
+            return "Change expressions without playing animations."
+        return "Animate expressions when available; use a still pose otherwise."
+
+    def _refresh_character_expression_motion_help(self) -> None:
+        self._set_static_text(
+            "#settings-appearance-character-expression-help",
+            self._character_expression_motion_help(),
+        )
+
+    @on(Select.Changed, "#settings-appearance-character-expression-mode")
+    def handle_appearance_character_expression_mode_changed(
+        self, event: Select.Changed
+    ) -> None:
+        event.stop()
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value("character_expression_mode", str(event.value))
+        self._mark_appearance_settings_staged()
+        self._refresh_character_expression_motion_help()
+
     @on(Checkbox.Changed, "#settings-appearance-animations-enabled")
     def handle_appearance_animations_enabled_changed(
         self, event: Checkbox.Changed
@@ -22442,6 +22499,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_appearance_value("animations_enabled", bool(event.value))
         self._mark_appearance_settings_staged()
+        self._refresh_character_expression_motion_help()
 
     @on(Button.Pressed, "#settings-appearance-smooth-scrolling")
     def handle_appearance_smooth_scrolling_changed(self, event: Button.Pressed) -> None:
@@ -22468,6 +22526,7 @@ class SettingsScreen(BaseAppScreen):
         self._stage_appearance_value("reduce_motion", next_value)
         event.button.label = self._appearance_bool_label("reduce_motion")
         self._mark_appearance_settings_staged()
+        self._refresh_character_expression_motion_help()
 
     @on(Button.Pressed, "#settings-appearance-ascii-glyphs")
     def handle_appearance_ascii_glyphs_changed(self, event: Button.Pressed) -> None:
@@ -29030,6 +29089,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _sync_appearance_widgets(self) -> None:
         values = self._appearance_setting_values()
+        self._refresh_character_expression_motion_help()
         self._syncing_appearance_defaults = True
         try:
             try:
@@ -29060,6 +29120,12 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(
                     "#settings-appearance-transcript-style", Select
                 ).value = str(values["console_transcript_style"])
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#settings-appearance-character-expression-mode", Select
+                ).value = str(values["character_expression_mode"])
             except QueryError:
                 pass
             try:

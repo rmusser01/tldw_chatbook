@@ -1979,6 +1979,15 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         screen.handle_appearance_palette_theme_limit_changed(
             Input.Changed(palette_limit, palette_limit.value)
         )
+        expression_mode = screen.query_one(
+            "#settings-appearance-character-expression-mode", Select
+        )
+        assert expression_mode.value == "dynamic"
+        expression_mode.value = "static"
+        screen.handle_appearance_character_expression_mode_changed(
+            Select.Changed(expression_mode, "static")
+        )
+        assert "Change expressions without playing animations" in _visible_text(screen)
         transcript_style.value = "immersive_rp"
         screen.handle_appearance_transcript_style_changed(
             Select.Changed(transcript_style, transcript_style.value)
@@ -2012,6 +2021,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
     assert saved[-1]["appearance"]["console_transcript_style"] == "immersive_rp"
+    assert saved[-1]["appearance"]["character_expression_mode"] == "static"
 
 
 @pytest.mark.asyncio
@@ -2256,6 +2266,10 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
         assert "‹ Library" in visible
         assert "< Library" in visible
 
+        screen.query_one("#settings-appearance-library-media-reset").scroll_visible(
+            animate=False
+        )
+        await pilot.pause()
         await pilot.click("#settings-appearance-library-media-reset")
         await pilot.pause()
 
@@ -2415,6 +2429,19 @@ async def test_settings_appearance_revert_restores_loaded_values():
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         font_size = screen.query_one("#settings-appearance-font-size", Input)
+        expression_mode = screen.query_one(
+            "#settings-appearance-character-expression-mode", Select
+        )
+        expression_mode.value = "static"
+        screen.handle_appearance_character_expression_mode_changed(
+            Select.Changed(expression_mode, "static")
+        )
+        assert (
+            app.app_config.get("appearance", {}).get(
+                "character_expression_mode", "dynamic"
+            )
+            == "dynamic"
+        )
         font_size.value = "16"
         screen.handle_appearance_font_size_changed(
             Input.Changed(font_size, font_size.value)
@@ -2429,6 +2456,7 @@ async def test_settings_appearance_revert_restores_loaded_values():
         await pilot.pause()
 
         assert font_size.value == "12"
+        assert expression_mode.value == "dynamic"
         assert not screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
         assert "No unsaved changes" in _visible_text(screen)
 
@@ -2455,6 +2483,8 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
         theme.value = "textual-light"
         screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
 
+        screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-preview-appearance")
         text = _visible_text(screen)
 

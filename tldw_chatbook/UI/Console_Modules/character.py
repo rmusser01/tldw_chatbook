@@ -18,6 +18,10 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 
 from ...Character_Chat.visual_identity import normalize_expression_key
+from ...Chat.character_expression_playback import (
+    expression_image_size,
+    expression_motion_enabled,
+)
 from ...Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
@@ -57,6 +61,8 @@ AvatarRequest = tuple[
     AvatarRequestSource,
     str | None,
     CharacterEmoteHistoryIdentity | None,
+    bool,
+    str,
 ]
 
 
@@ -118,6 +124,7 @@ class ConsoleCharacterController:
         # fence compares against it instead of re-deriving the world (see
         # `_request_is_current`).
         self._latest_built_request: AvatarRequest | None = None
+        self._last_painted_request: AvatarRequest | None = None
         self._console_expression_spec_cache: dict[tuple[str, ...], dict] = {}
         self._character_emote_cursor_by_session: dict[str, int] = {}
         self._character_emote_explicit_by_session: dict[str, tuple[str, str]] = {}
@@ -383,6 +390,8 @@ class ConsoleCharacterController:
             source,
             message_id,
             history_identity,
+            expression_motion_enabled(config, react=react, manual=manual is not None),
+            self._console_image_default_mode() or "pixels",
         )
         self._latest_built_request = request
         return request
@@ -472,7 +481,6 @@ class ConsoleCharacterController:
 
     def invalidate_refresh_scope(self) -> None:
         """Force the next tick to repaint after the rail becomes visible."""
-
         self._last_console_avatar_scope = None
         self._last_console_avatar_request_key = None
 
@@ -486,6 +494,18 @@ class ConsoleCharacterController:
     ) -> None:
         if not self._request_is_current(request):
             return
+        if (
+            spec is not None
+            and spec.get("animation_bytes")
+            and self._active_character_avatar is not None
+            and self._last_painted_request == request
+            and self._active_character_avatar.get("resolution_cache_identity")
+            == spec.get("resolution_cache_identity")
+        ):
+            return
+        if spec is not None:
+            spec = dict(spec, animate=request[11], mode=request[12])
+        self._last_painted_request = request
         self._active_character_avatar = spec
         self._active_character_avatar_name = name
 
@@ -538,7 +558,7 @@ class ConsoleCharacterController:
         source = request[8]
         history_identity = request[10]
         scope = (actor_scope, state, manual_key)
-        request_key = (*scope, source, history_identity)
+        request_key = (*scope, source, history_identity, request[11], request[12])
         if not force and request_key == self._last_console_avatar_request_key:
             return
         self._last_console_avatar_scope = scope
@@ -631,6 +651,36 @@ class ConsoleCharacterController:
         if actor_kind == "character":
             spec["character_id"] = int(actor_id)
         try:
+            if resolution.image_bytes and resolution.is_animated:
+                # Keep only immutable bytes and header geometry here. The
+                # disposable widget owns bounded frame buffers, never the
+                # transcript image cache or the expression-spec LRU.
+                size = await asyncio.to_thread(
+                    expression_image_size, resolution.image_bytes
+                )
+                if not self._request_is_current(request):
+                    return
+                current = (
+                    await asyncio.to_thread(resolver) if resolver is not None else None
+                )
+                if (
+                    not self._request_is_current(request)
+                    or current is None
+                    or current.cache_identity != identity
+                ):
+                    return
+                spec["animation_bytes"] = resolution.image_bytes
+                spec["image_size"] = size
+                if resolution_state != "idle" or manual_key is not None:
+                    neutral = await asyncio.to_thread(
+                        self._resolve_visual_identity, actor_scope, "idle", None
+                    )
+                    if not self._request_is_current(request):
+                        return
+                    if neutral is not None and neutral.cache_identity != identity:
+                        spec["animation_fallback_bytes"] = neutral.image_bytes
+                await self._paint(request, spec, name=name, manual_label=manual_label)
+                return
             if resolution.image_bytes:
                 ok = await asyncio.to_thread(cache.prepare, key, resolution.image_bytes)
                 if not self._request_is_current(request):

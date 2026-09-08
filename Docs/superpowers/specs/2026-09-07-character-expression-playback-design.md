@@ -1,6 +1,6 @@
 # Dynamic and Static character expression playback
 
-Status: Reviewed design; implementation pending
+Status: Implemented on codex/buddy-import-design; integration pending
 Date: 2026-09-07
 Creator: tldw-project
 Programme: [Buddy imports and characters](2026-09-07-buddy-character-programme-design.md)
