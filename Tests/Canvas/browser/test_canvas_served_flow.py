@@ -13,6 +13,7 @@ import tomllib
 from http.cookies import SimpleCookie
 from pathlib import Path
 from threading import Event, Thread
+from time import monotonic
 from types import SimpleNamespace
 from typing import ClassVar
 from urllib.parse import parse_qs, urlsplit
@@ -323,6 +324,38 @@ async def _login_live_page(page, *, origin: str, access_token: str) -> None:
     await page.get_by_label("Access token").fill(access_token)
     await page.get_by_role("button", name="Sign in").click()
     await expect(page.locator("#terminal-region")).to_be_visible()
+
+
+async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
+    """Wait for both initial Console signals within one shared deadline."""
+
+    deadline = monotonic() + timeout_ms / 1_000
+
+    def remaining_ms(stage: str) -> float:
+        remaining = (deadline - monotonic()) * 1_000
+        if remaining <= 0:
+            raise PlaywrightTimeoutError(
+                f"initial Console startup deadline expired before {stage}"
+            )
+        return remaining
+
+    first_output_timeout = remaining_ms("first output")
+    try:
+        await expect(page.locator("body")).to_have_class(
+            re.compile("first-byte"), timeout=first_output_timeout
+        )
+    except AssertionError as error:
+        error.add_note("initial Console readiness stage: first output")
+        raise
+
+    composer_timeout = remaining_ms("terminal Composer")
+    try:
+        await expect(page.locator("#terminal")).to_contain_text(
+            "Composer", timeout=composer_timeout
+        )
+    except AssertionError as error:
+        error.add_note("initial Console readiness stage: terminal Composer")
+        raise
 
 
 async def _live_browser_session_id(server, page, *, port: int) -> str:
@@ -835,10 +868,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
               };
             })();""")
             await _login_live_page(page, origin=stack.origin, access_token=access_token)
-            await expect(page.locator("body")).to_have_class(re.compile("first-byte"))
-            await expect(page.locator("#terminal")).to_contain_text(
-                "Composer", timeout=45_000
-            )
+            await _wait_for_initial_console_ready(page)
             await expect(page.locator("#terminal")).not_to_contain_text("Check online")
             child_id = await _live_child_for_page(stack.server, page, port=stack.port)
             await stack.server._canvas_control_broker.wait_connected(
