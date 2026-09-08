@@ -8633,6 +8633,57 @@ def _default_base_data_dir() -> Path:
     return base / ".local" / "share" / "tldw_cli"
 
 
+def _data_root_entry_exists(path: Path) -> bool:
+    """Count links as existing data; never interpret access errors as absence."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _selected_default_base_data_dir() -> Path:
+    """Read the durable default-root selection without creating directories."""
+    conventional = _default_base_data_dir()
+    fallback = conventional.parents[2] / ".tldw_cli-data"
+    if not _data_root_entry_exists(fallback):
+        return conventional
+    if _data_root_entry_exists(conventional):
+        raise PrivatePathError(
+            PrivatePathResult(
+                conventional,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="ambiguous_default_data_roots",
+            )
+        )
+    return fallback
+
+
+def _secure_default_data_dir() -> Path:
+    """Recover a fresh install from shared default ancestors (ADR-127)."""
+    selected = _selected_default_base_data_dir()
+    try:
+        return secure_private_directory(
+            selected, create=True, application_owned=True
+        ).lexical_path
+    except PrivatePathError as exc:
+        conventional = _default_base_data_dir()
+        if (
+            selected != conventional
+            or exc.result.status is not PrivatePathStatus.UNSAFE_PARENT
+            or exc.result.reason != "shared_writable_parent"
+            or _data_root_entry_exists(conventional)
+        ):
+            raise
+        # Only a missing conventional root can select a new location. Existing
+        # data, explicit overrides and unrelated failures must never be hidden.
+        # The unchanged guard also refuses a shared/foreign/symlinked HOME.
+        fallback = conventional.parents[2] / ".tldw_cli-data"
+        return secure_private_directory(
+            fallback, create=True, application_owned=True
+        ).lexical_path
+
+
 def get_api_key(api_name: str) -> Optional[str]:
     """
     Get API key for a given provider.
@@ -8734,11 +8785,7 @@ def get_user_data_dir() -> Path:
         base_data_dir = lexical_path(configured_data_dir)
         verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
     else:
-        base_data_dir = secure_private_directory(
-            _default_base_data_dir(),
-            create=True,
-            application_owned=True,
-        ).lexical_path
+        base_data_dir = _secure_default_data_dir()
     user_dir = base_data_dir / user_folder
     return secure_private_directory(
         user_dir,

@@ -530,6 +530,16 @@ The default base data directory on a typical Unix-like system is:
 ~/.local/share/tldw_cli/
 ```
 
+On a fresh POSIX install, if existing `.local` or `share` permissions prevent
+private storage, Chatbook automatically uses `~/.tldw_cli-data/<user>/` instead.
+This location remains selected on later launches, including after those
+permissions change. Shared ancestor permissions are left untouched; application
+directories remain owner-only. Settings shows the selected storage location.
+Existing data and explicit `[paths] data_dir` settings are never silently
+bypassed. If both default roots exist, select the intended base explicitly with
+`[paths] data_dir` before restarting. An unsafe home directory still requires a
+safe storage location; Chatbook does not weaken its private-file checks.
+
 Profiles live below it:
 
 ```text
