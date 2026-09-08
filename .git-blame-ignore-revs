@@ -304,3 +304,13 @@ ec731818132255dbf8b30deb6ba2f9a20ff20ecf
 # preimport-closure suffix, both size-ratchet re-pins and the relocated
 # production-diagnostic inventory rows. Zero method bodies edited.
 9e13f0207cadb0de5eb7559faa4ada234e3a6f6c
+
+# fix(library): revert one notes mover; retarget two path censuses
+# Wave-8 task 2 fix round 1, 2026-09-08 -- still a pure move.
+# `_restore_library_notes_browse_return_receipt` returns to LibraryScreen
+# byte-for-byte (a `partial(LibraryScreen.<name>, self, ...)` caller the first
+# census's direct-call-argument shape could not see), its now-dead constructor
+# dependency and import are dropped, two hardcoded-file-path censuses are
+# retargeted at the file the code moved to, and both size-ratchet rows are
+# re-pinned. Zero method bodies edited.
+a529dbd3ed0b13502b8d100e3053e0bea5baa119
