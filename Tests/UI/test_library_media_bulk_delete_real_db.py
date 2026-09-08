@@ -114,7 +114,7 @@ def _fresh_is_trash(db_path: str, media_id: int) -> int:
 async def _run_bulk_delete(screen, media_ids: tuple[str, ...]) -> None:
     """Drive the worker body exactly as ``handle_library_media_bulk_delete_confirm``
     does: arm the interlock and open the mutation fence first."""
-    screen._library_media_bulk_delete_in_flight = True
+    screen._media_state.bulk_delete_in_flight = True
     screen._begin_library_media_mutation()
     await LibraryScreen._delete_library_media_selection(screen, media_ids)
 
@@ -137,8 +137,8 @@ async def test_bulk_delete_write_is_visible_to_a_fresh_reader_and_receipt_matche
             await pilot.pause()
 
             assert _fresh_is_trash(db_path, _backing(target)) == 1
-            assert screen._library_media_delete_receipt_ids == (target,)
-            assert screen._library_media_bulk_delete_in_flight is False
+            assert screen._media_state.delete_receipt_ids == (target,)
+            assert screen._media_state.bulk_delete_in_flight is False
             assert host.app_instance.library_media_notifications == []
             # Every other seeded row is untouched.
             for other in ids[1:]:
@@ -170,7 +170,7 @@ async def test_long_lived_reader_connection_can_miss_the_write_the_receipt_repor
             await _run_bulk_delete(screen, (target,))
             await pilot.pause()
 
-            assert screen._library_media_delete_receipt_ids == (target,)
+            assert screen._media_state.delete_receipt_ids == (target,)
             stale_view = int(
                 reader.get_media_by_id(backing, include_trash=True)["is_trash"]
             )
@@ -225,8 +225,8 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
                 await _run_bulk_delete(screen, (target,))
                 await pilot.pause()
 
-                assert screen._library_media_delete_receipt_ids == ()
-                assert screen._library_media_bulk_delete_in_flight is False
+                assert screen._media_state.delete_receipt_ids == ()
+                assert screen._media_state.bulk_delete_in_flight is False
                 assert _fresh_is_trash(db_path, _backing(target)) == 0
                 notified = host.app_instance.library_media_notifications
                 assert [message for message, _ in notified] == [
@@ -269,8 +269,8 @@ async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_pat
             # Exactly the state a committed bulk delete leaves behind.
             screen._begin_library_media_mutation()
             controller.reconcile_committed_mutation(remove_ids=())
-            screen._library_media_mutation_scope = None
-            screen._library_media_mutation_authority = None
+            screen._media_state.mutation_scope = None
+            screen._media_state.mutation_authority = None
             screen._sync_library_media_browse_state(None)
             await pilot.pause()
 
@@ -278,7 +278,7 @@ async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_pat
             assert controller.stale_copy == (
                 "Media changed; retry to load a current page."
             )
-            assert screen._library_media_bulk_delete_in_flight is False
+            assert screen._media_state.bulk_delete_in_flight is False
 
             row = next(
                 button
@@ -289,7 +289,7 @@ async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_pat
             row.press()
             await pilot.pause()
 
-            assert screen._selected_media_id == target
+            assert screen._media_state.selected_media_id == target
     finally:
         db.close_connection()
 
@@ -314,8 +314,8 @@ async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
             # Stale the page exactly as a committed mutation does.
             screen._begin_library_media_mutation()
             controller.reconcile_committed_mutation(remove_ids=())
-            screen._library_media_mutation_scope = None
-            screen._library_media_mutation_authority = None
+            screen._media_state.mutation_scope = None
+            screen._media_state.mutation_authority = None
             screen._sync_library_media_browse_state(None)
             await pilot.pause()
             status = screen.query_one("#library-media-status", Static)
@@ -379,13 +379,13 @@ async def test_rail_media_count_returns_to_the_restored_total_after_undo(tmp_pat
 
             await _run_bulk_delete(screen, ids[:2])
             await pilot.pause()
-            assert screen._library_media_delete_receipt_ids == ids[:2]
+            assert screen._media_state.delete_receipt_ids == ids[:2]
             assert "Media (1)" in _painted_rail_media_count(host, screen)
 
             screen.query_one("#library-media-bulk-delete-undo", Button).press()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_media_bulk_delete_in_flight,
+                lambda: not screen._media_state.bulk_delete_in_flight,
                 message="The bulk-delete Undo never settled.",
             )
             await pilot.pause()

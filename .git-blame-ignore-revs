@@ -219,3 +219,58 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # same shape as the export/collections/search+RAG/skills/ingest series'
 # own closing commits above.
 6fd2b753aaa90160c286579fe07257cb72917f32
+
+# Wave-7 task 1: media state object + shims (media series 1/3). 82 of the 85
+# "media"-named LibraryScreen attributes relocated verbatim into
+# LibraryMediaState (2 WIRING controller instances and 1 shared shell field
+# stayed); 77 __init__ assignments removed (74 outright, 3 becoming
+# constructor arguments for their computed defaults) plus the sole class-body
+# attribute (_library_media_arrival_note); 4 assignments kept at their
+# original positions because they run after the forced-early construction
+# point; 131 comment lines moved byte-for-byte with their fields; a
+# sentinel-wrapped generated-property shim block installed at module end; one
+# bypass-fixture seeding line and the screen size-ratchet re-pin. Zero method
+# bodies touched.
+76b248c05811de06277f5fbae7abe5bc2de59b29
+
+# Wave-7 task 2: media controller + delegators (media series 2/3). 141 of the
+# 251 media-named LibraryScreen methods relocated verbatim into
+# LibraryMediaController (UI/Library_Modules/library_media_controller.py),
+# each replaced by a one-line screen delegator; the other 110 stayed
+# screen-resident and full-bodied (73 unbound-fake-self, 16
+# instance-attribute-monkeypatch, 8 inspect.getsource census, 4
+# module-globals-coupling, 3 screen-identity, 2 class-monkeypatch, 2
+# bypassed-construction-lifecycle, 1 shared shell helper, 1 generic
+# dispatcher). Every moved body byte-for-byte identical, verified both
+# TEXT-wise and by ast.dump. Also: four module-level constants relocated to
+# screen_constants.py and imported back, the born-lazy controller import, the
+# construction site (1 positional + 83 keyword-only named dependencies; 92 is
+# the hand-written property SURFACE, a deliberately different number), both
+# size-ratchet re-pins, the
+# preimport-closure suffix and the wiring pins. Zero logic changes.
+9187bd281916c79f5412838af322a3c07cbb3ff0
+
+# Wave-7 task 2 fix round 1: one more media method reverted to LibraryScreen
+# (_exit_library_media_viewer -- a callback-identity assertion compares the
+# continuation it schedules against screen._apply_library_media_list_return,
+# which a controller-bound method can never equal). 140 movers instead of
+# 141, one added late-binding dependency, both size-ratchet re-pins and the
+# wiring-tuple amendment. Still a pure move: every remaining moved body
+# re-verified TEXT- and AST-identical to its pre-move original.
+40fe1f5bcd1180ccfacfc2c94439340e941e1f43
+
+# Wave-7 task 3: media cleanup (media series 3/3). The generated media-state
+# shim block (82 properties, two prefix families) deleted; 456 screen-side
+# `self._library_media_<field>`/`self._selected_media_id` occurrences
+# retargeted to `self._media_state.<field>`, plus 9 `getattr` receiver fixes
+# and 6 dotted dynamic-dispatch string values; 1,182 test-side code retargets
+# across 32 files -- 36 Tests/ files changed in all, across FOUR roots (UI 32,
+# Architecture 2, Live 1, Media 1), including 37 SimpleNamespace fixtures whose
+# 136 flat kwargs became a nested `_media_state=SimpleNamespace(...)`; 22 of
+# the 140 screen delegators deleted on a zero-external-reference census; 10
+# dead imports removed; the shared `_apply_library_row_toggle` dispatcher's
+# COMPUTED attribute name given a media dotted branch; both size-ratchet
+# re-pins and the wiring-test absence flip. Mechanical receiver swaps and
+# removals only -- zero assertion values changed, proven by an AST-level
+# comparison of each file against the same transform applied to its parent.
+5dd2e71cfe2401ad26d8df38c8ec3fa4badad471

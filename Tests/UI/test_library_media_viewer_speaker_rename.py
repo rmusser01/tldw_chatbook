@@ -4,6 +4,13 @@ The rename legend shipped inside ``LibraryMediaCanvas``' preview sub-pane,
 which is ``display: none`` app-wide -- so the feature existed and could not
 be reached. These pin it on ``LibraryMediaViewer``, the surface a user
 actually reads a media item in.
+
+(wave-7 merge) ``_build_library_media_viewer_display_state`` lives on
+``LibraryMediaController``; its ``LibraryScreen`` delegator was one of the 22
+the media cleanup PR pruned because nothing outside the controller called it.
+These calls reach the method at its one home rather than restoring a delegator
+whose only caller would be this file -- which is exactly the shape the prune
+census exists to remove.
 """
 
 import dataclasses
@@ -73,9 +80,9 @@ def test_viewer_state_carries_the_rename_legend_for_a_meeting(
     selected item is a renameable meeting and what its speakers are."""
     media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
     screen = _library_screen(tmp_media_db)
-    screen._selected_media_id = f"local:media:{media_id}"
+    screen._media_state.selected_media_id = f"local:media:{media_id}"
 
-    state = screen._build_library_media_viewer_display_state(
+    state = screen._media_controller._build_library_media_viewer_display_state(
         dict(tmp_media_db.get_media_by_id(media_id))
     )
 
@@ -88,9 +95,9 @@ def test_viewer_state_has_no_legend_for_a_plain_document(tmp_media_db):
         title="A plain document", media_type="article", content="not a meeting",
     )
     screen = _library_screen(tmp_media_db)
-    screen._selected_media_id = f"local:media:{media_id}"
+    screen._media_state.selected_media_id = f"local:media:{media_id}"
 
-    state = screen._build_library_media_viewer_display_state(
+    state = screen._media_controller._build_library_media_viewer_display_state(
         dict(tmp_media_db.get_media_by_id(media_id))
     )
 
@@ -125,9 +132,9 @@ def test_the_empty_viewer_state_never_parses_a_transcript(
 
     spy = _SpyDB(tmp_media_db)
     screen = _library_screen(spy)
-    screen._selected_media_id = f"local:media:{media_id}"
+    screen._media_state.selected_media_id = f"local:media:{media_id}"
 
-    state = screen._build_library_media_viewer_display_state(None)
+    state = screen._media_controller._build_library_media_viewer_display_state(None)
 
     assert state.can_rename_speakers is False
     assert state.speaker_legend_rows == ()
@@ -236,25 +243,25 @@ def test_a_later_viewer_sync_keeps_the_new_name(
 
     media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
     screen = _library_screen(tmp_media_db)
-    screen._selected_media_id = f"local:media:{media_id}"
-    screen._library_media_detail = dict(tmp_media_db.get_media_by_id(media_id))
-    assert "Speaker 1:" in screen._build_library_media_viewer_display_state(
-        screen._library_media_detail
+    screen._media_state.selected_media_id = f"local:media:{media_id}"
+    screen._media_state.detail = dict(tmp_media_db.get_media_by_id(media_id))
+    assert "Speaker 1:" in screen._media_controller._build_library_media_viewer_display_state(
+        screen._media_state.detail
     ).content
 
     rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice")
 
     # Negative control: the memo still holds the pre-rename render.
-    assert "Speaker 1:" in screen._build_library_media_viewer_display_state(
-        screen._library_media_detail
+    assert "Speaker 1:" in screen._media_controller._build_library_media_viewer_display_state(
+        screen._media_state.detail
     ).content
 
     screen._handle_library_media_speaker_renamed(
         LibraryMediaViewer.SpeakerRenamed(media_id)
     )
 
-    refreshed = screen._build_library_media_viewer_display_state(
-        screen._library_media_detail
+    refreshed = screen._media_controller._build_library_media_viewer_display_state(
+        screen._media_state.detail
     )
     assert "Alice:" in refreshed.content
     assert refreshed.speaker_legend_rows == (("S1", "Alice"),)
@@ -268,15 +275,15 @@ def test_a_rename_for_another_item_leaves_the_loaded_detail_alone(
 
     media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
     screen = _library_screen(tmp_media_db)
-    screen._selected_media_id = f"local:media:{media_id}"
+    screen._media_state.selected_media_id = f"local:media:{media_id}"
     detail = dict(tmp_media_db.get_media_by_id(media_id))
-    screen._library_media_detail = detail
+    screen._media_state.detail = detail
 
     screen._handle_library_media_speaker_renamed(
         LibraryMediaViewer.SpeakerRenamed(media_id + 999)
     )
 
-    assert screen._library_media_detail is detail
+    assert screen._media_state.detail is detail
 
 
 @pytest.mark.asyncio

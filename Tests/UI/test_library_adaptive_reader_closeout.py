@@ -58,8 +58,12 @@ DESTINATION_CONTRACT = {
         "#library-row-browse-media",
         "#library-media-reader-shell",
         "#library-media-row-1",
-        "_library_media_reader_preferences",
-        "_library_media_reader_layout",
+        # wave-7 task 3: media's own reader_preferences/reader_layout fields
+        # moved to ``screen._media_state.<field>`` -- the same extra hop the
+        # collections/conversations/prompts/skills entries already carry, and
+        # every call site reads these through ``operator.attrgetter``.
+        "_media_state.reader_preferences",
+        "_media_state.reader_layout",
     ),
     "collections": (
         "#library-row-browse-collections",
@@ -429,7 +433,7 @@ async def _open_destination(screen, pilot, destination: str):
         )
     already_selected = {
         "media": lambda: (
-            str(screen._library_media_reader_session.selected_id or "")
+            str(screen._media_state.reader_session.selected_id or "")
             == str(second.media_id)
             and bool(screen.query("#library-media-viewer-title"))
         ),
@@ -458,16 +462,16 @@ async def _open_destination(screen, pilot, destination: str):
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_reader_session.selected_id == expected
-                and screen._library_media_reader_session.loaded_id == expected
-                and screen._library_media_reader_session.pending_request is None
+                screen._media_state.reader_session.selected_id == expected
+                and screen._media_state.reader_session.loaded_id == expected
+                and screen._media_state.reader_session.pending_request is None
             ),
             message="Media second selection did not settle",
         )
         await _wait_for_selector(
             screen,
             pilot,
-            (f"#library-media-reader-mode-{screen._library_media_reader_session.mode}"),
+            (f"#library-media-reader-mode-{screen._media_state.reader_session.mode}"),
         )
     elif destination == "collections":
         await _wait_for_condition(
@@ -571,9 +575,9 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
     shell = screen.query_one(shell_selector)
     if destination == "media":
         semantic = (
-            screen._selected_media_id,
-            screen._library_media_reader_session.loaded_id,
-            screen._library_media_reader_session.mode,
+            screen._media_state.selected_media_id,
+            screen._media_state.reader_session.loaded_id,
+            screen._media_state.reader_session.mode,
         )
     elif destination == "collections":
         state = screen._library_collections_capture_controller.state
@@ -626,7 +630,7 @@ def _durable_live_oracle(
     preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
     layout = operator.attrgetter(DESTINATION_CONTRACT[destination][4])(screen)
     if destination == "media":
-        state = screen._library_media_reader_session
+        state = screen._media_state.reader_session
         record = {
             "selected": state.selected_id,
             "pending": state.pending_request,
@@ -1089,7 +1093,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     ).press()
                     await _wait_for_condition(
                         pilot,
-                        lambda: screen._library_media_reader_session.mode == "info",
+                        lambda: screen._media_state.reader_session.mode == "info",
                         message="Media route mode did not settle",
                     )
                     library_generation = screen._library_reader_persistence_generations[
@@ -1294,7 +1298,7 @@ async def _exercise_closeout_single_app_route_cycle(
                 if destination == "notes" and "conversations" in revisit_receipts:
                     revisit_receipts["conversations"]["worker_fenced"] = True
             assert screen._library_notes_reader_preferences.items_open is False
-            assert screen._library_media_reader_preferences.items_open is True
+            assert screen._media_state.reader_preferences.items_open is True
             assert (
                 tuple(dict(note) for note in app.notes_scope_service.notes)
                 == notes_before

@@ -96,7 +96,7 @@ async def _load_row(screen, pilot, service: ControlledDetailMediaService, index:
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+        lambda: screen._media_state.reader_session.loaded_id == canonical_id,
         message=f"Row {index} never settled its detail.",
     )
     return canonical_id, backing_id, title
@@ -130,7 +130,7 @@ async def test_focus_traversal_builds_zero_bodies_for_pass_through_rows():
             _release_everything(service)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_session.loaded_id == final_id,
+                lambda: screen._media_state.reader_session.loaded_id == final_id,
                 message="The final traversal row never settled.",
             )
             await pilot.pause()
@@ -188,7 +188,7 @@ async def test_loading_banner_paints_in_place_without_body_rebuild():
             service.release(backing_b)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_session.loaded_id
+                lambda: screen._media_state.reader_session.loaded_id
                 == canonical_b,
                 message="Row B never settled.",
             )
@@ -232,7 +232,7 @@ async def test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke():
         source["type"] = "markdown"
         source["content"] = big_markdown
         await _load_row(screen, pilot, service, 0)
-        assert screen._library_media_content_mode == "rendered"
+        assert screen._media_state.content_mode == "rendered"
         assert screen.query_one("#library-media-viewer-content-markdown", Markdown)
 
         final_id, final_backing_id, _ = _row_identity(
@@ -260,7 +260,7 @@ async def test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke():
             _release_everything(service)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_session.loaded_id == final_id,
+                lambda: screen._media_state.reader_session.loaded_id == final_id,
                 # Generous deadline: the PRE-fix tree queues a fresh 1 MB
                 # Markdown parse per keystroke, and the settle has to drain
                 # that backlog first -- the red run must still reach the
@@ -334,19 +334,19 @@ async def test_stale_failure_after_selection_moved_on_paints_no_error():
             service.release(backing_b, RuntimeError("stale failure"))
             await pilot.pause()
             await pilot.pause()
-            assert screen._library_media_reader_session.error is None
+            assert screen._media_state.reader_session.error is None
             assert not screen.query("#library-media-viewer-error")
             assert counts["body"] == 0
 
             service.release(backing_c)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_session.loaded_id
+                lambda: screen._media_state.reader_session.loaded_id
                 == canonical_c,
                 message="Row C never settled after the stale failure.",
             )
             await pilot.pause()
-        assert screen._library_media_reader_session.error is None
+        assert screen._media_state.reader_session.error is None
         assert counts["body"] == 1
 
 
@@ -369,8 +369,8 @@ async def test_fast_alternating_focus_settles_identical_content_without_rebuild(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_reader_session.loaded_id == canonical_a
-                    and screen._library_media_reader_session.pending_request is None
+                    screen._media_state.reader_session.loaded_id == canonical_a
+                    and screen._media_state.reader_session.pending_request is None
                 ),
                 message="Alternating focus never re-settled row A.",
             )
@@ -385,4 +385,4 @@ async def test_fast_alternating_focus_settles_identical_content_without_rebuild(
         )
         assert len(screen.query("#library-media-viewer-content")) == 1
         assert not _loading_banner_displayed(screen)
-        assert screen._library_media_reader_session.error is None
+        assert screen._media_state.reader_session.error is None

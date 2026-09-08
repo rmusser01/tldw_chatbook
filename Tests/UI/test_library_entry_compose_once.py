@@ -795,7 +795,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
     if case.name in {"notes", "pending-notes"}:
         return screen._library_note_load_state == "loaded" and selector_ready
     if case.name in {"media", "pending-media"}:
-        return screen._library_media_detail is not None and selector_ready
+        return screen._media_state.detail is not None and selector_ready
     if case.name == "export":
         return screen._export_state.counts is not None and selector_ready
     if case.name == "pending-conversations":
@@ -954,7 +954,7 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
                 message=lambda: (
                     f"{case.name} entry worker did not reach its gate; "
                     f"route={active_screen._library_entry_route_key()!r}, "
-                    f"detail={active_screen._library_media_detail!r}."
+                    f"detail={active_screen._media_state.detail!r}."
                 ),
             )
         await _wait_for_condition(
@@ -1760,9 +1760,9 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
         await _wait_for_library_shell(active_screen, pilot)
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(active_screen, pilot, "#library-media-canvas")
-        active_screen._selected_media_id = "local:media:1"
-        active_screen._library_media_view = "viewer"
-        active_screen._library_media_detail = _two_media_items()[0]
+        active_screen._media_state.selected_media_id = "local:media:1"
+        active_screen._media_state.view = "viewer"
+        active_screen._media_state.detail = _two_media_items()[0]
         replacement = active_screen._build_library_media_active_child()
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
@@ -1772,7 +1772,7 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
         def route_switching_remove(*children):
             removal = original_remove(*children)
             active_screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-            active_screen._library_media_view = "list"
+            active_screen._media_state.view = "list"
             return removal
 
         monkeypatch.setattr(canvas_host, "remove_children", route_switching_remove)
@@ -1886,9 +1886,9 @@ async def test_replace_canvas_child_repairs_owner_after_mount_failure(
         await _wait_for_library_shell(active_screen, pilot)
         await active_screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
         await _wait_for_selector(active_screen, pilot, "#library-media-canvas")
-        active_screen._selected_media_id = "local:media:1"
-        active_screen._library_media_view = "viewer"
-        active_screen._library_media_detail = _two_media_items()[0]
+        active_screen._media_state.selected_media_id = "local:media:1"
+        active_screen._media_state.view = "viewer"
+        active_screen._media_state.detail = _two_media_items()[0]
         replacement = active_screen._build_library_media_active_child()
         generation = active_screen._library_snapshot_state_generation
         route_key = active_screen._library_entry_route_key()
@@ -1933,14 +1933,14 @@ async def test_media_reader_sync_rereads_state_without_replacing_items() -> None
         first_row.press()
         await _wait_for_condition(
             pilot,
-            lambda: active_screen._library_media_reader_session.loaded_id
+            lambda: active_screen._media_state.reader_session.loaded_id
             == first_row.media_id,
             message="Selected media did not settle in the permanent Reader.",
         )
-        active_screen._library_media_reader_session = library_screen_module.set_mode(
-            active_screen._library_media_reader_session, "info"
+        active_screen._media_state.reader_session = library_screen_module.set_mode(
+            active_screen._media_state.reader_session, "info"
         )
-        active_screen._library_media_editing = True
+        active_screen._media_state.editing = True
         assert active_screen._sync_library_media_viewer_state(viewer)
         await _wait_for_selector(active_screen, pilot, "#library-media-edit-title")
 
@@ -3924,8 +3924,8 @@ def test_constructor_seeds_cached_snapshot_before_restore_state_wins_selection()
     )
 
     assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-    assert screen._selected_media_id == "m1"
-    assert screen._library_media_view == "viewer"
+    assert screen._media_state.selected_media_id == "m1"
+    assert screen._media_state.view == "viewer"
 
 
 def test_cache_seed_rejects_future_and_ttl_boundary_stamps():
