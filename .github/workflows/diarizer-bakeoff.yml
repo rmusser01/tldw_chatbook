@@ -1,0 +1,95 @@
+name: TASK-31827 diarizer bake-off (x86 proxy)
+
+# Manual only, and NEVER a required check (spec §7): it downloads ~2 GB of
+# CC-BY-4.0 corpus audio and runs both engines over it, which is minutes of
+# compute per cell. Its job is the secondary (x86) machine in the bake-off
+# report; the primary numbers come from an Apple M-series laptop.
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Corpus ids to run ('all', or a comma-separated subset)"
+        default: "wmori,mvjuk,zcdsd,ES2011a"
+      embedders:
+        description: "ONNX embedders to measure"
+        default: "titanet_small,wespeaker_resnet34,eres2net_en,campplus_en"
+      cluster_thresholds:
+        description: "Stop-pass clustering thresholds to sweep"
+        default: "0.4,0.5,0.6,0.7,0.8"
+      live_thresholds:
+        description: "Live clustering thresholds to sweep"
+        default: "0.25,0.35,0.45,0.55,0.65"
+
+permissions:
+  contents: read
+
+jobs:
+  bakeoff:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache the bake-off corpus
+        uses: actions/cache@v4
+        with:
+          path: Tests/Audio/bakeoff/data
+          # The corpus list is fixed in corpus.py, so its hash is the cache key.
+          key: bakeoff-corpus-${{ hashFiles('Tests/Audio/bakeoff/corpus.py') }}
+
+      - name: Install dependencies
+        id: dependencies
+        continue-on-error: true
+        run: python -m pip install -e '.[dev,diarization]'
+
+      - name: Record dependency installation failure
+        if: steps.dependencies.outcome != 'success'
+        run: echo "dependency install failed" | tee "$RUNNER_TEMP/bakeoff-failure.txt"
+
+      - name: Unit-test the DER scorer
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        id: der
+        run: python -m pytest Tests/Audio/bakeoff/test_der.py -q -p no:cacheprovider
+
+      - name: Record scorer failure
+        if: steps.der.outcome != 'success'
+        run: echo "DER scorer unit test failed -- the numbers below are not trustworthy" | tee -a "$RUNNER_TEMP/bakeoff-failure.txt"
+
+      - name: Run the bake-off
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        id: bakeoff
+        run: |
+          python Tests/Audio/bakeoff/run_bakeoff.py \
+            --engines onnx,speechbrain \
+            --embedders '${{ inputs.embedders }}' \
+            --segmentation float,int8 \
+            --live-thresholds '${{ inputs.live_thresholds }}' \
+            --cluster-thresholds '${{ inputs.cluster_thresholds }}' \
+            --files '${{ inputs.files }}' \
+            --out "$RUNNER_TEMP/report.md"
+
+      - name: Record bake-off failure
+        if: steps.bakeoff.outcome != 'success'
+        run: echo "run_bakeoff.py exited non-zero" | tee -a "$RUNNER_TEMP/bakeoff-failure.txt"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diarizer-bakeoff-ubuntu-24.04
+          path: |
+            ${{ runner.temp }}/report.md
+            ${{ runner.temp }}/results.json
+            ${{ runner.temp }}/bakeoff-failure.txt
+          if-no-files-found: warn
