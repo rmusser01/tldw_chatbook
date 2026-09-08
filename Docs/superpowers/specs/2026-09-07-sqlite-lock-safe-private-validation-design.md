@@ -1,25 +1,27 @@
 # Lock-safe private SQLite validation
 
 Date: 2026-09-07
-Status: Core design approved; native-close amendment below awaits written review
+Status: Approved, including the native-close amendment
 Runtime decision: Python >=3.12 approved by user on 2026-09-07; not yet implemented
 Task: TASK-31942
 ADR: [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md)
 
 ## Purpose and evidence
 
-Implementation checkpoint: Tasks1–4 are independently reviewed. Task5 is paused
+Implementation checkpoint: Tasks1–4 are independently reviewed. Task5 stopped
 at the explicitly required orderly-shutdown safety gate; the actual retained-owner
 experiment, including helper-shaped ownership, unlinks foreign sidecar names after
 an atexit observation and before normal interpreter exit completes. See the preserved
 [gate evidence](../reviews/2026-09-07-sqlite-orderly-exit-gate.md). The terminal-loss
-design must be revised before implementation continues. The subsequent
+design required revision before implementation could continue. The subsequent
 [native-policy spike](../reviews/2026-09-07-sqlite-native-close-policy-spike.md)
 passed all 25 native-policy cases on the local runtime; eight default controls
-reproduced ordinary-exit deletion. That supports the proposed amendment below,
+reproduced ordinary-exit deletion. That supports the approved amendment below,
 not production qualification or a weakened preservation requirement. The user
-approved Python >=3.12 after reviewing these results. Task5 remains paused until
-this written amendment is approved and its implementation plan is updated.
+approved Python >=3.12 after reviewing these results, then approved the written
+native-close amendment. The updated implementation plan resumes with runtime
+admission (Task5a), then live integration (Task5b). The production shutdown gate
+must still pass; approval does not turn the diagnostic spike into qualification.
 
 Repair private-file inspection without canceling locks held by live SQLite
 connections. Keep Canvas Mermaid disabled until the corrective work is reviewed
@@ -242,7 +244,7 @@ fails while proof remains available, retain the same quarantined owner/lease for
 the existing cleanup retry; do not publish a usable repository. Partial setup
 failures must preserve locks held by an independent live sibling.
 
-### Native close-policy amendment — proposed for written approval
+### Native close-policy amendment — approved
 
 ADR required: yes
 ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md (amendment)
