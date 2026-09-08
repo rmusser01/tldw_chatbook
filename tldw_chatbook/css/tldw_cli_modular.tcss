@@ -13920,12 +13920,6 @@ CodingWindow {
 
 /* ===== MODULE: features/_watchlists.tcss ===== */
 
-/* Empty state actions */
-#wc-empty-actions {
-    height: auto;
-    margin: 1 0;
-}
-
 .watchlists-read-mode #content-body-scroll {
     height: 1fr;
     min-height: 1;

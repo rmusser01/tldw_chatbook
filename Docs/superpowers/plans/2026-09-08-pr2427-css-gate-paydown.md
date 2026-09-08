@@ -31,13 +31,47 @@ Files: `tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py`
 Files: `tldw_chatbook/css/build_css.py`, `tldw_chatbook/app.py`, generated `tldw_chatbook/css/tldw_cli_modular.tcss` and `screen_feature_watchlists.tcss`, `Tests/UI/test_css_build_integrity.py`, `Tests/Performance/boot_budget_snapshots/boot_css_bytes.json` after an under-cap measurement.
 
 - [ ] Extend existing route-loading tests before implementation: absent at ordinary Console boot, present before Watchlists first paint, no duplicate parsing on repeat entry, and present for Watchlists as initial route. Add the new sheet to the union/reproduction checks. Observe missing split/route failures.
-- [ ] Reconfirm all moved selector tokens have compose consumers only in Watchlists. The prior in-memory conservative split found 33 selectors / 25 tokens / 11,203 bytes. Audit repo-relative consumers; keep any shared tokens pinned and mixed rules eager.
-- [ ] Add `ScreenOwnedSplit(module="features/_watchlists.tcss", sheets={"watchlists": "screen_feature_watchlists.tcss"}, prefixes={"watchlists": ("watchlists",)}, pinned=frozenset())` if the consumer audit still supports no pins.
+- [x] Reconfirm all moved selector tokens have compose consumers only in Watchlists. The conservative split found 11,203 bytes. A fresh exact-token audit safely adds six units (1,568 bytes): overview-card/overview-failed-runs/overview-first-run are composed only in `UI/Watchlists_Modules/overview_pane.py`; wl-workbench-body only in `watchlists_workbench.py`; wl-centre-status and wc-empty-actions only in `UI/Screens/watchlists_collections_screen.py`. No foreign-screen consumers or later-module collisions were found. Generic/mixed selectors remain eager. The expanded source partition moves12,771 bytes, with final boot cost still to measure.
+- [ ] Add `ScreenOwnedSplit(module="features/_watchlists.tcss", sheets={"watchlists": "screen_feature_watchlists.tcss"}, prefixes={"watchlists": ("watchlists", "wl", "wc", "overview")}, pinned=frozenset())` according to that verified consumer audit.
 - [ ] Add `TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",)` to the existing `_SCREEN_OWNED_ROUTE_CSS`. Do not add it to global boot CSS or the screen's `CSS_PATH`; harness styling tiers must remain intact.
 - [ ] Regenerate all sheets with the existing builder. Run complete `test_css_build_integrity.py`, `test_widget_css_consolidation.py`, `Tests/Performance/test_boot_css_byte_budget.py`, and `test_boot_budget_ratchet_messages.py`. Actual startup total, not projection, must remain <=804,000; no raised constants or force snapshot refresh.
 - [ ] Run complete Watchlists destination-shell, overview-loading, inspector, select-overlay and run-detail affected files. Verify real navigation/initial-route and 160x45 / 235x52 painted controls, with a compact supported terminal check where existing coverage requires it. Preserve all original behavioral assertions.
 - [ ] Only after under-cap evidence, run `.venv/bin/python scripts/update_boot_budget_snapshots.py --only css`; verify the snapshot and generated artifacts again. Apply ADR-097 downward tightening only if its standard-slack condition actually holds.
 - [ ] Obtain spec then correctness review. Commit this split separately from selector changes and controller moves.
+
+## Task 2b: Consolidate four pre-existing modal defaults without cap exceptions
+
+Files: the three source modules declaring LibraryCharacterRepairDialog,
+RoleplayDraftNavigationDialog/RoleplayDraftRecoveryDialog, and
+ConsoleAppearancePickerModal; existing generated widget-default sheets;
+focused full-tier parity and affected complete modal tests.
+
+ADR required: no new ADR.
+ADR path: `backlog/decisions/097-boot-budget-ratchets.md`.
+Reason: existing default-tier BUNDLED_CSS mechanism, unchanged UI behavior and
+all numerical caps. This addresses the independently reproduced consolidation
+guard failure under the user's request to address all PR issues.
+
+- [ ] Read the exact owner tasks/source, reproduce the unchanged consolidation failure, and capture full-app-tier incumbent computed styles, geometry, focus/disabled paint and hit targets for all four dialogs.
+- [ ] Add failing class-subject/consolidation and paired cascade controls before production changes. Give only existing Library Select/Horizontal/Button, Navigation Vertical/Button, and Appearance action Button subjects dedicated classes so the broad-type census does not grow.
+- [ ] Convert the three effective default blocks to BUNDLED_CSS, preserving their default cascade tier through the established builder. Verify the Recovery alias scopes Navigation-named selectors under a non-subclass Recovery owner and is genuinely inert; remove only that redundant alias if paired normal/focus/disabled controls prove unchanged presentation.
+- [ ] Rebuild, measure actual startup bytes and selector census, and require <=804,000 /274. Read-only simulation predicts +4,206 bytes; expanded Watchlists deferral provides1,568 bytes beyond the original plan, but projections are not evidence. No allowlist addition, cap raise, comment compression, or default-to-app tier migration.
+- [ ] Run complete consolidation/fastpath/boot budget/parity files and actual affected modal files. Refresh the CSS snapshot only after real under-cap measurement. Obtain spec then correctness review and commit separately from the Watchlists split.
+
+Task 2b independent plan review: ready. In addition to class-key comparisons,
+Appearance's original comma-separated Clear/Cancel declaration must be compared
+against the generated registration for both buttons, because consolidation
+normalizes selector scoping. Recovery must be compared against its original
+class-level alias, not a reconstructed approximation.
+
+Task 2/2b review checkpoint: independent spec and correctness reviews pass.
+Measured combined cost after the header-only wording correction is803,075/804,000
+bytes and273/274 broad subjects; no cap was raised. Complete modal/navigation
+47tests and CSS/consolidation51tests pass. Full-app fixture loading and real
+backend filter seeding were reconciled without suppressing production reloads.
+The complete Watchlists re-run remains pending with two independently reproduced
+pre-split focus-contrast failures explicitly open for separate approval.
+The shared generated header now describes app/owning-screen loading accurately.
 
 ## Task 3: Integration and PR qualification
 

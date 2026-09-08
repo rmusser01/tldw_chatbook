@@ -226,28 +226,52 @@ async def test_items_status_filter_covers_the_reader_set_the_backend_produces():
 
 async def test_picking_a_status_filters_the_items_list():
     """AC#1. The filter is wired, not merely populated."""
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
     host = _watchlists_host()
+    db = host.app.local_watchlists_service._db()
+    source_id = db.add_subscription(
+        name="F", type="rss", source="https://example.invalid/filter.xml"
+    )
+    # Filtering replaces the snapshot from backend authority; assigning only
+    # pane.items seeds a cache which the real reload correctly discards.
+    with db.transaction() as connection:
+        fresh_id, filed_id = (
+            persist_subscription_item(
+                connection,
+                source_id,
+                {
+                    "url": f"https://example.invalid/{name}",
+                    "title": name,
+                    "content_hash": f"filter-{name}",
+                },
+                run_id=None,
+                now="2026-08-04T09:00:00+00:00",
+            )
+            for name in ("Fresh", "Filed")
+        )
+    db.mark_item_status(filed_id, "ingested")
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "items"
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#items-status-select", timeout=5.0)
 
-        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
-        pane.items = [
-            {"id": "1", "title": "Fresh", "status": "new", "source_name": "F"},
-            {"id": "2", "title": "Filed", "status": "ingested", "source_name": "F"},
-        ]
+        await host.workers.wait_for_complete()
         await pilot.pause()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert len(pane.displayed_items()) == 2
 
         select = screen.query_one("#items-status-select", Select)
         select.value = "unread"
         await pilot.pause()
+        await host.workers.wait_for_complete()
         await pilot.pause()
 
-        displayed = screen.query_one("#watchlists-items-pane", ArticleListPane).displayed_items()
-        assert [row["id"] for row in displayed] == ["1"]
+        displayed = screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).displayed_items()
+        assert [row["id"] for row in displayed] == [f"local:watchlist_item:{fresh_id}"]
 
 
 async def test_new_rule_condition_select_paints_the_real_vocabulary():
