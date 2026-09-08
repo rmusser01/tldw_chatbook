@@ -879,7 +879,7 @@ migration, proof/helper modules, budget constants or snapshots.
   root-owned governance unstaged. Do not repair shared dependencies or host
   semaphores, change unrelated inventory tests, or enable Canvas V2.
 - [x] Independent task-scoped spec and quality review.
-- [ ] Complete the existing whole-correction review against original `9bc73ffb3`.
+- [x] Complete the existing whole-correction review against original `9bc73ffb3`.
   This local fix
   does not waive remaining qualification gaps or mark TASK-31942 Done.
 
@@ -899,6 +899,140 @@ qualification gates, not waived by this local approval. All seven final task ACs
 remain unchecked and V2 stays disabled. See `Docs/Canvas/V2_VERIFICATION.md` and
 the preserved Task7b report/review/controller verification.
 
+### Task 8: Apply the single final-review fix wave (SQLite correction)
+
+This is the SQLite correction's final-review wave, not Canvas's separate Task8
+admission workflow. BASE is `41f144ab900c9937a25e99717b9fd6c48d4b2942`.
+Read the final review's exact I1, M1 and M2 findings in
+`.superpowers/sdd/2026-09-07-sqlite-lock-safe-private-validation-implementation/final-review.md`
+and the preserved `final-review-probe.py.txt` / `final-review-probe-output.md`.
+All three findings belong to one implementation dispatch and one scoped re-review.
+Q1 and the unrelated inventory/host/platform gates are not part of this fix wave.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md
+Reason: complete the already-approved control-flow and retained-live-owner
+contract; no new storage, native policy, authentication or runtime boundary.
+
+**Controller ruling:** I1 is an in-scope incomplete correction even though its
+exception-replacement pattern predates this branch. The approved cleanup contract
+preserves control-flow precedence and complete ownership; substantial rewriting
+of this live opener must satisfy both. Fix it without silently expanding the
+migration carrier into live ownership or losing reservation/lease classification.
+Cost if wrong: localized live-opener/caller/exception handoff rework. This does not
+authorize broader policy changes, forced cleanup, or qualification waivers.
+
+**Permitted production files:** `tldw_chatbook/TTS/profile_schema.py`,
+`tldw_chatbook/TTS/profile_repository.py`, and, only if required to reuse the
+existing guarded carrier mechanism, `tldw_chatbook/TTS/profile_errors.py`.
+**Permitted test files:** `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`,
+`Tests/TTS/test_profile_repository_lifecycle.py`,
+`Tests/TTS/test_profile_sqlite_policy.py`, and
+`Tests/Performance/test_app_startup_performance.py`.
+Root owns all plan/ADR/Backlog/evidence documentation. Ask root before extending
+these files or changing an established interface; no new production registry,
+helper protocol, worker service or public failure code.
+
+Binding constraints for this wave:
+
+- Control-flow body errors remain primary; when there is no earlier control-flow
+  signal, retain a cleanup control-flow signal rather than converting it into an
+  ordinary failure. Preserve exact object identity and existing earlier-owner
+  metadata/hostile attribute-hook protections where a carrier is needed.
+  A private live carrier may use guarded exception-local history plus a current
+  attempt entry: preserve prior carriers by identity but never adopt stale prior
+  ownership into the current repository. The current entry must cover healthy
+  cleanup and pre-live/early failure too. Do not close or transfer earlier owners,
+  change migration metadata, or introduce a global registry.
+- The live opener must settle the transient child and hand off healthy retained
+  proof before raising out of its reservation. The repository must adopt the
+  complete live wrapper with its SHARED store lease and retained worker. A failed
+  native close remains retryable cleanup, not terminal proof loss; a teardown
+  retry does not replay validation/initialization or new user work.
+- Keep the live handle's native flag enabled through finalization. Healthy
+  serialized cleanup rolls back pending work, revalidates each phase, settles
+  tombstones and attempts one PASSIVE checkpoint. Valid partial/exact BUSY leaves
+  WAL intact; other errors retain the cleanup owner and worker for guarded retry.
+  Restore keeps its separate strict checkpoint. Preserve terminal proof-loss
+  quarantine and restart-required admission behavior; do not remint proof or
+  force-close an unsafe handle.
+- Existing fixed helper limits remain: eight helpers (four retained, four
+  transient), five-second general waits, 30-second initial TTS validation, one
+  second graceful close plus a further two-second terminate/kill/reap bound;
+  metadata1M rows,576MiB artifacts,64KiB closed JSON frames. No numeric native
+  fallback, raw parent database/sidecar inspection FD, BLOB evidence, or new import
+  dependency. Python>=3.12 and the public pre-SQL native admission remain.
+- Only collected repository pytest isolation and owned temporary resources. No
+  ad hoc app imports before Tests.conftest, real user data/config, shared package
+  changes, host cleanup, full suite, PR/push/rebase/merge or V2 enablement.
+
+- [x] Reproduce I1 with committed regression coverage before production edits.
+  Use the review probe as evidence, not a test with an unadapted post-fix owner
+  lookup. Cover body cancellation/control-flow plus ordinary close failure,
+  cleanup-originated control flow and earlier-signal precedence; assert exact
+  signal identity, native flag/proof/charged retained ownership, no premature
+  helper reap, and safe eventual teardown of the same owner.
+- [x] Correct the opener and actual repository adoption together. Add real
+  repository-level coverage that reaches the live-opening failure (not a failed
+  capability probe), retains its lease/worker/owner, and performs teardown-only
+  retry. Preserve ordinary-error, healthy-close, terminal-proof-loss and existing
+  cancellation behavior. No production testing hooks or blanket exception skips.
+- [x] Address M1 with an observable borrowed-handle close check in both
+  missing-method cases. Address M2 by releasing the barrier, joining the open
+  task and attempting repository cleanup on assertion/open failure with nested
+  cleanup that preserves the primary failure. Demonstrate sensitivity to the
+  asserted bad behavior without modifying production policy or adding a broad
+  test framework. Keep test-only utilities in tests.
+- [x] Run focused RED/GREEN nodes, then the complete four scoped test files above,
+  plus `Tests/Packaging/test_private_sqlite_helper_distribution.py`,
+  `Tests/Packaging/test_tts_profile_repository_import_closure.py`,
+  `Tests/Performance/test_app_import_weight.py`,
+  `Tests/Performance/test_ui_ready_module_census.py`,
+  `Tests/Performance/test_screen_preimport_payload_budget.py`, and
+  `Tests/Canvas/test_startup_deferral.py`. Preserve unchanged budgets
+  import660,UI972,preload500 modules,378740 totalLOC and123319 largest-routeLOC.
+  If `profile_errors.py` changes, also run its carrier tests in
+  `Tests/TTS/test_profile_migration_publication.py` and
+  `Tests/TTS/test_profile_migration_recovery.py` to protect the shared metadata
+  boundary. Report existing failures explicitly; no unrelated repairs.
+- [x] Run diff-check and scoped Ruff/format checks, comparing introduced spans
+  against immutable BASE rather than only aggregate counts. Do not reformat
+  legacy files wholesale. Self-review, commit only named production/test files,
+  and write exact commands, RED/GREEN results, scope, static limits, retained-owner
+  accounting and any concerns to this SDD directory's `task-8-report.md`.
+- [x] One fix-only re-review against this wave's immutable diff, with a verdict on
+  I1/M1/M2 and new breakage in the fix only. Root adjudicates residuals per the
+  final-review workflow; no second automatic fix wave. Remaining qualification
+  gaps still block TASK-31942 completion and Canvas V2 admission.
+
+**Task8 checkpoint:** Commit `3b5031012c` addresses I1/M1/M2 in six scoped files.
+The independent fix-only re-review confirms all three addressed and no new
+Critical/Important issue. Covering selection: 343 passed, 5 warnings, 260.93s;
+final focused: 22 passed, 1 warning, 5.51s, including the later-added terminal-control
+parameter. Controller committed check: 8 passed, 1 warning, 1.98s, covering exact control,
+retained-owner retries, both guard sensitivities and terminal classification.
+No runtime behavior changed after covering collection; other concurrent edits
+were static-only. All six files pass format checks; BASE-mapped lint reports
+zero introduced and 128 inherited diagnostics. Startup ceilings and passing
+counts 625/660, 963/972, 499/500 remain unchanged. Exact evidence and freshness are
+recorded in `Docs/Canvas/V2_VERIFICATION.md` and the preserved SDD reports.
+
+**Controller residual ruling:** The private current-carrier slot guarantees the
+approved sequential signal-reuse cases, not simultaneous reuse of one exception
+instance across workers. No concrete shared-signal runtime producer was found.
+Retain the review's concurrency observation as a documented limitation rather
+than inventing a new contract or running another final fix wave. If a producer
+later needs concurrent same-object reuse, an attempt-bound carrier and coverage
+must precede it. Cost if wrong: localized carrier/adoption rework; a missed
+existing producer could associate the wrong retained owner with its repository.
+
+This closes the concrete review wave, not the full correction. Q1 remains:
+three unrelated strict-inventory failures, eleven pre-body SemLock ENOSPC cases,
+platform/optional qualification and final affected-selection/benchmark evidence.
+TASK-31942 stays In Progress with all seven final ACs unchecked, and Canvas V2
+remains disabled. No host cleanup, unrelated repair, dependency change, full
+suite or external PR action was authorized or performed by this wave.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -916,4 +1050,4 @@ the preserved Task7b report/review/controller verification.
 | Exclusive descriptor finalizers and complete consumer inventory | 6 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Current startup-budget, semaphore ENOSPC and strict-inventory failures are not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Remaining semaphore ENOSPC, strict-inventory, platform and final affected-selection/benchmark gaps are not passing tests or permission for host cleanup/unrelated repairs.
