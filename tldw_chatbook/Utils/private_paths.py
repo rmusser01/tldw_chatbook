@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import functools
 import os
 import secrets
 import stat
@@ -446,6 +447,66 @@ def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
     )
 
 
+def _admitted_file(function):
+    @functools.wraps(function)
+    def admitted(path, *args, **kwargs):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(lexical_path(path)):
+            return function(path, *args, **kwargs)
+    return admitted
+
+
+class _AdmittedStream:
+    def __init__(self, stream, lease):
+        self._stream = stream
+        self._lease = lease
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def close(self):
+        self._stream.close()
+        self._lease.close()
+
+    def __iter__(self):
+        return iter(self._stream)
+
+    def __del__(self):
+        try:
+            self.close()
+        except BaseException:
+            pass
+
+
+def _admitted_stream(function):
+    @functools.wraps(function)
+    def admitted(path, *args, **kwargs):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        lease = acquire_storage(lexical_path(path))
+        try:
+            return _AdmittedStream(function(path, *args, **kwargs), lease)
+        except BaseException:
+            lease.close()
+            raise
+    return admitted
+
+
+def _admitted_reader(function):
+    @functools.wraps(function)
+    def admitted(path, *args, **kwargs):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        with acquire_storage(lexical_path(path)):
+            yield from function(path, *args, **kwargs)
+    return admitted
+
+
+@_admitted_file
 def create_private_text(
     path: PathInput,
     text: str,
@@ -555,6 +616,7 @@ def _prepare_application_owned_parent(
     )
 
 
+@_admitted_file
 def atomic_private_write_bytes(
     path: PathInput,
     payload: bytes,
@@ -764,6 +826,7 @@ def open_private_text_append(
         os.fsync(stream.fileno())
 
 
+@_admitted_stream
 def open_private_text_append_stream(
     path: PathInput,
     *,
@@ -861,6 +924,7 @@ def open_private_text_append_stream(
 
 
 @contextlib.contextmanager
+@_admitted_reader
 def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     """Open and harden an existing private file without following links."""
 
@@ -962,6 +1026,7 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
         )
 
 
+@_admitted_file
 def secure_private_directory(
     path: PathInput,
     *,

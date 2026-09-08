@@ -10,6 +10,10 @@ def main_cli_runner() -> Any:
         The full application runner's return value.
     """
 
+    from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+    admit_startup()
+
     from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 
     return app_main_cli_runner()

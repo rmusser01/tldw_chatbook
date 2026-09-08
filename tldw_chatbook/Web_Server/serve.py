@@ -6,6 +6,12 @@ This module provides functions to launch the Textual application as a web server
 allowing users to access the TUI through their web browser.
 """
 
+# ADR-126: fence recovery and enroll before any runtime/config imports.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
+
 import sys
 from pathlib import Path
 from typing import Optional

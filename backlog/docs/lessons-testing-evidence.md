@@ -9,6 +9,20 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Reading a selector can change atime without changing its contents (TASK-31988)
+
+**Incident.** The first recovery binding fingerprint compared whole `fstat` results
+before and after reading a real temporary config. After the SQLite enrollment test
+waited for two connection retirements, a subsequent bind intermittently reported
+`selector_unverified`: the read itself had advanced access time. Comparing device,
+inode, size, mtime and ctime preserved the intended concurrent-change check while
+excluding this reader-owned side effect. The lifetime regression then passed.
+
+**What to do.** A read-stability predicate must name the content/identity fields it
+protects; whole-stat equality also measures access-time updates caused by the probe.
+
+---
+
 ## Packaging build copies can become duplicate source owners (TASK-31985, 2026-09-07)
 
 **Incident.** The packaging baseline left an untracked `build/lib` tree inside the

@@ -985,8 +985,13 @@ def test_connection_accepts_str_path_and_pathlike_file_targets(tmp_path):
 def test_connection_selection_never_resolves_path(tmp_path, monkeypatch):
     target = tmp_path / "db.sqlite"
 
-    def fail_resolve(*args, **kwargs):
-        pytest.fail("database target selection called Path.resolve()")
+    original_resolve = Path.resolve
+
+    def fail_resolve(selected, *args, **kwargs):
+        if selected == target:
+            pytest.fail("database target selection called Path.resolve()")
+        # ADR-126 independently verifies the fixed admission authority marker.
+        return original_resolve(selected, *args, **kwargs)
 
     monkeypatch.setattr(Path, "resolve", fail_resolve)
     connection = connect_private_sqlite("db.base", target)

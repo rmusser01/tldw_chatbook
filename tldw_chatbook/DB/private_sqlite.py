@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import functools
 import os
 import sqlite3
 import stat
@@ -74,6 +75,7 @@ class SQLiteOwnerPolicy:
     reason: str
     centralized_backup_allowed: bool = False
     preserve_read_only_source_mode: bool = False
+    foreign_read_only_source: bool = False
 
 
 _PRIVATE_FILE = frozenset({SQLiteTargetKind.PRIVATE_FILE})
@@ -116,16 +118,19 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner",
         _READ_ONLY_URI,
         "Chrome cookie clones are validated read-only SQLite sources.",
+        foreign_read_only_source=True,
     ),
     "cookies.edge": SQLiteOwnerPolicy(
         "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner",
         _READ_ONLY_URI,
         "Edge cookie clones are validated read-only SQLite sources.",
+        foreign_read_only_source=True,
     ),
     "cookies.firefox": SQLiteOwnerPolicy(
         "tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner",
         _READ_ONLY_URI,
         "Firefox cookie clones are validated read-only SQLite sources.",
+        foreign_read_only_source=True,
     ),
     "db.base": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/base_db",
@@ -1060,6 +1065,49 @@ def _classify_target(
     )
 
 
+def _with_storage_admission(function):
+    @functools.wraps(function)
+    def admitted(owner_id, database, **kwargs):
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        policy = _validated_owner_policy(owner_id)
+        if kwargs.get("_verified_descriptor_fd") is not None or os.fspath(database) == ":memory:" or (
+            kwargs.get("read_only", False) and policy.foreign_read_only_source
+        ):
+            return function(owner_id, database, **kwargs)
+        lease = acquire_storage(Path(database))
+        factory = kwargs.get("factory", sqlite3.Connection)
+        try:
+            if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
+                raise RecoveryRequired("connection_factory_not_qualified")
+
+            class AdmittedConnection(factory):
+                _admission_close_attempted = False
+
+                def close(self):
+                    self._admission_close_attempted = True
+                    super().close()
+                    lease.close()
+
+                def __del__(self):
+                    # Match sqlite's abandoned-connection retirement, including rollback.
+                    # If a custom close fails, retain the fence until process exit.
+                    try:
+                        if not self._admission_close_attempted:
+                            self.close()
+                    except BaseException:
+                        pass
+
+            kwargs["factory"] = AdmittedConnection
+            return function(owner_id, database, **kwargs)
+        except BaseException:
+            lease.close()
+            raise
+    return admitted
+
+
+@_with_storage_admission
 def _connect_registered_sqlite(
     owner_id: str,
     database: str | os.PathLike[str],

@@ -1295,3 +1295,33 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | generic |
 | tldw_chatbook/Utils/secure_temp_files.py | secure_temp_file | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | scrape_entire_site | os.unlink | 1 | unsupported | miscellaneous |
+
+
+## Startup admission integration (TASK-31988)
+
+The fixed default config namespace now owns `recovery-bootstrap/`, including
+version-1 private pending/profile associations, a scope-neutral `unbound-owner`,
+and the separate stable `admission/` authority. These local records are recovery
+authority, excluded from imported archive authority. Missing/corrupt known state
+is retained and fenced, never repaired by ordinary startup. Pending control roots
+may be elsewhere; they cannot choose a second admission authority.
+
+The following conservative read-open candidates have been reviewed individually:
+
+| Module | Symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Backup_Recovery/bootstrap.py | _read | open | 1 | generic_boundary | backup_control_reader |
+| tldw_chatbook/Backup_Recovery/bootstrap.py | _fingerprint | open | 1 | generic_boundary | backup_selector_reader |
+
+`DB/private_sqlite.py` retains its exact two raw connection sites and the
+registered owner inventory. Connection lifetime admission wraps that seam without
+changing target selection or trusted-parent enforcement. Memory databases and
+verified immutable descriptor views remain classified exemptions. Only browser
+cookie clone sources (`cookies.chrome`, `cookies.edge`, `cookies.firefox`) have the
+explicit `foreign_read_only_source` exemption; preserving a source file's mode
+does not exempt owned RAG, Watchlists, or TTS reads from recovery fences.
+
+The shared private file create/atomic-write/append/read-harden/directory boundaries
+participate, with append streams retaining admission through successful close.
+This does not qualify every raw writer in this census. Unsupported raw-owner
+cohorts still block Complete backup and replacement.

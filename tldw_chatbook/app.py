@@ -1,3 +1,9 @@
+
+# ADR-126: fence recovery and enroll before any runtime/config imports.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
 # tldw_cli - Textual CLI for LLMs
 # Description: This file contains the main application logic for the tldw_cli, a Textual-based CLI for interacting with various LLM APIs.
 #

@@ -10,6 +10,12 @@ This script runs ChatterboxTTS in a completely isolated subprocess to prevent:
 Communication is done via JSON over stdin/stdout.
 """
 
+# ADR-126: fence and enroll before runtime imports, including direct workers.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
+
 import sys
 import os
 

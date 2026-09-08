@@ -1,3 +1,9 @@
+
+# ADR-126: fence recovery and enroll before any runtime/config imports.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
 # tldw_cli/config.py
 # Description: Configuration management for the tldw_cli application.
 #
