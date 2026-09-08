@@ -8041,40 +8041,19 @@ class LibraryScreen(BaseAppScreen):
             self._register_footer_shortcuts()
 
     def on_key(self, event: Key) -> None:
-        """Keyboard affordances: ``/`` anywhere, plus landing accelerators.
+        """Handle guarded search, landing actions and list navigation.
 
-        F-012's focus-search key, implemented as a screen-level key handler
-        (the settings screen's task-1715 pattern) rather than a ``Binding``:
-        the key stays out of the key palette, and it can never fire while an
-        ``Input``/``TextArea`` owns focus -- text fields consume printable
-        keys before this handler runs, so the isinstance guard is belt and
-        braces for any field that lets an event through. Once the rail box
-        itself has focus, its own ``_on_key`` re-arms the query instead
-        (see ``LibraryRailSearchInput``).
+        F-012/task-1715: ``/`` uses a screen handler, not a palette Binding.
+        Input/TextArea keep printable keys; LibraryRailSearchInput re-arms
+        its own query when focused.
 
-        task-2237 (R2): `i` and `n` are the hub next-action accelerators
-        (import content / new note), dispatched through the same guarded
-        row-switch the hub rows use. task-3302 (MI-04) widened `i` to work
-        from ANY Library canvas (it opens the same Ingest canvas from
-        anywhere, and the row-switch guards still veto over dirty edits);
-        `n` stays landing-scoped because it opens a create editor.
+        task-2237/3302: ``i`` opens Ingest from any canvas; ``n`` creates a
+        note from the landing only. Both use the dirty-edit row-switch guard.
 
-        task-2856 (AC1): Up/Down move DOM focus between Library list rows
-        (Media/Notes/Prompts/Skills) -- see ``_move_library_list_row_focus``,
-        which claims the key only while a list row genuinely has focus, so
-        Up/Down are left alone everywhere else (rail rows, form Inputs, the
-        command palette, etc.).
-
-        task-2856 (review round 2): ANY key disarms a pending entry-focus
-        request (``_library_pending_list_entry_focus``) the instant it is
-        pressed -- unconditionally, before the Input/TextArea early
-        return, since typing into a Tab-reached field is exactly the kind
-        of user interaction that must stop the request too. Disarming an
-        already-idle flag is a harmless no-op, so this never needs its own
-        gate. Complements ``on_descendant_focus`` (which also catches
-        mouse clicks -- see its docstring); together the two mean the
-        settle-window timer is only ever the LAST resort for a
-        still-armed, still-idle request.
+        task-2856: Up/Down move only genuinely focused list rows, leaving
+        rail/forms/palette untouched. Any key disarms pending entry focus
+        before the text-field early return. Descendant focus handles mouse
+        interaction; settlement timers are a last resort for idle requests.
         """
         emergency_tab = bool(
             event.key in {"tab", "shift+tab", "backtab"}

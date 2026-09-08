@@ -87,6 +87,8 @@ control before accepting the fixture. No production reset API expansion.
 
 32. Restore the existing deferred Conversation Reader import contract: the complete packaging guard exposes an unused three-line Screen compatibility re-export introduced by rebased assembly commit 8cf9b10fd2 and still present at 9c6a003fc6. The tracked consumer census finds no remaining user of that alias; constructor assembly and architecture tests import the canonical controller directly. Remove only the eager re-export, retain constructor order and all assertions, and verify complete packaging, controller-assembly, conversations-wiring and Screen-size files before the mounted Library qualification. ADR required: no; routine removal of an unused import under existing ADR-097, not a new runtime boundary or compatibility layer.
 
+33. Rebase the saved checkpoint onto dev 9a54013f07, retaining TASK-32046 keyboard routing and all four new shell tests. The complete Screen ratchet reproduces a 35,412/35,393-line breach after the 23-line upstream addition. Shorten only the existing verbose on_key docstring, preserving its keyboard/dirty-edit/focus-admission facts and every executable AST node; do not raise the cap or alter upstream behavior. Verify the complete ratchet, exact docstring-only AST normalization and the complete rebased shell/mounted files. ADR required: no; documentation-only paydown under the existing Screen ratchet, not a runtime change.
+
 Step 30 ADR required: yes. ADR path:
 `backlog/decisions/128-library-media-browse-presentation-state.md`.
 Reason: explicit UI-local state composition, preserving ADR-067 service/page
