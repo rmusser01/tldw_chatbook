@@ -1318,6 +1318,24 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                         disabled=self.mutation_in_flight,
                     )
+                    # task-32074: the prompt's primary outbound action, in
+                    # the header beside the mode tabs -- where the Media
+                    # Reader puts its own "Use in Console". At the bottom of
+                    # the editor (row 49 of 52 live) it was below every field
+                    # and the whole history region.
+                    use_console = Button(
+                        "Use in Console",
+                        id="library-prompt-insert-console",
+                        classes="library-canvas-action console-action-primary",
+                        compact=True,
+                        disabled=item_locked,
+                    )
+                    use_console.display = (
+                        not self.conflict
+                        and editor_state.prompt_id is not None
+                        and not self.dirty
+                    )
+                    yield use_console
                 yield Static(
                     self.basic_unavailable_reason,
                     id="library-prompt-mode-reason",
@@ -1579,15 +1597,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 )
                 save.display = not self.conflict and (is_new or self.dirty)
                 yield save
-                use_console = Button(
-                    "Use in Console",
-                    id="library-prompt-insert-console",
-                    classes="library-canvas-action console-action-primary",
-                    compact=True,
-                    disabled=item_locked,
-                )
-                use_console.display = not self.conflict and not is_new and not self.dirty
-                yield use_console
+                # task-32074: "Use in Console" moved up into
+                # ``#library-prompt-mode-controls`` -- see the header above.
                 more = Button(
                     "More actions",
                     id="library-prompt-more-actions",

@@ -8,9 +8,12 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
+
+from tldw_chatbook.Widgets.glyph_fallback import ascii_glyph_mode
 
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptApplicationDestination,
@@ -36,6 +39,26 @@ VARIABLE_ROW_CLASS = "prompt-variable-row"
 VARIABLE_INPUT_CLASS = "prompt-variable-input"
 
 SYSTEM_CHECKBOX_COPY = "Replace the current session System prompt with this System lane"
+
+
+class GlyphCheckbox(Checkbox):
+    """A checkbox whose state is a glyph rather than a colour (task-32074).
+
+    Textual paints the toggle's inner ``X`` in the button's own background
+    while the value is ``False``, so an unchecked box reads as an empty frame
+    -- state by colour alone, and indistinguishable from a checked one in a
+    plain-text capture (critique #8 met exactly that here). Rendering the
+    state as ``☑``/``☐`` (``[x]``/``[ ]`` under ASCII glyphs) keeps the
+    widget, its id and its ``Changed`` messages untouched.
+    """
+
+    @property
+    def _button(self) -> Content:
+        """Return the state glyph in place of Textual's colour-only button."""
+        checked, unchecked = (
+            ("[x]", "[ ]") if ascii_glyph_mode() else ("☑", "☐")
+        )
+        return Content(checked if self.value else unchecked)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +116,7 @@ class PromptVariablesDialog(
             )
             if self.request.system_text is not None:
                 with Horizontal(id="prompt-variables-system-authorization"):
-                    yield Checkbox(
+                    yield GlyphCheckbox(
                         SYSTEM_CHECKBOX_COPY,
                         value=False,
                         id=SYSTEM_CHECKBOX_ID,

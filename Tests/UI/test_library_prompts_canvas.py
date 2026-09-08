@@ -11552,9 +11552,10 @@ async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order(
 
     async with app.run_test(size=(140, 40)) as pilot:
         actions = pilot.app.query_one("#library-prompt-editor-actions")
+        # task-32074: "Use in Console" now sits in the editor HEADER, beside
+        # Basic/Advanced/Info, where the Media Reader keeps the same action.
         assert [child.id for child in actions.children] == [
             "library-prompt-save",
-            "library-prompt-insert-console",
             "library-prompt-more-actions",
             "library-prompt-conflict-save-new",
             "library-prompt-conflict-reload",
@@ -11563,10 +11564,11 @@ async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order(
         ]
         assert [
             button.id for button in actions.query(Button) if button.region.width > 0
-        ] == [
-            "library-prompt-insert-console",
-            "library-prompt-more-actions",
-        ]
+        ] == ["library-prompt-more-actions"]
+        assert (
+            pilot.app.query_one("#library-prompt-insert-console", Button).region.width
+            > 0
+        )
         assert str(pilot.app.query_one("#library-prompt-copy", Button).label) == (
             "Copy Markdown"
         )
