@@ -153,6 +153,12 @@ a checked `P` row when it is introduced.
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
 The migrated boundary retains 53 classified connection sites and fourteen
-classified backup/restore operations. Production has one raw
-`sqlite3.connect` site and one direct `Connection.backup()` site, both inside
-`DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.
+classified backup/restore operations. The centralized filesystem seam owns
+three raw `sqlite3.connect` calls inside `DB/private_sqlite.py`. One separate
+raw call in `TTS/profile_sqlite_policy.require_native_close_policy_support` is
+admitted only as an argument-free capability probe whose source is guarded to
+contain exactly `sqlite3.connect(":memory:")`, with no keywords, forwarded
+input, file, URI, or variable target. That probe creates no filesystem owner
+and therefore has no `C` row or registry entry. The boundary retains one
+direct `Connection.backup()` site inside `DB/private_sqlite.py`; Settings has
+no SQLite database `shutil.copy2()` site.

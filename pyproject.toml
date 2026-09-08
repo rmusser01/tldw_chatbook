@@ -11,7 +11,7 @@ authors = [
 ]
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
@@ -25,7 +25,6 @@ classifiers = [
     "Topic :: Communications :: Chat",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
@@ -666,7 +665,7 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 warn_return_any = false
 warn_unused_configs = true

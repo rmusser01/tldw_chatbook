@@ -32,7 +32,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
 # "stdlib-only" means the PROJECT's stdlib floor (pyproject: requires-python
-# >=3.11), not whatever `python3` happens to be. On macOS `python3` is the
+# >=3.12), not whatever `python3` happens to be. On macOS `python3` is the
 # system 3.9, and under it three of the five checks below die on unrelated
 # tracebacks: `list[str] | None` evaluated at runtime (check_bundle_sync.py),
 # `from enum import StrEnum` (check_profile_owned_path_inventory.py), and
@@ -43,7 +43,7 @@ cd "$REPO_ROOT" || exit 1
 # muted, which is the exact failure this file exists to prevent. So pick an
 # interpreter that meets the floor, and say so plainly when none is reachable.
 PYTHON_FLOOR_MAJOR=3
-PYTHON_FLOOR_MINOR=11
+PYTHON_FLOOR_MINOR=12
 
 meets_python_floor() {
   command -v "$1" >/dev/null 2>&1 || [ -x "$1" ] || return 1
@@ -66,7 +66,7 @@ else
   # project does not otherwise use.
   for candidate in \
     "$REPO_ROOT/.venv/bin/python" \
-    python3 python3.14 python3.13 python3.12 python3.11 python
+    python3 python3.14 python3.13 python3.12 python
   do
     if meets_python_floor "$candidate"; then
       PYTHON="$candidate"
@@ -75,8 +75,8 @@ else
   done
   if [ -z "${PYTHON:-}" ]; then
     echo "preflight: no Python >= ${PYTHON_FLOOR_MAJOR}.${PYTHON_FLOOR_MINOR} found" \
-      "(tried $REPO_ROOT/.venv/bin/python, python3.14 .. python3.11, python3, python)." >&2
-    echo "preflight: re-run as  PYTHON=/path/to/python3.11-or-newer ./scripts/preflight.sh" >&2
+      "(tried $REPO_ROOT/.venv/bin/python, python3.14, python3.13, python3.12, python3, python)." >&2
+    echo "preflight: re-run as  PYTHON=/path/to/python3.12-or-newer ./scripts/preflight.sh" >&2
     exit 1
   fi
 fi

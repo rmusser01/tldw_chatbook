@@ -193,7 +193,7 @@ def test_artifact_lease_spike_runs_three_os_on_main_and_manual_events() -> None:
 
     assert "os: [ubuntu-latest, macos-latest, windows-latest]" in block
     assert "pull_request" not in block
-    assert 'python-version: ["3.11"]' in block
+    assert 'python-version: ["3.12"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block
     assert (

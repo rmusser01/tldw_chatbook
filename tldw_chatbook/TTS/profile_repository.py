@@ -105,6 +105,7 @@ from tldw_chatbook.TTS.profile_store_lock import (
     ProfileStoreLease,
     ProfileStoreLockMode,
 )
+from tldw_chatbook.TTS.profile_sqlite_policy import require_native_close_policy_support
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -1442,6 +1443,7 @@ class TTSProfileRepository:
         self._clear_reference_damage_markers()
         if self._connection is not None or self._lease is not None:
             self._worker_cleanup()
+        require_native_close_policy_support()
 
         lease: ProfileStoreLease | None = None
         connection: sqlite3.Connection | None = None

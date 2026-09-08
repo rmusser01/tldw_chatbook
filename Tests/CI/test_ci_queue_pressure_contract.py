@@ -133,7 +133,6 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     nightly = workflow["jobs"]["nightly-deep"]
     assert nightly["needs"] == ["resolve-dev-sha"]
     assert nightly["strategy"]["matrix"]["include"] == [
-        {"os": "ubuntu-latest", "python-version": "3.11", "io-encoding": "utf-8"},
         {"os": "ubuntu-latest", "python-version": "3.12", "io-encoding": "utf-8"},
         {"os": "ubuntu-latest", "python-version": "3.13", "io-encoding": "utf-8"},
         {"os": "macos-latest", "python-version": "3.12", "io-encoding": "utf-8"},
@@ -159,7 +158,7 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     assert "-n auto" not in run["run"]
 
 
-def test_fast_lane_is_one_serial_minimal_python_311_job() -> None:
+def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     """Keep the fast lane serial, bounded, and minimally provisioned."""
     fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
 
@@ -175,7 +174,7 @@ def test_fast_lane_is_one_serial_minimal_python_311_job() -> None:
         for step in fast["steps"]
         if step.get("uses") == "actions/setup-python@v5"
     )
-    assert setup["with"]["python-version"] == "3.11"
+    assert setup["with"]["python-version"] == "3.12"
 
     install = _named_step(fast, "Install fast-lane dependencies")["run"]
     assert shlex.split(install) == [

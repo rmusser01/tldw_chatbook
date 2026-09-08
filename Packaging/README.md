@@ -11,7 +11,7 @@ The packaging system supports creating native installers and portable distributi
 ## Prerequisites
 
 ### Common Requirements
-- Python 3.11 or later
+- Python 3.12 or later
 - The main tldw_chatbook dependencies installed
 - Git (for version info)
 
@@ -152,7 +152,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install dependencies
         run: |
           pip install -e .
@@ -173,7 +173,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install dependencies
         run: |
           pip install -e .
@@ -204,7 +204,7 @@ Version information is centralized in `packaging/common/version.py`. Update this
 
 **"Nuitka compilation failed"**
 - Ensure Visual Studio Build Tools are installed
-- Check Python version (3.11+ required)
+- Check Python version (3.12+ required)
 
 **Large file size**
 - Use `--mode minimal` for smaller builds
