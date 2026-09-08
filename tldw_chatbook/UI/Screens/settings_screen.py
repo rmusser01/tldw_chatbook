@@ -227,7 +227,6 @@ from .settings_search_index import (
 )
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
-    NOTE_SUMMARY_PROMPT_ID,
     SUMMARY_PROMPT_ID,
     format_ratio_percent,
     load_context_memory_values,
@@ -16727,15 +16726,6 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-context-edit-summary-prompt",
                 tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
             )
-            yield Button(
-                "Edit summarize-to-note prompt…",
-                id="settings-console-context-edit-note-summary-prompt",
-                tooltip=(
-                    "Open the Internal Prompts editor filtered to the prompt "
-                    "used by the Console message More-menu 'Summarize up to "
-                    "here as note' action."
-                ),
-            )
             yield Static(
                 "Text summary and Hybrid make one extra model call and store generated "
                 "memory with provenance. Visual pages are rendered on-device for one "
@@ -24162,33 +24152,6 @@ class SettingsScreen(BaseAppScreen):
         # panel this reaches for is built by the detail pane's own rebuild
         # (task-15475), which finishes later than a screen callback would.
         self._after_category_panes(_focus_summary_prompt)
-
-    @on(Button.Pressed, "#settings-console-context-edit-note-summary-prompt")
-    def handle_console_context_edit_note_summary_prompt(
-        self, event: Button.Pressed
-    ) -> None:
-        """TASK-31901: same reveal-and-focus jump for the note-summarize
-        prompt used by the Console More-menu note action."""
-        event.stop()
-        self._select_category(SettingsCategoryId.INTERNAL_PROMPTS.value)
-
-        def _focus_note_summary_prompt() -> None:
-            try:
-                panel = self.query_one(
-                    "#settings-internal-prompts-panel", InternalPromptsPanel
-                )
-            except QueryError:
-                self.app.notify(
-                    "Internal Prompts is not available.", severity="warning"
-                )
-                return
-            if not panel.focus_prompt(NOTE_SUMMARY_PROMPT_ID):
-                self.app.notify(
-                    "The Console summarize-to-note prompt is not registered.",
-                    severity="warning",
-                )
-
-        self._after_category_panes(_focus_note_summary_prompt)
 
     @on(Input.Changed, "#settings-console-default-user-display-name")
     def handle_console_default_user_display_name_changed(

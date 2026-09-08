@@ -186,17 +186,7 @@ def _recording_thread_start(self):
 threading.Thread.start = _recording_thread_start
 
 
-EXPECTED = [
-    ("_backfill_chachanotes_messages_fts", "chachanotes-fts-backfill"),
-    ("load", "console-prompt-history"),
-    ("run", "scheduling"),
-]
-
-
 async def main() -> None:
-    import asyncio
-    import time
-
     import tldw_chatbook.app
 
     app = tldw_chatbook.app.TldwCli()
@@ -204,21 +194,8 @@ async def main() -> None:
         while not getattr(app, "_ui_ready", False):
             await asyncio.sleep(0.005)
         # Settle window: the deferred-startup timers (0.1-0.2 s) fire inside
-        # it, so their workers are censused too. The chachanotes FTS backfill
-        # is THIRD in the strictly-serial staggered fleet (cap 1, behind the
-        # two actor-pack prefetches), so a flat 1.0 s window intermittently
-        # snapshot before it was admitted on slow runners -- the PR #2467 CI
-        # flake. Poll for the expected starts with a generous deadline
-        # instead; a worker that finishes quickly is still censused because
-        # the probe records STARTS, not running state.
-        deadline = time.monotonic() + 30.0
-        while True:
-            started = {(w["name"], w["group"]) for w in records["workers"]}
-            if all(pair in started for pair in EXPECTED):
-                break
-            if time.monotonic() > deadline:
-                break
-            await asyncio.sleep(0.05)
+        # it, so their workers are censused too.
+        await asyncio.sleep(1.0)
         print("CENSUS_JSON:" + json.dumps(records), flush=True)
 
 

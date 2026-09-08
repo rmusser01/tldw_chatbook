@@ -46,6 +46,7 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     "▸": ">",  # collapsed / active / collapse-right
     "◂": "<",  # collapse-left
     "▾": "v",  # expanded
+    "▢": "+",  # unset conversation-appearance slot (task-31207)
     # RAG scope source types.
     "▦": "[M]",  # media
     "✎": "[N]",  # note

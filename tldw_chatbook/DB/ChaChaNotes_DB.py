@@ -57,6 +57,7 @@ from typing import (
     Set,
     Tuple,
     Sequence,
+    Iterable,
     Mapping,
     Callable,
     TYPE_CHECKING,
@@ -10861,6 +10862,57 @@ UPDATE db_schema_version
                 f"Database error fetching conversation ID {conversation_id}: exception_type={type(e).__name__}"
             )
             raise
+
+    def get_conversations_metadata_by_ids(
+        self, conversation_ids: Iterable[str]
+    ) -> Dict[str, Optional[str]]:
+        """
+        Retrieves the raw metadata JSON for many conversations in batched reads.
+
+        task-31207: the Console conversation browser decorates every row with
+        per-conversation appearance parsed from ``conversations.metadata``; one
+        batched SELECT replaces a ``get_conversation_by_id`` per row. Only
+        non-deleted conversations are returned. Unknown ids are simply absent
+        from the result.
+
+        Args:
+            conversation_ids: Conversation UUIDs to fetch. Duplicates are
+                collapsed; the empty input returns an empty mapping.
+
+        Returns:
+            A mapping of conversation id to its raw ``metadata`` value (``None``
+            when the row carries no metadata).
+
+        Raises:
+            CharactersRAGDBError: For database errors during fetching.
+        """
+        ids = list(dict.fromkeys(str(value) for value in conversation_ids if value))
+        results: Dict[str, Optional[str]] = {}
+        # SQLite's default host-parameter ceiling is 999; chunk well below it.
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            query = (
+                "SELECT id, metadata FROM conversations "
+                f"WHERE id IN ({placeholders}) AND deleted = 0"
+            )
+            cursor = None
+            try:
+                cursor = self.execute_query(query, tuple(chunk))
+                for row in cursor.fetchall():
+                    results[str(row["id"])] = row["metadata"]
+            except CharactersRAGDBError as e:
+                logger.error(
+                    "Database error fetching conversation metadata batch error_type={}",
+                    type(e).__name__,
+                )
+                raise
+            finally:
+                # PR #2480 review (#1): release the acquired cursor even
+                # when fetching or row access raises.
+                if cursor is not None:
+                    cursor.close()
+        return results
 
     def get_conversation_by_name(self, conversation_name: str) -> List[Dict[str, Any]]:
         """

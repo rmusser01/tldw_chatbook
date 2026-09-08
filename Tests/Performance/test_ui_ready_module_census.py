@@ -106,7 +106,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: outbound-client policy); measured 969 macOS / 971 linux CI, so 972 keeps
 #: the documented +/-1 wobble headroom. Snapshot refreshed via
 #: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
-MAX_TLDW_MODULES_AT_UI_READY = 972
+#: 972 -> 973 (2026-09-07, PR #2480): per-conversation appearance adds
+#: exactly one UI-ready resident -- ``Chat.console_appearance`` (the
+#: metadata contract read by the browser merge). The picker modal and the
+#: emoji catalog it re-awakens stay OFF the boot path via a deferred import
+#: at open time, precisely so this ratchet does not grow for a modal used
+#: a handful of times per session. Snapshot refreshed via
+#: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
+MAX_TLDW_MODULES_AT_UI_READY = 973
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

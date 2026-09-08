@@ -260,6 +260,11 @@ class ConsoleSwitcherEntry:
     multiplicity: int = 0
     workspace_label: str = ""
     lifecycle: str = ""
+    #: task-31208: sanitized custom icon glyph ("" when unset), shown left
+    #: of the title exactly like the Context rail row.
+    icon: str = ""
+    #: task-31208: canonical ``#rrggbb`` icon tint ("" when unset).
+    color: str = ""
 
     @property
     def stable_result_key(self) -> str:
@@ -477,6 +482,8 @@ def build_console_switcher_entries(
                 section="open" if row.native_session_id else "saved",
                 state_label=state_label,
                 openable=bool(row.openable),
+                icon=str(row.icon or ""),
+                color=str(row.color or ""),
             )
         )
     return tuple(entries)

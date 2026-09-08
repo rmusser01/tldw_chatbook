@@ -32,6 +32,8 @@ def _row(
     updated_sort: str = "",
     updated_label: str = "",
     run_marker: str = "",
+    icon: str = "",
+    color: str = "",
 ) -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key=key,
@@ -51,6 +53,8 @@ def _row(
         source_kind=source_kind,
         updated_sort=updated_sort,
         run_marker=run_marker,
+        icon=icon,
+        color=color,
     )
 
 
@@ -316,3 +320,46 @@ def test_persisted_updated_sort_uses_activity_fallback_chain() -> None:
     )
     assert console_persisted_row_updated_sort({"created_at": "created"}) == "created"
     assert console_persisted_row_updated_sort({}) == ""
+
+
+def _all_browser_rows(state):
+    for section in state.sections:
+        yield from section.rows
+        for group in section.groups:
+            yield from group.rows
+
+
+def test_browser_rows_carry_icon_and_color():
+    """task-31207: an input row's icon/color survive the builder unchanged."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-icon", "Lab chat", icon="🧪", color="#f87171"),
+            _row("conv-plain", "Plain chat"),
+        ),
+        active_workspace_id="ws-a",
+    )
+    by_key = {row.row_key: row for row in _all_browser_rows(state)}
+    assert by_key["conv-icon"].icon == "🧪"
+    assert by_key["conv-icon"].color == "#f87171"
+    assert by_key["conv-plain"].icon == ""
+    assert by_key["conv-plain"].color == ""
+
+
+def test_browser_row_icon_color_defaults_are_empty_strings():
+    """task-31207: rows built without appearance render exactly as before."""
+    state = build_console_conversation_browser_state(
+        rows=(_row("conv-defaults", "Any chat"),),
+        active_workspace_id="ws-a",
+    )
+    (row,) = list(_all_browser_rows(state))
+    assert row.icon == ""
+    assert row.color == ""
+
+
+def test_browser_row_appearance_participates_in_equality():
+    """task-31207: icon/color are part of row value equality, so the tray's
+    structural recompose guard (TASK-15454) repaints on an appearance change
+    instead of skipping as a no-op."""
+    base = _row("conv-eq", "Same title")
+    recolored = _row("conv-eq", "Same title", color="#22d3ee")
+    assert base != recolored

@@ -258,6 +258,12 @@ class ConsoleConversationBrowserInputRow:
     run_marker: str = ""
     #: Content-free count of unsent prompts for a live native session.
     queued_count: int = 0
+    #: task-31207: sanitized custom icon glyph for this conversation ("" when
+    #: unset). Supplied by the controller from ``conversations.metadata``
+    #: (``console_appearance``); the display layer renders it as-is.
+    icon: str = ""
+    #: task-31207: canonical ``#rrggbb`` tint for the icon ("" when unset).
+    color: str = ""
 
 
 @dataclass(frozen=True)
@@ -302,6 +308,12 @@ class ConsoleConversationBrowserRow:
     run_marker: str = ""
     #: Content-free count of unsent prompts for a live native session.
     queued_count: int = 0
+    #: task-31207: sanitized custom icon glyph ("" when unset). Part of row
+    #: value equality so the tray's structural recompose guard repaints on an
+    #: appearance change instead of skipping it as a no-op.
+    icon: str = ""
+    #: task-31207: canonical ``#rrggbb`` icon tint ("" when unset).
+    color: str = ""
 
 
 @dataclass(frozen=True)
@@ -549,6 +561,8 @@ def _normalize_input_row(
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
         queued_count=max(0, int(row.queued_count)),
+        icon=str(row.icon or ""),
+        color=str(row.color or ""),
     )
 
 
@@ -575,6 +589,8 @@ def _to_browser_row(
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
         queued_count=max(0, int(row.queued_count)),
+        icon=str(row.icon or ""),
+        color=str(row.color or ""),
     )
 
 
