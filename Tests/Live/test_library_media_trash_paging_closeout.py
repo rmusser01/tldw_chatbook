@@ -46,7 +46,7 @@ from tldw_chatbook.config import get_cli_config_path, get_cli_log_file_path, get
 EXPECTED_LAYOUT_BY_SIZE = types.MappingProxyType(
     {
         (160, 50): (True, "split-then-library-collapse-delta"),
-        (120, 35): (False, "items-priority-exclusive-optional-pane"),
+        (120, 35): (True, "split-then-library-collapse-delta"),
         (100, 30): (False, "items-priority-exclusive-optional-pane"),
         (80, 24): (False, "items-priority-exclusive-optional-pane"),
     }
@@ -369,10 +369,11 @@ def _assert_expected_layout_posture(
     return expected_wide_posture, layout_contract
 
 
-def test_layout_posture_oracle_rejects_160_compact_before_branch() -> None:
-    """Mutation proof: 160x50 may not relabel a compact regression as valid."""
+@pytest.mark.parametrize("size", [(160, 50), (120, 35)])
+def test_layout_posture_oracle_rejects_wide_sizes_compact_before_branch(size) -> None:
+    """TASK-31633: neither wide posture may relabel compact as valid."""
     with pytest.raises(AssertionError, match="layout posture mismatch"):
-        _assert_expected_layout_posture((160, 50), False)
+        _assert_expected_layout_posture(size, False)
 
 
 def _assert_viewer_target(

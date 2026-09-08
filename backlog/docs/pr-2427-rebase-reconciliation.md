@@ -1156,3 +1156,94 @@ setup/fallback cleanup boundary. The final diff adds 63 lines and changes no
 pre-existing executable AST. The full 848-case shell remains pending. These
 reviewed fixes are checkpointed before the latest-dev rebase; incomplete Live
 posture and final resource/CI/review gates remain open.
+
+### Latest-dev qualification checkpoint — 2026-09-08
+
+The reviewed checkpoint was rebased successfully onto dev `2c6a7de490` at
+local head `5020cdebb9`; remote PR head remains `8fe8c40e79` pending the
+lease-protected publication. Both appended lessons were preserved and the
+diagnostic inventory regenerated after inspecting the incoming exception-type
+log statements. Six complete architecture/import/UI-ready guard files pass
+**65 tests in 11.89s**, with all limits unchanged. Eight complete incoming
+Agents/Chat/ZAI files pass **420 tests in 65.55s**. Preflight passes five of
+six checks; the only failure is the two explicitly pending review-only task
+identity collisions, TASK-32014/32015. No renumbering exception is inferred.
+
+The seven-file Live/settings/Media/selection/recompose/Skills cohort finishes
+**411 passed / 3 failed in 350.95s**. The complete Live walkthrough now passes
+all four sizes, including 120 columns, with the authoritative post-Restore
+page, independent logging channels, privacy, keyboard and zero-owned-handle
+assertions intact. Two failures are attributed selection-fixture mismatches:
+source-order row identity and an absent optional-query interface. Step 47
+repairs only those fixtures; the complete selection file then passes **7 tests
+in 7.50s**, with independent review and scoped Ruff passing. The third failure
+is the inherited whole-Library recompose census, **66 against the unchanged
+63 cap**; attribution remains open and the cap is not raised.
+
+The complete 15-file non-live Audio increment initially reports **544 passed,
+1 failed, 8 setup errors**. All eight errors are the sandbox's loopback-bind
+restriction; rerunning the complete ONNX file with the approved local-server
+permission gives **47 passed**, accounting for **552 of 553** unique cases
+passing. The sole real failure is a phantom optional extra: accepted
+TASK-31827 moved sherpa-onnx/numpy into core while retaining its named readiness
+capability. Step 46's stronger metadata/consumer controls reproduce **4 failed
+/ 4 passed** before any production edit. No models, device tests, external
+services or package installations are used as qualification.
+
+The full 848-case Library shell native-observed run remains active on frozen
+runtime sources. Its late native sample shows retained Notes/export database
+paths from earlier tests, unlike the current-test-only sample at 50%; those
+handles require separate exact-owner attribution before declaring cleanup
+complete. The successful focused ingest cleanup is not evidence that every
+other harness owner closes.
+
+A fresh remote check now finds dev `a59536eb70` (Console trace source-pin
+migration, Kokoro recovery and Media flag-width correction). It is fetched,
+not yet integrated at this checkpoint. Final rebase, affected verification,
+final-head Qodo/checks and normal merge remain open.
+
+The diagnostic shell run was deliberately interrupted after native evidence
+proved the separate owner leak: **834 passed / 11 warnings in 1412.69s**, exit
+2, not a complete-file pass. Its session sentinel independently reports
+**331 additional descriptors (12 to 343)**. The late native snapshot attributes
+the retained Notes paths to all eleven real-service callers and the remaining
+export handles to the file-backed ChaChaNotes owner. Step 48 uses opt-in fixture
+finalizers and the existing same-file quiescence barrier; failure-path controls
+must exercise those actual finalizers, retain foreign-path usability, and prove
+the cached worker handles close. A clean complete-file rerun remains required.
+
+The recompose history is now exact: four accepted ADR-120 character-navigation
+structural sites, offset by one existing Media fallback consolidation, account
+for the net three-site breach. Step 49 leaves those navigation barriers intact
+and routes three older Media viewer-substate updates through the already
+sanctioned targeted sync seam, including its existing missing-viewer fallback.
+The 63-site ceiling is unchanged; RED/GREEN and mounted qualification are open.
+
+Step 46 is now independently reviewed and frozen: the complete optional-deps,
+meeting-owner and ingestion-capability files pass **285 tests / 10 warnings
+in 26.89s**. The focused controls transition from four expected metadata
+failures to **8 passed**. All 37 capability keys remain; only ONNX becomes
+core-backed, and every genuine extra retains its original install commands.
+Source/Utils/Library Ruff checks pass; the Audio file has exactly its five
+pre-existing findings, checked against HEAD, with no new finding. Changed
+functions are formatted without unrelated whole-file reformatting. Evidence:
+`/private/tmp/pr2427-core-metadata-report.md`.
+
+Step 48's valid-fixture RED controls reproduce one retained setup handle and
+two retained worker/test-failure handles. After the exact finalizers, both
+controls pass; the native-observed group of both controls, all eleven Notes
+callers and the file-backed export case passes **14 tests in 25.58s**. All
+fourteen post-test descriptor deltas are empty despite 166 observed
+CharactersRAGDB opens. The actual fixture finalizer preserves the primary
+error and leaves the foreign-path connection usable; outer safety cleanup also
+protects intentionally failing regression runs. Independent review, Ruff and
+diff checks pass. Final complete shell qualification is still required.
+
+Step 49 passes independent review: exactly three direct Media recomposes now
+use the existing viewer sync seam. Focused controls transition from three
+expected failures to three passes. The two complete Reader/render files pass
+**208 tests in 240.14s**; census, wiring, assembly and size guards pass
+**77 tests in 22.33s**. The whole-Library census is restored to **63/63**, without
+changing its pin. Existing mounted shell highlight add/delete and analysis-save
+tests remain part of the pending final complete Library run. All implementation
+files are frozen for checkpoint and latest-dev integration.

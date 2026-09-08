@@ -1347,6 +1347,63 @@ def _escape_fake_query_one(shell, find, *, mounted):
     return query_one
 
 
+@pytest.mark.asyncio
+async def test_highlight_reload_uses_the_viewer_sync_seam():
+    """A highlight-only mutation rebuilds the Reader, not the whole Library."""
+    calls: list[object] = []
+
+    async def fetch_highlights(media_id: str) -> list[dict[str, str]]:
+        calls.append(("fetch", media_id))
+        return [{"quote": "Pinned"}]
+
+    fake = SimpleNamespace(
+        _library_media_highlights=[],
+        _fetch_library_media_highlights=fetch_highlights,
+        is_mounted=True,
+        refresh=lambda **kwargs: calls.append(("refresh", kwargs)),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+    )
+
+    await LibraryMediaController._reload_library_media_highlights(
+        fake, "local:media:7"
+    )
+
+    assert fake._library_media_highlights == [{"quote": "Pinned"}]
+    assert calls == [("fetch", "local:media:7"), "sync"]
+
+
+@pytest.mark.parametrize("selected_media_id", [None, "local:media:7"])
+def test_analysis_save_failure_exits_through_the_viewer_sync_seam(
+    selected_media_id: str | None,
+):
+    """Both invalid analysis-save exits clear edit mode through one seam."""
+    from textual.css.query import NoMatches
+
+    calls: list[object] = []
+
+    def query_one(selector: str, *_args):
+        if selected_media_id is None:
+            pytest.fail("The missing-selection branch queried the edit form.")
+        raise NoMatches(selector)
+
+    fake = SimpleNamespace(
+        _selected_media_id=selected_media_id,
+        _library_media_editing_analysis=True,
+        query_one=query_one,
+        refresh=lambda **kwargs: calls.append(("refresh", kwargs)),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        run_worker=lambda *_args, **_kwargs: pytest.fail(
+            "An invalid analysis save scheduled a worker."
+        ),
+    )
+    event = SimpleNamespace(stop=lambda: calls.append("stop"))
+
+    LibraryMediaController.handle_library_media_analysis_save(fake, event)
+
+    assert fake._library_media_editing_analysis is False
+    assert calls == ["stop", "sync"]
+
+
 def _escape_fake(
     *,
     region: str,
