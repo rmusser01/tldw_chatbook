@@ -6362,21 +6362,49 @@ inside the controller by a per-name occurrence count.
 1,031 attribute retargets (`<recv>.<flat>` → `<recv>._notes_state.<field>`),
 applied at `ast` attribute spans back-to-front, single-line only, the tool
 reporting and refusing rather than guessing (**zero refusals**). 61 flat
-kwargs became 11 nested `_notes_state=SimpleNamespace(...)` fixtures — 8
+kwargs became 12 nested `_notes_state=SimpleNamespace(...)` fixtures — 9
 mechanical contiguous runs, 3 hand-reordered first because a non-field entry
 sat inside the run (a WIRING attribute, a projection `@property` name, method
 stand-ins and test-local counters), each with a one-line comment saying why
 the moved kwarg is not a state field.
 
-**Three `_notes_state` seeds were needed for doubles that are not
-`LibraryScreen`s**, found by the Store-context binding-site census media's
-own 19-test incident taught (`test_library_resize_focus_gates_t23025.py`'s
-stage-signature fake, and the TWO `App` stand-ins in
-`test_library_multiselect_notes.py` that `_apply_library_row_toggle` is
-driven against). The second of those two was missed by the first pass and
-caught by running the file — **a receiver census that enumerates receiver
-NAMES misses a second class with the same name in a different scope**; the
-count to trust is the one taken per binding site, not per name.
+**SIX `_notes_state` seeds were needed for doubles that are not
+`LibraryScreen`s, and only TWO were found by the census media's 19-test
+incident taught.** The other two were found by paired baselines, and each
+exposes a hole in that census:
+
+1. It enumerates receiver NAMES, so a second class binding the same name in a
+   different scope is invisible (`test_library_multiselect_notes.py` has TWO
+   `App` stand-ins `_apply_library_row_toggle` is driven against; the second
+   seeds at the call site rather than in `__init__`). **The count to trust is
+   per binding SITE, not per name.**
+2. It matches only the DOTTED shape `<recv>._notes_state.<field>`, so a
+   **`getattr(<recv>._notes_state, "<field>", <default>)` RECEIVER is
+   invisible** — the `_notes_state` node sits in a `Call`'s argument list, not
+   as the value of an enclosing `Attribute`. This cleanup created 43 such
+   receivers on the screen, and one of them
+   (`_restore_library_media_from_trash`, stamping
+   `_media_state.trash_focus_authority_generation` from the NOTES focus
+   counter) is driven unbound with a MEDIA fake, which reds 3 tests.
+
+**The census that finds all four, and the one to run:** for every screen
+method whose body spells `self._<subsystem>_state` **in any form**, find every
+unbound `<Screen>.<name>(<first-arg>, …)` call across `Tests/` and resolve the
+first argument. Run over notes' 112 such methods it returns 25 (file,
+receiver) pairs across 12 files — **including five files the cleanup never
+edited**, each driving a retargeted screen method with a duck-typed fake.
+**A cleanup PR's blast radius is not its changed-file set**: retargeting a
+screen method's receiver reaches every test that calls that method unbound,
+whichever subsystem the test belongs to. The generalized node-level form
+(walk EVERY `<recv>._<subsystem>_state` `ast.Attribute`, whatever encloses it)
+is the same shape §3's sixth spelling took, for the same reason.
+
+**And fixing the first instance of a shape does not close the shape.** The
+first media-trash seed fixed ONE of that file's three branch-unique names; the
+other two needed their own fakes seeded, and only a SECOND paired round
+established that. Re-pair after a fix round rather than assuming the class is
+closed — the same discipline §3's amended-RED-tuple rule already applies to
+counts.
 
 Two string-spelling retargets carry the whole invariant of their guard:
 
@@ -6411,6 +6439,47 @@ choice_if_needed` constructor), so the repoint was proven by CONSTRUCTION:
 running the file's own `_discover_library_modal_edges` against the notes scope
 alone returns **2 discovered, 2 declared, zero undeclared, zero missing,
 exact match including each modal's concrete type**.
+
+### Sweep evidence — the heaviest consumer, byte-for-byte identical
+
+`test_library_shell.py -k "note"` (339 attribute retargets, the largest of any
+test file) run paired against an isolated worktree at the task parent, `-n 8
+--dist worksteal`, sequentially: **branch 171 failed / 83 passed (499.81s) vs.
+parent 171 failed / 83 passed (499.26s)**, and the two failure NAME SETS are
+identical — zero branch-unique, zero parent-unique. The 171-failure backdrop
+is §7's file-descriptor-exhaustion cascade and is the SAME 171/83 the media
+and notes controller PRs each measured for this file.
+
+**The sharpest evidence lesson of this series, and it nearly went the other
+way.** The 17-file batch measured branch 52 failed / 760 passed vs. parent
+47 / 765 — **6 branch-unique and 1 parent-unique**, a bidirectional split
+across exactly two files, both of which the cleanup had touched only once or
+twice, and all seven names failure-path / stale-state / focus-survival tests.
+Every surface feature said "xdist noise". Run through §7's THIRD level (each
+node ALONE, n=3, trees INTERLEAVED) the seven split cleanly: four at 0/3 on
+both trees (noise, as predicted) and **three at 3/3 on the branch against 0/3
+at the parent — a real regression this cleanup introduced.** Had the batch
+been dispositioned from its shape rather than from re-measurement, a
+three-test regression would have shipped. **A bidirectional unique split is
+not a disposition; it is a reason to run the third level.**
+
+The three heaviest notes suites (`test_library_notes_folder_navigator.py`,
+`test_library_multiselect_notes.py`, `test_library_notes_reader.py`; 419 of
+the 1,031 retargets between them) paired the same way: **branch 15/146 vs.
+parent 14/147, 14 shared, ONE branch-unique** — and that one was a REAL miss,
+a third `_notes_state` seed for an `App` double the static receiver census had
+under-counted, fixed with one line (10 passed afterwards). **The paired
+baseline is what turned a silent census miss into a one-line fix**, which is
+the argument for running it before believing a census rather than after.
+
+**A batch-composition lesson worth recording, because it cost this task an
+hour.** These suites' pre-existing failures are DOM-mount pollers that each
+burn a **30-second timeout** before failing, so a batch's wall time is
+dominated by its FAILURE count, not its test count: a 21-file single-process
+batch reached 22% in 75 minutes. Recipe §7 already prescribes `-n 8 --dist
+worksteal`; the lesson is that the prescription is not a nicety for large
+batches — for a batch containing timeout-shaped pre-existing failures it is
+what makes the batch finish at all.
 
 ### Field-name prose sweep
 

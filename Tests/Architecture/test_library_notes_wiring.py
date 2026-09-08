@@ -1,6 +1,6 @@
 """Notes extraction series: state object exists and is screen-wired.
 
-Wave-8 Task 1 (notes series 1/N, state PR; recipe: ``backlog/docs/
+Wave-8 Task 1 (notes series 1/3, state PR; recipe: ``backlog/docs/
 library-decomposition-recipe.md``; media series precedent: ``Tests/
 Architecture/test_library_media_wiring.py``, its state-PR-era shape -- the
 closest match, since Notes likewise carries a bare-underscore extra-prefix
@@ -45,6 +45,17 @@ run against Textual's own NAME-based dispatch rather than against a reference
 census. See ``library_notes_controller.py``'s own module docstring for the
 full 285-candidate derivation, the 100 exclusions, and the
 connected-components evidence behind the single-controller decision.
+
+**Task 3 (cleanup PR)** deleted the screen's generated shim block, so the
+per-field sweep above now runs the OTHER way: ``test_the_screen_no_longer_
+carries_a_notes_state_shim`` asserts ABSENCE on ``LibraryScreen``, and the
+read/write round-trip that proved the generated properties are real two-way
+shims lives on in ``test_every_controller_shim_reads_and_writes_its_own_
+state_field``, aimed at ``LibraryNotesController``'s own permanent copy of the
+identical loop -- which carries the identical closure-binding trap and is what
+keeps the 185 moved bodies byte-for-byte. It also filled
+``_NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED`` with the 26 names whose screen
+delegator had zero references across all SIX census spellings.
 """
 from __future__ import annotations
 
