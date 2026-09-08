@@ -12087,3 +12087,52 @@ budgets and self-contained failure records fixed both regression tests.
 user action through refusal or completion. Test a responsive refresh episode
 separately from a stall, and test failure records at WARNING thresholds. A
 start/end-only log is absence of coverage, not proof that the send worked.
+
+---
+
+---
+
+## A boot census must poll for serially-gated workers, not use a flat settle window
+
+**PR #2467 CI, 2026-09-06.** The "UI latency guardrails" job failed once
+with `census looks degenerate -- boot workers that always start were not
+recorded: [('_backfill_chachanotes_messages_fts', 'chachanotes-fts-backfill')]`
+and passed everywhere else, including the identical commit locally. The
+chachanotes FTS backfill is THIRD in the staggered boot fleet, which
+`boot_worker_policy.py` runs strictly serially (`MAX_CONCURRENT = 1`,
+behind the two actor-pack prefetches whose durations are "milliseconds on
+a healthy profile"). The census probe snapshotted at `_ui_ready` + a flat
+1.0 s; on a contended runner the two prefetches occasionally consumed the
+whole window before the third worker was admitted, and the anti-vacuity
+assert read that as a degenerate census.
+
+**What to do.** When a probe asserts that gated/queued work "always"
+starts, wait for the expected starts (poll with a generous deadline)
+rather than a flat window sized to the happy path. The probe already
+records STARTS rather than running state, so waiting cannot miss a worker
+that finishes quickly.
+
+## A settled paint does not prove a failed send released its busy state
+
+**TASK-32010, 2026-09-07.** Extending the existing mounted Console diagnostic
+test to press Enter with capture enabled found zero repeated full-screen
+compositor updates after a readiness exception, yet the transcript's 200ms timer
+kept running. The failed echo was correctly marked unsent, but the controller
+remained VALIDATING and refused another send. Testing slot release and an actual
+controller retry exposed the missing exception cleanup. The same omission also
+affected cancellation before provider entry.
+
+**What to do.** Check send state, retry and timer termination alongside actual
+compositor output. An orphaned polling timer is a concrete lifecycle defect;
+without repeated paint evidence, it does not establish the cause of a reporter's
+visible terminal flicker.
+
+**TASK-32012 follow-up.** Holding provider validation open after Enter still
+produced zero full-screen updates and stable geometry, but actual partial spans
+repainted the unchanged transcript title, composer reason and footer hints about
+five times per second. Suppressing equal text writes at those three widgets in
+the experiment left only caret paints. The mounted regression therefore checks
+emitted partial spans, alongside full-screen updates, and then completes the send.
+The first implementation caught only one of two heading writers; the real-paint
+assertion remained red until both were guarded. Keep responsive width and
+visibility recalculation outside text equality guards.

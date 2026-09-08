@@ -7611,7 +7611,7 @@ class ConsoleChatController:
                 if resumed_preparation is not None
                 else await self._resolve_for_send_bounded(turn_selection)
             )
-        except BaseException:
+        except BaseException as exc:
             # A readiness probe that raises or is cancelled AFTER the optimistic
             # USER echo must still fail that row — otherwise a never-sent USER
             # message leaks into the NEXT send's provider context (`skip_failed`
@@ -7627,6 +7627,28 @@ class ConsoleChatController:
                     )
                 else:
                     self._mark_transient_echo_blocked(echoed_user.id)
+            # Validation owns a busy slot even before a provider starts. Release
+            # it on failure so retry and the view's idle polling cleanup can run.
+            # A closed session or an already-stopped run keeps its owner's state.
+            # Wakes own a separate retry loop; releasing their slot here would
+            # immediately retry the same failed wake ahead of other pending wakes.
+            if (
+                origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+                and self.run_state_for(session.id).status is ConsoleRunStatus.VALIDATING
+                and any(item.id == session.id for item in self.store.sessions())
+            ):
+                cancelled = isinstance(exc, asyncio.CancelledError)
+                self._set_run_state(
+                    ConsoleRunState(
+                        ConsoleRunStatus.STOPPED
+                        if cancelled
+                        else ConsoleRunStatus.BLOCKED,
+                        "Provider validation was cancelled."
+                        if cancelled
+                        else "Provider validation failed. Try sending again.",
+                    ),
+                    session_id=session.id,
+                )
             raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
