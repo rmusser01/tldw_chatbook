@@ -6,6 +6,7 @@ closes before raw pins; only the exec child retains original file descriptors.
 
 from __future__ import annotations
 
+import errno
 import os
 import sqlite3
 import stat
@@ -27,6 +28,10 @@ from tldw_chatbook.TTS.profile_validation import (
     validate_profile_store_rows,
 )
 from tldw_chatbook.Utils import private_paths
+
+_AUTHORITY_ERRNOS = frozenset(
+    {errno.ELOOP, errno.EACCES, errno.EPERM, errno.ENOENT, errno.ENOTDIR}
+)
 
 
 class TTSProofError(RuntimeError):
@@ -174,24 +179,32 @@ class TTSProof:
         return identity
 
     def _capture_sidecars(self, *, require: bool) -> None:
-        if self.sidecars:
-            self.recheck()
-            return
+        if self.initialized:
+            # A partial cohort may only acquire its missing SHM after checking
+            # every already-owned pin. Never reopen or remint an acquired pin.
+            self._recheck_original_pins()
         for suffix in ("wal", "shm"):
+            if suffix in self.sidecars:
+                continue
             leaf = f"{self.path.name}-{suffix}"
             try:
                 fd = _open_artifact_fd(
                     self.parent_fd, leaf, writable=False, create=False
                 )
             except FileNotFoundError:
+                if require:
+                    raise TTSProofError() from None
                 continue
             self.sidecars[suffix] = fd
-            self.identities[suffix] = self._file_identity(fd, leaf)
+            # Record ownership before named/privacy checks can refuse. A retry
+            # must validate this same descriptor, including after a capture race.
+            self.identities[suffix] = FileIdentity.from_stat(os.fstat(fd))
+            self._file_identity(fd, leaf)
         if len(self.sidecars) == 1 or (require and not self.sidecars):
             raise TTSProofError("operation_failed" if require else "exact_not_current")
 
-    def recheck(self) -> dict[str, object]:
-        """Compare original pins, private namespace, and exact parent authority."""
+    def _recheck_original_pins(self) -> dict[str, FileIdentity]:
+        """Revalidate acquired authority without admitting an incomplete cohort."""
         if not self.initialized:
             raise TTSProofError()
         other_parent = -1
@@ -213,20 +226,29 @@ class TTSProof:
             main = self._file_identity(self.file_fd, leaf)
             if not main.same_inode(self.identities["main"]):
                 raise TTSProofError()
-            current_sidecars: dict[str, FileIdentity] = {}
+            current = {"main": main}
+            for suffix, fd in self.sidecars.items():
+                observed = self._file_identity(fd, f"{leaf}-{suffix}")
+                if not observed.same_inode(self.identities[suffix]):
+                    raise TTSProofError()
+                current[suffix] = observed
+            return current
+        finally:
+            if other_parent >= 0:
+                os.close(other_parent)
+
+    def recheck(self) -> dict[str, object]:
+        """Compare original pins, private namespace, and exact parent authority."""
+        try:
+            current = self._recheck_original_pins()
             if self.sidecars:
                 if set(self.sidecars) != {"wal", "shm"}:
                     raise TTSProofError()
-                for suffix, fd in self.sidecars.items():
-                    observed = self._file_identity(fd, f"{leaf}-{suffix}")
-                    if not observed.same_inode(self.identities[suffix]):
-                        raise TTSProofError()
-                    current_sidecars[suffix] = observed
             else:
                 for suffix in ("wal", "shm"):
                     try:
                         os.stat(
-                            f"{leaf}-{suffix}",
+                            f"{self.path.name}-{suffix}",
                             dir_fd=self.parent_fd,
                             follow_symlinks=False,
                         )
@@ -236,21 +258,25 @@ class TTSProof:
             self._namespace()
             return {
                 "parent": self.identities["parent"].to_payload(),
-                "main": main.to_payload(),
-                "wal": current_sidecars["wal"].to_payload() if self.sidecars else None,
-                "shm": current_sidecars["shm"].to_payload() if self.sidecars else None,
+                "main": current["main"].to_payload(),
+                "wal": current["wal"].to_payload() if self.sidecars else None,
+                "shm": current["shm"].to_payload() if self.sidecars else None,
             }
-        except OSError:
-            raise TTSProofError() from None
-        finally:
-            if other_parent >= 0:
-                os.close(other_parent)
+        except OSError as error:
+            if error.errno in _AUTHORITY_ERRNOS:
+                raise TTSProofError() from None
+            raise
 
     def pin_sidecars(self) -> dict[str, object]:
         """Bind the first complete original WAL/SHM cohort, never a replacement."""
         if not self.initialized:
             raise TTSProofError()
-        self._capture_sidecars(require=True)
+        try:
+            self._capture_sidecars(require=True)
+        except OSError as error:
+            if error.errno in _AUTHORITY_ERRNOS:
+                raise TTSProofError() from None
+            raise
         return self.recheck()
 
     def export_restore_authority(self) -> TTSRestoreAuthority:
