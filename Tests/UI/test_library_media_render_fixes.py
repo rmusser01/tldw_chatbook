@@ -2096,6 +2096,60 @@ async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
 
 
 @pytest.mark.asyncio
+async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
+    """task-32047 AC#1 (Qodo #7): the zero-selection reason must not paint on a
+    SUCCESSFUL empty list.
+
+    task-32045 made ``Select items to enable.`` visible whenever
+    ``selected_count == 0``, without checking that any row exists -- so select
+    mode surviving a refresh that returns zero rows asked the user to select
+    from nothing. The line stays MOUNTED (height reserved, per task-32045's
+    visibility-not-display layout fix) but paints nothing when there is no
+    selectable row.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        await _wait_for_selector(screen, pilot, "#library-media-select-actions")
+        await pilot.pause()
+        # Baseline: with rows present and nothing selected, the reason paints.
+        reason = screen.query_one("#library-media-select-bulk-reason", Static)
+        assert reason.styles.visibility == "visible"
+
+        # A successful refresh empties the list while select mode survives.
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total == 0
+            and not controller.loading,
+            message="Empty Media refresh never applied while in select mode.",
+        )
+        await pilot.pause()
+
+        assert screen._media_state.select_mode is True
+        empty_reason = screen.query("#library-media-select-bulk-reason")
+        assert empty_reason, "reason line must stay mounted for layout stability"
+        empty_reason_widget = empty_reason.first(Static)
+        # No selectable row -> kept mounted via ``visibility: hidden`` (the
+        # height-reserving mechanism, NOT ``display: none``), painting nothing.
+        assert empty_reason_widget.styles.visibility == "hidden"
+        canvas_region = screen.query_one("#library-media-canvas").region
+        assert "Select items to enable" not in _painted(
+            host, canvas_region
+        ).replace("\n", " ")
+
+
+@pytest.mark.asyncio
 async def test_select_mode_analyze_reason_refreshes_on_resume():
     """task-32039 AC#2: a provider configured mid-session clears the gate on return.
 
