@@ -575,5 +575,25 @@ def test_old_meeting_json_backfills_the_user_display_name(tmp_path):
     assert read_meeting_json(tmp_path)["user_display_name"] == "You"
 
 
+def test_meta_round_trips_engine_fields_and_backfills_old_folders(tmp_path):
+    """task-31827: a payload from before the ONNX backend existed has neither
+    `diarizer_engine` nor `diarizer_model_id` -- reading it back must yield
+    None, None rather than a KeyError. A meeting stamped with both must carry
+    them through `to_json()` unchanged."""
+    from tldw_chatbook.Audio.meeting_session import write_meeting_json
+
+    write_meeting_json(tmp_path, {"mode": "call"})
+    payload = read_meeting_json(tmp_path)
+    assert payload["diarizer_engine"] is None
+    assert payload["diarizer_model_id"] is None
+
+    meta = _meta(tmp_path)
+    meta.diarizer_engine = "onnx"
+    meta.diarizer_model_id = "titanet-small"
+    out = meta.to_json()
+    assert out["diarizer_engine"] == "onnx"
+    assert out["diarizer_model_id"] == "titanet-small"
+
+
 def test_format_clock():
     assert format_clock(0) == "00:00:00" and format_clock(3725.9) == "01:02:05"
