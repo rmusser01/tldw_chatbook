@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -52,6 +53,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -266,6 +268,116 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
         ), "the wake turn must settle terminal like any turn"
     finally:
         chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_session_close_fence_discards_a_late_child_drain_without_waking(
+    tmp_path,
+    monkeypatch,
+):
+    """A child settling after its session-close grace window is stale."""
+
+    from tldw_chatbook.Chat import console_fleet_wake as wake_module
+
+    monkeypatch.setattr(wake_module, "autowake_enabled", lambda: False)
+    controller, store, runs_db = _controller(tmp_path, [["must not run"]])
+    closing = store.ensure_session()
+    surviving = store.create_session(title="Other")
+    _closing_parent, closing_run_id = _terminal_subagent_run(
+        runs_db,
+        closing.id,
+        result="late closing result",
+    )
+    _other_parent, other_run_id = _terminal_subagent_run(
+        runs_db,
+        surviving.id,
+        result="other result",
+    )
+
+    controller.fleet_wake.on_fleet_drained(
+        _drain(
+            closing.id,
+            _survivor(closing_run_id, session_id=closing.id),
+        )
+    )
+    controller.fleet_wake.on_fleet_drained(
+        _drain(
+            surviving.id,
+            _survivor(other_run_id, session_id=surviving.id),
+        )
+    )
+    assert controller.fleet_wake.has_pending(closing.id) is True
+    assert controller.fleet_wake.has_pending(surviving.id) is True
+
+    controller.fleet_wake.fence_conversation(closing.id, generation=1)
+
+    assert controller.fleet_wake.has_pending(closing.id) is False
+    assert controller.fleet_wake.has_pending(surviving.id) is True
+
+    controller.fleet_wake.on_fleet_drained(
+        _drain(
+            closing.id,
+            _survivor(closing_run_id, session_id=closing.id),
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert controller.fleet_wake.has_pending(closing.id) is False
+    assert not any(
+        getattr(message.metadata, "origin", "") == "agent_wake"
+        for message in store.messages_for_session(closing.id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_fence_releases_uncooperative_delivery_task_reference():
+    """A terminal fence must not retain a wrapper that may never settle."""
+
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace())
+    task = asyncio.create_task(asyncio.Event().wait())
+    coordinator._delivery_tasks[task] = "closing"
+
+    coordinator.fence_conversation("closing", generation=1)
+
+    assert task not in coordinator._delivery_tasks
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+def test_gracefully_drained_close_releases_wake_fence_for_saved_reopen():
+    """A later incarnation may accept drains after a matching fence release."""
+
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace())
+    coordinator.fence_conversation("saved", generation=1)
+
+    assert coordinator.release_conversation_fence("saved", generation=1) is True
+    coordinator.on_fleet_drained(
+        _drain("saved", _survivor("new-run", session_id="new-session"))
+    )
+
+    assert coordinator.has_pending("saved") is True
+
+
+def test_latched_wake_fence_cannot_be_replaced_by_a_later_close_generation():
+    """A later incarnation cannot release a timed-out incarnation's fence."""
+
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace())
+    coordinator.fence_conversation("saved", generation=1)
+    coordinator.fence_conversation("saved", generation=2)
+
+    assert coordinator.release_conversation_fence("saved", generation=2) is False
+    coordinator.on_fleet_drained(
+        _drain("saved", _survivor("late-run", session_id="new-session"))
+    )
+    assert coordinator.has_pending("saved") is False
+
+
+def test_disposed_wake_coordinator_never_releases_a_session_fence():
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace())
+    coordinator.fence_conversation("closing", generation=1)
+    coordinator.dispose()
+
+    assert coordinator.release_conversation_fence("closing", generation=1) is False
 
 
 @pytest.mark.asyncio

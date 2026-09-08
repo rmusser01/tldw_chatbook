@@ -13,19 +13,24 @@ import re
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
-from typing import Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from tldw_chatbook.Chat.console_trace_models import (
     FrozenTracePolicy,
     SemanticRevisionRef,
     SurfaceReplacement,
+    MAX_SURFACE_REPLACEMENT_SPAN,
     TraceCallState,
     TraceContentRef,
     TraceOmission,
+    TraceReservationProvenance,
+    PROMOTED_VOICE_IMPORT_REASON,
     is_terminal_call_state,
     new_opaque_id,
     validate_call_transition,
+    _validate_stable_opaque_id,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
@@ -33,6 +38,23 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     PIIRedactionSpan,
     merge_pii_spans,
 )
+
+from tldw_chatbook.Chat.console_voice_trace_promotion import (
+    ConfirmedPreCommitTraceImportError,
+    MAX_PROMOTED_TRACE_BYTES,
+    MAX_PROMOTED_TRACE_CALLS,
+    PostDispatchTraceArtifact,
+    PostDispatchTraceCall,
+    PostDispatchTraceImport,
+    PostDispatchTraceImportResult,
+    PostDispatchTraceSurfaceComponent,
+    derive_post_dispatch_trace_ids,
+    derive_post_dispatch_trace_node_id,
+    derive_post_dispatch_trace_replacement_id,
+)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 _TOKEN = re.compile(r"[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*\Z", re.ASCII)
 _TOKEN_MAX = 64
@@ -181,7 +203,7 @@ class HeaderComponentRef:
         _validate_token(self.component_kind, "component_kind")
         if type(self.ordinal) is not int or self.ordinal < 0:
             raise ValueError("ordinal")
-        SemanticRevisionRef(self.artifact_id)
+        _validate_stable_opaque_id(self.artifact_id, "artifact_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +244,8 @@ class TraceCallRecord:
     usage: Mapping[str, object] | None
     integrity_state: IntegrityState
     omission_reason_code: str | None
+    reservation_provenance: TraceReservationProvenance
+    import_reason_code: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,6 +445,1255 @@ class ConsoleTraceRepository:
     ``transaction(immediate=True)`` to acquire that lock at the outer
     transaction boundary.
     """
+
+    def import_post_dispatch_trace(
+        self,
+        db: "CharactersRAGDB",
+        request: PostDispatchTraceImport,
+    ) -> PostDispatchTraceImportResult:
+        """Atomically import one complete already-observed winning call set.
+
+        This is the sole repository API that may insert terminal calls directly.
+        It owns an immediate transaction and a connection-local exact-call grant;
+        ordinary reservation APIs retain their pre-dispatch lifecycle.
+        """
+
+        if type(request) is not PostDispatchTraceImport:
+            raise TypeError("request must be a PostDispatchTraceImport")
+        connection = db.get_connection()
+        managed_depth = getattr(db._local, "transaction_depth", 0)
+        if managed_depth or connection.in_transaction:
+            raise TraceIdentityConflict("post_dispatch_transaction_owner")
+        self._validate_post_dispatch_request(request)
+        transaction = db.transaction(immediate=True)
+        transaction_body_error: Exception | None = None
+        try:
+            with transaction as cursor:
+                try:
+                    self._validate_post_dispatch_message_lineage(cursor, request)
+                    existing = self._reconcile_post_dispatch_trace(cursor, request)
+                    if existing is not None:
+                        return existing
+                    result = self._write_post_dispatch_trace(db, cursor, request)
+                except Exception as exc:
+                    transaction_body_error = exc
+                    raise
+        except Exception as exc:
+            if (
+                exc is transaction_body_error
+                and not isinstance(exc, TraceIdentityConflict)
+                and transaction.is_outermost_transaction
+                and transaction.conn is not None
+                and not transaction.conn.in_transaction
+            ):
+                raise ConfirmedPreCommitTraceImportError() from None
+            raise
+        self._after_post_dispatch_trace_commit(request)
+        return result
+
+    @staticmethod
+    def _after_post_dispatch_trace_commit(request: PostDispatchTraceImport) -> None:
+        """Private test seam for exception-after-commit reconciliation."""
+
+        del request
+
+    @staticmethod
+    def _validate_post_dispatch_request(request: PostDispatchTraceImport) -> None:
+        calls = request.calls
+        if not 1 <= len(calls) <= MAX_PROMOTED_TRACE_CALLS:
+            raise ValueError("promoted calls must be complete and bounded")
+        if len(calls) != request.expected_call_count:
+            raise ValueError("promoted call aggregate is incomplete")
+        if tuple(call.call_sequence for call in calls) != tuple(range(len(calls))):
+            raise ValueError("promoted call sequence must be contiguous and ordered")
+        if len({call.call_id for call in calls}) != len(calls) or len(
+            {call.idempotency_key for call in calls}
+        ) != len(calls):
+            raise ValueError("promoted call identities must be unique")
+        identities = derive_post_dispatch_trace_ids(
+            request.import_id,
+            call_count=len(calls),
+        )
+        if tuple(call.call_id for call in calls) != identities.call_ids:
+            raise TraceIdentityConflict("promoted_call_ids")
+        previous_surface: tuple[PostDispatchTraceSurfaceComponent, ...] = ()
+        seen_node_ids: set[str] = set()
+        aggregate_header_bytes = 0
+        aggregate_artifacts: dict[str, PostDispatchTraceArtifact] = {}
+        previous_settled_at: str | None = None
+        for call in calls:
+            for name in ("provider_name", "model_name", "route_identity", "endpoint_identity"):
+                value = getattr(call, name)
+                if _sanitize_trace_scalar(value, name) != value:
+                    raise TraceIdentityConflict("post_dispatch_credential_projection")
+            for name in ("generation_parameters_json", "adapter_defaults_json",
+                         "response_format_json", "reasoning_controls_json", "usage_json"):
+                value = getattr(call, name)
+                if value is not None:
+                    decoded = json.loads(value)
+                    if json.loads(_json_object(decoded, name)) != decoded:
+                        raise TraceIdentityConflict("post_dispatch_credential_projection")
+            if (
+                call.call_sequence < len(calls) - 1
+                and call.response.kind == "committed_revision"
+            ):
+                raise TraceIdentityConflict("promoted_nonfinal_response")
+            common_prefix = 0
+            for previous, current in zip(
+                previous_surface, call.request_surface, strict=False
+            ):
+                if previous != current:
+                    break
+                common_prefix += 1
+            if previous_settled_at is not None and datetime.fromisoformat(
+                call.dispatch_started_at[:-1] + "+00:00"
+            ) < datetime.fromisoformat(previous_settled_at[:-1] + "+00:00"):
+                raise ValueError("promoted call chronology must be sequential")
+            for ordinal, component in enumerate(call.request_surface):
+                if ordinal >= common_prefix:
+                    expected_node_id = derive_post_dispatch_trace_node_id(
+                        request.import_id,
+                        call.call_sequence,
+                        ordinal,
+                    )
+                    if component.node_id != expected_node_id:
+                        raise TraceIdentityConflict("promoted_surface_node_ids")
+                    if component.node_id in seen_node_ids:
+                        raise TraceIdentityConflict("promoted_surface_node_ids")
+                    seen_node_ids.add(component.node_id)
+            inline_payload_bytes = sum(
+                len(value.encode("utf-8"))
+                for value in (
+                    call.generation_parameters_json,
+                    call.adapter_defaults_json,
+                    call.response_format_json,
+                    call.reasoning_controls_json,
+                    *((call.usage_json,) if call.usage_json is not None else ()),
+                )
+            )
+            call_artifacts = ConsoleTraceRepository._post_dispatch_call_artifacts(call)
+            call_payload_bytes = inline_payload_bytes + sum(
+                artifact.retained_bytes for artifact in call_artifacts
+            )
+            if call_payload_bytes != call.sealed_payload_bytes:
+                raise ValueError("promoted call byte accounting is not exact")
+            if (
+                call.response.kind == "committed_revision"
+                and call.response.committed_revision_id != request.assistant_revision_id
+            ):
+                raise TraceIdentityConflict("assistant_revision")
+            aggregate_header_bytes += inline_payload_bytes
+            for artifact in call_artifacts:
+                if (
+                    artifact.media_type.split(";", 1)[0].strip().lower()
+                    != "application/json"
+                    or artifact.normalization_version
+                    not in (_CANONICAL_TRACE_JSON, "json-v1")
+                ):
+                    raise TraceIdentityConflict("post_dispatch_artifact_envelope")
+                # Both supported JSON envelopes must satisfy the same mandatory
+                # projection without changing sealed bytes or their identity.
+                if _sanitize_trace_artifact_bytes(
+                    artifact.sanitized_bytes, media_type="application/json",
+                    normalization_version=_CANONICAL_TRACE_JSON,
+                ) != artifact.sanitized_bytes:
+                    raise TraceIdentityConflict("post_dispatch_artifact_projection")
+                existing = aggregate_artifacts.get(artifact.artifact_id)
+                if existing is not None and existing != artifact:
+                    raise TraceIdentityConflict("post_dispatch_artifact_identity")
+                aggregate_artifacts[artifact.artifact_id] = artifact
+            previous_surface = call.request_surface
+            previous_settled_at = call.settled_at
+        aggregate_payload_bytes = aggregate_header_bytes + sum(
+            artifact.retained_bytes for artifact in aggregate_artifacts.values()
+        )
+        if aggregate_payload_bytes > MAX_PROMOTED_TRACE_BYTES:
+            raise ValueError("promoted aggregate exceeds the byte bound")
+        if aggregate_payload_bytes != request.aggregate_payload_bytes:
+            raise ValueError("promoted aggregate byte accounting is not exact")
+        final_call = request.calls[-1]
+        if final_call.response.kind != "committed_revision":
+            raise TraceIdentityConflict("promoted_final_response")
+        if final_call.terminal_state is not TraceCallState.COMPLETE:
+            raise TraceIdentityConflict("promoted_final_state")
+        if not any(
+            component.reference_kind == "revision"
+            and component.revision_id == request.user_revision_id
+            for component in request.calls[-1].request_surface
+        ):
+            raise TraceIdentityConflict("promoted_final_user_surface")
+
+    @staticmethod
+    def _post_dispatch_call_artifacts(
+        call: PostDispatchTraceCall,
+    ) -> tuple[PostDispatchTraceArtifact, ...]:
+        """Return retained call artifacts once per exact artifact identity."""
+
+        artifacts: dict[str, PostDispatchTraceArtifact] = {}
+
+        def retain(artifact: PostDispatchTraceArtifact | None) -> None:
+            if artifact is None:
+                return
+            existing = artifacts.get(artifact.artifact_id)
+            if existing is not None and existing != artifact:
+                raise TraceIdentityConflict("post_dispatch_artifact_identity")
+            artifacts[artifact.artifact_id] = artifact
+
+        for component in call.request_surface:
+            retain(component.artifact_value)
+        for component in call.header_components:
+            retain(component.artifact_value)
+        retain(call.response.artifact_value)
+        return tuple(artifacts.values())
+
+    @staticmethod
+    def _validate_post_dispatch_message_lineage(
+        cursor: sqlite3.Cursor,
+        request: PostDispatchTraceImport,
+    ) -> None:
+        conversation = cursor.execute(
+            """SELECT id, deleted FROM conversations WHERE id = ?""",
+            (request.conversation_id,),
+        ).fetchone()
+        if conversation is None or conversation[1]:
+            raise TraceIdentityConflict("conversation")
+        messages = cursor.execute(
+            """SELECT id, conversation_id, parent_message_id, sender, role,
+                      deleted, assistant_generation_state
+                 FROM messages WHERE id IN (?, ?)""",
+            (request.user_message_id, request.assistant_message_id),
+        ).fetchall()
+        by_id = {str(row[0]): row for row in messages}
+        user = by_id.get(request.user_message_id)
+        assistant = by_id.get(request.assistant_message_id)
+        if (
+            user is None
+            or user[1] != request.conversation_id
+            or user[3] != "user"
+            or user[4] != "user"
+            or user[5]
+        ):
+            raise TraceIdentityConflict("user_message")
+        if request.turn_id != request.user_message_id:
+            raise TraceIdentityConflict("turn_lineage")
+        if (
+            assistant is None
+            or assistant[1] != request.conversation_id
+            or assistant[2] != request.user_message_id
+            or assistant[3] != "assistant"
+            or assistant[4] != "assistant"
+            or assistant[5]
+            or assistant[6] != "complete"
+        ):
+            raise TraceIdentityConflict("assistant_message")
+        surface_revision_ids = {
+            component.revision_id
+            for call in request.calls
+            for component in call.request_surface
+            if component.revision_id is not None
+        }
+        system_revision_ids = {
+            component.revision_id
+            for call in request.calls
+            for component in call.system_composition
+            if component.revision_id is not None
+        }
+        required_revision_ids = {
+            request.user_revision_id,
+            request.assistant_revision_id,
+            *surface_revision_ids,
+            *system_revision_ids,
+        }
+        placeholders = ",".join("?" for _ in required_revision_ids)
+        revisions = cursor.execute(
+            """SELECT revision_id, source_conversation_id, source_message_id,
+                      revision_sequence, normalized_role, content_kind,
+                      predecessor_revision_id, live_message_id,
+                      live_locator_retired_at
+                 FROM console_trace_semantic_revisions
+                WHERE revision_id IN ("""
+            + placeholders
+            + ")",
+            tuple(required_revision_ids),
+        ).fetchall()
+        revisions_by_id = {str(row[0]): row for row in revisions}
+        if any(
+            revision_id not in revisions_by_id
+            or revisions_by_id[revision_id][1] != request.conversation_id
+            for revision_id in required_revision_ids
+        ):
+            raise TraceIdentityConflict("surface_revision")
+        for label, revision_id, message_id, role in (
+            (
+                "user_revision",
+                request.user_revision_id,
+                request.user_message_id,
+                "user",
+            ),
+            (
+                "assistant_revision",
+                request.assistant_revision_id,
+                request.assistant_message_id,
+                "assistant",
+            ),
+        ):
+            row = revisions_by_id.get(revision_id)
+            if (
+                row is None
+                or row[1] != request.conversation_id
+                or row[2] != message_id
+                or row[3] != 0
+                or row[4] != role
+                or row[5] != "text"
+                or row[6] is not None
+                or row[7] != message_id
+                or row[8] is not None
+            ):
+                raise TraceIdentityConflict(label)
+
+    def _post_dispatch_initial_replacement(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        predecessor: SurfaceNodeRecord | None,
+        replacement_node_id: str,
+    ) -> SurfaceReplacement | None:
+        if predecessor is None:
+            return None
+        # Reuse the ordinary reader's inherited/replaced projection algebra.
+        # This short-lived service only reads; it reserves or settles nothing.
+        from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+
+        projection = ConsoleTraceService(repository=self)._surface_projection(
+            cursor, segment_id, predecessor
+        )
+        if not projection.entries:
+            raise TraceIdentityConflict("post_dispatch_surface_predecessor")
+        sequences = tuple(sequence for sequence, _key in projection.entries)
+        start_sequence, end_sequence = min(sequences), max(sequences)
+        if end_sequence - start_sequence + 1 > MAX_SURFACE_REPLACEMENT_SPAN:
+            raise TraceIdentityConflict("post_dispatch_surface_span")
+        nodes = self.read_lineage_surface_nodes(
+            cursor, segment_id=segment_id,
+            start_sequence=start_sequence, end_sequence=end_sequence,
+        )
+        return SurfaceReplacement(
+            predecessor_head_id=predecessor.node_id,
+            start_node_id=nodes[0].node_id, start_sequence=start_sequence,
+            end_node_id=nodes[-1].node_id, end_sequence=end_sequence,
+            replacement_node_id=replacement_node_id,
+        )
+
+    def _write_post_dispatch_trace(
+        self,
+        db: "CharactersRAGDB",
+        cursor: sqlite3.Cursor,
+        request: PostDispatchTraceImport,
+    ) -> PostDispatchTraceImportResult:
+        identities = derive_post_dispatch_trace_ids(
+            request.import_id,
+            call_count=len(request.calls),
+        )
+        self._reject_post_dispatch_identity_residue(cursor, request)
+        policy = self.ensure_policy(cursor, request.policy)
+        self._admit_post_dispatch_revision_privacy(cursor, request)
+        owner = self.get_attached_owner_by_conversation(
+            cursor, request.conversation_id
+        )
+        if owner is None:
+            cursor.execute(
+                "INSERT INTO console_trace_segments(segment_id) VALUES (?)",
+                (identities.root_segment_id,),
+            )
+            cursor.execute(
+                """INSERT INTO console_trace_owners(
+                       owner_id, conversation_id, root_segment_id, attached)
+                     VALUES (?, ?, ?, 1)""",
+                (
+                    identities.owner_id,
+                    request.conversation_id,
+                    identities.root_segment_id,
+                ),
+            )
+            self._advance_graph_epoch(cursor)
+            owner = self.get_owner(cursor, identities.owner_id)
+            assert owner is not None
+        segment_id = owner.root_segment_id
+        from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+
+        surface_tail = ConsoleTraceService(repository=self)._effective_surface_tail(
+            cursor, segment_id
+        )
+        surface_sequence = 0 if surface_tail is None else surface_tail.sequence + 1
+        predecessor_node_id = None if surface_tail is None else surface_tail.node_id
+        previous_surface: tuple[PostDispatchTraceSurfaceComponent, ...] = ()
+        surface_heads: dict[str, str] = {}
+        new_surface_nodes: dict[str, tuple[str, ...]] = {}
+        surface_replacement_ids: dict[str, str] = {}
+        surface_replacement_targets: dict[str, str] = {}
+        initial_replacement = self._post_dispatch_initial_replacement(
+            cursor, segment_id=segment_id, predecessor=surface_tail,
+            replacement_node_id=request.calls[0].request_surface[0].node_id,
+        )
+        for call in request.calls:
+            common_prefix = 0
+            for previous, current in zip(
+                previous_surface, call.request_surface, strict=False
+            ):
+                if previous != current:
+                    break
+                common_prefix += 1
+            appended_node_ids: list[str] = []
+            for component in call.request_surface[common_prefix:]:
+                artifact_id: str | None = None
+                if component.artifact_value is not None:
+                    artifact_id = self._ensure_post_dispatch_artifact(
+                        cursor, component.artifact_value, policy
+                    )
+                cursor.execute(
+                    """INSERT INTO console_trace_surface_nodes(
+                           node_id, segment_id, sequence, predecessor_node_id,
+                           component_kind, reference_kind, semantic_revision_id,
+                           artifact_id, omission_reason_code)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        component.node_id,
+                        segment_id,
+                        surface_sequence,
+                        predecessor_node_id,
+                        component.component_kind,
+                        component.reference_kind,
+                        component.revision_id,
+                        artifact_id,
+                        component.omission_reason_code,
+                    ),
+                )
+                self._advance_graph_epoch(cursor)
+                predecessor_node_id = component.node_id
+                surface_sequence += 1
+                appended_node_ids.append(component.node_id)
+            replacement = initial_replacement if call.call_sequence == 0 else None
+            if previous_surface and common_prefix < len(previous_surface):
+                start = self.get_surface_node(
+                    cursor, previous_surface[common_prefix].node_id
+                )
+                end = self.get_surface_node(cursor, previous_surface[-1].node_id)
+                assert start is not None and end is not None
+                replacement = SurfaceReplacement(
+                    predecessor_head_id=previous_surface[-1].node_id,
+                    start_node_id=start.node_id, start_sequence=start.sequence,
+                    end_node_id=end.node_id, end_sequence=end.sequence,
+                    replacement_node_id=call.request_surface[common_prefix].node_id,
+                )
+            if replacement is not None:
+                replacement_id = derive_post_dispatch_trace_replacement_id(
+                    request.import_id, call.call_sequence
+                )
+                cursor.execute(
+                    """INSERT INTO console_trace_surface_replacements(
+                           replacement_id, segment_id, predecessor_head_id,
+                           start_node_id, start_sequence, end_node_id, end_sequence,
+                           replacement_node_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        replacement_id,
+                        segment_id,
+                        replacement.predecessor_head_id,
+                        replacement.start_node_id,
+                        replacement.start_sequence,
+                        replacement.end_node_id,
+                        replacement.end_sequence,
+                        replacement.replacement_node_id,
+                    ),
+                )
+                self._advance_graph_epoch(cursor)
+                surface_replacement_ids[call.call_id] = replacement_id
+                surface_replacement_targets[call.call_id] = replacement.replacement_node_id
+            surface_heads[call.call_id] = call.request_surface[-1].node_id
+            new_surface_nodes[call.call_id] = tuple(appended_node_ids)
+            previous_surface = call.request_surface
+        for sequence, call in enumerate(request.calls):
+            header_id = identities.header_ids[sequence]
+            header_component_rows = []
+            for component in call.header_components:
+                artifact_id = self._ensure_post_dispatch_artifact(
+                    cursor, component.artifact_value, policy
+                )
+                header_component_rows.append(
+                    (
+                        header_id,
+                        component.component_kind,
+                        component.ordinal,
+                        artifact_id,
+                    )
+                )
+            cursor.execute(
+                """INSERT INTO console_trace_request_headers(
+                       header_id, provider_name, model_name, route_identity,
+                       endpoint_identity, generation_parameters_json,
+                       adapter_defaults_json, response_format_json,
+                       reasoning_controls_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    header_id,
+                    call.provider_name,
+                    call.model_name,
+                    call.route_identity,
+                    call.endpoint_identity,
+                    call.generation_parameters_json,
+                    call.adapter_defaults_json,
+                    call.response_format_json,
+                    call.reasoning_controls_json,
+                ),
+            )
+            cursor.executemany(
+                """INSERT INTO console_trace_header_components(
+                       header_id, component_kind, ordinal, artifact_id)
+                     VALUES (?, ?, ?, ?)""",
+                header_component_rows,
+            )
+            if header_component_rows:
+                self._advance_graph_epoch(cursor)
+        authorization = db._voice_trace_import_authorization_for_repository(
+            cursor.connection
+        )
+        with authorization._authorize(tuple(call.call_id for call in request.calls)):
+            for sequence, call in enumerate(request.calls):
+                cursor.execute(
+                    """INSERT INTO console_trace_calls(
+                           call_id, owner_id, segment_id, turn_id, run_id,
+                           call_sequence, idempotency_key, policy_id, state,
+                           surface_node_id, request_header_id, provider_name,
+                           model_name, route_identity, dispatch_started_at,
+                           response_started_at, settled_at, outcome, usage_json,
+                           integrity_state, reservation_provenance,
+                           import_reason_code)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                 ?, ?, ?, ?, ?, 'complete',
+                                 'post_dispatch_promoted',
+                                 'provisional_voice_promoted')""",
+                    (
+                        call.call_id,
+                        owner.owner_id,
+                        segment_id,
+                        request.turn_id,
+                        request.run_id,
+                        call.call_sequence,
+                        call.idempotency_key,
+                        policy.policy_id,
+                        call.terminal_state.value,
+                        surface_heads[call.call_id],
+                        identities.header_ids[sequence],
+                        call.provider_name,
+                        call.model_name,
+                        call.route_identity,
+                        call.dispatch_started_at,
+                        call.response_started_at,
+                        call.settled_at,
+                        call.terminal_state.value,
+                        call.usage_json,
+                    ),
+                )
+        for sequence, call in enumerate(request.calls):
+            response = call.response
+            if response.kind == "committed_revision":
+                cursor.execute(
+                    """INSERT INTO console_trace_response_links(
+                           response_link_id, call_id, link_kind,
+                           semantic_revision_id, verification_outcome)
+                         VALUES (?, ?, 'revision', ?, 'verified_equal')""",
+                    (
+                        identities.response_link_ids[sequence],
+                        call.call_id,
+                        response.committed_revision_id,
+                    ),
+                )
+            elif response.kind == "artifact":
+                assert response.artifact_value is not None
+                artifact_id = self._ensure_post_dispatch_artifact(
+                    cursor, response.artifact_value, policy
+                )
+                cursor.execute(
+                    """INSERT INTO console_trace_response_links(
+                           response_link_id, call_id, link_kind, artifact_id,
+                           verification_outcome)
+                         VALUES (?, ?, 'artifact', ?, 'sanitized_artifact')""",
+                    (
+                        identities.response_link_ids[sequence],
+                        call.call_id,
+                        artifact_id,
+                    ),
+                )
+        event_tail = self.get_event_tail(cursor, segment_id)
+        event_sequence = 0 if event_tail is None else event_tail.sequence + 1
+
+        def event(event_type: TraceEventType, **values: object) -> None:
+            nonlocal event_sequence
+            self.append_event(
+                cursor,
+                segment_id=segment_id,
+                sequence=event_sequence,
+                event_type=event_type,
+                **values,  # type: ignore[arg-type]
+            )
+            event_sequence += 1
+
+        event("turn_boundary", turn_id=request.turn_id)
+        for sequence, call in enumerate(request.calls):
+            for node_id in new_surface_nodes[call.call_id]:
+                event("surface_append", surface_node_id=node_id)
+                if node_id == surface_replacement_targets.get(call.call_id):
+                    event("surface_replace", surface_replacement_id=surface_replacement_ids[call.call_id])
+            header_id = identities.header_ids[sequence]
+            event("call_boundary", call_id=call.call_id)
+            event(
+                "request_header_selection",
+                call_id=call.call_id,
+                request_header_id=header_id,
+            )
+            event(
+                "provider_route_selection",
+                call_id=call.call_id,
+                request_header_id=header_id,
+            )
+            if call.response.kind == "committed_revision":
+                event(
+                    "response_selection",
+                    call_id=call.call_id,
+                    semantic_revision_id=call.response.committed_revision_id,
+                )
+            elif call.response.kind == "artifact":
+                assert call.response.artifact_value is not None
+                event(
+                    "response_selection",
+                    call_id=call.call_id,
+                    artifact_id=call.response.artifact_value.artifact_id,
+                )
+            else:
+                event(
+                    "gap",
+                    omission_reason_code=call.response.omission_reason_code,
+                )
+            event("call_outcome", call_id=call.call_id)
+            if call.usage_json is not None:
+                event("usage", call_id=call.call_id)
+        return PostDispatchTraceImportResult(
+            conversation_id=request.conversation_id,
+            owner_id=owner.owner_id,
+            segment_id=segment_id,
+            call_ids=tuple(call.call_id for call in request.calls),
+            already_imported=False,
+        )
+
+    def _admit_post_dispatch_revision_privacy(
+        self,
+        cursor: sqlite3.Cursor,
+        request: PostDispatchTraceImport,
+    ) -> None:
+        # This fresh-import step shares the call transaction. Reconciliation
+        # never invokes detectors again, including for revisions with no spans.
+        from tldw_chatbook.Chat.console_semantic_revision import (
+            project_semantic_revision_provider_message,
+        )
+        from tldw_chatbook.Chat.console_trace_custom_pii import (
+            CUSTOM_PII_RULESET_UNAVAILABLE,
+            redact_pii_value_for_ruleset_revision,
+        )
+
+        policy = request.policy
+        if not policy.pii_redaction_enabled:
+            return
+        revision_ids = {request.user_revision_id, request.assistant_revision_id}
+        for call in request.calls:
+            revision_ids.update(
+                component.revision_id for component in call.request_surface
+                if component.revision_id is not None
+            )
+            if call.response.committed_revision_id is not None:
+                revision_ids.add(call.response.committed_revision_id)
+            revision_ids.update(
+                component.revision_id for component in call.system_composition
+                if component.revision_id is not None
+            )
+        for revision_id in sorted(revision_ids):
+            omission = None
+            try:
+                value = project_semantic_revision_provider_message(
+                    cursor, revision_id=revision_id,
+                    expected_conversation_id=request.conversation_id,
+                )
+            except (ValueError, LookupError):
+                omission = "trace_source_unavailable"
+            if omission is None:
+                credential = CredentialSanitizer().sanitize(value)
+                if not credential.available:
+                    omission = CREDENTIAL_SANITIZER_UNAVAILABLE
+                elif policy.pii_ruleset_revision_id is None:
+                    omission = CUSTOM_PII_RULESET_UNAVAILABLE
+                else:
+                    redaction = redact_pii_value_for_ruleset_revision(
+                        credential.value, policy.pii_ruleset_revision_id,
+                    )
+                    if not redaction.available:
+                        omission = redaction.omission_reason_code or CUSTOM_PII_RULESET_UNAVAILABLE
+                    else:
+                        by_path: dict[str, list[PIIRedactionSpan]] = {}
+                        for item in redaction.field_redactions:
+                            by_path.setdefault(item.field_path, []).append(item.span)
+                        for field_path, spans in sorted(by_path.items()):
+                            self.ensure_redaction_spans(
+                                cursor, policy_id=policy.policy_id,
+                                semantic_revision_id=revision_id, artifact_id=None,
+                                field_path=field_path, spans=spans,
+                            )
+            if omission is not None:
+                self.bind_revision_policy(
+                    cursor, revision_id=revision_id, policy_id=policy.policy_id,
+                    omission_reason_code=omission,
+                )
+
+    def _ensure_post_dispatch_artifact(
+        self,
+        cursor: sqlite3.Cursor,
+        artifact: PostDispatchTraceArtifact,
+        policy: FrozenTracePolicy,
+    ) -> str:
+        existing = cursor.execute(
+            """SELECT identity_digest, media_type, normalization_version,
+                      sanitized_bytes
+                 FROM console_trace_artifacts WHERE artifact_id = ?""",
+            (artifact.artifact_id,),
+        ).fetchone()
+        expected = (
+            artifact.identity_digest,
+            artifact.media_type,
+            artifact.normalization_version,
+            artifact.sanitized_bytes,
+        )
+        if existing is not None:
+            stored = (existing[0], existing[1], existing[2], bytes(existing[3]))
+            if stored != expected:
+                raise TraceIdentityConflict("post_dispatch_artifact")
+            self._ensure_post_dispatch_artifact_masks(cursor, artifact, policy)
+            return artifact.artifact_id
+        cursor.execute(
+            """INSERT INTO console_trace_artifacts(
+                   artifact_id, identity_digest, media_type, normalization_version,
+                   sanitized_bytes, byte_length) VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                artifact.artifact_id,
+                artifact.identity_digest,
+                artifact.media_type,
+                artifact.normalization_version,
+                sqlite3.Binary(artifact.sanitized_bytes),
+                len(artifact.sanitized_bytes),
+            ),
+        )
+        self._ensure_post_dispatch_artifact_masks(cursor, artifact, policy)
+        return artifact.artifact_id
+
+    def _ensure_post_dispatch_artifact_masks(
+        self, cursor: sqlite3.Cursor, artifact: PostDispatchTraceArtifact,
+        policy: FrozenTracePolicy,
+    ) -> None:
+        by_path: dict[str, list[PIIRedactionSpan]] = {}
+        for item in artifact.field_redactions:
+            by_path.setdefault(item.field_path, []).append(item.span)
+        for field_path, spans in sorted(by_path.items()):
+            self.ensure_redaction_spans(
+                cursor, policy_id=policy.policy_id, semantic_revision_id=None,
+                artifact_id=artifact.artifact_id, field_path=field_path, spans=spans,
+            )
+
+    @staticmethod
+    def _reject_post_dispatch_identity_residue(
+        cursor: sqlite3.Cursor,
+        request: PostDispatchTraceImport,
+    ) -> None:
+        identities = derive_post_dispatch_trace_ids(
+            request.import_id,
+            call_count=len(request.calls),
+        )
+        surface_node_ids = tuple(
+            dict.fromkeys(
+                component.node_id
+                for call in request.calls
+                for component in call.request_surface
+            )
+        )
+        replacement_ids: list[str] = [
+            derive_post_dispatch_trace_replacement_id(request.import_id, 0)
+        ]
+        previous_surface: tuple[PostDispatchTraceSurfaceComponent, ...] = ()
+        for call in request.calls:
+            common_prefix = 0
+            for previous, current in zip(
+                previous_surface, call.request_surface, strict=False
+            ):
+                if previous != current:
+                    break
+                common_prefix += 1
+            if previous_surface and common_prefix < len(previous_surface):
+                replacement_ids.append(
+                    derive_post_dispatch_trace_replacement_id(
+                        request.import_id, call.call_sequence
+                    )
+                )
+            previous_surface = call.request_surface
+        checks = (
+            ("console_trace_calls", "call_id", identities.call_ids),
+            (
+                "console_trace_request_headers",
+                "header_id",
+                identities.header_ids,
+            ),
+            (
+                "console_trace_response_links",
+                "response_link_id",
+                identities.response_link_ids,
+            ),
+            (
+                "console_trace_surface_nodes",
+                "node_id",
+                surface_node_ids,
+            ),
+            (
+                "console_trace_surface_replacements",
+                "replacement_id",
+                tuple(replacement_ids),
+            ),
+        )
+        for table, column, values in checks:
+            if not values:
+                continue
+            placeholders = ",".join("?" for _ in values)
+            if (
+                cursor.execute(
+                    f'SELECT 1 FROM "{table}" WHERE "{column}" IN ({placeholders}) LIMIT 1',
+                    values,
+                ).fetchone()
+                is not None
+            ):
+                raise TraceIdentityConflict("post_dispatch_residue")
+
+    def _reconcile_post_dispatch_trace(
+        self,
+        cursor: sqlite3.Cursor,
+        request: PostDispatchTraceImport,
+    ) -> PostDispatchTraceImportResult | None:
+        calls = tuple(self.get_call(cursor, call.call_id) for call in request.calls)
+        present = tuple(call for call in calls if call is not None)
+        if not present:
+            return None
+        if len(present) != len(request.calls):
+            raise TraceIdentityConflict("post_dispatch_partial_calls")
+        assert all(call is not None for call in calls)
+        stored_calls = cast(tuple[TraceCallRecord, ...], calls)
+        owner_id = stored_calls[0].owner_id
+        segment_id = stored_calls[0].segment_id
+        owner = self.get_owner(cursor, owner_id)
+        policy = self.get_policy(cursor, request.policy.policy_id)
+        if (
+            owner is None
+            or not owner.attached
+            or owner.conversation_id != request.conversation_id
+            or policy != request.policy
+        ):
+            raise TraceIdentityConflict("post_dispatch_owner_policy")
+        identities = derive_post_dispatch_trace_ids(
+            request.import_id,
+            call_count=len(request.calls),
+        )
+        expected_components: list[PostDispatchTraceSurfaceComponent] = []
+        seen_node_ids: set[str] = set()
+        for call in request.calls:
+            for component in call.request_surface:
+                if component.node_id not in seen_node_ids:
+                    expected_components.append(component)
+                    seen_node_ids.add(component.node_id)
+        stored_surfaces = []
+        for component in expected_components:
+            surface = self.get_surface_node(cursor, component.node_id)
+            artifact_id = (
+                None
+                if component.artifact_value is None
+                else component.artifact_value.artifact_id
+            )
+            if (
+                surface is None
+                or surface.segment_id != segment_id
+                or surface.component_kind != component.component_kind
+                or surface.reference_kind != component.reference_kind
+                or surface.semantic_revision_id != component.revision_id
+                or surface.artifact_id != artifact_id
+                or surface.omission_reason_code != component.omission_reason_code
+                or (
+                    component.artifact_value is not None
+                    and not self._post_dispatch_artifact_matches(
+                        cursor, component.artifact_value, request.policy
+                    )
+                )
+            ):
+                raise TraceIdentityConflict("post_dispatch_surface")
+            stored_surfaces.append(surface)
+        for ordinal, surface in enumerate(stored_surfaces):
+            if ordinal:
+                predecessor = stored_surfaces[ordinal - 1]
+                if (
+                    surface.sequence != predecessor.sequence + 1
+                    or surface.predecessor_node_id != predecessor.node_id
+                ):
+                    raise TraceIdentityConflict("post_dispatch_surface_lineage")
+            elif surface.predecessor_node_id is None:
+                if surface.sequence != 0:
+                    raise TraceIdentityConflict("post_dispatch_surface_lineage")
+            else:
+                predecessor = self.get_surface_node(cursor, surface.predecessor_node_id)
+                segment = self.get_segment(cursor, segment_id)
+                if (
+                    predecessor is None
+                    or (
+                        predecessor.segment_id != segment_id
+                        and (segment is None or predecessor.node_id != segment.inherited_surface_head_id)
+                    )
+                    or predecessor.sequence + 1 != surface.sequence
+                ):
+                    raise TraceIdentityConflict("post_dispatch_surface_lineage")
+        surfaces_by_id = {surface.node_id: surface for surface in stored_surfaces}
+        replacements_by_id = {
+            record.replacement_id: record.replacement
+            for record in self.read_surface_replacements(cursor, segment_id)
+        }
+        expected_replacement_ids: list[str] = []
+        initial_predecessor_id = stored_surfaces[0].predecessor_node_id
+        initial_replacement = self._post_dispatch_initial_replacement(
+            cursor, segment_id=segment_id,
+            predecessor=(None if initial_predecessor_id is None else self.get_surface_node(cursor, initial_predecessor_id)),
+            replacement_node_id=request.calls[0].request_surface[0].node_id,
+        )
+        previous_surface = ()
+        for call in request.calls:
+            common_prefix = 0
+            for previous, current in zip(
+                previous_surface, call.request_surface, strict=False
+            ):
+                if previous != current:
+                    break
+                common_prefix += 1
+            expected_replacement = initial_replacement if call.call_sequence == 0 else None
+            if previous_surface and common_prefix < len(previous_surface):
+                replacement_id = derive_post_dispatch_trace_replacement_id(
+                    request.import_id, call.call_sequence
+                )
+                start = surfaces_by_id[previous_surface[common_prefix].node_id]
+                end = surfaces_by_id[previous_surface[-1].node_id]
+                expected_replacement = SurfaceReplacement(
+                    predecessor_head_id=previous_surface[-1].node_id,
+                    start_node_id=start.node_id,
+                    start_sequence=start.sequence,
+                    end_node_id=end.node_id,
+                    end_sequence=end.sequence,
+                    replacement_node_id=call.request_surface[common_prefix].node_id,
+                )
+            replacement_id = derive_post_dispatch_trace_replacement_id(request.import_id, call.call_sequence)
+            if expected_replacement is not None:
+                expected_replacement_ids.append(replacement_id)
+                if replacements_by_id.get(replacement_id) != expected_replacement:
+                    raise TraceIdentityConflict("post_dispatch_surface_replacement")
+            elif replacement_id in replacements_by_id:
+                raise TraceIdentityConflict("post_dispatch_surface_replacement")
+            previous_surface = call.request_surface
+        for sequence, (expected, stored) in enumerate(
+            zip(request.calls, stored_calls, strict=True)
+        ):
+            header = self.get_request_header(cursor, identities.header_ids[sequence])
+            response = self.get_response_link(cursor, expected.call_id)
+            if header is None:
+                raise TraceIdentityConflict("post_dispatch_call_links")
+            expected_header_components = tuple(
+                HeaderComponentRef(
+                    component.component_kind,
+                    component.ordinal,
+                    component.artifact_value.artifact_id,
+                )
+                for component in expected.header_components
+            )
+            if (
+                header.provider_name != expected.provider_name
+                or header.model_name != expected.model_name
+                or header.route_identity != expected.route_identity
+                or header.endpoint_identity != expected.endpoint_identity
+                or _json_object(
+                    header.generation_parameters,
+                    "generation_parameters",
+                    allow_frozen=True,
+                )
+                != expected.generation_parameters_json
+                or _json_object(
+                    header.adapter_defaults,
+                    "adapter_defaults",
+                    allow_frozen=True,
+                )
+                != expected.adapter_defaults_json
+                or _json_object(
+                    header.response_format,
+                    "response_format",
+                    allow_frozen=True,
+                )
+                != expected.response_format_json
+                or _json_object(
+                    header.reasoning_controls,
+                    "reasoning_controls",
+                    allow_frozen=True,
+                )
+                != expected.reasoning_controls_json
+                or header.components != expected_header_components
+                or any(
+                    not self._post_dispatch_artifact_matches(
+                        cursor, component.artifact_value, request.policy
+                    )
+                    for component in expected.header_components
+                )
+            ):
+                raise TraceIdentityConflict("post_dispatch_header")
+            expected_usage = (
+                None
+                if expected.usage_json is None
+                else _decode_object(expected.usage_json)
+            )
+            if (
+                stored.owner_id != owner_id
+                or stored.segment_id != segment_id
+                or stored.turn_id != request.turn_id
+                or stored.run_id != request.run_id
+                or stored.call_sequence != expected.call_sequence
+                or stored.idempotency_key != expected.idempotency_key
+                or stored.policy_id != request.policy.policy_id
+                or stored.state is not expected.terminal_state
+                or stored.surface_node_id != expected.request_surface[-1].node_id
+                or stored.request_header_id != identities.header_ids[sequence]
+                or stored.provider_name != expected.provider_name
+                or stored.model_name != expected.model_name
+                or stored.route_identity != expected.route_identity
+                or stored.dispatch_started_at != expected.dispatch_started_at
+                or stored.response_started_at != expected.response_started_at
+                or stored.settled_at != expected.settled_at
+                or stored.outcome != expected.terminal_state.value
+                or stored.usage != expected_usage
+                or stored.integrity_state != "complete"
+                or stored.omission_reason_code is not None
+                or stored.reservation_provenance
+                is not TraceReservationProvenance.POST_DISPATCH_PROMOTED
+                or stored.import_reason_code != PROMOTED_VOICE_IMPORT_REASON
+            ):
+                raise TraceIdentityConflict("post_dispatch_call")
+            expected_response = expected.response
+            if expected_response.kind == "committed_revision":
+                if (
+                    response is None
+                    or response.response_link_id
+                    != identities.response_link_ids[sequence]
+                    or response.link_kind != "revision"
+                    or response.semantic_revision_id
+                    != expected_response.committed_revision_id
+                    or response.artifact_id is not None
+                    or response.verification_outcome != "verified_equal"
+                ):
+                    raise TraceIdentityConflict("post_dispatch_response")
+            elif expected_response.kind == "artifact":
+                artifact = expected_response.artifact_value
+                assert artifact is not None
+                if (
+                    response is None
+                    or response.response_link_id
+                    != identities.response_link_ids[sequence]
+                    or response.link_kind != "artifact"
+                    or response.semantic_revision_id is not None
+                    or response.artifact_id != artifact.artifact_id
+                    or response.verification_outcome != "sanitized_artifact"
+                    or not self._post_dispatch_artifact_matches(cursor, artifact, request.policy)
+                ):
+                    raise TraceIdentityConflict("post_dispatch_response")
+            elif (
+                response is not None
+                or cursor.execute(
+                    """SELECT 1 FROM console_trace_response_links
+                    WHERE response_link_id = ?""",
+                    (identities.response_link_ids[sequence],),
+                ).fetchone()
+                is not None
+            ):
+                raise TraceIdentityConflict("post_dispatch_response")
+        events = tuple(self.read_events(cursor, segment_id))
+        if (
+            not any(
+                event.event_type == "turn_boundary" and event.turn_id == request.turn_id
+                for event in events
+            )
+            or any(
+                not any(
+                    event.event_type == "surface_append"
+                    and event.surface_node_id == component.node_id
+                    for event in events
+                )
+                for component in expected_components
+            )
+            or any(
+                not any(
+                    event.event_type == "surface_replace"
+                    and event.surface_replacement_id == replacement_id
+                    for event in events
+                )
+                for replacement_id in expected_replacement_ids
+            )
+        ):
+            raise TraceIdentityConflict("post_dispatch_events")
+        for sequence, call in enumerate(request.calls):
+            call_events = tuple(
+                event for event in events if event.call_id == call.call_id
+            )
+            boundaries = tuple(event for event in call_events if event.event_type == "call_boundary")
+            if len(boundaries) != 1 or self.surface_head_at_event_boundary(
+                cursor, segment_id=segment_id, through_sequence=boundaries[0].sequence,
+            ) != call.request_surface[-1].node_id:
+                raise TraceIdentityConflict("post_dispatch_surface_event_head")
+            # Gap events are segment-scoped by the existing schema. Their
+            # position immediately after this call's route binds the omission.
+            if call.response.kind == "no_response":
+                route_events = tuple(
+                    event for event in call_events
+                    if event.event_type == "provider_route_selection"
+                )
+                if len(route_events) != 1:
+                    raise TraceIdentityConflict("post_dispatch_events")
+                call_events += tuple(
+                    event for event in events
+                    if event.sequence == route_events[0].sequence + 1
+                    and event.event_type == "gap" and event.call_id is None
+                )
+            expected_event_types = [
+                "call_boundary",
+                "request_header_selection",
+                "provider_route_selection",
+                "response_selection" if call.response.kind != "no_response" else "gap",
+                "call_outcome",
+            ]
+            if call.usage_json is not None:
+                expected_event_types.append("usage")
+            if sorted(event.event_type for event in call_events) != sorted(
+                expected_event_types
+            ):
+                raise TraceIdentityConflict("post_dispatch_events")
+            required_event_shapes = (
+                ("call_boundary", None, None, None),
+                (
+                    "request_header_selection",
+                    identities.header_ids[sequence],
+                    None,
+                    None,
+                ),
+                (
+                    "provider_route_selection",
+                    identities.header_ids[sequence],
+                    None,
+                    None,
+                ),
+                ("call_outcome", None, None, None),
+            )
+            if any(
+                not any(
+                    event.event_type == event_type
+                    and event.request_header_id == header_id
+                    and event.semantic_revision_id == revision_id
+                    and event.artifact_id == artifact_id
+                    for event in call_events
+                )
+                for event_type, header_id, revision_id, artifact_id in required_event_shapes
+            ):
+                raise TraceIdentityConflict("post_dispatch_events")
+            response_events = tuple(
+                event
+                for event in call_events
+                if event.event_type in {"response_selection", "gap"}
+            )
+            if call.response.kind == "committed_revision":
+                response_events_match = len(response_events) == 1 and (
+                    response_events[0].event_type == "response_selection"
+                    and response_events[0].semantic_revision_id
+                    == call.response.committed_revision_id
+                    and response_events[0].artifact_id is None
+                )
+            elif call.response.kind == "artifact":
+                assert call.response.artifact_value is not None
+                response_events_match = len(response_events) == 1 and (
+                    response_events[0].event_type == "response_selection"
+                    and response_events[0].semantic_revision_id is None
+                    and response_events[0].artifact_id
+                    == call.response.artifact_value.artifact_id
+                )
+            else:
+                response_events_match = len(response_events) == 1 and (
+                    response_events[0].event_type == "gap"
+                    and response_events[0].omission_reason_code
+                    == call.response.omission_reason_code
+                )
+            usage_events = tuple(
+                event for event in call_events if event.event_type == "usage"
+            )
+            if not response_events_match or len(usage_events) != int(
+                call.usage_json is not None
+            ):
+                raise TraceIdentityConflict("post_dispatch_events")
+        return PostDispatchTraceImportResult(
+            conversation_id=request.conversation_id,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            call_ids=tuple(call.call_id for call in request.calls),
+            already_imported=True,
+        )
+
+    @staticmethod
+    def _post_dispatch_artifact_matches(
+        cursor: sqlite3.Cursor,
+        artifact: PostDispatchTraceArtifact,
+        policy: FrozenTracePolicy,
+    ) -> bool:
+        by_path: dict[str, list[PIIRedactionSpan]] = {}
+        for item in artifact.field_redactions:
+            by_path.setdefault(item.field_path, []).append(item.span)
+        expected_masks = tuple(
+            (path, span.start_codepoint, span.end_codepoint, span.category,
+             span.rule_id, span.detector_version, "applied")
+            for path, spans in sorted(by_path.items()) for span in merge_pii_spans(spans)
+        )
+        stored_masks = tuple(tuple(row) for row in cursor.execute(
+            """SELECT field_path, start_codepoint, end_codepoint, category,
+                      rule_id, detector_version, outcome
+                 FROM console_trace_redaction_spans
+                WHERE policy_id = ? AND artifact_id = ?
+                ORDER BY field_path, start_codepoint, end_codepoint, span_id""",
+            (policy.policy_id, artifact.artifact_id),
+        ))
+        if stored_masks != expected_masks:
+            return False
+        row = cursor.execute(
+            """SELECT identity_digest, media_type, normalization_version,
+                      sanitized_bytes
+                 FROM console_trace_artifacts WHERE artifact_id = ?""",
+            (artifact.artifact_id,),
+        ).fetchone()
+        return row is not None and (
+            row[0],
+            row[1],
+            row[2],
+            bytes(row[3]),
+        ) == (
+            artifact.identity_digest,
+            artifact.media_type,
+            artifact.normalization_version,
+            artifact.sanitized_bytes,
+        )
 
     def get_graph_epoch(self, cursor: sqlite3.Cursor) -> int:
         row = cursor.execute(
@@ -2408,7 +3681,8 @@ class ConsoleTraceRepository:
                          surface_node_id, request_header_id, provider_name,
                          model_name, route_identity, dispatch_started_at,
                          response_started_at, settled_at, provider_inactive_at,
-                         outcome, usage_json, integrity_state, omission_reason_code
+                         outcome, usage_json, integrity_state, omission_reason_code,
+                         reservation_provenance, import_reason_code
                     FROM console_trace_calls"""
 
     @staticmethod
@@ -2436,6 +3710,8 @@ class ConsoleTraceRepository:
             usage=_decode_object(row[19]),
             integrity_state=row[20],
             omission_reason_code=row[21],
+            reservation_provenance=TraceReservationProvenance(row[22]),
+            import_reason_code=row[23],
         )
 
     @staticmethod

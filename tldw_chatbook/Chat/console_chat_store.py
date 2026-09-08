@@ -201,6 +201,19 @@ from tldw_chatbook.Chat.console_speech import (
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+from tldw_chatbook.Chat.console_voice_promotion import (
+    CompletedVoicePairCommit,
+    ConsoleSessionBindingOrigin,
+    ConsoleVoicePromotionClaim,
+    ConsoleVoicePromotionClaimStatus,
+    ConsoleVoicePromotionLease,
+    ConsoleVoicePromotionRebranch,
+    ConsoleVoicePromotionRecovery,
+    ConsoleVoicePromotionRecoveryKind,
+    ResolvedVoicePromotionDestination,
+    VoicePromotionContext,
+    derive_voice_promotion_identities,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsolePromotionTransactionContribution,
 )
@@ -224,6 +237,7 @@ from tldw_chatbook.Chat.message_metadata import (
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
+    terminal_receipt_id_for_message,
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
@@ -263,6 +277,9 @@ def _fork_session_transition(method: Callable[..., Any]) -> Callable[..., Any]:
     def transitioned(
         self: "ConsoleChatStore", session_id: str, *args: Any, **kwargs: Any
     ) -> Any:
+        if self._voice_promotion_mutation_is_admitted_here(session_id):
+            with self._fork_source_transition_admitted(session_id):
+                return method(self, session_id, *args, **kwargs)
         with self._fork_source_transition(session_id):
             return method(self, session_id, *args, **kwargs)
 
@@ -1728,6 +1745,7 @@ class ConsoleChatStore:
         # history, not conversation activity or durable user data.
         self._session_mru: deque[str] = deque()
         self._active_session_epoch = 0
+        self.on_active_session_changed: Callable[[], None] | None = None
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._ephemeral_promotion_lock = threading.RLock()
@@ -1784,6 +1802,7 @@ class ConsoleChatStore:
         self._generation_owner_locks_guard = threading.Lock()
         self._generation_owner_locks: dict[str, _GenerationOwnerLockEntry] = {}
         self._generation_mutation_local = threading.local()
+        self._voice_promotion_admission_local = threading.local()
         # Attempt tokens are intentionally process-local: a detached worker
         # cannot survive process restart. The app-lifetime sequence is global
         # across message ids so delete/restore/reuse can never recreate an old
@@ -1794,6 +1813,27 @@ class ConsoleChatStore:
         # acquisition/I/O. The reservation map below is session-scoped; split
         # the lock only if unrelated-session contention becomes measurable.
         self._first_persistence_lock = threading.RLock()
+        # A promotion capability is a store-private, process-local fence.  This
+        # lock is deliberately acquired only for short admission/lease checks;
+        # it is never held while taking fork, first-persistence, or preparation
+        # locks, nor across a persistence call.
+        self._voice_promotion_lock = threading.RLock()
+        self._voice_promotion_leases: dict[str, ConsoleVoicePromotionLease] = {}
+        self._voice_promotion_contexts: dict[str, VoicePromotionContext] = {}
+        self._voice_promotion_recoveries: dict[str, ConsoleVoicePromotionRecovery] = {}
+        self._voice_promotion_mutation_admissions: dict[str, int] = {}
+        self._voice_promotion_selection_decisions: dict[
+            str,
+            tuple[
+                str,
+                ConsoleVoicePromotionLease,
+                str | None,
+                str | None,
+                str | None,
+            ],
+        ] = {}
+        self._voice_promotion_lease_revision = 0
+        self._voice_promotion_state_replacement: tuple[str, int] | None = None
         self._first_identity_reservations: dict[
             str, tuple[str | None, ConsoleStagedConversationIdentity, bool]
         ] = {}
@@ -1876,6 +1916,11 @@ class ConsoleChatStore:
         self._unresolved_promotion_operations: dict[str, str] = {}
         self._pending_workspace_projections: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
+        # One content-free retry identity per in-flight terminal commit. A
+        # failed/conflicted write restores live metadata, while this token
+        # lets an exact retry reuse the same receipt rather than duplicating
+        # attention.
+        self._pending_terminal_receipts: dict[str, str] = {}
         self._terminal_citation_finalizers: dict[str, TerminalCitationFinalizer] = {}
         self._provisional_terminal_selection_ids: set[str] = set()
         self._terminal_persistence_deferred_ids: set[str] = set()
@@ -2229,6 +2274,16 @@ class ConsoleChatStore:
         self.active_session_id = session_id
         self._active_session_epoch += 1
         self._notify_canvas_context_changed(session_id)
+        callback = self.on_active_session_changed
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception as exc:  # noqa: BLE001 -- activation must still land
+            logger.debug(
+                "Console active-session subscriber raised (exception_type={})",
+                type(exc).__name__,
+            )
 
     def _notify_canvas_context_changed(self, session_id: str | None) -> None:
         callback = self._on_canvas_context_changed
@@ -3468,6 +3523,47 @@ class ConsoleChatStore:
             message = self._message_or_raise(assistant_message_id)
         except KeyError:
             message = None
+        receipt_metadata_before: (
+            tuple[MessageMetadata | None, VideoGenerationMetadata | None] | None
+        ) = None
+        terminal_receipt_id: str | None = None
+        if (
+            not ephemeral
+            and terminal_state in {"complete", "failed"}
+            and message is None
+        ):
+            return False
+        if (
+            not ephemeral
+            and terminal_state in {"complete", "failed"}
+            and message is not None
+        ):
+            merged_metadata = (
+                json.loads(metadata_json) if metadata_json is not None else None
+            )
+            if merged_metadata is not None and type(merged_metadata) is not dict:
+                raise ConsoleDispatchSettlementError(
+                    "Terminal metadata must be an object."
+                )
+            receipt_metadata_before = self._terminal_metadata_snapshot(message)
+            terminal_receipt_id = self._ensure_terminal_receipt(message.id)
+            receipt_metadata_json = (
+                message.video_metadata.to_json()
+                if message.video_metadata is not None
+                else message.metadata.to_json()
+                if message.metadata is not None
+                else None
+            )
+            # The caller may have joined Canvas cards or other local sidecars
+            # that have not yet been published on the live message.
+            if merged_metadata is None:
+                merged_metadata = json.loads(receipt_metadata_json or "{}")
+            merged_metadata["terminal_receipt_id"] = terminal_receipt_id
+            metadata_json = json.dumps(
+                merged_metadata, ensure_ascii=False, allow_nan=False
+            )
+        elif message is not None:
+            self._pending_terminal_receipts.pop(message.id, None)
         committed_message_version: int | None = None
         if not ephemeral:
             repository = getattr(
@@ -3476,6 +3572,11 @@ class ConsoleChatStore:
                 None,
             )
             if repository is None:
+                if message is not None and receipt_metadata_before is not None:
+                    self._restore_terminal_metadata(
+                        message,
+                        receipt_metadata_before,
+                    )
                 return False
             try:
                 result = repository.settle_with_assistant(
@@ -3490,6 +3591,7 @@ class ConsoleChatStore:
                         terminal_state=terminal_state,
                         content=content,
                         metadata_json=metadata_json,
+                        terminal_receipt_id=terminal_receipt_id,
                         usage_json=(
                             message.usage.to_json()
                             if message is not None and message.usage is not None
@@ -3505,10 +3607,22 @@ class ConsoleChatStore:
                     )
                 )
             except Exception:
+                if message is not None and receipt_metadata_before is not None:
+                    self._restore_terminal_metadata(
+                        message,
+                        receipt_metadata_before,
+                    )
                 return False
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
+                if message is not None and receipt_metadata_before is not None:
+                    self._restore_terminal_metadata(
+                        message,
+                        receipt_metadata_before,
+                    )
                 return False
             committed_message_version = result.committed_message_version
+            if message is not None and terminal_receipt_id is not None:
+                self._commit_terminal_receipt(message.id)
             if on_durable_commit is not None:
                 on_durable_commit()
         if message is not None:
@@ -3635,6 +3749,132 @@ class ConsoleChatStore:
         ):
             canvas_controller.confirm_exact_settlement(canvas_settlement)
         return True
+
+    def _ensure_terminal_receipt(self, message_id: str) -> str:
+        """Attach this attempt's stable pending receipt to the exact live row."""
+        message = self._message_or_raise(message_id)
+        existing = terminal_receipt_id_for_message(message)
+        if existing:
+            return existing
+        receipt_id = self._pending_terminal_receipts.get(message_id)
+        if receipt_id is None:
+            receipt_id = str(uuid4())
+            self._pending_terminal_receipts[message_id] = receipt_id
+        if message.video_metadata is not None:
+            message.video_metadata = replace(
+                message.video_metadata,
+                terminal_receipt_id=receipt_id,
+            )
+        else:
+            message.metadata = replace(
+                message.metadata or MessageMetadata(),
+                terminal_receipt_id=receipt_id,
+            )
+        return receipt_id
+
+    @staticmethod
+    def _terminal_metadata_snapshot(
+        message: ConsoleChatMessage,
+    ) -> tuple[MessageMetadata | None, VideoGenerationMetadata | None]:
+        """Capture the exact metadata preceding speculative receipt attach."""
+
+        return message.metadata, message.video_metadata
+
+    @staticmethod
+    def _restore_terminal_metadata(
+        message: ConsoleChatMessage,
+        snapshot: tuple[MessageMetadata | None, VideoGenerationMetadata | None],
+    ) -> None:
+        """Restore metadata without reconstructing or dropping sibling fields."""
+
+        message.metadata, message.video_metadata = snapshot
+
+    def _prime_unpersisted_terminal_receipt(
+        self, message: ConsoleChatMessage
+    ) -> None:
+        """Prevent stream materialization from creating an orphan row first."""
+        if (
+            self.persistence is None
+            or message.persisted_message_id is not None
+            or getattr(self.persistence, "local_marks", None) is None
+        ):
+            return
+        session = self._sessions[self._message_session_index[message.id]]
+        if not session.ephemeral:
+            self._ensure_terminal_receipt(message.id)
+
+    def _commit_terminal_receipt(self, message_id: str) -> None:
+        """Release process-local retry ownership after row+mark commit."""
+
+        self._pending_terminal_receipts.pop(message_id, None)
+
+    def _begin_new_terminal_attempt(self, message: ConsoleChatMessage) -> None:
+        """Clear prior receipt identity before a new provider attempt starts."""
+
+        self._pending_terminal_receipts.pop(message.id, None)
+        self._clear_terminal_receipt_metadata(message)
+
+    @staticmethod
+    def _clear_terminal_receipt_metadata(message: ConsoleChatMessage) -> None:
+        """Clear a prior row receipt without discarding current retry custody."""
+        if message.video_metadata is not None:
+            message.video_metadata = replace(
+                message.video_metadata,
+                terminal_receipt_id="",
+            )
+        elif message.metadata is not None:
+            message.metadata = replace(
+                message.metadata,
+                terminal_receipt_id="",
+            )
+
+    def _persist_existing_terminal(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        terminal_outcome: str,
+        force_metadata_write: bool = False,
+    ) -> str | None:
+        """Atomically publish one existing row and its attempt receipt."""
+
+        if self.persistence is None or (
+            message.persisted_message_id is None
+            and message.id not in self._pending_persistence_message_ids
+        ):
+            return None
+        if getattr(self.persistence, "local_marks", None) is None:
+            # Narrow/legacy adapters cannot own the row+local-mark
+            # transaction, so they must never receive or retain a receipt.
+            # Preserve their established terminal flush behavior without
+            # advertising attention durability they cannot provide.
+            self._begin_new_terminal_attempt(message)
+            self._persist_terminal_generation(
+                message, force_metadata_write=force_metadata_write
+            )
+            return None
+        session_id = self._message_session_index.get(message.id)
+        session = self._sessions.get(session_id or "")
+        if session is not None and session.ephemeral:
+            # Temporary transcripts have no durable conversation, therefore
+            # no transaction in which a row and unseen mark could coexist.
+            # Keep the completed live row, but never stage a receipt that a
+            # later promotion could serialize without its mark.
+            self._begin_new_terminal_attempt(message)
+            return None
+        prior_metadata = self._terminal_metadata_snapshot(message)
+        receipt_id = self._ensure_terminal_receipt(message.id)
+        try:
+            self._persist_terminal_generation(
+                message,
+                force_metadata_write=force_metadata_write,
+                terminal_receipt_id=receipt_id,
+                terminal_outcome=terminal_outcome,
+            )
+        except BaseException:
+            self._restore_terminal_metadata(message, prior_metadata)
+            raise
+        self._commit_terminal_receipt(message.id)
+        return receipt_id
 
     def _hydrate_provider_continuations_from_persistence(
         self,
@@ -4400,6 +4640,12 @@ class ConsoleChatStore:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
+        with self._first_persistence_lock:
+            return self._close_session_locked(session_id)
+
+    def _close_session_locked(self, session_id: str) -> ConsoleChatSession | None:
+        """Close while excluding first persistence and temporary promotion."""
+
         session = self._session_or_raise(session_id)
         recovery = self.dispatch_recovery_for_session(session_id)
         if (
@@ -4498,6 +4744,7 @@ class ConsoleChatStore:
             self._stream_chunks_by_message.pop(message_id, None)
             self._stream_materialized_counts.pop(message_id, None)
             self._pending_persistence_message_ids.discard(message_id)
+            self._pending_terminal_receipts.pop(message_id, None)
             self._variant_stream_bases.pop(message_id, None)
             self._variant_restored_message_ids.discard(message_id)
             self._failed_retry_message_ids.discard(message_id)
@@ -4570,6 +4817,34 @@ class ConsoleChatStore:
             self._preparations_by_session.pop(session_id, None)
             if preparation is not None:
                 self._preparations_by_id.pop(preparation.preparation_id, None)
+
+    def snapshot_voice_promotion_origin(
+        self,
+        session_id: str,
+    ) -> tuple[ConsoleSessionBindingOrigin, str | None, str | None]:
+        """Freeze the binding and leaf identities used by a voice dispatch."""
+
+        with self._voice_promotion_lock:
+            session = self._session_or_raise(session_id)
+            native_leaf_id = self._active_leaf_by_session.get(session_id)
+            node = (
+                self._nodes_by_session.get(session_id, {}).get(native_leaf_id)
+                if native_leaf_id is not None
+                else None
+            )
+            persisted_leaf_id = node.persisted_message_id if node is not None else None
+            return (
+                ConsoleSessionBindingOrigin(
+                    session_id=session_id,
+                    session_incarnation=self._settings_session_incarnations[session_id],
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=(
+                        session.conversation_binding_revision
+                    ),
+                ),
+                native_leaf_id,
+                persisted_leaf_id,
+            )
 
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
@@ -9673,6 +9948,37 @@ class ConsoleChatStore:
         """
         return list(self._session_or_raise(session_id).pending_attachments)
 
+    def transfer_pending_attachments_to_turn(
+        self,
+        session_id: str,
+        turn_id: str,
+        expected_attachment_ids: Sequence[str],
+    ) -> tuple[PendingAttachment, ...]:
+        """Atomically remove and return the exact staged attachment sequence.
+
+        Attachments staged after the synchronous snapshot are allowed only as
+        a suffix and remain staged.  No bytes or attachment objects are copied.
+        """
+        if not turn_id:
+            raise ValueError("turn_id must be non-empty")
+        expected = tuple(expected_attachment_ids)
+        pending = self._session_or_raise(session_id).pending_attachments
+        actual = tuple(item.attachment_id for item in pending[: len(expected)])
+        if actual != expected:
+            raise RuntimeError("Pending attachments changed before runtime custody.")
+        transferred = tuple(pending[: len(expected)])
+        del pending[: len(expected)]
+        return transferred
+
+    def restore_transferred_pending_attachments(
+        self,
+        session_id: str,
+        attachments: Sequence[PendingAttachment],
+    ) -> None:
+        """Prepend exact transferred objects without replacing newer staging."""
+        pending = self._session_or_raise(session_id).pending_attachments
+        pending[:0] = list(attachments)
+
     def add_pending_attachment(
         self, session_id: str, attachment: PendingAttachment
     ) -> bool:
@@ -9848,6 +10154,22 @@ class ConsoleChatStore:
 
     @_ephemeral_promotion_global_lifecycle
     def restore_state(
+        self,
+        *,
+        sessions: Iterable[ConsoleChatSession],
+        messages_by_session: Mapping[str, Iterable[ConsoleChatMessage]] | None = None,
+        active_session_id: str | None = None,
+    ) -> None:
+        """Replace state only while no voice capability can observe it."""
+
+        with self._voice_promotion_state_replacement_scope():
+            self._restore_state_unfenced(
+                sessions=sessions,
+                messages_by_session=messages_by_session,
+                active_session_id=active_session_id,
+            )
+
+    def _restore_state_unfenced(
         self,
         *,
         sessions: Iterable[ConsoleChatSession],
@@ -10073,6 +10395,10 @@ class ConsoleChatStore:
     def end_app_runtime(self) -> None:
         """Drop every volatile recovery projection at explicit app teardown."""
 
+        with self._voice_promotion_state_replacement_scope():
+            self._end_app_runtime_after_voice_fence()
+
+    def _end_app_runtime_after_voice_fence(self) -> None:
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.close_runtime()
         if (
@@ -10349,6 +10675,7 @@ class ConsoleChatStore:
         content: str = "",
         persist: bool = False,
         attachments: Sequence[MessageAttachment] = (),
+        message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Create one sibling within an atomic fork-transition window."""
 
@@ -10365,6 +10692,7 @@ class ConsoleChatStore:
                 content=content,
                 persist=persist,
                 attachments=attachments,
+                message_id=message_id,
             )
         self._notify_canvas_context_changed(session_id)
         return sibling
@@ -10377,6 +10705,7 @@ class ConsoleChatStore:
         content: str = "",
         persist: bool = False,
         attachments: Sequence[MessageAttachment] = (),
+        message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Fork a new node alongside ``anchor_message_id`` and make it active.
 
@@ -10427,6 +10756,7 @@ class ConsoleChatStore:
         session_id = self._message_session_index[anchor_message_id]
         parent_native_id = self._native_parent_by_message.get(anchor_message_id)
         message = ConsoleChatMessage(
+            id=message_id or str(uuid4()),
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),
@@ -10546,19 +10876,43 @@ class ConsoleChatStore:
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
-        try:
-            if persist:
-                self._persist_new_message_or_defer(
-                    session_id=session_id, message=message
-                )
-        except Exception:
-            self._rollback_new_tree_node(
-                session_id,
-                message.id,
-                previous_active_leaf=old_leaf,
-                previous_updated_at=previous_updated_at,
+        if persist:
+            message.assistant_generation_state = "complete"
+            durability_expected = (
+                self.persistence is not None
+                and not self._sessions[session_id].ephemeral
             )
-            raise
+            terminal_receipt_id = (
+                self._ensure_terminal_receipt(message.id)
+                if durability_expected
+                else None
+            )
+            try:
+                self._persist_new_message_or_defer(
+                    session_id=session_id,
+                    message=message,
+                    terminal_receipt_id=terminal_receipt_id,
+                    terminal_outcome="complete",
+                )
+            except BaseException:
+                self._rollback_new_tree_node(
+                    session_id,
+                    message.id,
+                    previous_active_leaf=old_leaf,
+                    previous_updated_at=previous_updated_at,
+                )
+                raise
+            if durability_expected and message.persisted_message_id is None:
+                self._rollback_new_tree_node(
+                    session_id,
+                    message.id,
+                    previous_active_leaf=old_leaf,
+                    previous_updated_at=previous_updated_at,
+                )
+                raise ConsoleDispatchSettlementError(
+                    "Terminal image persistence failed."
+                )
+            self._commit_terminal_receipt(message.id)
         self._bump_payload_revision(session_id)
         return message
 
@@ -10662,6 +11016,7 @@ class ConsoleChatStore:
                 ),
             ),
             generation_metadata=(metadata,),
+            metadata=MessageMetadata.from_json(row.get("metadata_json")),
         )
         parent_native_id = next(
             (
@@ -10827,21 +11182,69 @@ class ConsoleChatStore:
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
-        try:
-            if persist:
-                self._persist_new_message_or_defer(
-                    session_id=session_id, message=message
-                )
-        except Exception:
-            self._rollback_new_tree_node(
-                session_id,
-                message.id,
-                previous_active_leaf=old_leaf,
-                previous_updated_at=previous_updated_at,
+        if persist:
+            message.assistant_generation_state = "complete"
+            durability_expected = (
+                self.persistence is not None
+                and not self._sessions[session_id].ephemeral
             )
-            raise
+            terminal_receipt_id = (
+                self._ensure_terminal_receipt(message.id)
+                if durability_expected
+                else None
+            )
+            try:
+                self._persist_new_message_or_defer(
+                    session_id=session_id,
+                    message=message,
+                    terminal_receipt_id=terminal_receipt_id,
+                    terminal_outcome="complete",
+                )
+            except BaseException:
+                self._rollback_new_tree_node(
+                    session_id,
+                    message.id,
+                    previous_active_leaf=old_leaf,
+                    previous_updated_at=previous_updated_at,
+                )
+                raise
+            if durability_expected and message.persisted_message_id is None:
+                self._rollback_new_tree_node(
+                    session_id,
+                    message.id,
+                    previous_active_leaf=old_leaf,
+                    previous_updated_at=previous_updated_at,
+                )
+                raise ConsoleDispatchSettlementError(
+                    "Terminal video persistence failed."
+                )
+            self._commit_terminal_receipt(message.id)
         self._bump_payload_revision(session_id)
         return message
+
+    def _rollback_unpersisted_terminal_append(
+        self,
+        session_id: str,
+        message_id: str,
+        prior_leaf_id: str | None,
+    ) -> None:
+        """Remove a live media leaf whose atomic create+mark never committed."""
+
+        parent_id = self._native_parent_by_message.pop(message_id, None)
+        siblings = self._children_by_parent.get(session_id, {}).get(parent_id, [])
+        if message_id in siblings:
+            siblings.remove(message_id)
+        if not siblings:
+            self._children_by_parent.get(session_id, {}).pop(parent_id, None)
+        self._children_by_parent.get(session_id, {}).pop(message_id, None)
+        self._nodes_by_session.get(session_id, {}).pop(message_id, None)
+        self._message_session_index.pop(message_id, None)
+        self._pending_persistence_message_ids.discard(message_id)
+        self._pending_terminal_receipts.pop(message_id, None)
+        self._message_speech_revisions.pop(message_id, None)
+        self._message_completion_generations.pop(message_id, None)
+        self._active_leaf_by_session[session_id] = prior_leaf_id
+        self._recompute_active_path(session_id)
 
     def append_generation_variant(
         self,
@@ -14479,43 +14882,808 @@ class ConsoleChatStore:
     def _generation_owner_scope(self, message_id: str):
         """Hold one generation owner and its fork source-transition boundary.
 
-        Lock order is generation owner -> fork source lock -> persistence. The
-        fork lock is held only while publishing the transition marker, never
-        across database work.
+        Promotion admission precedes generation ownership, which precedes the
+        fork source lock and persistence.  The fork lock is held only while
+        publishing the transition marker, never across database work.
         """
-        with self._generation_owner_locks_guard:
-            entry = self._generation_owner_locks.get(message_id)
-            if entry is None:
-                entry = _GenerationOwnerLockEntry()
-                self._generation_owner_locks[message_id] = entry
-            entry.users += 1
-        entry.lock.acquire()
-        try:
-            session_id = self._message_session_index.get(message_id)
-            if session_id is None:
-                yield
-            else:
-                with self._fork_source_transition(session_id):
-                    yield
-        finally:
-            entry.lock.release()
+        with self._voice_promotion_message_mutation(message_id) as session_id:
             with self._generation_owner_locks_guard:
-                entry.users -= 1
-                if (
-                    entry.users == 0
-                    and self._generation_owner_locks.get(message_id) is entry
-                ):
-                    self._generation_owner_locks.pop(message_id, None)
+                entry = self._generation_owner_locks.get(message_id)
+                if entry is None:
+                    entry = _GenerationOwnerLockEntry()
+                    self._generation_owner_locks[message_id] = entry
+                entry.users += 1
+            entry.lock.acquire()
+            try:
+                if session_id is None:
+                    yield
+                else:
+                    with self._fork_source_transition_admitted(session_id):
+                        yield
+            finally:
+                entry.lock.release()
+                with self._generation_owner_locks_guard:
+                    entry.users -= 1
+                    if (
+                        entry.users == 0
+                        and self._generation_owner_locks.get(message_id) is entry
+                    ):
+                        self._generation_owner_locks.pop(message_id, None)
 
     @contextmanager
     def _fork_source_transition(self, session_id: str):
         """Reject fork snapshots until one source mutation fully publishes."""
+
+        with self._voice_promotion_mutation(session_id):
+            with self._fork_source_transition_admitted(session_id):
+                yield
+
+    @contextmanager
+    def _fork_source_transition_admitted(self, session_id: str):
+        """Publish a fork transition after promotion admission already landed."""
 
         self._begin_fork_source_transition(session_id)
         try:
             yield
         finally:
             self._finish_fork_source_transition(session_id)
+
+    @contextmanager
+    def _voice_promotion_state_replacement_scope(self):
+        """Fence wholesale state replacement from promotion capabilities."""
+
+        token = str(uuid4())
+        owner = (token, threading.get_ident())
+        with self._voice_promotion_lock:
+            if (
+                self._voice_promotion_state_replacement is not None
+                or self._voice_promotion_leases
+                or self._voice_promotion_contexts
+                or self._voice_promotion_recoveries
+                or self._voice_promotion_mutation_admissions
+                or self._voice_promotion_selection_decisions
+            ):
+                raise RuntimeError("Voice promotion state prevents store replacement.")
+            self._voice_promotion_state_replacement = owner
+        try:
+            yield
+        finally:
+            with self._voice_promotion_lock:
+                if self._voice_promotion_state_replacement == owner:
+                    self._voice_promotion_state_replacement = None
+
+    def _voice_promotion_replacement_owned_here(self) -> bool:
+        replacement = self._voice_promotion_state_replacement
+        return replacement is not None and replacement[1] == threading.get_ident()
+
+    def _voice_promotion_mutation_is_admitted_here(self, session_id: str) -> bool:
+        """Return whether this thread retains the exact session admission."""
+
+        admissions = getattr(self._voice_promotion_admission_local, "sessions", {})
+        return admissions.get(session_id, 0) > 0
+
+    @contextmanager
+    def _voice_promotion_mutation(self, session_id: str):
+        """Admit a lineage mutation before it can inspect mutable session state."""
+
+        with self._voice_promotion_lock:
+            if (
+                self._voice_promotion_state_replacement is not None
+                and not self._voice_promotion_replacement_owned_here()
+            ):
+                raise RuntimeError("Console state replacement is in progress.")
+            if session_id in self._voice_promotion_leases:
+                raise RuntimeError("A voice promotion owns this session.")
+            self._voice_promotion_mutation_admissions[session_id] = (
+                self._voice_promotion_mutation_admissions.get(session_id, 0) + 1
+            )
+        admissions = dict(
+            getattr(self._voice_promotion_admission_local, "sessions", {})
+        )
+        admissions[session_id] = admissions.get(session_id, 0) + 1
+        self._voice_promotion_admission_local.sessions = admissions
+        try:
+            yield
+        finally:
+            admissions = dict(
+                getattr(self._voice_promotion_admission_local, "sessions", {})
+            )
+            remaining_local = admissions.get(session_id, 0) - 1
+            if remaining_local > 0:
+                admissions[session_id] = remaining_local
+            else:
+                admissions.pop(session_id, None)
+            self._voice_promotion_admission_local.sessions = admissions
+            with self._voice_promotion_lock:
+                remaining = (
+                    self._voice_promotion_mutation_admissions.get(session_id, 0) - 1
+                )
+                if remaining > 0:
+                    self._voice_promotion_mutation_admissions[session_id] = remaining
+                else:
+                    self._voice_promotion_mutation_admissions.pop(session_id, None)
+
+    @contextmanager
+    def _voice_promotion_message_mutation(self, message_id: str):
+        """Resolve and admit a message mutation before generation ownership."""
+
+        with self._voice_promotion_lock:
+            if (
+                self._voice_promotion_state_replacement is not None
+                and not self._voice_promotion_replacement_owned_here()
+            ):
+                raise RuntimeError("Console state replacement is in progress.")
+            session_id = self._message_session_index.get(message_id)
+            if session_id is not None:
+                if session_id in self._voice_promotion_leases:
+                    raise RuntimeError("A voice promotion owns this session.")
+                self._voice_promotion_mutation_admissions[session_id] = (
+                    self._voice_promotion_mutation_admissions.get(session_id, 0) + 1
+                )
+        try:
+            yield session_id
+        finally:
+            if session_id is not None:
+                with self._voice_promotion_lock:
+                    remaining = (
+                        self._voice_promotion_mutation_admissions.get(session_id, 0) - 1
+                    )
+                    if remaining > 0:
+                        self._voice_promotion_mutation_admissions[session_id] = (
+                            remaining
+                        )
+                    else:
+                        self._voice_promotion_mutation_admissions.pop(session_id, None)
+
+    def _resolve_voice_promotion_destination(
+        self, context: VoicePromotionContext
+    ) -> ResolvedVoicePromotionDestination | None:
+        """Resolve one frozen origin without exposing content in diagnostics.
+
+        The caller owns ``_voice_promotion_lock`` and holds no other store lock.
+        """
+
+        session = self._sessions.get(context.origin.session_id)
+        if session is None:
+            return None
+        session_id = context.origin.session_id
+        if (
+            self._settings_session_incarnations.get(session_id)
+            != context.origin.session_incarnation
+            or session.conversation_binding_revision
+            != context.origin.conversation_binding_revision
+            or self._active_leaf_by_session.get(session_id)
+            != context.expected_native_leaf_id
+        ):
+            return None
+        node = (
+            self._nodes_by_session.get(session_id, {}).get(
+                context.expected_native_leaf_id
+            )
+            if context.expected_native_leaf_id is not None
+            else None
+        )
+        if context.expected_native_leaf_id is not None and node is None:
+            return None
+        current_leaf_persisted_id = (
+            node.persisted_message_id if node is not None else None
+        )
+        origin_conversation_id = context.origin.persisted_conversation_id
+        if origin_conversation_id is not None:
+            if (
+                session.persisted_conversation_id != origin_conversation_id
+                or current_leaf_persisted_id != context.expected_persisted_leaf_id
+            ):
+                return None
+        else:
+            # A temporary dispatch is capture-ineligible forever.  The only
+            # allowed drift is ordinary first persistence by this same live
+            # slot, which preserves the binding revision checked above.
+            if (
+                context.capture_eligible_at_dispatch
+                or context.expected_persisted_leaf_id is not None
+            ):
+                return None
+            if context.expected_native_leaf_id is not None:
+                if session.persisted_conversation_id is None:
+                    if current_leaf_persisted_id is not None:
+                        return None
+                elif not current_leaf_persisted_id:
+                    return None
+        return ResolvedVoicePromotionDestination(
+            session_id=session_id,
+            session_incarnation=context.origin.session_incarnation,
+            persisted_conversation_id=session.persisted_conversation_id,
+            expected_persisted_leaf_id=current_leaf_persisted_id,
+            capture_eligible_at_dispatch=context.capture_eligible_at_dispatch,
+        )
+
+    def try_claim_voice_promotion(
+        self, context: VoicePromotionContext
+    ) -> ConsoleVoicePromotionClaim:
+        """Attempt the synchronous, content-safe voice-promotion claim."""
+
+        if type(context) is not VoicePromotionContext:
+            raise TypeError("context must be a VoicePromotionContext")
+        session_id = context.origin.session_id
+        with self._voice_promotion_lock:
+            if self._voice_promotion_state_replacement is not None:
+                raise RuntimeError("Console state replacement is in progress.")
+            existing = self._voice_promotion_leases.get(session_id)
+            if existing is not None:
+                if (
+                    existing.promotion_id == context.promotion_id
+                    and self._voice_promotion_contexts.get(session_id) == context
+                ):
+                    return ConsoleVoicePromotionClaim.claimed(existing)
+                if existing.promotion_id == context.promotion_id:
+                    return ConsoleVoicePromotionClaim(
+                        ConsoleVoicePromotionClaimStatus.CONFLICT
+                    )
+                return ConsoleVoicePromotionClaim(
+                    ConsoleVoicePromotionClaimStatus.TRANSIENT_CONTENTION
+                )
+            if self._voice_promotion_mutation_admissions.get(session_id, 0):
+                return ConsoleVoicePromotionClaim(
+                    ConsoleVoicePromotionClaimStatus.TRANSIENT_CONTENTION
+                )
+            destination = self._resolve_voice_promotion_destination(context)
+            if destination is None:
+                return ConsoleVoicePromotionClaim(
+                    ConsoleVoicePromotionClaimStatus.CONFLICT
+                )
+            self._voice_promotion_lease_revision += 1
+            lease = ConsoleVoicePromotionLease(
+                lease_id=str(uuid4()),
+                session_id=session_id,
+                session_incarnation=context.origin.session_incarnation,
+                lease_revision=self._voice_promotion_lease_revision,
+                promotion_id=context.promotion_id,
+                expected_native_leaf_id=context.expected_native_leaf_id,
+                destination=destination,
+            )
+            self._voice_promotion_leases[session_id] = lease
+            self._voice_promotion_contexts[session_id] = context
+            return ConsoleVoicePromotionClaim.claimed(lease)
+
+    def _voice_promotion_lease_is_live(
+        self, lease: ConsoleVoicePromotionLease, context: VoicePromotionContext
+    ) -> bool:
+        """Return whether the exact opaque capability remains the session owner."""
+
+        return (
+            self._voice_promotion_leases.get(lease.session_id) == lease
+            and self._voice_promotion_contexts.get(lease.session_id) == context
+            and lease.promotion_id == context.promotion_id
+            and lease.expected_native_leaf_id == context.expected_native_leaf_id
+            and self._resolve_voice_promotion_destination(context) == lease.destination
+        )
+
+    def abort_voice_promotion(self, lease: ConsoleVoicePromotionLease) -> bool:
+        """Idempotently release only the exact currently live capability."""
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        with self._voice_promotion_lock:
+            if self._voice_promotion_leases.get(lease.session_id) != lease:
+                return False
+            if lease.session_id in self._voice_promotion_selection_decisions:
+                return False
+            if lease.session_id in self._voice_promotion_recoveries:
+                return False
+            self._voice_promotion_leases.pop(lease.session_id, None)
+            self._voice_promotion_contexts.pop(lease.session_id, None)
+            return True
+
+    def voice_promotion_recovery(
+        self, lease: ConsoleVoicePromotionLease
+    ) -> ConsoleVoicePromotionRecovery | None:
+        """Read the exact provider-free retry projection for one live lease."""
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        with self._voice_promotion_lock:
+            recovery = self._voice_promotion_recoveries.get(lease.session_id)
+            return (
+                recovery if recovery is not None and recovery.lease == lease else None
+            )
+
+    def rebranch_voice_promotion_recovery(
+        self,
+        lease: ConsoleVoicePromotionLease,
+    ) -> ConsoleVoicePromotionRebranch:
+        """Replace one failed lease with the currently selected exact parent."""
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        with self._voice_promotion_lock:
+            if lease.session_id in self._voice_promotion_selection_decisions:
+                raise RuntimeError("Voice promotion recovery selection is active.")
+            context = self._voice_promotion_contexts.get(lease.session_id)
+            if (
+                self._voice_promotion_leases.get(lease.session_id) != lease
+                or context is None
+            ):
+                raise RuntimeError("Voice promotion recovery is stale or unavailable.")
+            session = self._sessions.get(lease.session_id)
+            if (
+                session is None
+                or self._settings_session_incarnations.get(lease.session_id)
+                != lease.session_incarnation
+                or (
+                    context.origin.persisted_conversation_id is not None
+                    and session.persisted_conversation_id
+                    != context.origin.persisted_conversation_id
+                )
+            ):
+                raise RuntimeError(
+                    "Voice promotion rebranch destination is unavailable."
+                )
+            selected_leaf_id = self._active_leaf_by_session.get(lease.session_id)
+            selected_leaf = (
+                self._nodes_by_session.get(lease.session_id, {}).get(selected_leaf_id)
+                if selected_leaf_id is not None
+                else None
+            )
+            if selected_leaf_id is not None and selected_leaf is None:
+                raise RuntimeError("Voice promotion rebranch parent is unavailable.")
+            selected_persisted_id = (
+                selected_leaf.persisted_message_id
+                if selected_leaf is not None
+                else None
+            )
+            if session.persisted_conversation_id is not None and (
+                selected_leaf_id is not None and selected_persisted_id is None
+            ):
+                raise RuntimeError("Voice promotion rebranch parent is not durable.")
+            if (
+                session.persisted_conversation_id is None
+                and selected_persisted_id is not None
+            ):
+                raise RuntimeError("Voice promotion rebranch binding is invalid.")
+
+            rebranched_context = replace(
+                context,
+                origin=ConsoleSessionBindingOrigin(
+                    session_id=session.id,
+                    session_incarnation=lease.session_incarnation,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=(
+                        session.conversation_binding_revision
+                    ),
+                ),
+                expected_native_leaf_id=selected_leaf_id,
+                expected_persisted_leaf_id=selected_persisted_id,
+            )
+            destination = self._resolve_voice_promotion_destination(rebranched_context)
+            if destination is None:
+                raise RuntimeError("Voice promotion rebranch destination conflicted.")
+            self._voice_promotion_lease_revision += 1
+            rebranched_lease = ConsoleVoicePromotionLease(
+                lease_id=str(uuid4()),
+                session_id=lease.session_id,
+                session_incarnation=lease.session_incarnation,
+                lease_revision=self._voice_promotion_lease_revision,
+                promotion_id=lease.promotion_id,
+                expected_native_leaf_id=selected_leaf_id,
+                destination=destination,
+            )
+            result = ConsoleVoicePromotionRebranch(
+                lease=rebranched_lease,
+                context=rebranched_context,
+            )
+            self._voice_promotion_leases[lease.session_id] = rebranched_lease
+            self._voice_promotion_contexts[lease.session_id] = rebranched_context
+            self._voice_promotion_recoveries.pop(lease.session_id, None)
+            return result
+
+    def select_voice_promotion_recovery_leaf(
+        self,
+        lease: ConsoleVoicePromotionLease,
+        message_id: str | None,
+    ) -> bool:
+        """Select a Rebranch parent using only one exact live recovery lease."""
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        if message_id is not None and (type(message_id) is not str or not message_id):
+            raise ValueError("message_id must be a non-empty string or None")
+        decision_id = str(uuid4())
+        with self._voice_promotion_lock:
+            if lease.session_id in self._voice_promotion_selection_decisions:
+                raise RuntimeError("Voice promotion recovery selection is active.")
+            context = self._voice_promotion_contexts.get(lease.session_id)
+            if (
+                self._voice_promotion_leases.get(lease.session_id) != lease
+                or context is None
+            ):
+                raise RuntimeError("Voice promotion recovery is stale or unavailable.")
+            session = self._sessions.get(lease.session_id)
+            if (
+                session is None
+                or self._settings_session_incarnations.get(lease.session_id)
+                != lease.session_incarnation
+            ):
+                raise RuntimeError("Voice promotion recovery session is unavailable.")
+            nodes = self._nodes_by_session.get(lease.session_id, {})
+            if message_id is not None and message_id not in nodes:
+                raise KeyError(f"Unknown Console message: {message_id}")
+            selected = nodes.get(message_id) if message_id is not None else None
+            selected_persisted_id = (
+                selected.persisted_message_id if selected is not None else None
+            )
+            if session.persisted_conversation_id is not None and (
+                message_id is not None and selected_persisted_id is None
+            ):
+                raise RuntimeError("Voice promotion recovery parent is not durable.")
+            if (
+                session.persisted_conversation_id is None
+                and selected_persisted_id is not None
+            ):
+                raise RuntimeError("Voice promotion recovery binding is invalid.")
+            previous_leaf = self._active_leaf_by_session.get(lease.session_id)
+            if previous_leaf == message_id:
+                return True
+            decision = (
+                decision_id,
+                lease,
+                previous_leaf,
+                message_id,
+                selected_persisted_id,
+            )
+            self._voice_promotion_selection_decisions[lease.session_id] = decision
+
+        try:
+            self._persist_active_leaf(lease.session_id, message_id)
+            with self._voice_promotion_lock:
+                if (
+                    self._voice_promotion_selection_decisions.get(lease.session_id)
+                    != decision
+                    or self._voice_promotion_leases.get(lease.session_id) != lease
+                    or self._voice_promotion_contexts.get(lease.session_id) != context
+                    or self._settings_session_incarnations.get(lease.session_id)
+                    != lease.session_incarnation
+                    or self._active_leaf_by_session.get(lease.session_id)
+                    != previous_leaf
+                ):
+                    raise RuntimeError("Voice promotion recovery selection conflicted.")
+                current = (
+                    self._nodes_by_session.get(lease.session_id, {}).get(message_id)
+                    if message_id is not None
+                    else None
+                )
+                if message_id is not None and (
+                    current is None
+                    or current.persisted_message_id != selected_persisted_id
+                ):
+                    raise RuntimeError("Voice promotion recovery selection conflicted.")
+                self._active_leaf_by_session[lease.session_id] = message_id
+                self._recompute_active_path(lease.session_id)
+                self._bump_payload_revision(lease.session_id)
+                self._bump_conversation_context_epoch(lease.session_id)
+                return True
+        finally:
+            with self._voice_promotion_lock:
+                if (
+                    self._voice_promotion_selection_decisions.get(lease.session_id)
+                    == decision
+                ):
+                    self._voice_promotion_selection_decisions.pop(
+                        lease.session_id,
+                        None,
+                    )
+
+    def _install_voice_promotion_recovery_for_live_lease(
+        self,
+        lease: ConsoleVoicePromotionLease,
+        *,
+        commit: CompletedVoicePairCommit | None = None,
+        retryable: bool,
+    ) -> None:
+        """Retain only the original sealed context for an exact live lease."""
+
+        context = self._voice_promotion_contexts.get(lease.session_id)
+        if (
+            self._voice_promotion_leases.get(lease.session_id) != lease
+            or context is None
+        ):
+            return
+        kind = (
+            ConsoleVoicePromotionRecoveryKind.DURABLE_RETRYABLE
+            if retryable and commit is not None
+            else ConsoleVoicePromotionRecoveryKind.TEMPORARY_RETRYABLE
+            if retryable
+            else ConsoleVoicePromotionRecoveryKind.VALIDATION_BLOCKED
+        )
+        self._voice_promotion_recoveries[lease.session_id] = (
+            ConsoleVoicePromotionRecovery(
+                lease=lease,
+                context=context,
+                commit=commit
+                if kind is ConsoleVoicePromotionRecoveryKind.DURABLE_RETRYABLE
+                else None,
+                kind=kind,
+            )
+        )
+
+    def discard_voice_promotion_recovery(
+        self, lease: ConsoleVoicePromotionLease
+    ) -> bool:
+        """Explicitly discard one exact failed publication and its ownership."""
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        with self._voice_promotion_lock:
+            if lease.session_id in self._voice_promotion_selection_decisions:
+                raise RuntimeError("Voice promotion recovery selection is active.")
+            recovery = self._voice_promotion_recoveries.get(lease.session_id)
+            if recovery is None or recovery.lease != lease:
+                return False
+            self._voice_promotion_recoveries.pop(lease.session_id, None)
+            self._voice_promotion_leases.pop(lease.session_id, None)
+            self._voice_promotion_contexts.pop(lease.session_id, None)
+            return True
+
+    def retry_voice_promotion_recovery(
+        self, lease: ConsoleVoicePromotionLease
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Retry one failed in-memory projection without contacting a provider."""
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        with self._voice_promotion_lock:
+            if lease.session_id in self._voice_promotion_selection_decisions:
+                raise RuntimeError("Voice promotion recovery selection is active.")
+            recovery = self._voice_promotion_recoveries.get(lease.session_id)
+            if recovery is None or recovery.lease != lease:
+                raise RuntimeError("Voice promotion recovery is stale or unavailable.")
+            if recovery.kind is ConsoleVoicePromotionRecoveryKind.VALIDATION_BLOCKED:
+                raise RuntimeError(
+                    "Voice promotion recovery requires explicit discard or correction."
+                )
+            if recovery.kind is ConsoleVoicePromotionRecoveryKind.TEMPORARY_RETRYABLE:
+                return self._publish_voice_pair(
+                    lease=lease,
+                    context=recovery.context,
+                    user_id=derive_voice_promotion_identities(
+                        recovery.context.promotion_id
+                    ).user_message_id,
+                    assistant_id=derive_voice_promotion_identities(
+                        recovery.context.promotion_id
+                    ).assistant_message_id,
+                    persisted=False,
+                    commit=None,
+                )
+            assert recovery.commit is not None
+            return self._publish_voice_pair(
+                lease=lease,
+                context=recovery.context,
+                user_id=recovery.commit.user_message_id,
+                assistant_id=recovery.commit.assistant_message_id,
+                persisted=True,
+                commit=recovery.commit,
+            )
+
+    def _publish_voice_pair(
+        self,
+        *,
+        lease: ConsoleVoicePromotionLease,
+        context: VoicePromotionContext,
+        user_id: str,
+        assistant_id: str,
+        persisted: bool,
+        commit: CompletedVoicePairCommit | None,
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Publish a complete pair in one in-memory critical section."""
+
+        if lease.session_id in self._voice_promotion_selection_decisions:
+            raise RuntimeError("Voice promotion recovery selection is active.")
+        if not self._voice_promotion_lease_is_live(lease, context):
+            raise RuntimeError("Voice promotion lease is stale or conflicted.")
+        session_id = lease.session_id
+        pair_ids = (user_id, assistant_id)
+        occupied_pair_id = (
+            user_id == assistant_id
+            or any(
+                message_id in mapping
+                for message_id in pair_ids
+                for mapping in (
+                    self._message_session_index,
+                    self._native_parent_by_message,
+                    self._message_speech_revisions,
+                    self._message_completion_generations,
+                )
+            )
+            or any(
+                message_id in nodes
+                for message_id in pair_ids
+                for nodes in self._nodes_by_session.values()
+            )
+        )
+        if occupied_pair_id:
+            self._install_voice_promotion_recovery_for_live_lease(
+                lease, commit=None, retryable=False
+            )
+            raise RuntimeError("Voice promotion pair identity is already occupied.")
+        prior_leaf = self._active_leaf_by_session.get(session_id)
+        # Keep an exact local rollback image.  Publishing deliberately calls no
+        # persistence seam; an injected in-memory failure must therefore leave
+        # neither a half pair nor a changed active-path projection behind.
+        prior_nodes = dict(self._nodes_by_session[session_id])
+        prior_children = {
+            parent_id: list(children)
+            for parent_id, children in self._children_by_parent[session_id].items()
+        }
+        prior_messages = list(self._messages_by_session[session_id])
+
+        def prior_entries(mapping: Mapping[str, Any]) -> dict[str, tuple[bool, Any]]:
+            return {
+                message_id: (message_id in mapping, mapping.get(message_id))
+                for message_id in pair_ids
+            }
+
+        prior_native_parents = prior_entries(self._native_parent_by_message)
+        prior_message_sessions = prior_entries(self._message_session_index)
+        prior_speech_revisions = prior_entries(self._message_speech_revisions)
+        prior_completion_generations = prior_entries(
+            self._message_completion_generations
+        )
+        prior_payload_revision = (
+            session_id in self._payload_revisions,
+            self._payload_revisions.get(session_id),
+        )
+        prior_context_epoch = (
+            session_id in self._conversation_context_epochs,
+            self._conversation_context_epochs.get(session_id),
+        )
+        prior_updated_at = self._sessions[session_id].updated_at
+        user = ConsoleChatMessage(
+            id=user_id,
+            persisted_message_id=user_id if persisted else None,
+            role=ConsoleMessageRole.USER,
+            content=context.user_text,
+            status="complete",
+        )
+        assistant = ConsoleChatMessage(
+            id=assistant_id,
+            persisted_message_id=assistant_id if persisted else None,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=context.assistant_text,
+            status="complete",
+            usage=ProviderUsage.from_json(context.usage_json),
+            assistant_generation_state="complete",
+        )
+        if commit is not None:
+            assistant.metadata = MessageMetadata(
+                terminal_receipt_id=commit.terminal_receipt_id
+            )
+        if persisted:
+            user.parent_message_id = lease.destination.expected_persisted_leaf_id
+            assistant.parent_message_id = user.id
+        try:
+            self._register_tree_node(session_id, user, parent_native_id=prior_leaf)
+            self._register_tree_node(session_id, assistant, parent_native_id=user.id)
+            self._active_leaf_by_session[session_id] = assistant.id
+            self._recompute_active_path(session_id)
+            self._bump_payload_revision(session_id)
+            self._sessions[session_id].updated_at = _utc_now_iso()
+        except BaseException:
+            self._nodes_by_session[session_id] = prior_nodes
+            self._children_by_parent[session_id] = prior_children
+            self._messages_by_session[session_id] = prior_messages
+            for mapping, prior in (
+                (self._native_parent_by_message, prior_native_parents),
+                (self._message_session_index, prior_message_sessions),
+                (self._message_speech_revisions, prior_speech_revisions),
+                (self._message_completion_generations, prior_completion_generations),
+            ):
+                for message_id, (present, value) in prior.items():
+                    if present:
+                        mapping[message_id] = value
+                    else:
+                        mapping.pop(message_id, None)
+            self._active_leaf_by_session[session_id] = prior_leaf
+            for mapping, (present, value) in (
+                (self._payload_revisions, prior_payload_revision),
+                (self._conversation_context_epochs, prior_context_epoch),
+            ):
+                if present:
+                    mapping[session_id] = value
+                else:
+                    mapping.pop(session_id, None)
+            self._sessions[session_id].updated_at = prior_updated_at
+            self._install_voice_promotion_recovery_for_live_lease(
+                lease,
+                commit=commit,
+                retryable=True,
+            )
+            raise
+        self._voice_promotion_leases.pop(session_id, None)
+        self._voice_promotion_contexts.pop(session_id, None)
+        self._voice_promotion_recoveries.pop(session_id, None)
+        return self._snapshot(user), self._snapshot(assistant)
+
+    def publish_temporary_voice_pair(
+        self, lease: ConsoleVoicePromotionLease, context: VoicePromotionContext
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Atomically expose a completed temporary pair without persistence."""
+
+        if (
+            type(lease) is not ConsoleVoicePromotionLease
+            or type(context) is not VoicePromotionContext
+        ):
+            raise TypeError("lease and context must be voice-promotion values")
+        with self._voice_promotion_lock:
+            try:
+                if lease.destination.persisted_conversation_id is not None:
+                    raise RuntimeError(
+                        "Temporary voice publication requires a temporary lease."
+                    )
+                identities = derive_voice_promotion_identities(context.promotion_id)
+                return self._publish_voice_pair(
+                    lease=lease,
+                    context=context,
+                    user_id=identities.user_message_id,
+                    assistant_id=identities.assistant_message_id,
+                    persisted=False,
+                    commit=None,
+                )
+            except BaseException:
+                recovery = self._voice_promotion_recoveries.get(lease.session_id)
+                if recovery is None or recovery.lease != lease:
+                    self._install_voice_promotion_recovery_for_live_lease(
+                        lease, retryable=False
+                    )
+                raise
+
+    def publish_durable_voice_pair(
+        self,
+        lease: ConsoleVoicePromotionLease,
+        commit: CompletedVoicePairCommit,
+        context: VoicePromotionContext,
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Expose an already-committed durable pair without another DB write."""
+
+        if (
+            type(lease) is not ConsoleVoicePromotionLease
+            or type(commit) is not CompletedVoicePairCommit
+            or type(context) is not VoicePromotionContext
+        ):
+            raise TypeError("lease, commit, and context must be voice-promotion values")
+        with self._voice_promotion_lock:
+            try:
+                if (
+                    lease.destination.persisted_conversation_id
+                    != commit.conversation_id
+                    or commit.active_leaf_message_id != commit.assistant_message_id
+                ):
+                    raise RuntimeError(
+                        "Durable voice commit does not match its claimed destination."
+                    )
+                identities = derive_voice_promotion_identities(context.promotion_id)
+                if (
+                    commit.user_message_id != identities.user_message_id
+                    or commit.assistant_message_id != identities.assistant_message_id
+                    or commit.terminal_receipt_id != identities.terminal_receipt_id
+                ):
+                    raise RuntimeError(
+                        "Durable voice commit does not match its promotion identity."
+                    )
+                return self._publish_voice_pair(
+                    lease=lease,
+                    context=context,
+                    user_id=commit.user_message_id,
+                    assistant_id=commit.assistant_message_id,
+                    persisted=True,
+                    commit=commit,
+                )
+            except BaseException:
+                recovery = self._voice_promotion_recoveries.get(lease.session_id)
+                if recovery is None or recovery.lease != lease:
+                    self._install_voice_promotion_recovery_for_live_lease(
+                        lease, commit=None, retryable=False
+                    )
+                raise
 
     def _begin_fork_source_transition(self, session_id: str) -> None:
         """Register one nested source transition before any owned mutation."""
@@ -15133,11 +16301,9 @@ class ConsoleChatStore:
     def _mark_message_complete(self, message_id: str) -> ConsoleChatMessage:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._prime_unpersisted_terminal_receipt(message)
         self._finalize_character_emote_capture(message, outcome="complete")
         self._materialize_stream_buffer(message)
-        retry_status = message.status
-        retry_generation_state = message.assistant_generation_state
-        retry_thinking = message.thinking
         session_id = self._message_session_index[message.id]
         finalizer = self._terminal_citation_finalizers.pop(message.id, None)
         terminal_persistence = (
@@ -15184,27 +16350,40 @@ class ConsoleChatStore:
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
-            try:
-                self._persist_terminal_generation(message)
-            except Exception:
-                if message.persisted_message_id is None:
-                    message.status = retry_status
-                    message.assistant_generation_state = retry_generation_state
-                    message.thinking = retry_thinking
-                    self._pending_persistence_message_ids.add(message.id)
-                raise
+            self._persist_existing_terminal(message, terminal_outcome="complete")
             self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
 
+        prior_metadata = self._terminal_metadata_snapshot(message)
+        terminal_receipt_id = (
+            self._ensure_terminal_receipt(message.id)
+            if self.persistence is not None
+            else None
+        )
+        terminal_state_committed = False
         try:
             if not message.content:
+                had_persisted_owner = message.persisted_message_id is not None
                 message.status = "complete"
                 message.assistant_generation_state = "complete"
                 self._settle_thinking_envelope(message, "complete")
                 self._bump_message_speech_revision(message.id)
                 self._bump_payload_revision(session_id)
                 self._settle_failed_retry_context(message, provider_visible=True)
-                self._persist_terminal_generation(message)
+                persisted = self._persist_existing_message(
+                    message,
+                    preserve_provider_continuation=True,
+                    terminal_receipt_id=terminal_receipt_id,
+                    terminal_outcome="complete",
+                )
+                if persisted and message.persisted_message_id is not None:
+                    self._commit_terminal_receipt(message.id)
+                elif had_persisted_owner:
+                    raise ConsoleDispatchSettlementError(
+                        "Terminal assistant persistence was refused."
+                    )
+                else:
+                    self._restore_terminal_metadata(message, prior_metadata)
                 # ``_persist_existing_message`` only reaches its own
                 # exchanges hook when the message ALREADY had a
                 # persisted_message_id -- an empty-content deferred message
@@ -15215,6 +16394,7 @@ class ConsoleChatStore:
                 if message.exchanges:
                     self._persist_exchanges_only(message)
                 self._record_message_completed(session_id, message.id)
+                terminal_state_committed = True
                 return self._snapshot(message)
 
             citation_write = None
@@ -15243,7 +16423,7 @@ class ConsoleChatStore:
                     # `citation_write` at all. Guarding this flush on one would
                     # leave the durable row empty while the in-memory message
                     # reads complete -- the answer lost, silently.
-                    self._persist_terminal_generation(message)
+                    self._persist_existing_terminal(message, terminal_outcome="complete")
                 # A checkpointed row with no sealed citation is complete after
                 # the UPDATE above.  Calling create_message again would try to
                 # insert the same stable id and turn a successful durable
@@ -15259,9 +16439,15 @@ class ConsoleChatStore:
                         citation_write=citation_write,
                         force_stable_message_id=True,
                         terminal_persistence=True,
+                        terminal_receipt_id=terminal_receipt_id,
+                        terminal_outcome="complete",
                     )
                 if not persisted:
                     raise RuntimeError("Terminal message persistence did not commit.")
+                if message.persisted_message_id is not None:
+                    self._commit_terminal_receipt(message.id)
+                else:
+                    self._restore_terminal_metadata(message, prior_metadata)
                 # This branch creates the durable row directly via
                 # ``_persist_new_message`` rather than
                 # ``_persist_existing_message``, so it never passes through
@@ -15270,19 +16456,14 @@ class ConsoleChatStore:
                 if message.exchanges:
                     self._persist_exchanges_only(message)
             except Exception:
-                if finalizer is None and message.persisted_message_id is None:
-                    message.status = retry_status
-                    message.assistant_generation_state = retry_generation_state
-                    message.thinking = retry_thinking
-                    self._pending_persistence_message_ids.add(message.id)
-                elif finalizer is not None:
-                    self._pending_persistence_message_ids.discard(message.id)
                 logger.warning("terminal_citation_persistence_abandoned")
                 raise
             self._record_message_completed(session_id, message.id)
+            terminal_state_committed = True
             return self._snapshot(message)
         finally:
-            self.clear_terminal_citation_state(message.id)
+            if terminal_state_committed:
+                self.clear_terminal_citation_state(message.id)
 
     def mark_message_stopped(self, message_id: str) -> ConsoleChatMessage:
         """Serialize a stopped terminal projection for one generation owner."""
@@ -15340,6 +16521,7 @@ class ConsoleChatStore:
             message.assistant_generation_state = "stopped"
             self._settle_thinking_envelope(message, "stopped")
             self._variant_restored_message_ids.discard(message.id)
+        self._pending_terminal_receipts.pop(message.id, None)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(session_id)
         self._settle_failed_retry_context(
@@ -15393,6 +16575,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._prime_unpersisted_terminal_receipt(message)
         self._finalize_character_emote_capture(message, outcome="failed")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -15406,6 +16589,7 @@ class ConsoleChatStore:
             self._restore_variant_stream_base(message, base)
             self._variant_restored_message_ids.add(message.id)
             self._invalidate_generation_attempt_locked(message.id)
+            self._clear_terminal_receipt_metadata(message)
         else:
             message.status = "failed"
             message.assistant_generation_state = "failed"
@@ -15418,7 +16602,7 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         if not self._settle_owned_dispatch_terminal(message, "failed"):
-            self._persist_terminal_generation(message)
+            self._persist_existing_terminal(message, terminal_outcome="failed")
             if message.persisted_message_id is None:
                 self._flush_pending_trace_events_to_parent(message)
         self._settle_provider_trace_settlements(
@@ -15532,6 +16716,7 @@ class ConsoleChatStore:
         message.thinking_warning = None
         message.thinking_actions_enabled = True
         message.status = "pending"
+        self._begin_new_terminal_attempt(message)
         if (
             message.metadata is not None
             and message.metadata.character_emote is not None
@@ -15719,6 +16904,8 @@ class ConsoleChatStore:
             ConsolePromotionTransactionContribution
         ] = (),
         on_durable_commit: Callable[[], object] | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> tuple[bool, int | None]:
         """Persist a candidate without changing its live row owner."""
         current = current or self._generation_variant(message)
@@ -15869,7 +17056,11 @@ class ConsoleChatStore:
             "expected_version": message.provider_continuation_message_version,
         }
         metadata_committed_in_transaction = False
-        if transaction_contributions or on_durable_commit is not None:
+        if (
+            transaction_contributions
+            or on_durable_commit is not None
+            or terminal_receipt_id is not None
+        ):
             transaction_writer = getattr(
                 self.persistence,
                 "replace_assistant_generation_projection_with_contributions",
@@ -15889,6 +17080,8 @@ class ConsoleChatStore:
                 update_metadata=candidate.metadata is not None,
                 contributions=tuple(transaction_contributions),
                 on_durable_commit=on_durable_commit,
+                terminal_receipt_id=terminal_receipt_id,
+                terminal_outcome=terminal_outcome,
                 **generation_kwargs,
             )
             metadata_committed_in_transaction = candidate.metadata is not None
@@ -16022,8 +17215,20 @@ class ConsoleChatStore:
             )
         )
 
-    def _persist_terminal_generation(self, message: ConsoleChatMessage) -> None:
+    def _persist_terminal_generation(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        force_metadata_write: bool = False,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
+    ) -> None:
         """Persist a terminal assistant as one paired generation projection."""
+        if (
+            message.persisted_message_id is None
+            and message.id not in self._pending_persistence_message_ids
+        ):
+            return
         canvas_settlement = None
         canvas_contributions: tuple[ConsolePromotionTransactionContribution, ...] = ()
         canvas_controller = self.canvas_turn_controller
@@ -16069,6 +17274,8 @@ class ConsoleChatStore:
                 message.role is ConsoleMessageRole.ASSISTANT
                 and self.persist_selected_generation(
                     message.id,
+                    terminal_receipt_id=terminal_receipt_id,
+                    terminal_outcome=terminal_outcome,
                     transaction_contributions=canvas_contributions,
                     on_durable_commit=(
                         lambda: canvas_controller.confirm_exact_settlement(
@@ -16079,7 +17286,11 @@ class ConsoleChatStore:
                     else None,
                 )
             ) and not self._persist_existing_message(
-                message, preserve_provider_continuation=True
+                message,
+                force_metadata_write=force_metadata_write,
+                preserve_provider_continuation=True,
+                terminal_receipt_id=terminal_receipt_id,
+                terminal_outcome=terminal_outcome,
             ):
                 raise RuntimeError("Terminal generation persistence did not commit.")
         except Exception:
@@ -16274,6 +17485,7 @@ class ConsoleChatStore:
             ),
             prior_assistant_generation_state=message.assistant_generation_state,
         )
+        self._begin_new_terminal_attempt(message)
         # A new generation starts here, so this message's next usage attach
         # is legitimate again even if an earlier regenerate was abandoned.
         self._variant_restored_message_ids.discard(message.id)
@@ -16380,16 +17592,13 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        if not self.persist_selected_generation(message.id):
-            persisted = self._persist_existing_message(
-                message, force_metadata_write=provenance_cleared
-            )
-            if (
-                self.persistence is not None
-                and message.persisted_message_id is not None
-                and not persisted
-            ):
-                raise RuntimeError("Variant finalization persistence did not commit.")
+        # The outer dev generation boundary owns rollback, including its
+        # per-owner counter contributions and post-commit reconciliation.
+        self._persist_existing_terminal(
+            message,
+            terminal_outcome="complete",
+            force_metadata_write=provenance_cleared,
+        )
         self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
@@ -17457,7 +18666,12 @@ class ConsoleChatStore:
         return session, persisted
 
     def _persist_new_message_or_defer(
-        self, *, session_id: str, message: ConsoleChatMessage
+        self,
+        *,
+        session_id: str,
+        message: ConsoleChatMessage,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> None:
         if self.persistence is None:
             return
@@ -17469,7 +18683,12 @@ class ConsoleChatStore:
             self._pending_persistence_message_ids.add(message.id)
             self.persist_session_if_needed(session_id)
             return
-        self._persist_new_message(session_id=session_id, message=message)
+        self._persist_new_message(
+            session_id=session_id,
+            message=message,
+            terminal_receipt_id=terminal_receipt_id,
+            terminal_outcome=terminal_outcome,
+        )
 
     def register_provider_trace_settlement(
         self,
@@ -18023,6 +19242,8 @@ class ConsoleChatStore:
         citation_write: SealedCitationWrite | None = None,
         force_stable_message_id: bool = False,
         terminal_persistence: bool = False,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> bool:
         if self.persistence is None:
             return False
@@ -18174,6 +19395,30 @@ class ConsoleChatStore:
             )
         ):
             create_kwargs["metadata_json"] = message.metadata.to_json()
+        if (
+            terminal_receipt_id is not None
+            and self._persistence_accepts_kwarg(
+                self.persistence.create_message, "terminal_receipt_id"
+            )
+        ):
+            create_kwargs["terminal_receipt_id"] = terminal_receipt_id
+        if (
+            terminal_outcome is not None
+            and self._persistence_accepts_kwarg(
+                self.persistence.create_message, "terminal_outcome"
+            )
+        ):
+            create_kwargs["terminal_outcome"] = terminal_outcome
+        if (
+            terminal_outcome is not None
+            and message.assistant_generation_state is not None
+            and self._persistence_accepts_kwarg(
+                self.persistence.create_message, "assistant_generation_state"
+            )
+        ):
+            create_kwargs["assistant_generation_state"] = (
+                message.assistant_generation_state
+            )
         if citation_write is not None:
             create_kwargs["citation_write"] = citation_write
         try:
@@ -18185,8 +19430,9 @@ class ConsoleChatStore:
                 )
                 if persisted_message_id is None:
                     self._settle_provider_trace_settlements(message.id, None)
-                    self._pending_persistence_message_ids.add(message.id)
-                    return False
+                    raise ConsoleDispatchSettlementError(
+                        "Terminal assistant persistence was refused."
+                    )
             else:
                 persisted_message_id = self.persistence.create_message(**create_kwargs)
         except Exception:
@@ -18458,6 +19704,8 @@ class ConsoleChatStore:
             ConsolePromotionTransactionContribution
         ] = (),
         on_durable_commit: Callable[[], object] | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> bool:
         """Atomically project the complete selected assistant generation."""
         with self._generation_owner_scope(message_id):
@@ -18467,6 +19715,8 @@ class ConsoleChatStore:
                     message_id,
                     transaction_contributions=transaction_contributions,
                     on_durable_commit=on_durable_commit,
+                    terminal_receipt_id=terminal_receipt_id,
+                    terminal_outcome=terminal_outcome,
                 ),
             )
 
@@ -18621,6 +19871,8 @@ class ConsoleChatStore:
             ConsolePromotionTransactionContribution
         ] = (),
         on_durable_commit: Callable[[], object] | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> bool:
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
@@ -18632,6 +19884,8 @@ class ConsoleChatStore:
             current=current,
             transaction_contributions=transaction_contributions,
             on_durable_commit=on_durable_commit,
+            terminal_receipt_id=terminal_receipt_id,
+            terminal_outcome=terminal_outcome,
         )
         if not durably_committed:
             return False
@@ -18650,13 +19904,19 @@ class ConsoleChatStore:
         clear_generation_provenance: bool = False,
         enqueue_sync: bool = True,
         expected_version: int | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> bool:
         if self.persistence is None:
             return True
         if message.persisted_message_id is None:
             if getattr(self.persistence, "console_process_local_only", False) is True:
                 return True
-            self._persist_pending_message_if_ready(message)
+            self._persist_pending_message_if_ready(
+                message,
+                terminal_receipt_id=terminal_receipt_id,
+                terminal_outcome=terminal_outcome,
+            )
             return message.persisted_message_id is not None or not message.content
         update_kwargs: dict[str, Any] = dict(
             message_id=message.persisted_message_id,
@@ -18722,6 +19982,33 @@ class ConsoleChatStore:
             ):
                 return False
             update_kwargs["expected_version"] = expected_version
+        if (
+            terminal_receipt_id is not None
+            and self._persistence_accepts_kwarg(
+                self.persistence.update_message_content,
+                "terminal_receipt_id",
+            )
+        ):
+            update_kwargs["terminal_receipt_id"] = terminal_receipt_id
+        if (
+            terminal_outcome is not None
+            and self._persistence_accepts_kwarg(
+                self.persistence.update_message_content,
+                "terminal_outcome",
+            )
+        ):
+            update_kwargs["terminal_outcome"] = terminal_outcome
+        if (
+            terminal_outcome is not None
+            and message.assistant_generation_state is not None
+            and self._persistence_accepts_kwarg(
+                self.persistence.update_message_content,
+                "assistant_generation_state",
+            )
+        ):
+            update_kwargs["assistant_generation_state"] = (
+                message.assistant_generation_state
+            )
         had_provider_continuation = message.provider_continuation is not None
         if not self.persistence.update_message_content(**update_kwargs):
             return False
@@ -18811,16 +20098,28 @@ class ConsoleChatStore:
                 "Failed to project Sync v2 continuation owner after local mutation"
             )
 
-    def _persist_pending_message_if_ready(self, message: ConsoleChatMessage) -> None:
+    def _persist_pending_message_if_ready(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
+    ) -> bool:
         if (
             self.persistence is None
             or message.id not in self._pending_persistence_message_ids
             or message.id in self._terminal_persistence_deferred_ids
             or not message.content
         ):
-            return
+            return False
         session_id = self._message_session_index[message.id]
-        self._persist_new_message(session_id=session_id, message=message)
+        self._persist_new_message(
+            session_id=session_id,
+            message=message,
+            terminal_receipt_id=terminal_receipt_id,
+            terminal_outcome=terminal_outcome,
+        )
+        return message.persisted_message_id is not None
 
     def ensure_provider_continuation_durable(
         self,
@@ -19255,7 +20554,7 @@ class ConsoleChatStore:
         variant_metadata = self._sync_variant_metadata(message)
         stable_key = f"{conversation_id}:{message.persisted_message_id}"
         try:
-            result = self.sync_v2_chat_producer.enqueue_chat_message(
+            enqueue_kwargs: dict[str, Any] = dict(
                 server_profile_id=self.sync_v2_server_profile_id,
                 authenticated_principal_id=self.sync_v2_authenticated_principal_id,
                 workspace_scope=self.sync_v2_workspace_scope,
@@ -19271,6 +20570,13 @@ class ConsoleChatStore:
                 selected_variant_id=variant_metadata["selected_variant_id"],
                 base_version=self._sync_v2_message_versions.get(stable_key),
                 entity_version=None,
+            )
+            if message.assistant_generation_state is not None:
+                enqueue_kwargs["assistant_generation_state"] = (
+                    message.assistant_generation_state
+                )
+            result = self.sync_v2_chat_producer.enqueue_chat_message(
+                **enqueue_kwargs
             )
             self._record_sync_v2_message_version(stable_key, result)
         except Exception:
@@ -19621,6 +20927,7 @@ class ConsoleChatStore:
         self._message_speech_revisions.pop(message_id, None)
         self._message_completion_generations.pop(message_id, None)
         self._pending_persistence_message_ids.discard(message_id)
+        self._pending_terminal_receipts.pop(message_id, None)
         self.clear_terminal_citation_state(message_id)
         self._active_leaf_by_session[session_id] = previous_active_leaf
         self._sessions[session_id].updated_at = previous_updated_at
@@ -20240,6 +21547,11 @@ class ConsoleChatStore:
     def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
         """Fold buffered chunks and persist a newly materialized pending row."""
         if self._fold_stream_buffer_without_persistence(message):
+            if message.id in self._pending_terminal_receipts:
+                # A receipt is only valid as part of its terminal row+mark
+                # transaction. Leave the folded body live until that owner
+                # persists it atomically rather than writing an orphan first.
+                return
             self._persist_pending_message_if_ready(message)
 
     @staticmethod

@@ -228,17 +228,19 @@ class _DraftSegment:
 
 @dataclass
 class ConsoleDraftStash:
-    """A draft captured synchronously at the send keypress (TASK-340).
+    """A revision-pinned draft captured synchronously for send admission.
 
-    Holds the composer's real segment objects so paste provenance and
-    collapse state survive a restore, plus the canonical text the send
-    path uses as its payload.
+    The snapshot is intentionally non-destructive.  ``edit_serial`` and
+    ``generation`` identify the accepted revision while ``segments`` preserve
+    paste provenance if a caller still needs the legacy restore path.
     """
 
     segments: list[_DraftSegment]
     text: str
     has_paste: bool
     raw_cli_prefix_typed: bool = False
+    edit_serial: int = 0
+    generation: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -3807,20 +3809,16 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
-    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
-        """Capture and clear the draft synchronously at the send keypress.
+    def capture_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Capture the current draft for admission without mutating it.
 
-        Keystrokes processed after this call land in a fresh, empty draft —
-        they can never fold into the captured send payload (TASK-340). A
-        rejected send hands the stash back via ``restore_stashed_draft``.
+        The caller commits this exact revision only after app-owned runtime
+        custody succeeds.  Text typed after capture therefore remains live
+        and is preserved by :meth:`commit_captured_draft`.
 
         Returns:
-            The captured stash, or ``None`` when the draft is empty (an
-            image-only send has nothing to capture or restore).
+            The captured revision, or ``None`` when the draft is empty.
         """
-        # A send keypress is a draft-scope barrier even when there is no text
-        # to stash (for example, an attachment-only send).
-        self.invalidate_improvement_undo()
         text = self.draft_text()
         raw_cli_prefix_typed = self._raw_cli_prefix_typed and text.startswith("! ")
         self._raw_cli_prefix_stage_one = False
@@ -3839,8 +3837,70 @@ class ConsoleComposerBar(Horizontal):
             text=text,
             has_paste=self.has_paste_segments(),
             raw_cli_prefix_typed=raw_cli_prefix_typed,
+            edit_serial=self._user_edit_serial,
+            generation=self._draft_generation,
         )
-        self.clear_draft()
+        return stash
+
+    def commit_captured_draft(self, stash: ConsoleDraftStash | None) -> bool:
+        """Remove only a captured revision after runtime accepts custody.
+
+        A later edit is preserved when it follows the captured payload.  If
+        the captured prefix itself changed, the commit fails closed and leaves
+        the whole live draft untouched.
+
+        Args:
+            stash: Snapshot returned by :meth:`capture_draft_for_send`.
+
+        Returns:
+            True when the captured revision was committed, otherwise False.
+        """
+        self.invalidate_improvement_undo()
+        if stash is None:
+            self.clear_history()
+            return True
+        current = self.draft_text()
+        if (
+            self._draft_generation != stash.generation
+            or not current.startswith(stash.text)
+            or (
+                current == stash.text
+                and self._user_edit_serial != stash.edit_serial
+            )
+        ):
+            return False
+        if not self._segments_initialized:
+            self._segments = [_DraftSegment(current)] if current else []
+            self._segments_initialized = True
+        remaining = len(stash.text)
+        kept: list[_DraftSegment] = []
+        for segment in self._segments:
+            if remaining >= len(segment.text):
+                remaining -= len(segment.text)
+                continue
+            if remaining:
+                kept.append(replace(segment, text=segment.text[remaining:]))
+                remaining = 0
+            else:
+                kept.append(replace(segment))
+        if remaining:
+            return False
+        self._advance_draft_generation()
+        self._clear_draft_selection()
+        self._segments = kept
+        self._cursor_index = len(self._canonical_draft_text())
+        self._coalescing_active = False
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+        self.clear_history()
+        return True
+
+    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Legacy destructive wrapper around capture followed by commit."""
+        stash = self.capture_draft_for_send()
+        self.commit_captured_draft(stash)
         return stash
 
     def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:

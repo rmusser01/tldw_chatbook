@@ -101,6 +101,26 @@ gateway: launch mode had been inferred from whether authentication produced a
 client. Retaining the served marker independently and refusing native gateway
 creation made that regression pass. A bad protocol version must disable the
 affected transport, not select a different listener or authority boundary.
+---
+
+## Trace import evidence must cross the real producer and reconstruction boundaries
+
+**TASK-23175 current-dev voice integration, 2026-09-07.** Green row-shape
+and recording-only repository tests missed duplicated cross-turn surfaces,
+multi-message retry ordering and component-tag collisions. Real
+`ConsoleTraceService` reconstruction after consecutive imports exposed them.
+A separate real saved-controller → gateway seal → winning claim → SQLite
+check found that generated inline headers did not share the sanitized prompt's
+privacy projection, despite apparently correct captured body text.
+
+**What to do.** Assert exact reconstructed surfaces across consecutive turns,
+retries, inherited history and ordinary continuation, not just inserted rows.
+Carry actual transformed producer output through the production sealing and
+durable import boundary, and compare exact sanitized headers as well as bodies.
+Keep malformed bounded-span inputs fail-closed; a recording fake cannot prove
+production privacy or reconstruction behavior.
+
+---
 
 ## Index-plan guards must accept the names the DDL actually uses
 

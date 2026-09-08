@@ -142,6 +142,7 @@ from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleLifecycleImpact,
+    ConsoleLifecycleRevisionChanged,
     ConsoleMessageRole,
     ConsoleChatMessage,
 )
@@ -159,12 +160,18 @@ from ...Chat.console_chat_store import (
 )
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
+    capture_character_authority,
+    capture_mcp_definition_maximum,
+    capture_prompt_transform_inputs,
+    capture_project_instruction_authority,
+    capture_skill_context_maximum,
     resolve_project_instruction_binding,
 )
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
+from ...Chat.console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
     resolve_console_expression_state,
@@ -209,7 +216,12 @@ from ...Chat.console_switcher_state import (
 )
 from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
-from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
+from ...Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    capture_change_review_admission,
+    resolve_turn_persona_policy_rules,
+    resolve_turn_tool_policy_profile_id,
+)
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
     VisualIdentityResolution,
@@ -222,7 +234,11 @@ from ...Character_Chat.persona_visual_identity import (
 )
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...config import (
+    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     coerce_bool_setting,
+    coerce_int_setting,
     get_runtime_config_snapshot,
     run_if_runtime_config_generation_current,
 )
@@ -886,6 +902,7 @@ class ConsoleSessionController:
         self._console_project_instruction_refresh_completed: dict[
             str, tuple[tuple[Any, Any], float]
         ] = {}
+        self._project_instruction_decision_modals: dict[str, Any] = {}
         self._first_chat_handoff_notified_revision: int | None = None
         self._fork_validation_generation = 0
         self._active_fork_request: _ConsoleForkRequest | None = None
@@ -2503,39 +2520,51 @@ class ConsoleSessionController:
                 screen from the button id.
         """
 
-        async def _complete_close() -> None:
+        async def _complete_close(impact: ConsoleSessionCloseImpact) -> bool:
             store = self._ensure_console_chat_store()
             try:
                 closing_ids = [
                     message.id for message in store.messages_for_session(session_id)
                 ]
             except KeyError:
-                return
+                return True
+            try:
+                await self._console_runtime().close_session(
+                    session_id,
+                    expected_revision=impact.lifecycle.revision,
+                )
+            except ConsoleLifecycleRevisionChanged:
+                return False
             _state, cache = self._ensure_console_image_view()
             cache.evict_session(closing_ids)
-            self._ensure_console_chat_controller().close_session(session_id)
             self._clear_session_manual_reactions(session_id)
             self._console_undo_histories.pop(session_id, None)
             self._console_project_instruction_display_cache.pop(session_id, None)
             self._console_project_instruction_refresh_inflight.pop(session_id, None)
             self._console_project_instruction_refresh_completed.pop(session_id, None)
             await self._sync_native_console_chat_ui()
+            return True
 
         while True:
             impact = self._session_close_impact(session_id)
             if impact is None:
                 return
             if not impact.has_loss_risk:
-                await _complete_close()
-                return
+                if await _complete_close(impact):
+                    return
+                self.app_instance.notify(
+                    "Session activity changed; review the updated close impact.",
+                    severity="warning",
+                )
+                continue
             if not await self._confirm_session_close(impact):
                 return
             current = self._session_close_impact(session_id)
             if current is None:
                 return
             if current == impact:
-                await _complete_close()
-                return
+                if await _complete_close(impact):
+                    return
             self.app_instance.notify(
                 "Session activity changed; review the updated close impact.",
                 severity="warning",
@@ -2621,6 +2650,7 @@ class ConsoleSessionController:
                 f"Unsent draft: {'yes' if impact.has_draft else 'no'}\n"
                 f"Pending attachments: {impact.pending_attachment_count}\n"
                 f"Live agent turns: {lifecycle.live_run_count}\n"
+                f"Delegated agents: {lifecycle.delegated_child_count}\n"
                 f"Unsent queued prompts: {lifecycle.unsent_prompt_count}\n\n"
                 "Close this session?"
             ),
@@ -2646,6 +2676,7 @@ class ConsoleSessionController:
                 message=(
                     f"{action} will cancel or discard:\n\n"
                     f"Live agent runs: {impact.live_run_count}\n"
+                    f"Delegated agents: {impact.delegated_child_count}\n"
                     f"Sessions with queued prompts: {impact.queued_session_count}\n"
                     f"Unsent queued prompts: {impact.unsent_prompt_count}\n\n"
                     f"{question}"
@@ -2664,9 +2695,9 @@ class ConsoleSessionController:
             )
 
     async def confirm_navigation(self, controller: Any) -> bool:
-        """Confirm revision-stable Console loss before navigation."""
+        """Ordinary navigation only detaches the Console projection."""
 
-        return await self._confirm_fleet_loss(controller, quitting=False)
+        return True
 
     async def confirm_quit(self, controller: Any) -> bool:
         """Confirm revision-stable Console loss before application quit."""
@@ -3130,24 +3161,9 @@ class ConsoleSessionController:
         record, no defaults, empty id -- degrades to ``"default"``, the
         single-profile behavior. Never raises.
         """
-        try:
-            registry_service = getattr(
-                self.app_instance, "workspace_registry_service", None
-            )
-            if not workspace_id or registry_service is None:
-                return "default"
-            record = registry_service.get_workspace(workspace_id)
-            defaults = getattr(record, "assistant_defaults", None) if record else None
-            profile_id = getattr(defaults, "tool_policy_profile_id", None)
-            if isinstance(profile_id, str) and profile_id.strip():
-                return profile_id.strip()
-        except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
-            logger.warning(
-                "Console turn context: tool policy profile resolution failed; "
-                "using the default profile; error_type={}",
-                type(exc).__name__,
-            )
-        return "default"
+        return resolve_turn_tool_policy_profile_id(
+            getattr(self, "app_instance", None), workspace_id
+        )
 
     def _resolve_turn_persona_policy_rules(
         self, session_id: str
@@ -3169,24 +3185,7 @@ class ConsoleSessionController:
             session = next(
                 (item for item in store.sessions() if item.id == session_id), None
             )
-            if session is None:
-                return ()
-            if session.assistant_kind != "persona":
-                return ()
-            assistant_id = str(session.assistant_id or "").strip()
-            if not assistant_id:
-                return ()
-            service = getattr(
-                self.app_instance, "local_character_persona_service", None
-            )
-            if service is None:
-                return ()
-            profile = service.get_persona_profile(assistant_id)
-            rules = (
-                profile.get("policy_rules") if isinstance(profile, Mapping) else None
-            )
-            if isinstance(rules, (list, tuple)):
-                return tuple(rule for rule in rules if isinstance(rule, Mapping))
+            return resolve_turn_persona_policy_rules(self.app_instance, session)
         except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
             logger.warning(
                 "Console turn context: persona policy rules resolution failed; "
@@ -3240,6 +3239,7 @@ class ConsoleSessionController:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
         from ...model_capabilities import is_vision_capable
+        from ...Chat.console_agent_bridge import console_run_budget
         from ..Screens.settings_library_rag_defaults import (
             load_direct_library_tools,
         )
@@ -3255,27 +3255,48 @@ class ConsoleSessionController:
         )
         if not isinstance(console_config, Mapping):
             console_config = {}
-        workspace_id = self._ensure_console_chat_store().session_workspace_id(
-            session_id
+        store = self._ensure_console_chat_store()
+        workspace_id = store.session_workspace_id(session_id)
+        presentation_context = store.presentation_context(
+            session_id,
+            _console_global_user_display_name(app_config),
         )
-        workspace_roots = ()
-        ready_review_aliases = ()
-        skipped_review_roots = ()
-        consent_service = getattr(
-            self.app_instance,
-            "change_review_consent_service",
-            None,
+        session = next(item for item in store.sessions() if item.id == session_id)
+        app_instance = getattr(self, "app_instance", None)
+        agent_dispatch_eligible = bool(
+            coerce_bool_setting(
+                console_config.get("agent_runtime", True),
+                True,
+            )
+            and not store.session_one_shot_prefill(session_id)
+            and session.assistant_kind != "character"
         )
-        if consent_service is not None:
-            try:
-                admission = consent_service.admit_turn(workspace_id)
-                workspace_roots = tuple(admission.ready_roots)
-                ready_review_aliases = tuple(getattr(admission, "ready_aliases", ()))
-                skipped_review_roots = tuple(admission.skipped_roots)
-            except Exception:  # noqa: BLE001 -- review never blocks a send
-                workspace_roots = ()
-                ready_review_aliases = ()
-                skipped_review_roots = ()
+        project_authority = capture_project_instruction_authority(
+            session,
+            getattr(app_instance, "workspace_registry_service", None),
+            include_bindings=agent_dispatch_eligible,
+        )
+        held_scope = session.rag_scope_holder.scope
+        library_scope = ConsoleLibraryItemScopeSnapshot(
+            note_ids=tuple(
+                str(item.source_id)
+                for item in held_scope.items
+                if item.source_type == "note"
+            )
+            if held_scope is not None
+            else (),
+            media_ids=tuple(
+                str(item.source_id)
+                for item in held_scope.items
+                if item.source_type == "media"
+            )
+            if held_scope is not None
+            else (),
+            conversations_allowed=held_scope is None,
+        )
+        workspace_roots, ready_review_aliases, skipped_review_roots = (
+            capture_change_review_admission(app_instance, workspace_id)
+        )
         # Workspace assistant defaults (Task 7): this turn's tool posture --
         # the workspace's named permission profile (absent/Default/global
         # defaults degrade to "default") and the owning session's persona
@@ -3285,6 +3306,7 @@ class ConsoleSessionController:
         tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(workspace_id)
         persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
 
+        mcp_definition_maximum = capture_mcp_definition_maximum(app_instance)
         return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=selection,
@@ -3295,6 +3317,29 @@ class ConsoleSessionController:
             change_review_skipped_roots=skipped_review_roots,
             persona_policy_rules=persona_policy_rules,
             tool_policy_profile_id=tool_policy_profile_id,
+            presentation_context=presentation_context,
+            library_policy_maximum=session.library_policy_holder.snapshot,
+            library_scope_maximum=library_scope,
+            project_authority=project_authority,
+            character_authority=capture_character_authority(
+                session,
+                getattr(
+                    (
+                        self._ensure_console_chat_controller()
+                        if hasattr(self, "_ensure_console_chat_controller_fn")
+                        else None
+                    ),
+                    "_visual_identity_repository",
+                    None,
+                ),
+            ),
+            prompt_transform_inputs=capture_prompt_transform_inputs(
+                app_instance,
+                session,
+            ),
+            skill_context_maximum=capture_skill_context_maximum(app_instance),
+            mcp_tool_maximum=mcp_definition_maximum,
+            mcp_definition_maximum=mcp_definition_maximum,
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
@@ -3305,6 +3350,7 @@ class ConsoleSessionController:
                 "top_k": self._rag_top_k_accessor(),
             },
             tool_configuration={
+                "session_ephemeral": bool(session.ephemeral),
                 "agent_runtime_enabled": coerce_bool_setting(
                     console_config.get("agent_runtime", True),
                     True,
@@ -3318,6 +3364,28 @@ class ConsoleSessionController:
                     False,
                 ),
                 "direct_library_tools": load_direct_library_tools(app_config),
+                "project_instructions_startup_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "project_instructions_nested_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_nested_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "agent_run_budget_maximum": console_run_budget(),
+                "exchange_capture_enabled": coerce_bool_setting(
+                    console_config.get("exchange_capture", True), True
+                ),
             },
             provider_payload_settings={
                 "streaming": selection.streaming,
@@ -4750,6 +4818,110 @@ class ConsoleSessionController:
         ):
             return "cancel", None
         return result.action, result.binding_id
+
+    def _project_project_instruction_binding(
+        self, decision_id: str, options: tuple[Any, ...]
+    ) -> bool:
+        """Mount one runtime-owned binding decision on this Console only."""
+        if decision_id in self._project_instruction_decision_modals:
+            return True
+        modal = ProjectInstructionSetupModal(options)
+        self._project_instruction_decision_modals[decision_id] = modal
+        owner_ref = weakref.ref(self)
+        screen_ref = weakref.ref(self._screen)
+        runtime = self._screen._console_runtime()
+        generation = getattr(
+            self._screen, "_console_runtime_attachment_generation", None
+        )
+
+        def finish(result: Any) -> None:
+            owner = owner_ref()
+            screen = screen_ref()
+            if (
+                owner is None
+                or owner._project_instruction_decision_modals.pop(
+                    decision_id, None
+                )
+                is not modal
+                or screen is None
+                or getattr(screen, "_console_runtime_attachment_retired", False)
+                or runtime.view is not screen
+                or runtime._attached_generation != generation
+                or not isinstance(result, ProjectInstructionSetupResult)
+            ):
+                return
+            runtime.resolve_project_instruction_binding(
+                decision_id, result.action, result.binding_id
+            )
+
+        try:
+            self.push_screen(modal, callback=finish)
+        except Exception:  # noqa: BLE001 -- runtime retains retryable decision
+            self._project_instruction_decision_modals.pop(decision_id, None)
+            return False
+        return True
+
+    def _project_project_instruction_dispatch(
+        self, decision_id: str, notice: Any
+    ) -> bool:
+        """Mount one runtime-owned dispatch decision on this Console only."""
+        if decision_id in self._project_instruction_decision_modals:
+            return True
+        modal = ProjectInstructionNoticeModal(notice)
+        self._project_instruction_decision_modals[decision_id] = modal
+        owner_ref = weakref.ref(self)
+        screen_ref = weakref.ref(self._screen)
+        runtime = self._screen._console_runtime()
+        generation = getattr(
+            self._screen, "_console_runtime_attachment_generation", None
+        )
+
+        def finish(result: Any) -> None:
+            owner = owner_ref()
+            screen = screen_ref()
+            if (
+                owner is None
+                or owner._project_instruction_decision_modals.pop(
+                    decision_id, None
+                )
+                is not modal
+                or screen is None
+                or getattr(screen, "_console_runtime_attachment_retired", False)
+                or runtime.view is not screen
+                or runtime._attached_generation != generation
+            ):
+                return
+            runtime.resolve_project_instruction_dispatch(decision_id, str(result))
+
+        try:
+            self.push_screen(modal, callback=finish)
+        except Exception:  # noqa: BLE001 -- runtime retains retryable decision
+            self._project_instruction_decision_modals.pop(decision_id, None)
+            return False
+        return True
+
+    def _dismiss_project_instruction_decision_projection(
+        self, decision_id: str
+    ) -> bool:
+        """Dismiss one stale modal without resolving its runtime decision."""
+        modal = self._project_instruction_decision_modals.pop(decision_id, None)
+        if modal is None:
+            return False
+        try:
+            result = (
+                ProjectInstructionSetupResult("cancel")
+                if isinstance(modal, ProjectInstructionSetupModal)
+                else "cancel"
+            )
+            modal.dismiss(result)
+        except Exception:  # noqa: BLE001 -- view cleanup remains best-effort
+            pass
+        return True
+
+    def _dismiss_project_instruction_decision_projections(self) -> None:
+        """Dismiss this retired view's modals without resolving their records."""
+        for decision_id in tuple(self._project_instruction_decision_modals):
+            self._dismiss_project_instruction_decision_projection(decision_id)
 
     def _confirm_project_instruction_dispatch(self, notice: Any) -> str:
         """Marshal a worker-thread notice to Textual and wait fail-closed."""

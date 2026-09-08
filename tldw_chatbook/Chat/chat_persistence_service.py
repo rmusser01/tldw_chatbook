@@ -2,6 +2,8 @@ import base64
 import json
 import time
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime
+from uuid import UUID
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
@@ -73,8 +75,18 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceForkBoundary,
 )
 from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
+from tldw_chatbook.Chat.console_voice_promotion import (
+    CompletedVoicePairCommit,
+    ResolvedVoicePromotionDestination,
+    VoicePromotionContext,
+    VoicePromotionIdentitySet,
+    derive_voice_promotion_identities,
+)
 from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
@@ -109,6 +121,60 @@ _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 _CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
 CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH = 10_000
 
+# Complete census of direct ChaChaNotes message/revision locators. The schema
+# inventory regression requires every new locator to be classified before the
+# voice-pair reconciler can silently adopt it.
+_VOICE_PROMOTION_MANDATORY_LOCATORS = frozenset(
+    {
+        ("console_trace_semantic_revisions", "revision_id"),
+        ("console_trace_semantic_revisions", "source_message_id"),
+        ("console_trace_semantic_revisions", "live_message_id"),
+        ("console_trace_semantic_revisions", "predecessor_revision_id"),
+    }
+)
+_VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS = frozenset(
+    {
+        ("canvas_revisions", "origin_message_id"),
+        ("console_dispatch_checkpoints", "assistant_message_id"),
+        ("console_dispatch_checkpoints", "user_message_id"),
+        ("message_attachments", "message_id"),
+        ("message_exchanges", "message_id"),
+        ("message_generation_metadata", "message_id"),
+        ("message_trajectory_metadata", "message_id"),
+        ("rag_citation_traces", "legacy_message_id"),
+        ("rag_message_trace_owners", "message_id"),
+        ("transcript_annotations", "message_id"),
+    }
+)
+_VOICE_PROMOTION_FORBIDDEN_REVISION_LOCATORS = frozenset(
+    {
+        ("console_trace_events", "semantic_revision_id"),
+        ("console_trace_redaction_spans", "semantic_revision_id"),
+        ("console_trace_response_links", "semantic_revision_id"),
+        ("console_trace_revision_bindings", "revision_id"),
+        ("console_trace_surface_nodes", "semantic_revision_id"),
+    }
+)
+# These locators are core parent/conversation pointers or conversation-level
+# derived state, rather than typed sidecars owned by either promoted message.
+_VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
+    {
+        ("canvas_revisions", "parent_revision_id"),
+        ("console_conversation_memories", "boundary_message_id"),
+        ("console_conversation_memories", "captured_leaf_message_id"),
+        ("console_conversation_memory_scopes", "selection_anchor_message_id"),
+        ("console_conversation_memory_selections", "activation_message_id"),
+        ("console_trace_policies", "pii_ruleset_revision_id"),
+        ("conversations", "active_leaf_message_id"),
+        ("conversations", "active_leaf_before_message_id"),
+        ("conversations", "forked_from_message_id"),
+        ("conversations", "summary_boundary_message_id"),
+        ("conversations", "topic_last_tagged_message_id"),
+        ("messages", "parent_message_id"),
+        ("messages", "variant_of"),
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ConsoleForkCommitResult:
@@ -124,6 +190,25 @@ class ConsoleForkCommitResult:
 def _initial_metadata_object(metadata: object) -> dict[str, object]:
     """Return strict JSON-object metadata without lossy key coercion."""
     return strict_json_metadata_object(metadata)
+
+
+def _is_canonical_utc_timestamp(value: object) -> bool:
+    """Accept only the two exact UTC shapes emitted by ChaChaNotes writers."""
+    if type(value) is not str:
+        return False
+    timestamp_format: str
+    if len(value) == 24 and value.endswith("Z"):
+        timestamp_format = "%Y-%m-%dT%H:%M:%S.%fZ"
+    elif len(value) == 19:
+        # SQLite CURRENT_TIMESTAMP is UTC, emitted without a zone suffix.
+        timestamp_format = "%Y-%m-%d %H:%M:%S"
+    else:
+        return False
+    try:
+        datetime.strptime(value, timestamp_format)
+    except ValueError:
+        return False
+    return True
 
 
 class ChatPersistenceService:
@@ -144,6 +229,7 @@ class ChatPersistenceService:
             db,
             repository=self._console_trace_repository,
         )
+        self.local_marks = ConversationLocalMarksService(db)
 
     @property
     def console_trace_repository(self) -> ConsoleTraceRepository:
@@ -258,6 +344,512 @@ class ChatPersistenceService:
                     conversation_id=conversation_id,
                     message_ids=message_ids,
                 )
+    def _terminal_mark_type(
+        self,
+        terminal_receipt_id: str | None,
+        terminal_outcome: str | None,
+        metadata_json: str | None,
+        *,
+        assistant_owner: bool,
+        existing_metadata_json: str | None = None,
+    ) -> str | None:
+        """Validate one assistant receipt/outcome pair and its metadata."""
+        ordinary = MessageMetadata.from_json(metadata_json)
+        video = VideoGenerationMetadata.from_json(metadata_json)
+        metadata_receipt = (
+            video.terminal_receipt_id
+            if video is not None
+            else ordinary.terminal_receipt_id
+            if ordinary is not None
+            else ""
+        )
+        if terminal_receipt_id is None:
+            if terminal_outcome is not None:
+                raise ValueError("terminal outcome requires a terminal receipt")
+            if not metadata_receipt:
+                return None
+            existing_ordinary = MessageMetadata.from_json(existing_metadata_json)
+            existing_video = VideoGenerationMetadata.from_json(
+                existing_metadata_json
+            )
+            existing_receipt = (
+                existing_video.terminal_receipt_id
+                if existing_video is not None
+                else existing_ordinary.terminal_receipt_id
+                if existing_ordinary is not None
+                else ""
+            )
+            if metadata_receipt != existing_receipt:
+                raise ValueError(
+                    "terminal receipt metadata requires an atomic mark owner"
+                )
+            return None
+        if terminal_outcome not in {"complete", "failed"}:
+            raise ValueError("terminal outcome must be complete or failed")
+        if not assistant_owner:
+            raise ValueError("terminal receipt requires an assistant message")
+        mark_type = self.local_marks.console_unseen_mark_type(terminal_receipt_id)
+        if metadata_receipt != terminal_receipt_id:
+            raise ValueError("terminal receipt must match metadata_json")
+        return mark_type
+
+    def _set_terminal_outcome_and_mark_with_cursor(
+        self,
+        cursor: Any,
+        *,
+        conversation_id: str,
+        terminal_outcome: str | None,
+        mark_type: str | None,
+    ) -> None:
+        """Commit one exact local receipt/outcome pair in this transaction."""
+        if mark_type is None:
+            return
+        if terminal_outcome is None:
+            raise ValueError("terminal mark requires a terminal outcome")
+        receipt_id = self.local_marks.parse_console_unseen_mark_type(mark_type)
+        if receipt_id is None:
+            raise ValueError("terminal mark requires a valid receipt")
+        now = self.db._get_current_utc_timestamp_iso()
+        self.local_marks.set_console_terminal_with_cursor(
+            cursor,
+            conversation_id,
+            receipt_id,
+            terminal_outcome,
+            created_at=now,
+            updated_at=now,
+        )
+
+    @staticmethod
+    def _validate_completed_voice_pair_destination(
+        *,
+        destination: ResolvedVoicePromotionDestination,
+        context: VoicePromotionContext,
+    ) -> str:
+        """Validate the store-resolved destination before opening a transaction."""
+        if type(destination) is not ResolvedVoicePromotionDestination:
+            raise TypeError("destination must be a ResolvedVoicePromotionDestination")
+        if type(context) is not VoicePromotionContext:
+            raise TypeError("context must be a VoicePromotionContext")
+        conversation_id = destination.persisted_conversation_id
+        if conversation_id is None:
+            raise ValueError("destination must identify a durable conversation")
+        origin = context.origin
+        if (
+            destination.session_id != origin.session_id
+            or destination.session_incarnation != origin.session_incarnation
+            or destination.capture_eligible_at_dispatch
+            != context.capture_eligible_at_dispatch
+        ):
+            raise ValueError("destination does not match the sealed promotion origin")
+        if origin.persisted_conversation_id is not None and (
+            conversation_id != origin.persisted_conversation_id
+            or destination.expected_persisted_leaf_id
+            != context.expected_persisted_leaf_id
+        ):
+            raise ValueError("destination does not match the sealed durable binding")
+        return conversation_id
+
+    @staticmethod
+    def _compare_and_swap_completed_voice_pair_leaf(
+        cursor: Any,
+        *,
+        conversation_id: str,
+        expected_leaf_message_id: str | None,
+        active_leaf_message_id: str,
+    ) -> None:
+        """Advance one local active leaf only from the store-resolved DB leaf."""
+        result = cursor.execute(
+            """UPDATE conversations
+                  SET active_leaf_message_id = ?
+                WHERE id = ?
+                  AND deleted = 0
+                  AND active_leaf_message_id IS ?""",
+            (
+                active_leaf_message_id,
+                conversation_id,
+                expected_leaf_message_id,
+            ),
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("Voice promotion active-leaf conflict.")
+
+    @staticmethod
+    def _voice_promotion_locator_exists(
+        cursor: Any,
+        *,
+        locators: frozenset[tuple[str, str]],
+        identifiers: tuple[str, ...],
+    ) -> bool:
+        """Return whether a classified typed-sidecar locator owns any ID."""
+        if not identifiers:
+            return False
+        placeholders = ", ".join("?" for _identifier in identifiers)
+        queries: list[str] = []
+        parameters: list[str] = []
+        for table, column in sorted(locators):
+            # Identifiers come only from the complete private schema census.
+            queries.append(
+                f'SELECT 1 FROM "{table}" WHERE "{column}" IN ({placeholders})'
+            )
+            parameters.extend(identifiers)
+        query = " UNION ALL ".join(queries) + " LIMIT 1"
+        return cursor.execute(query, parameters).fetchone() is not None
+
+    def _reconcile_completed_voice_pair(
+        self,
+        cursor: Any,
+        *,
+        conversation_id: str,
+        expected_leaf_message_id: str | None,
+        context: VoicePromotionContext,
+        identities: VoicePromotionIdentitySet,
+        assistant_metadata_json: str,
+    ) -> CompletedVoicePairCommit | None:
+        """Adopt one complete exact-ID commit or fail closed on any residue."""
+        messages = cursor.execute(
+            """SELECT id, conversation_id, parent_message_id, sender, content,
+                      image_data, image_mime_type, timestamp, ranking,
+                      last_modified, deleted, client_id, version, feedback,
+                      role, variant_of, variant_number, is_selected_variant,
+                      total_variants, usage_json, metadata_json,
+                      provider_continuation_json, thinking_blocks_json,
+                      assistant_generation_state
+                 FROM messages
+                WHERE id IN (?, ?)""",
+            (identities.user_message_id, identities.assistant_message_id),
+        ).fetchall()
+        revisions = cursor.execute(
+            """SELECT revision_id, source_conversation_id, source_message_id,
+                      revision_sequence, normalized_role, content_kind,
+                      creation_reason, predecessor_revision_id, live_message_id,
+                      live_locator_retired_at, created_at
+                 FROM console_trace_semantic_revisions
+                WHERE source_message_id IN (?, ?)
+                   OR live_message_id IN (?, ?)""",
+            (
+                identities.user_message_id,
+                identities.assistant_message_id,
+                identities.user_message_id,
+                identities.assistant_message_id,
+            ),
+        ).fetchall()
+        message_sidecar = self._voice_promotion_locator_exists(
+            cursor,
+            locators=_VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS,
+            identifiers=(
+                identities.user_message_id,
+                identities.assistant_message_id,
+            ),
+        )
+        unseen_mark = self.local_marks.console_unseen_mark_type(
+            identities.terminal_receipt_id
+        )
+        complete_mark = self.local_marks.console_terminal_outcome_mark_type(
+            identities.terminal_receipt_id,
+            "complete",
+        )
+        outcome_prefix = (
+            f"{self.local_marks.CONSOLE_TERMINAL_OUTCOME_PREFIX}"
+            f"{identities.terminal_receipt_id}:%"
+        )
+        marks = cursor.execute(
+            """SELECT conversation_id, mark_type,
+                      CAST(created_at AS TEXT) AS created_at_text,
+                      CAST(updated_at AS TEXT) AS updated_at_text
+                 FROM conversation_local_marks
+                WHERE mark_type = ? OR mark_type LIKE ?""",
+            (unseen_mark, outcome_prefix),
+        ).fetchall()
+        if not messages and not revisions and not marks and not message_sidecar:
+            return None
+
+        by_id = {row["id"]: row for row in messages}
+        user = by_id.get(identities.user_message_id)
+        assistant = by_id.get(identities.assistant_message_id)
+        user_matches = bool(
+            user is not None
+            and user["conversation_id"] == conversation_id
+            and user["parent_message_id"] == expected_leaf_message_id
+            and user["sender"] == "user"
+            and user["role"] == "user"
+            and user["content"] == context.user_text
+            and user["image_data"] is None
+            and user["image_mime_type"] is None
+            and isinstance(user["timestamp"], datetime)
+            and user["last_modified"] == user["timestamp"]
+            and user["ranking"] is None
+            and user["deleted"] == 0
+            and user["client_id"] == self.db.client_id
+            and user["version"] == 1
+            and user["feedback"] is None
+            and user["variant_of"] is None
+            and user["variant_number"] == 1
+            and user["is_selected_variant"] == 1
+            and user["total_variants"] == 1
+            and user["usage_json"] is None
+            and user["metadata_json"] is None
+            and user["provider_continuation_json"] is None
+            and user["thinking_blocks_json"] is None
+            and user["assistant_generation_state"] is None
+        )
+        assistant_matches = bool(
+            assistant is not None
+            and assistant["conversation_id"] == conversation_id
+            and assistant["parent_message_id"] == identities.user_message_id
+            and assistant["sender"] == "assistant"
+            and assistant["role"] == "assistant"
+            and assistant["content"] == context.assistant_text
+            and assistant["image_data"] is None
+            and assistant["image_mime_type"] is None
+            and isinstance(assistant["timestamp"], datetime)
+            and assistant["last_modified"] == assistant["timestamp"]
+            and assistant["ranking"] is None
+            and assistant["deleted"] == 0
+            and assistant["client_id"] == self.db.client_id
+            and assistant["version"] == 1
+            and assistant["feedback"] is None
+            and assistant["variant_of"] is None
+            and assistant["variant_number"] == 1
+            and assistant["is_selected_variant"] == 1
+            and assistant["total_variants"] == 1
+            and assistant["usage_json"] == context.usage_json
+            and assistant["metadata_json"] == assistant_metadata_json
+            and assistant["provider_continuation_json"] is None
+            and assistant["thinking_blocks_json"] is None
+            and assistant["assistant_generation_state"] == "complete"
+        )
+        revisions_by_message = {row["source_message_id"]: row for row in revisions}
+        revisions_match = len(revisions) == 2 and all(
+            self._initial_voice_message_revision_matches(
+                revisions_by_message.get(message_id),
+                conversation_id=conversation_id,
+                message_id=message_id,
+                role=role,
+            )
+            for message_id, role in (
+                (identities.user_message_id, "user"),
+                (identities.assistant_message_id, "assistant"),
+            )
+        )
+        revision_ids = tuple(row["revision_id"] for row in revisions)
+        revision_sidecar = self._voice_promotion_locator_exists(
+            cursor,
+            locators=_VOICE_PROMOTION_FORBIDDEN_REVISION_LOCATORS,
+            identifiers=revision_ids,
+        )
+        expected_marks = {
+            (conversation_id, unseen_mark),
+            (conversation_id, complete_mark),
+        }
+        actual_marks = {(row["conversation_id"], row["mark_type"]) for row in marks}
+        mark_timestamp_pairs = {
+            (row["created_at_text"], row["updated_at_text"]) for row in marks
+        }
+        mark_timestamps_match = (
+            len(marks) == 2
+            and len(mark_timestamp_pairs) == 1
+            and all(
+                _is_canonical_utc_timestamp(created_at) and created_at == updated_at
+                for created_at, updated_at in mark_timestamp_pairs
+            )
+        )
+        conversation = cursor.execute(
+            """SELECT active_leaf_message_id, deleted
+                 FROM conversations
+                WHERE id = ?""",
+            (conversation_id,),
+        ).fetchone()
+        if not (
+            len(messages) == 2
+            and user_matches
+            and assistant_matches
+            and revisions_match
+            and not message_sidecar
+            and not revision_sidecar
+            and actual_marks == expected_marks
+            and mark_timestamps_match
+            and conversation is not None
+            and not conversation["deleted"]
+            and conversation["active_leaf_message_id"]
+            == identities.assistant_message_id
+        ):
+            raise RuntimeError("Voice promotion persistence conflict.")
+        return CompletedVoicePairCommit(
+            conversation_id=conversation_id,
+            user_message_id=identities.user_message_id,
+            assistant_message_id=identities.assistant_message_id,
+            terminal_receipt_id=identities.terminal_receipt_id,
+            active_leaf_message_id=identities.assistant_message_id,
+            already_committed=True,
+            user_revision_id=revisions_by_message[identities.user_message_id][
+                "revision_id"
+            ],
+            assistant_revision_id=revisions_by_message[identities.assistant_message_id][
+                "revision_id"
+            ],
+        )
+
+    @staticmethod
+    def _initial_voice_message_revision_matches(
+        revision: Any,
+        *,
+        conversation_id: str,
+        message_id: str,
+        role: str,
+    ) -> bool:
+        """Return whether one row is the canonical initial text revision."""
+        if revision is None or type(revision["revision_id"]) is not str:
+            return False
+        try:
+            parsed_revision_id = UUID(revision["revision_id"])
+        except (ValueError, AttributeError):
+            return False
+        return bool(
+            parsed_revision_id.version == 4
+            and str(parsed_revision_id) == revision["revision_id"]
+            and revision["source_conversation_id"] == conversation_id
+            and revision["source_message_id"] == message_id
+            and revision["revision_sequence"] == 0
+            and revision["normalized_role"] == role
+            and revision["content_kind"] == "text"
+            and revision["creation_reason"] == "message_create"
+            and revision["predecessor_revision_id"] is None
+            and revision["live_message_id"] == message_id
+            and revision["live_locator_retired_at"] is None
+            and _is_canonical_utc_timestamp(revision["created_at"])
+        )
+
+    def commit_completed_voice_pair(
+        self,
+        *,
+        destination: ResolvedVoicePromotionDestination,
+        context: VoicePromotionContext,
+    ) -> CompletedVoicePairCommit:
+        """Atomically persist an already-complete no-tool voice pair.
+
+        The transaction owns only this service's ChaChaNotes database. Retries
+        reconcile the promotion-derived identities before checking the current
+        active leaf, covering an exception reported after a successful commit.
+        """
+        conversation_id = self._validate_completed_voice_pair_destination(
+            destination=destination,
+            context=context,
+        )
+        if self.db.get_connection().in_transaction:
+            raise RuntimeError("Voice promotion must own transaction commit.")
+        identities = derive_voice_promotion_identities(context.promotion_id)
+        assistant_metadata_json = MessageMetadata(
+            terminal_receipt_id=identities.terminal_receipt_id
+        ).to_json()
+        with self.db.transaction(immediate=True) as cursor:
+            reconciled = self._reconcile_completed_voice_pair(
+                cursor,
+                conversation_id=conversation_id,
+                expected_leaf_message_id=destination.expected_persisted_leaf_id,
+                context=context,
+                identities=identities,
+                assistant_metadata_json=assistant_metadata_json,
+            )
+            if reconciled is not None:
+                result = reconciled
+            else:
+                conversation = cursor.execute(
+                    """SELECT active_leaf_message_id, deleted
+                         FROM conversations
+                        WHERE id = ?""",
+                    (conversation_id,),
+                ).fetchone()
+                if (
+                    conversation is None
+                    or conversation["deleted"]
+                    or conversation["active_leaf_message_id"]
+                    != destination.expected_persisted_leaf_id
+                ):
+                    raise RuntimeError("Voice promotion active-leaf conflict.")
+                if destination.expected_persisted_leaf_id is not None:
+                    expected_parent = cursor.execute(
+                        """SELECT conversation_id, deleted
+                             FROM messages
+                            WHERE id = ?""",
+                        (destination.expected_persisted_leaf_id,),
+                    ).fetchone()
+                    if (
+                        expected_parent is None
+                        or expected_parent["deleted"]
+                        or expected_parent["conversation_id"] != conversation_id
+                    ):
+                        raise RuntimeError("Voice promotion active-leaf conflict.")
+
+                user_message_id = self.db.add_message(
+                    {
+                        "id": identities.user_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_message_id": destination.expected_persisted_leaf_id,
+                        "sender": "user",
+                        "role": "user",
+                        "content": context.user_text,
+                    }
+                )
+                if user_message_id != identities.user_message_id:
+                    raise RuntimeError("Voice promotion user write failed.")
+                assistant_message_id = self.db.add_message(
+                    {
+                        "id": identities.assistant_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_message_id": identities.user_message_id,
+                        "sender": "assistant",
+                        "role": "assistant",
+                        "content": context.assistant_text,
+                        "usage_json": context.usage_json,
+                        "metadata_json": assistant_metadata_json,
+                        "assistant_generation_state": "complete",
+                    }
+                )
+                if assistant_message_id != identities.assistant_message_id:
+                    raise RuntimeError("Voice promotion assistant write failed.")
+                revision_rows = cursor.execute(
+                    """SELECT source_message_id, revision_id
+                         FROM console_trace_semantic_revisions
+                        WHERE source_message_id IN (?, ?)
+                          AND revision_sequence = 0""",
+                    (identities.user_message_id, identities.assistant_message_id),
+                ).fetchall()
+                revisions_by_message = {
+                    row["source_message_id"]: row["revision_id"]
+                    for row in revision_rows
+                }
+                if set(revisions_by_message) != {
+                    identities.user_message_id,
+                    identities.assistant_message_id,
+                }:
+                    raise RuntimeError("Voice promotion revision write failed.")
+                now = self.db._get_current_utc_timestamp_iso()
+                self.local_marks.set_console_terminal_with_cursor(
+                    cursor,
+                    conversation_id,
+                    identities.terminal_receipt_id,
+                    "complete",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._compare_and_swap_completed_voice_pair_leaf(
+                    cursor,
+                    conversation_id=conversation_id,
+                    expected_leaf_message_id=destination.expected_persisted_leaf_id,
+                    active_leaf_message_id=identities.assistant_message_id,
+                )
+                result = CompletedVoicePairCommit(
+                    conversation_id=conversation_id,
+                    user_message_id=identities.user_message_id,
+                    assistant_message_id=identities.assistant_message_id,
+                    terminal_receipt_id=identities.terminal_receipt_id,
+                    active_leaf_message_id=identities.assistant_message_id,
+                    user_revision_id=revisions_by_message[identities.user_message_id],
+                    assistant_revision_id=revisions_by_message[
+                        identities.assistant_message_id
+                    ],
+                )
+        return result
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
@@ -1986,6 +2578,9 @@ class ChatPersistenceService:
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
         expected_version: int | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
+        assistant_generation_state: str | None = None,
         expected_roleplay_template_source: str | None = None,
         expected_message_contents: tuple[str, ...] | None = None,
         allow_source_owned_repair: bool = False,
@@ -2050,6 +2645,11 @@ class ChatPersistenceService:
             metadata_json: Optional structured message metadata JSON
                 (task-2364). Follows the same only-when-supplied rule as
                 ``usage_json``, for the same reason.
+            terminal_receipt_id: Validated local terminal receipt carried by
+                ``metadata_json``. When present, the row update and exact
+                namespaced mark share one immediate transaction.
+            terminal_outcome: Exact assistant terminal state paired with
+                ``terminal_receipt_id`` and committed in the same transaction.
             preserve_descendants: Skip descendant tombstones when this
                 update belongs to an authoritative bulk-history resave.
 
@@ -2066,6 +2666,13 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        terminal_mark_type = self._terminal_mark_type(
+            terminal_receipt_id,
+            terminal_outcome,
+            metadata_json,
+            assistant_owner=current_message.get("role") == "assistant",
+            existing_metadata_json=current_message.get("metadata_json"),
+        )
         if (
             expected_version is not None
             and current_message.get("version") != expected_version
@@ -2138,6 +2745,11 @@ class ChatPersistenceService:
         if clear_generation_provenance:
             update_data["thinking_blocks_json"] = None
             update_data["provider_continuation_json"] = None
+        lifecycle_state = assistant_generation_state
+        if lifecycle_state is None and terminal_mark_type is not None:
+            lifecycle_state = terminal_outcome
+        if lifecycle_state is not None:
+            update_data["assistant_generation_state"] = lifecycle_state
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:
@@ -2202,6 +2814,12 @@ class ChatPersistenceService:
                         new_revision=current_message["version"] + 1,
                         new_body=content,
                     )
+                    self._set_terminal_outcome_and_mark_with_cursor(
+                        cursor,
+                        conversation_id=str(current_message["conversation_id"]),
+                        terminal_outcome=terminal_outcome,
+                        mark_type=terminal_mark_type,
+                    )
             return result
 
         if attachments is not None:
@@ -2219,6 +2837,25 @@ class ChatPersistenceService:
             # re-opens the snapshot-upgrade window (see add_message).
             with self.db.transaction(immediate=True) as cursor:
                 result = coordinated_update()
+                if result:
+                    self._set_terminal_outcome_and_mark_with_cursor(
+                        cursor,
+                        conversation_id=str(current_message["conversation_id"]),
+                        terminal_outcome=terminal_outcome,
+                        mark_type=terminal_mark_type,
+                    )
+            return result
+
+        if terminal_mark_type is not None:
+            with self.db.transaction(immediate=True) as cursor:
+                result = coordinated_update()
+                if result:
+                    self._set_terminal_outcome_and_mark_with_cursor(
+                        cursor,
+                        conversation_id=str(current_message["conversation_id"]),
+                        terminal_outcome=terminal_outcome,
+                        mark_type=terminal_mark_type,
+                    )
             return result
 
         return coordinated_update()
@@ -2308,8 +2945,20 @@ class ChatPersistenceService:
         contributions: Sequence[ConsolePromotionTransactionContribution],
         on_durable_commit: Callable[[], object] | None = None,
         expected_version: int | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> int:
         """Replace one generation and append exact contributions atomically."""
+        terminal_mark_type = (
+            self._terminal_mark_type(
+                terminal_receipt_id,
+                terminal_outcome,
+                metadata_json,
+                assistant_owner=True,
+            )
+            if terminal_receipt_id is not None or terminal_outcome is not None
+            else None
+        )
 
         def write_contributions(cursor: Any) -> None:
             row = cursor.execute(
@@ -2319,6 +2968,12 @@ class ChatPersistenceService:
             if row is None:
                 raise RuntimeError("Durable assistant owner is unavailable.")
             conversation_id = str(row["conversation_id"])
+            self._set_terminal_outcome_and_mark_with_cursor(
+                cursor,
+                conversation_id=conversation_id,
+                terminal_outcome=terminal_outcome,
+                mark_type=terminal_mark_type,
+            )
             message_ids = MappingProxyType(
                 {
                     native_message_id: message_id,
@@ -2533,6 +3188,8 @@ class ChatPersistenceService:
         thinking_blocks_json: Optional[str] = None,
         provider_continuation_json: Optional[str] = None,
         assistant_generation_state: Optional[str] = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -2601,6 +3258,11 @@ class ChatPersistenceService:
                 by this initial assistant generation.
             assistant_generation_state: Portable lifecycle state for the
                 initial assistant generation.
+            terminal_receipt_id: Validated local terminal receipt carried by
+                ``metadata_json``. When present, the row create and exact
+                namespaced mark share one immediate transaction.
+            terminal_outcome: Exact assistant terminal state paired with
+                ``terminal_receipt_id`` and committed in the same transaction.
 
         Returns:
             The newly created message's id.
@@ -2621,6 +3283,12 @@ class ChatPersistenceService:
         """
         prepared_citation = None
         citation_repository = self.citation_repository
+        terminal_mark_type = self._terminal_mark_type(
+            terminal_receipt_id,
+            terminal_outcome,
+            metadata_json,
+            assistant_owner=sender.strip().lower() == "assistant",
+        )
         if citation_write is not None:
             if citation_repository is None:
                 raise CitationPersistenceUnavailable("citation_repository_unavailable")
@@ -2674,7 +3342,11 @@ class ChatPersistenceService:
             "metadata_json": metadata_json,
             "thinking_blocks_json": thinking_blocks_json,
             "provider_continuation_json": provider_continuation_json,
-            "assistant_generation_state": assistant_generation_state,
+            "assistant_generation_state": (
+                assistant_generation_state
+                if assistant_generation_state is not None
+                else terminal_outcome
+            ),
         }
         if prepared_citation is not None:
             # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
@@ -2723,6 +3395,12 @@ class ChatPersistenceService:
                     message_revision=created_message["version"],
                     message_body=content,
                 )
+                self._set_terminal_outcome_and_mark_with_cursor(
+                    cursor,
+                    conversation_id=conversation_id,
+                    terminal_outcome=terminal_outcome,
+                    mark_type=terminal_mark_type,
+                )
             return created_message_id
         if attachments is not None or generation_metadata is not None:
             # One atomic unit: inside this outer transaction the nested
@@ -2735,7 +3413,7 @@ class ChatPersistenceService:
             # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
             # nested writers (immediate= is depth-0 only); DEFERRED here
             # re-opens the snapshot-upgrade window (see add_message).
-            with self.db.transaction(immediate=True):
+            with self.db.transaction(immediate=True) as cursor:
                 created_message_id = self.db.add_message_with_semantic_sidecars(
                     message_payload,
                     attachments=extra_rows if attachments is not None else (),
@@ -2745,6 +3423,24 @@ class ChatPersistenceService:
                         else ()
                     ),
                     feedback=feedback,
+                )
+                self._set_terminal_outcome_and_mark_with_cursor(
+                    cursor,
+                    conversation_id=conversation_id,
+                    terminal_outcome=terminal_outcome,
+                    mark_type=terminal_mark_type,
+                )
+        elif terminal_mark_type is not None:
+            with self.db.transaction(immediate=True) as cursor:
+                created_message_id = self.db.add_message_with_semantic_sidecars(
+                    message_payload,
+                    feedback=feedback,
+                )
+                self._set_terminal_outcome_and_mark_with_cursor(
+                    cursor,
+                    conversation_id=conversation_id,
+                    terminal_outcome=terminal_outcome,
+                    mark_type=terminal_mark_type,
                 )
         else:
             created_message_id = self.db.add_message_with_semantic_sidecars(

@@ -1,10 +1,17 @@
 # Low-Latency Speculative Duplex Voice Pipeline Implementation Plan
 
+Current dev port: follow the [2026-09-06 integration plan](2026-09-06-speculative-voice-dev-integration.md)
+and ADR-098's current-dev privacy amendment. This historical source plan's
+executable migration/test paths are mapped to dev schema 68→69; historical
+measurements and qualification requests below do not qualify the port or authorize
+additional runtime, hardware, or soak runs. Application/companion source version
+is 0.2.0; original unqualified identity bytes remain unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Start provider-agnostic hands-free replies from a fresh rolling transcript after 700 ms of silence by default, cancel and replace provisional replies whenever the same user turn continues, and make speaker-safe acoustic barge-in the default through a qualified cross-platform AEC path.
 
-**Architecture:** Add an import-safe duplex audio/DSP boundary, a rolling transcript protocol, and a serialized speculative-turn coordinator beside the existing legacy hands-free controller. Provisional provider and TTS work stays attempt-local; effectful turns cross a two-second barrier into the ordinary accepted-turn path, and only a winning no-tool attempt may use the existing ADR-094/ADR-097 promotion services. The new pipeline remains behind a hard-disabled qualification gate until native wheels, persistence/trace prerequisites, and the physical-device matrix pass.
+**Architecture:** Add an import-safe duplex audio/DSP boundary, a rolling transcript protocol, and a serialized speculative-turn coordinator beside the existing legacy hands-free controller. Provisional provider and TTS work stays attempt-local; effectful turns cross a two-second barrier into the ordinary accepted-turn path. A winning no-tool attempt crosses one app-lifetime promotion claim into a new atomic ADR-094 completed-pair transaction, followed by a best-effort typed ADR-097 post-dispatch trace import. The new pipeline remains behind a hard-disabled qualification gate until native wheels, the promotion/trace services, and the physical-device matrix pass.
 
 **Tech Stack:** Python 3.11+, asyncio, Textual 8.x, sounddevice/PortAudio, WebRTC Audio Processing Module AEC3, pybind11, scikit-build-core, CMake, pytest, Hypothesis, GitHub Actions/cibuildwheel.
 
@@ -26,8 +33,8 @@ Reason: native audio/runtime packaging, full-duplex clock ownership, AEC failure
 
 The implementation may begin at Task 1, but the speculative pipeline must remain hard-off in production until all of these conditions are true:
 
-1. ADR-094 terminal-receipt work, currently represented by `TASK-22514`, exposes one transaction that promotes the winning user/assistant pair, creates the terminal receipt, and records the exact unseen mark. Task 9 adapts to that service; it must not recreate the transaction.
-2. ADR-097 exposes reservation/settlement and temporary-chat trace behavior. Task 9 uses the trace service for winning-only `provisional_voice_promoted` capture; it must not add a parallel trace store.
+1. Task 9A lands the missing ADR-094 completed-pair path. The current `commit_durable_turn` plus later `settle_with_assistant` sequence is not atomic and must not be presented as sufficient. `ConsoleChatStore` owns a per-session promotion lease over its process-local binding/native leaf, `ChatPersistenceService` writes one already-complete voice pair, content-free usage, stable terminal receipt, exact unseen mark, and persisted active-leaf CAS in one transaction, and `ConsoleRuntime` owns/drains the claimed operation. Uncertain commits reconcile by opaque promotion-derived IDs.
+2. Task 9B lands the missing ADR-097 post-dispatch importer and schema version 56 provenance. It extends the existing trace store with typed one-use gateway envelopes plus a sealed completeness manifest and an exceptional direct terminal import. It must create/reconcile ownerless first-call lineage, reject partial multi-call capture, and never add a parallel trace store or fabricate the ordinary reserve/bind/dispatch chronology. The same migration must add and verify direct lookup indexes for every Task 9A promotion-reconciliation locator; until those indexes and the large-history query-plan gate pass, the completed-pair service exists for isolated verification only and the speculative pipeline remains hard-off.
 3. macOS, Windows, and Linux native wheels and the AEC corpus pass in CI.
 4. The latency, deterministic integration, soak, and physical-device qualification in Task 12 pass. Bluetooth may qualify only through explicit safe half duplex.
 
@@ -70,7 +77,12 @@ Select only hunks created for the current task. If patch staging cannot separate
 | `tldw_chatbook/Chat/console_voice_attempts.py` | Attempt-local generation, output, usage/capture, cancellation, and cleanup. |
 | `tldw_chatbook/Chat/console_voice_supervisor.py` | App-lifetime orphan set and voice-dispatch quarantine. |
 | `tldw_chatbook/Chat/console_speculative_voice.py` | Serialized logical-turn coordinator and effect barrier state machine. |
-| `tldw_chatbook/Chat/console_voice_promotion.py` | Narrow adapters to ADR-094 terminalization and ADR-097 trace promotion. |
+| `tldw_chatbook/Chat/console_voice_promotion.py` | Immutable promotion context, synchronous claim, app-lifetime owner, and recovery/result contract. |
+| `tldw_chatbook/Chat/console_chat_store.py` | Store-owned per-session promotion lease over binding, native leaf, typed turns, rebinding, and session deletion. |
+| `tldw_chatbook/Chat/console_runtime.py` | App-lifetime promotion owner composition, view injection, session-close coordination, and shutdown drain. |
+| `tldw_chatbook/Chat/chat_persistence_service.py` | Atomic already-complete pair, usage, receipt, unseen-mark, and active-leaf CAS transaction. |
+| `tldw_chatbook/Chat/console_voice_trace_promotion.py` | Typed one-use provisional trace capability registry and winning-call importer. |
+| `tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_voice_trace_provenance.sql` | Explicit ordinary versus post-dispatch trace provenance and direct-terminal import guards. |
 | `tldw_chatbook/UI/Console_Modules/hands_free.py` | Legacy/new selection and view-scoped lifecycle wiring. |
 | `tldw_chatbook/Widgets/Console/console_voice_preview.py` | Ephemeral user/assistant projection outside the durable message store. |
 | `tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py` | Canonical settings UI for response eagerness, STT mode, and AEC troubleshooting. |
@@ -236,6 +248,7 @@ Apply the dirty-worktree protocol to the five Task 1 paths, then commit with `gi
 
 **Files:**
 
+- Create: `native/voice_aec/.gitattributes`
 - Create: `native/voice_aec/pyproject.toml`
 - Create: `native/voice_aec/CMakeLists.txt`
 - Create: `native/voice_aec/src/bindings.cpp`
@@ -265,10 +278,35 @@ def test_processor_accepts_one_ten_ms_48khz_mono_frame() -> None:
     cleaned = processor.process_capture(silence, delay_ms=20)
     assert isinstance(cleaned, bytes)
     assert len(cleaned) == len(silence)
-    assert {"erle_db", "delay_confidence"} <= processor.metrics().keys()
+    assert {
+        "erle_db",
+        "delay_ms",
+        "delay_estimate_available",
+        "delay_estimate_refined",
+        "delay_age_blocks",
+        "clock_drift",
+    } <= processor.metrics().keys()
 ```
 
-The provenance test pins the [official WebRTC source](https://webrtc.googlesource.com/src/+/109e23c9cec3a44e67c08774874a409741b1e58a/modules/audio_processing/aec3/) at commit `109e23c9cec3a44e67c08774874a409741b1e58a`. The vendoring recipe copies only the dependency closure rooted at `modules/audio_processing`, with allowlisted roots `api/audio`, `api/array_view.h`, `common_audio`, `modules/audio_processing`, `rtc_base`, `system_wrappers`, and required `third_party/abseil-cpp` files. It rejects any copied path outside that allowlist.
+The provenance test pins the
+[official WebRTC source](https://webrtc.googlesource.com/src/+/109e23c9cec3a44e67c08774874a409741b1e58a/modules/audio_processing/aec3/)
+at commit `109e23c9cec3a44e67c08774874a409741b1e58a`. The vendoring recipe
+copies only the dependency closure rooted at `modules/audio_processing`, with broad
+allowlisted roots `api/audio`, `common_audio`, `modules/audio_processing`, `rtc_base`,
+`system_wrappers`, and required `third_party/abseil-cpp` files, plus
+`api/array_view.h` and exactly these source-required file exceptions:
+`api/ref_counted_base.h`, `api/rtp_headers.h`, `api/rtp_packet_info.h`,
+`api/rtp_packet_infos.h`, `api/scoped_refptr.h`, `api/units/time_delta.h`,
+`api/units/timestamp.h`, `api/video/color_space.h`, `api/video/hdr_metadata.h`,
+`api/video/video_content_type.h`, `api/video/video_frame_marking.h`,
+`api/video/video_rotation.h`, `api/video/video_timing.h`, and `common_types.h`. It
+rejects every other path, including other files under `api`; the allowlist must not be
+broadened to the entire directory. After adding the exact support implementations
+required at native link time, the verified source and link closure contains 315 files.
+Abseil comes from WebRTC's exact Chromium `src/third_party` DEPS pin
+`ac875ae5393d0516243cfd5d078cd4b098388f6b`, and both upstream revisions must be
+recorded in provenance. No additional external dependency or source patch is required;
+the initial imported patch series is `none`.
 
 - [ ] **Step 2: Run RED without building the extension.**
 
@@ -278,7 +316,11 @@ Expected: import/metadata assertions fail because the package and optional depen
 
 - [ ] **Step 3: Implement and run the deterministic vendoring recipe.**
 
-`vendor_webrtc_aec.py` clones/fetches only the pinned commit into a temporary directory, verifies `HEAD` equals the pinned 40-character commit, derives the compile dependency closure from the checked-in allowlist, copies it without `.git`, and emits:
+`vendor_webrtc_aec.py` clones/fetches only the pinned commit into a temporary directory,
+verifies `HEAD` equals the pinned 40-character commit, verifies the prepared Abseil
+dependency matches the exact Chromium `src/third_party` DEPS pin, derives the compile
+dependency closure from the checked-in exact allowlist, copies it without `.git`, and
+emits:
 
 - `UPSTREAM.json` with repository URL, commit, commit-tree object ID, import timestamp, roots, compiler defines, license path, patent-notice path, and notice-generation version;
 - `FILES.sha256` with every vendored relative path and SHA-256 in sorted order; and
@@ -360,6 +402,54 @@ Expected: all metadata, version, license, patent-notice, symbol, dependency, and
 - [ ] **Step 6: Commit distribution separately.**
 
 Apply the dirty-worktree protocol to the Task 2B files, then commit with `git commit -m "build: distribute cross-platform voice AEC wheels"`.
+
+## Task 2C: Expose truthful native AEC health evidence
+
+**Files:**
+
+- Modify: `native/voice_aec/src/bindings.cpp`
+- Modify: `native/voice_aec/CMakeLists.txt`
+- Modify: `native/voice_aec/tools/vendor_webrtc_aec.py`
+- Modify: `native/voice_aec/vendor/webrtc/PATCHES.md`
+- Modify: `native/voice_aec/vendor/webrtc/FILES.sha256`
+- Create: `native/voice_aec/vendor/webrtc/PRISTINE_FILES.sha256`
+- Modify: the minimal vendored AEC3 metric-interface files named by the patch
+- Create: `native/voice_aec/patches/0001-expose-delay-health-evidence.patch`
+- Modify: `native/voice_aec/tests/test_binding.py`
+- Modify: `native/voice_aec/tests/test_vendored_source.py`
+- Modify: `Packaging/check_voice_aec_wheel.py`
+- Modify: `Tests/Packaging/test_voice_aec_distribution.py`
+- Modify: `.github/workflows/voice-aec-wheels.yml`
+
+- [ ] **Step 1: Write a RED native-to-policy regression.**
+
+Prove the installed companion no longer reports a permanently impossible health
+predicate. A deterministic delayed-echo corpus must expose categorical, per-instance
+evidence for estimate availability, refined/coarse quality, freshness in blocks, and
+clock drift, together with the public AEC3 delay and ERLE metrics. Do not represent a
+categorical readiness state as a fabricated probabilistic confidence.
+
+- [ ] **Step 2: Add one declared minimal upstream patch.**
+
+Extend only the pinned AEC3 metrics seam needed to carry the existing internal delay
+estimate quality, age, and clock-drift evidence to `EchoControl::Metrics`. Record the
+patch file and SHA-256 in `PATCHES.md`; make the deterministic vendoring recipe apply
+and verify it; update `FILES.sha256`; and keep the unpatched upstream commit/tree as
+the provenance root. Silent edits to vendored source remain forbidden.
+
+- [ ] **Step 3: Adapt the narrow binding.**
+
+Return ERLE, delay, estimate availability, refined state, age, and drift as finite
+numeric values. Task 3 consumes this evidence and requires refined, fresh, drift-free
+state plus an ERLE threshold reachable under the pinned AEC3 default configuration.
+Missing, stale, or malformed evidence must remain fail-closed.
+
+- [ ] **Step 4: Rebuild and qualify the companion.**
+
+Run the native binding/provenance tests, build a fresh wheel, exercise the metrics and
+attenuation on a deterministic delayed-echo corpus in the repaired-wheel matrix, then
+rerun the Task 2B distribution checks. Commit
+separately with `git commit -m "fix: expose truthful voice AEC health evidence"`.
 
 ## Task 3: Build the app-owned duplex transport and fail-closed preprocessor
 
@@ -688,68 +778,539 @@ Expected: voice barrier and existing controller tests pass.
 
 Apply the dirty-worktree protocol to the Task 8 files, then commit with `git commit -m "feat: gate effectful voice turns"`.
 
-## Task 9: Promote only the winning no-tool attempt through ADR-094 and ADR-097
-
-**Blocked until:** the ADR-094 terminalization transaction and ADR-097 trace promotion service named in Preconditions are merged and available on this branch.
+## Task 9A: Add atomic completed-pair persistence and app-lifetime promotion custody
 
 **Files:**
 
 - Create: `tldw_chatbook/Chat/console_voice_promotion.py`
+- Modify: `tldw_chatbook/Chat/console_chat_store.py`
+- Modify: `tldw_chatbook/Chat/console_runtime.py`
 - Modify: `tldw_chatbook/Chat/chat_persistence_service.py`
-- Modify: `tldw_chatbook/Chat/console_exchange_capture.py`
 - Modify: `tldw_chatbook/Chat/console_speculative_voice.py`
+- Modify: `tldw_chatbook/app.py`
+- Test: `Tests/Chat/test_console_voice_promotion.py`
+- Test: `Tests/Chat/test_console_speculative_voice_promotion_races.py`
+- Test: `Tests/Chat/test_console_chat_store_atomic_promotion.py`
+- Test: `Tests/Chat/test_console_runtime_lifetime.py`
+- Test: `Tests/Chat/test_console_runtime_shutdown.py`
+- Test: `Tests/Chat/test_chat_persistence_service.py`
+- Test: `Tests/UI/test_app_quit_guard.py`
+
+- [x] **Step 1: Pin the existing baseline and transaction boundary.**
+
+Before editing, inspect the owned paths with the dirty-worktree protocol. Record that the
+authoritative database boundary is the single ChaChaNotes connection owned by
+`ChatPersistenceService`; do not include WorkspaceDB or another store in the atomicity
+claim. Follow these existing owners before adding a seam:
+
+- `ConsoleChatSession.persisted_conversation_id`,
+  `conversation_binding_revision`, and the store-private
+  `_settings_session_incarnations` map;
+- `ConsoleChatStore.active_leaf`, `append_message`, `append_generation_message`,
+  `set_active_leaf`, `rebind_persisted_conversation`, `persist_session_if_needed`,
+  `promote_ephemeral_session`, `delete_message`, and `close_session`;
+- `ChatPersistenceService.commit_durable_turn`, the current later assistant settlement,
+  terminal-receipt metadata, `ConversationLocalMarksService`, and
+  `conversations.active_leaf_message_id`;
+- `ConsoleRuntime.close_session`, `begin_dispose`, and `dispose`; and
+- `TldwCli._confirm_and_quit`, `_confirm_console_runtime_quit`, and
+  `_run_approved_quit_cleanup`.
+
+Run the pre-change baseline:
+
+```bash
+pytest -q \
+  Tests/Chat/test_chat_persistence_service.py \
+  Tests/Chat/test_console_runtime_lifetime.py \
+  Tests/Chat/test_console_runtime_shutdown.py \
+  Tests/UI/test_app_quit_guard.py
+```
+
+Expected: the existing targeted tests pass. If a dirty unrelated change makes one red,
+record the exact baseline failure and do not edit or absorb that owner's work.
+
+- [x] **Step 2: Define immutable promotion contracts with RED unit tests.**
+
+Create `Tests/Chat/test_console_voice_promotion.py` first. Pin frozen, slotted values with
+this public shape (field names may adapt only to an already-existing strongly typed
+equivalent):
+
+```python
+@dataclass(frozen=True, slots=True)
+class ConsoleSessionBindingOrigin:
+    session_id: str
+    session_incarnation: int
+    persisted_conversation_id: str | None
+    conversation_binding_revision: int
+
+@dataclass(frozen=True, slots=True)
+class VoicePromotionContext:
+    promotion_id: str
+    attempt_id: str
+    origin: ConsoleSessionBindingOrigin
+    expected_native_leaf_id: str | None
+    expected_persisted_leaf_id: str | None
+    user_text: str
+    assistant_text: str
+    usage_json: str | None
+    terminal_boundary_id: str
+    capture_eligible_at_dispatch: bool
+
+@dataclass(frozen=True, slots=True)
+class ResolvedVoicePromotionDestination:
+    session_id: str
+    session_incarnation: int
+    persisted_conversation_id: str | None
+    expected_persisted_leaf_id: str | None
+    capture_eligible_at_dispatch: bool
+
+@dataclass(frozen=True, slots=True)
+class CompletedVoicePairCommit:
+    conversation_id: str
+    user_message_id: str
+    assistant_message_id: str
+    terminal_receipt_id: str
+    active_leaf_message_id: str
+    already_committed: bool = False
+```
+
+The module owns one random opaque promotion ID and derives domain-separated user,
+assistant, receipt, and operation IDs from that ID only. Tests must prove identical text
+under different promotion IDs produces different identities, retry produces identical
+identities, and neither transcript content nor provider payload appears in an identifier
+or diagnostic representation.
+
+Run:
+
+```bash
+pytest -q Tests/Chat/test_console_voice_promotion.py
+```
+
+Expected RED: import or contract failures because `console_voice_promotion.py` and these
+types do not exist.
+
+- [x] **Step 3: Implement only the contracts and stable identity helper.**
+
+Create `tldw_chatbook/Chat/console_voice_promotion.py` with the immutable values above,
+bounded constructor validation, a private UUID namespace, and a single helper that
+derives IDs using explicit labels such as `user-message`, `assistant-message`, and
+`terminal-receipt`. Do not add store, runtime, or database behavior yet.
+
+Run:
+
+```bash
+pytest -q Tests/Chat/test_console_voice_promotion.py
+```
+
+Expected: contract and identity tests pass.
+
+- [x] **Step 4: Write RED real-SQLite atomic-pair and reconciliation tests.**
+
+Extend `Tests/Chat/test_chat_persistence_service.py` using `tmp_path` databases opened by
+the same `CharactersRAGDB`/service seam as production. Add a narrow request value or
+keyword arguments for an already-complete, no-tool voice pair and pin this method:
+
+```python
+def commit_completed_voice_pair(
+    self,
+    *,
+    destination: ResolvedVoicePromotionDestination,
+    context: VoicePromotionContext,
+) -> CompletedVoicePairCommit:
+    ...
+```
+
+Test the following transaction truth table:
+
+- matching existing durable conversation and active leaf commits the user row, completed
+  assistant row, `usage_json`, terminal-receipt metadata, exact
+  `console_unseen:<receipt-id>` local mark, and assistant active leaf in one
+  `BEGIN IMMEDIATE` transaction;
+- injected failure after each write boundary leaves none of those new facts;
+- a persisted active-leaf mismatch leaves no new facts;
+- an exception deliberately raised after SQLite commit is reconciled on retry from the
+  exact promotion-derived IDs before comparing the now-advanced leaf;
+- exact pre-existing IDs with any mismatched conversation, role, parent, text, usage,
+  terminal metadata, unseen mark, or active leaf fail closed rather than being adopted;
+- two retries never duplicate the pair or mark and never invoke a provider; and
+- no WorkspaceDB or other-database write occurs inside the claimed transaction.
+
+Use failure hooks or an instrumented repository, never elapsed-time sleeps. Run:
+
+```bash
+pytest -q \
+  Tests/Chat/test_chat_persistence_service.py \
+  Tests/Chat/test_console_voice_promotion.py
+```
+
+Expected RED: `commit_completed_voice_pair` is missing and atomic/reconciliation cases
+fail; pre-existing persistence tests remain green.
+
+- [x] **Step 5: Implement the single ChaChaNotes completed-pair transaction.**
+
+Add `ChatPersistenceService.commit_completed_voice_pair`. Before opening a new write
+transaction, perform only boundary validation. Inside one `db.transaction(immediate=True)`:
+
+1. query and strictly reconcile the complete promotion-derived identity set first;
+2. if reconciled, return `already_committed=True` only when every row, mark, metadata
+   field, parent link, and active leaf exactly matches;
+3. otherwise compare the durable conversation's current active leaf to
+   `destination.expected_persisted_leaf_id`;
+4. insert the user and terminal assistant rows with exact parentage, usage, and terminal
+   receipt metadata;
+5. insert the exact unseen mark through the existing local-marks repository using the
+   same cursor/connection; and
+6. compare-and-swap `conversations.active_leaf_message_id` to the assistant ID, requiring
+   exactly one affected row.
+
+Do not create a dispatch checkpoint, call `settle_with_assistant`, write a trace, use the
+process-local binding revision as SQL authority, or call any provider. Return only after
+the outer transaction commits. Re-run the Step 4 command; expected: all pass.
+
+- [x] **Step 6: Write RED store-lease and in-memory publication tests.**
+
+Create `Tests/Chat/test_console_chat_store_atomic_promotion.py`. Drive public store seams
+and deterministic barrier hooks to pin:
+
+```python
+def claim_voice_promotion(
+    self, context: VoicePromotionContext
+) -> ConsoleVoicePromotionLease:
+    ...
+
+def publish_temporary_voice_pair(
+    self, lease: ConsoleVoicePromotionLease, context: VoicePromotionContext
+) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+    ...
+
+def publish_durable_voice_pair(
+    self, lease: ConsoleVoicePromotionLease, commit: CompletedVoicePairCommit
+) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+    ...
+```
+
+The synchronous claim is the acceptance linearization point. Test exact session
+incarnation, binding revision, persisted ID, native leaf, and optional persisted leaf;
+the sole allowed drift is same-incarnation first persistence from `None` to an ID while
+the binding revision stays unchanged and the expected native leaf gains its persisted
+identity. While leased, `append_message`, `append_generation_message`,
+`append_video_message`, `create_sibling`/regenerate, `add_variant`/branching,
+`set_active_leaf`,
+`rebind_persisted_conversation`, `persist_session_if_needed`,
+`promote_ephemeral_session`, message deletion that changes the lineage, and session close
+must refuse or defer the conflicting mutation through one guard.
+
+The guard must also cover an operation already admitted but not yet published. Add one
+per-session mutation-admission count under the promotion lock and wrap
+`_fork_source_transition` plus every listed direct mutation with a shared
+`_voice_promotion_mutation(session_id)` scope. Mutation admission increments the count
+before any validation or state read and releases the promotion mutex before entering
+existing locks; claim requires the count to be zero before installing a lease. Pin both
+orders for sibling regeneration, first persistence, and preparation-backed Save:
+
+- mutation admitted first: `try_claim` returns typed transient contention and installs no
+  lease; after the mutation fully publishes, the serialized owner retries claim and
+  either accepts the sole allowed same-incarnation first-persistence successor or rejects
+  the changed leaf/binding into recovery; and
+- claim installed first: the later mutation is refused or visibly buffered before its
+  first state read.
+
+For a still-temporary destination, atomically publish the already-complete pair and new
+native leaf in memory with no DB row, usage sidecar, receipt, unseen mark, or trace. Later
+ordinary Save persists that pair but leaves capture ineligible because eligibility was
+frozen false at dispatch. For a durable destination, publish the already-committed IDs
+into the native tree and release the lease in the same store critical section. Any
+failure installs exact recovery before releasing the lease.
+
+Run:
+
+```bash
+pytest -q Tests/Chat/test_console_chat_store_atomic_promotion.py
+```
+
+Expected RED: lease claim/publication and mutation fencing do not exist.
+
+- [x] **Step 7: Implement the store-owned promotion lease.**
+
+Add one store promotion `RLock`, per-session lease map, per-session mutation-admission
+count, and monotonically increasing lease revision. `_voice_promotion_mutation` never
+holds the promotion mutex across mutation work. The canonical acquisition sequence is
+promotion admission, then—after releasing the promotion mutex—
+`_fork_source_transition`, `_first_persistence_lock`, and `_preparation_lock`; code must
+never acquire the promotion mutex while any of those existing locks is held. Exit removes
+existing transition/preparation ownership before decrementing mutation admission. Claim
+consults only the admission count and lease map under the promotion mutex, so it never
+inverts an existing lock order.
+
+`ConsoleVoicePromotionLease` is an opaque immutable capability carrying
+only lease/session/revision identity plus `ResolvedVoicePromotionDestination`; it never
+holds a Python mutex across database I/O. Centralize conflicting mutation checks in one
+private scope and call it from `_fork_source_transition` and every remaining direct
+mutation choke point enumerated in Step 6, including `create_sibling`/regenerate.
+Claim, temporary publication, durable publication, recovery installation, and exact-lease
+abort must each execute under the promotion lock. A stale lease may neither publish nor
+release a newer lease. Re-run Step 6; expected: all pass.
+
+- [x] **Step 8: Write RED app-lifetime owner, recovery, close, and quit-permit tests.**
+
+Create/extend:
+
+- `Tests/Chat/test_console_speculative_voice_promotion_races.py`
+- `Tests/Chat/test_console_runtime_lifetime.py`
+- `Tests/Chat/test_console_runtime_shutdown.py`
+- `Tests/UI/test_app_quit_guard.py`
+
+Use `asyncio.Event`, injected executor futures, and instrumented locks to construct both
+orders of each race—never sleeps. Pin these owner seams:
+
+```python
+class VoicePromotionOwner:
+    def try_claim(self, context: VoicePromotionContext) -> VoicePromotionClaim: ...
+    async def promote(self, claim: VoicePromotionClaim) -> VoicePromotionOutcome: ...
+    async def wait_for_session(self, session_id: str, timeout: float) -> bool: ...
+    def begin_quit(self) -> VoicePromotionQuitToken: ...
+    async def wait_for_quiescence(self, token: VoicePromotionQuitToken, timeout: float) -> bool: ...
+    def seal_quiescent(self, token: VoicePromotionQuitToken) -> VoicePromotionQuitPermit: ...
+    def abort_quit(self, token_or_permit: object) -> None: ...
+    def consume_quit_permit(self, permit: VoicePromotionQuitPermit) -> None: ...
+```
+
+Cover cancel-before-claim; claim-before-navigation/unmount; typed append, sibling
+regeneration, preparation-backed Save, rebind, first persistence, session close, and quit
+racing claim; pre-commit failure; exception after commit; and a synchronous DB call
+stalled beyond close/quit timeouts. Force both mutation-admitted-first and
+claim-installed-first orders for the three existing lock families. The claimed task
+must remain rooted in `ConsoleRuntime`, survive view teardown, and settle before the
+lease releases or recovery appears. A timeout cancels only the waiter, vetoes close/quit,
+and leaves runtime, gateway, store, persistence, and the in-flight DB call alive.
+
+Also force: permit acquisition followed by `prepare_for_quit` failure; quit-worker
+cancellation; stale permit/recovery rejection from `begin_dispose`; arbitrary exception;
+one successful consumption; and a later fence after abort. Each non-consumption path
+must exact-token abort in `finally`; a stale abort cannot release the later fence.
+`seal_quiescent` must snapshot owner revision only after zero claims/recoveries, and
+`begin_dispose` must atomically validate and consume that exact permit before setting
+`_disposed`.
+
+Run:
+
+```bash
+pytest -q \
+  Tests/Chat/test_console_speculative_voice_promotion_races.py \
+  Tests/Chat/test_console_runtime_lifetime.py \
+  Tests/Chat/test_console_runtime_shutdown.py \
+  Tests/UI/test_app_quit_guard.py
+```
+
+Expected RED: app-lifetime ownership, close veto, reversible quit token, and sealed permit
+are absent.
+
+- [x] **Step 9: Implement runtime custody and exact permit carriage.**
+
+Construct one `VoicePromotionOwner` in `ConsoleRuntime` and inject it into every
+view-scoped speculative coordinator. The coordinator may cancel an unclaimed offer, but
+after synchronous claim it enters `PROMOTING` and hands the task to the runtime owner.
+The owner retains the executor task through synchronous settlement, exposes content-free
+status separately from protected recovery text, and never uses an unobserved
+fire-and-forget awaitable.
+
+Make `ConsoleRuntime.close_session` cancel unclaimed offers, boundedly await a claimed
+promotion, and return a close veto without finalizing deletion on timeout/recovery.
+Introduce a local typed quit approval that carries both the existing lifecycle revision
+and the exact `VoicePromotionQuitPermit`; do not cache the permit in a mutable app-global
+field. `_confirm_and_quit` owns the token/permit and uses `try/finally` to exact-token
+abort on every path where `begin_dispose` did not consume it. Extend `begin_dispose` to
+validate/consume the permit under the same owner lock before setting `_disposed` or
+acquiring irreversible shutdown fences. Forced process termination remains the crash
+boundary and writes no emergency content artifact.
+
+Re-run the Step 8 command; expected: all pass.
+
+- [x] **Step 10: Write RED and implement provider-free recovery plus next-turn buffering.**
+
+In `Tests/Chat/test_console_voice_promotion.py` and
+`Tests/Chat/test_console_speculative_voice_promotion_races.py`, block promotion after the
+terminal boundary and admit more speech. Prove that it creates a separate next-turn
+buffer, cannot dispatch while promotion is unresolved, and on conflict/failure becomes
+an editable `pending next voice turn` draft. The recovery object must retain the exact
+user text and already-heard assistant text. Retry must call only the store/persistence
+path using the same promotion ID, and explicit Discard or Rebranch is required before
+session close or quit may proceed. A plain Retry retains the frozen parent and therefore
+remains fail-closed after an active-leaf conflict.
+
+Add an explicit provider-free **Rebranch here** recovery action. It snapshots the
+currently selected native leaf and its persisted identity only after the user chooses
+the action, acquires a fresh lease for that exact parent, and produces a new resolved
+destination while retaining the original promotion ID, exact user/assistant pair,
+terminal identity set, and dispatch-time capture decision. It then calls the same
+`commit_completed_voice_pair` transaction; it never regenerates text or adopts an
+implicit current leaf. Rebranch must fail closed if the selected leaf changes before
+claim/commit, and uncertain commit still reconciles the original stable IDs first.
+
+A successful Retry or Rebranch must publish the assistant as active leaf before
+releasing the next-turn draft to dispatch. Discard abandons the pair only after explicit
+confirmation and leaves the pending-next-turn draft editable. The draft must never
+disappear, merge into the retried/rebranched pair, or cause another provider call.
+
+Implement the smallest serialized coordinator states and callbacks needed to satisfy
+those tests. Re-run:
+
+```bash
+pytest -q \
+  Tests/Chat/test_console_voice_promotion.py \
+  Tests/Chat/test_console_speculative_voice_promotion_races.py \
+  Tests/Chat/test_console_chat_store_atomic_promotion.py
+```
+
+Expected: all pass.
+
+- [x] **Step 11: Run the complete targeted Task 9A regression set.**
+
+```bash
+pytest -q \
+  Tests/Chat/test_console_voice_promotion.py \
+  Tests/Chat/test_console_speculative_voice_promotion_races.py \
+  Tests/Chat/test_console_chat_store_atomic_promotion.py \
+  Tests/Chat/test_console_runtime_lifetime.py \
+  Tests/Chat/test_console_runtime_shutdown.py \
+  Tests/Chat/test_chat_persistence_service.py \
+  Tests/Chat/test_console_speculative_voice.py \
+  Tests/Chat/test_console_speculative_voice_properties.py \
+  Tests/UI/test_app_quit_guard.py
+```
+
+Expected: atomicity, exact reconciliation, deterministic lifecycle races, provider-free
+recovery, independent next-turn buffering, exact-token cleanup, single permit
+consumption, and all prior coordinator properties pass. Then run `git diff --check` and
+review only the owned hunks. Do not run the full suite without asking, and do not commit
+without explicit user authorization. Task 9A does not by itself qualify production
+rollout: its strict sidecar census includes exact lookups that are unindexed in schema
+v55, so Task 9B's v56 index migration and Task 12A's large-history query-plan/latency
+gate remain mandatory before any runtime wiring may become eligible.
+
+## Task 9B: Add typed post-dispatch trace provenance and importer
+
+**Files:**
+
+- Create: `tldw_chatbook/Chat/console_voice_trace_promotion.py`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_voice_trace_provenance.sql`
+- Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
+- Modify: `tldw_chatbook/Chat/console_exchange_capture.py`
+- Modify: `tldw_chatbook/Chat/console_trace_models.py`
+- Modify: `tldw_chatbook/Chat/console_trace_repository.py`
+- Modify: `tldw_chatbook/Chat/console_trace_service.py`
+- Test: `Tests/DB/test_chachanotes_v69_voice_trace_provenance_migration.py`
+- Test: `Tests/Chat/test_console_voice_capture.py`
+- Test: `Tests/Chat/test_console_trace_repository.py`
+- Test: `Tests/Chat/test_console_trace_service.py`
+
+- [x] **Step 1: Write RED schema-v56 and compatibility tests.**
+
+Add `reservation_provenance` constrained to `crash_durable_reserved` and `post_dispatch_promoted`, with the ordinary value as the default for every existing insert path. Add nullable `import_reason_code`, constrained by a cross-column check to null for ordinary calls and exactly `provisional_voice_promoted` for promoted calls; do not overload `omission_reason_code`. Existing v54/v55 databases migrate without rewriting semantic payloads. The existing reservation trigger still rejects ordinary direct terminal inserts; the exceptional shape admits only a complete promoted terminal call through the narrow repository transaction. Test defaults, constraints, model/repository round trip, and old-reader-compatible projections.
+
+In the same v56 migration, add direct lookup indexes for every locator in Task 9A's
+checked message/revision sidecar census. At minimum the current v55 planner must stop
+scanning `console_dispatch_checkpoints.user_message_id`,
+`rag_citation_traces.legacy_message_id`, `rag_message_trace_owners.message_id`, and
+`transcript_annotations.message_id`; cover the assistant/revision locator columns from
+the same inventory as well. Migration tests must use `EXPLAIN QUERY PLAN` to require an
+indexed `SEARCH` for each exact promotion-derived lookup and must fail by table/column
+name whenever the checked locator inventory grows without a matching index or documented
+primary/unique-key search.
+
+- [x] **Step 2: Write RED typed-capability and import tests.**
+
+At provider dispatch, freeze capture eligibility. For an eligible saved session, the provider gateway registry retains the sanitized payload and actual dispatch/response/settlement timestamp observations and issues a private-construction opaque `ProvisionalTraceEnvelope` capability per call. At attempt terminal it issues one `ProvisionalTraceManifest` over the exact contiguous envelope identities, expected call count, aggregate bytes, and observed chronology. Fix bounds at eight calls and 64 MiB per attempt, 128 MiB app-wide, and ten minutes after manifest seal. Test ordered multi-call attempts, one missing envelope, sequence gap, per-attempt/app overflow, expiry, losing-attempt destruction, temporary-chat admission, save-during-response, forged values, cross-attempt substitution, double redemption, transient pre-commit failure, and exception-after-commit reconciliation. Generic `Any`/capture records and caller-assembled tuples must not cross the attempt snapshot boundary.
+
+The winning importer must redeem the entire manifest in one trace transaction, link it to the committed assistant revision, set `reservation_provenance=post_dispatch_promoted` and `import_reason_code=provisional_voice_promoted`, and omit fictitious reserve/bind/dispatch-start events. It writes only the gateway-observed chronology required by the call row; it never estimates missing timestamps. It must create or reconcile the frozen capture policy, conversation owner/root segment when this is the first trace call, target segment/turn/run, semantic request surface/header, committed-assistant semantic revision, every ordered call/response link, and trace events. Test ownerless first call, existing-owner/segment reuse, and a concurrent ordinary reservation racing owner creation. A failed or incomplete trace import must not roll back or alter the committed conversation pair.
+
+- [x] **Step 3: Run RED.**
+
+Run: `pytest -q Tests/DB/test_chachanotes_v69_voice_trace_provenance_migration.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py`
+
+Expected: schema provenance, direct-terminal guards, typed capability, and importer tests fail while ordinary trace lifecycle tests remain green.
+
+- [x] **Step 4: Implement schema v56 and the exceptional repository transaction.**
+
+Extend the current trace tables and models rather than creating a parallel store. Keep the ordinary pre-dispatch reservation API and its chronology unchanged. Add the direct promotion-reconciliation indexes proven by Step 1, then add a dedicated transaction that creates or reconciles deterministic owner/root-segment/policy/surface/revision lineage, validates the sealed manifest and promoted provenance, imports all call request/response blobs plus terminal rows atomically in call-sequence order, and reconciles unique-constraint races or uncertain results. Do not overload `integrity_state`/`omission_reason_code` or fabricate timestamped lifecycle transitions.
+
+- [x] **Step 5: Implement gateway capability ownership.**
+
+The gateway registry is the authority for issue, manifest seal, aggregate budgets/expiry, claim, destroy, retry, and consume. Public callers hold typed opaque envelopes plus the gateway-issued manifest, never semantic payloads. Redemption verifies the exact manifest set, promotion/attempt/call identity, contiguity, count, bytes, and lifetime as one unit; any missing call rejects the whole import. A confirmed pre-commit failure may release the same bounded capability for retry, an uncertain result reconciles before reuse, and success, cancellation, expiry, or explicit recovery abandonment destroys its semantic payload. Temporary dispatch never issues one, even if the session is saved later.
+
+- [x] **Step 6: Run migration, trace, privacy, and lifecycle tests.**
+
+Run: `pytest -q Tests/DB/test_chachanotes_v56_semantic_trace_migration.py Tests/DB/test_chachanotes_v57_semantic_mutation_guard_migration.py Tests/DB/test_chachanotes_v69_voice_trace_provenance_migration.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py`
+
+Expected: old and new schema paths, provenance/reason round trip, ordinary reservation chronology, ownerless/existing/concurrent lineage, complete multi-call import, missing/gapped/overflow/expired rejection, replay rejection, temp/save races, uncertain commit, and conversation-authoritative trace failure all pass.
+
+- [ ] **Step 7: Commit the trace importer.**
+
+Apply the dirty-worktree protocol to the Task 9B files, then commit with `git commit -m "feat: import promoted voice traces with explicit provenance"`.
+
+## Task 9C: Integrate winning attempt promotion
+
+**Files:**
+
+- Modify: `tldw_chatbook/Chat/console_voice_attempts.py`
+- Modify: `tldw_chatbook/Chat/console_speculative_voice.py`
+- Modify: `tldw_chatbook/Chat/console_voice_promotion.py`
+- Modify: `tldw_chatbook/Chat/console_provider_gateway.py`
+- Test: `Tests/Chat/test_console_voice_attempts.py`
 - Test: `Tests/Chat/test_console_voice_promotion.py`
 - Test: `Tests/Chat/test_console_voice_capture.py`
+- Test: `Tests/Chat/test_console_speculative_voice_promotion_races.py`
 
-- [ ] **Step 1: Inspect and name the landed service interfaces before writing tests.**
+- [x] **Step 1: Write RED end-to-end adapter tests.**
 
-Replace generic names in this task with the actual ADR-094 and ADR-097 public methods. If either service is absent, stop this task and leave the rollout gate off; do not implement a substitute.
+Prove that the immutable winning snapshot carries a gateway-sealed manifest with typed trace envelopes, exact text, usage, terminal boundary, and frozen lineage into the claimed promotion. Cancelled, stale, failed-seal, incomplete-manifest, and tool-barrier attempts destroy their capabilities and create no trace; only a valid winning pair may persist. Pair commit is authoritative; complete ordered trace import is best-effort afterward. Recovery retry does not regenerate. New-turn speech buffered during `PROMOTING` dispatches only after successful active-leaf publication, or becomes a separate editable draft on promotion failure/conflict.
 
-- [ ] **Step 2: Write RED atomic-promotion and capture tests.**
+- [x] **Step 2: Run RED.**
 
-Test that one immutable winning snapshot atomically creates the user message, assistant message, terminal receipt, and exact unseen mark. Cancelled attempts, failed seals, and stale epochs create none. Retry/idempotency keys prevent duplicate promotion.
+Run: `pytest -q Tests/Chat/test_console_voice_attempts.py Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_speculative_voice_promotion_races.py`
 
-With Capture On, promote only the winner's sanitized in-memory provider exchange after terminalization and label it `provisional_voice_promoted` with explicit post-dispatch provenance. Capture failure is best-effort and does not roll back the accepted conversation pair. Temporary chats never create durable capture, and saving one later does not synthesize a historical trace.
+Expected: integration tests fail until attempt snapshots, gateway capture, claim ownership, persistence, and trace import are connected.
 
-- [ ] **Step 3: Run RED.**
+- [x] **Step 3: Implement the narrow integration.**
 
-Run: `pytest -q Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py`
+Replace `VoiceAttemptSnapshot.exchange_captures: tuple[Any, ...]` with an optional gateway-issued `ProvisionalTraceManifest` plus its exact typed envelopes. `VoiceWinningPromotion` first claims and commits the pair through Task 9A, then asks Task 9B to import the complete manifest if dispatch-time eligibility allowed it. It never writes SQL, calls ordinary streaming sinks, replays provider work, imports a partial manifest, or converts a temporary-chat capture after the fact.
 
-Expected: adapter tests fail until the narrow promotion integration exists.
+- [x] **Step 4: Run the Task 9 regression set.**
 
-- [ ] **Step 4: Implement adapters only.**
+Run: `pytest -q Tests/Chat/test_console_voice_attempts.py Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_speculative_voice_promotion_races.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_speculative_voice.py Tests/Chat/test_console_speculative_voice_properties.py`
 
-`VoiceWinningPromotion` receives the exact winning prompt, completed assistant text, terminal boundary, attempt identity, content-free usage, and optional sanitized capture envelope. It delegates transaction ownership to ADR-094 and trace ownership to ADR-097. It never writes SQL directly and never calls ordinary streaming sinks.
+Expected: all pass, including exact receipt acknowledgement, navigation races, provider-free recovery, explicit trace provenance, and temporary/save-later behavior.
 
-- [ ] **Step 5: Run persistence, receipt, and capture tests.**
+- [ ] **Step 5: Commit the promotion integration.**
 
-Run: `pytest -q Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_exchange_capture.py`
-
-Expected: all pass, including exact unseen-mark acknowledgement and temporary-chat cases.
-
-- [ ] **Step 6: Commit the promotion adapter.**
-
-Apply the dirty-worktree protocol to the Task 9 files, then commit with `git commit -m "feat: promote winning speculative voice turns"`.
+Apply the dirty-worktree protocol to the Task 9C files, then commit with `git commit -m "feat: promote winning speculative voice turns"`.
 
 ## Task 10: Wire view-scoped hands-free lifecycle and ephemeral preview rows
 
 **Files:**
 
+- Create: `tldw_chatbook/Chat/console_voice_controls.py`
 - Create: `tldw_chatbook/Widgets/Console/console_voice_preview.py`
+- Modify: `tldw_chatbook/Chat/console_speculative_voice.py`
+- Modify: `tldw_chatbook/UI/Console_Modules/dictation.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/hands_free.py`
+- Modify: `tldw_chatbook/UI/Console_Modules/wiring.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/Widgets/Console/__init__.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_transcript.py`
-- Modify: `tldw_chatbook/Widgets/Console/console_speech_controls.py`
 - Test: `Tests/UI/test_console_speculative_voice_wiring.py`
 - Test: `Tests/UI/test_console_voice_preview.py`
 - Test: `Tests/UI/test_console_voice_accessibility.py`
 - Test: `Tests/UI/test_console_hands_free_wiring.py`
 
-- [ ] **Step 1: Write RED UI/lifecycle tests before mounting hardware.**
+- [x] **Step 1: Write RED UI/lifecycle tests before mounting hardware.**
 
 Patch audio/native factories before creating the Textual app. Assert:
 
 - the qualification gate selects legacy `HandsFreeController` when false;
 - the development-qualified path constructs one view-scoped duplex engine/coordinator;
+- every view-scoped coordinator receives the same app-owned
+  `ConsoleRuntime.voice_promotion_owner`, and unmount never replaces or closes it;
 - rolling user text and current assistant output appear as visually provisional rows that are not present in `ConsoleStore` or `ConsoleTranscript.set_messages()` input;
 - replacing an attempt removes only the old assistant preview;
 - winning promotion removes previews after durable rows arrive;
@@ -758,13 +1319,13 @@ Patch audio/native factories before creating the Textual app. Assert:
 - the app-lifetime orphan supervisor survives view teardown.
 - the separate Realtime engine, manual per-message **Speak** action, and accessibility announcement throttling retain their current construction and behavior.
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 Run: `pytest -q Tests/UI/test_console_speculative_voice_wiring.py Tests/UI/test_console_voice_preview.py Tests/UI/test_console_hands_free_wiring.py`
 
 Expected: missing preview/wiring tests fail; legacy hands-free tests stay green.
 
-- [ ] **Step 3: Mount a separate ephemeral preview widget.**
+- [x] **Step 3: Mount a separate ephemeral preview widget.**
 
 `ConsoleVoicePreview` accepts a pure projection:
 
@@ -780,11 +1341,11 @@ class VoicePreviewProjection:
 
 Mount it adjacent to the transcript's message region and style it as provisional. Do not fabricate `ConsoleChatMessage` IDs, call `set_messages`, or insert preview rows into durable transcript grouping/action logic.
 
-- [ ] **Step 4: Branch the existing controller wiring.**
+- [x] **Step 4: Branch the existing controller wiring.**
 
 In `ConsoleHandsFreeController`, select the new pipeline only when the internal qualification gate is true. Reuse frozen provider/session selection but keep audio/coordinator resources view-scoped per ADR-094. Preserve the existing Realtime engine and legacy hands-free flow unchanged. Manual interruption must bypass acoustic admission and synchronously fence the active epoch before awaiting cleanup.
 
-- [ ] **Step 5: Run UI and legacy regressions.**
+- [x] **Step 5: Run UI and legacy regressions.**
 
 Run: `pytest -q Tests/UI/test_console_speculative_voice_wiring.py Tests/UI/test_console_voice_preview.py Tests/UI/test_console_voice_accessibility.py Tests/UI/test_console_hands_free_wiring.py Tests/Chat/test_console_hands_free.py Tests/Chat/test_console_voice_input.py Tests/UI/test_console_speech_controls.py Tests/TTS/test_console_speech_snapshot_admission.py`
 
@@ -800,6 +1361,7 @@ Apply the dirty-worktree protocol to the Task 10 files, then commit with `git co
 
 - Create: `tldw_chatbook/Audio/voice_metrics.py`
 - Modify: `tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py`
+- Modify: `tldw_chatbook/Widgets/Settings_Widgets/speech_tts_panel_types.py`
 - Modify: `tldw_chatbook/Chat/console_voice_settings.py`
 - Modify: `tldw_chatbook/config.py`
 - Modify: `Docs/User_Guide/console/attachments-images-voice.md`
@@ -809,7 +1371,7 @@ Apply the dirty-worktree protocol to the Task 10 files, then commit with `git co
 - Test: `Tests/UI/test_settings_speculative_voice_panel.py`
 - Test: `Tests/Chat/test_console_settings_defaults.py`
 
-- [ ] **Step 1: Write RED settings-ownership and content-privacy tests.**
+- [x] **Step 1: Write RED settings-ownership and content-privacy tests.**
 
 Test response-eagerness presets Fast 700/Balanced 1200/Deliberate 2000, valid numeric bounds 500-3000, invalid-value content-free warning plus fallback to 700, `pipeline_aec_enabled=true` by default, troubleshooting-only false→half-duplex behavior, and no config write merely from opening Settings.
 
@@ -817,25 +1379,25 @@ Assert `dictation.acoustic_barge_in` remains consumed only by Realtime compatibi
 
 Metrics tests must reject transcript text, response text, or PCM fields and retain only durations, counts, modes, health states, provider result class, and split winning/discarded usage.
 
-- [ ] **Step 2: Run RED.**
+- [x] **Step 2: Run RED.**
 
 Run: `pytest -q Tests/Audio/test_voice_metrics.py Tests/UI/test_settings_speculative_voice_panel.py Tests/Chat/test_console_settings_defaults.py`
 
 Expected: new settings and metrics assertions fail.
 
-- [ ] **Step 3: Add one canonical “Pipeline conversation” settings block.**
+- [x] **Step 3: Add one canonical “Pipeline conversation” settings block.**
 
 Modify only the F9 Settings Speech & TTS panel. Show native-live versus rolling-window STT mode, overlapping-remote-audio cost disclosure, speculative-call cost disclosure, response eagerness, and the troubleshooting-only AEC disable. Explain that unhealthy/unavailable AEC automatically becomes half duplex. Do not show the development qualification gate.
 
-- [ ] **Step 4: Implement content-free metrics and diagnostics.**
+- [x] **Step 4: Implement content-free metrics and diagnostics.**
 
 Record EOS→dispatch, barge→audible-stop, replacement dispatch, first audio, AEC state/ERLE aggregate, underruns, restarts, conservative-mode entry, duplicated STT audio duration, and winning/discarded usage. Logs may include turn/attempt opaque IDs but no transcript, response, audio, provider request body, or sanitized capture body.
 
-- [ ] **Step 5: Update user and developer docs.**
+- [x] **Step 5: Update user and developer docs.**
 
 Document same-turn interruption semantics, the 700 ms default and safe range, live/fallback STT modes, remote overlap cost, AEC warming/degraded half duplex, manual interruption, cancelled-attempt privacy, temporary-chat capture behavior, and the unchanged Realtime engine. Add a bounded compatibility note: old send-delay and acoustic-barge-in keys remain for legacy/Realtime and are not migrated.
 
-- [ ] **Step 6: Run targeted settings/docs tests.**
+- [x] **Step 6: Run targeted settings/docs tests.**
 
 Run: `pytest -q Tests/Audio/test_voice_metrics.py Tests/UI/test_settings_speculative_voice_panel.py Tests/Chat/test_console_settings_defaults.py Tests/UI/test_settings_speech_tts_panel.py Tests/Chat/test_console_voice_input.py`
 
@@ -851,18 +1413,25 @@ Apply the dirty-worktree protocol to the Task 11 files, then commit with `git co
 
 - Create: `Tests/Audio/fixtures/voice_aec/manifest.json`
 - Create: `Tests/Audio/test_voice_aec_corpus.py`
+- Create: `Packaging/voice_aec_corpus.py`
+- Create: `Packaging/qualify_installed_voice_aec.py`
+- Create: `tldw_chatbook/Chat/console_speculative_voice_session.py`
+- Modify: `tldw_chatbook/UI/Console_Modules/hands_free.py`
 - Create: `Tests/integration/test_speculative_voice_pipeline.py`
 - Create: `Tests/Performance/test_speculative_voice_latency.py`
 - Create: `Tests/Packaging/test_voice_aec_installed_wheel.py`
 - Create: `Tests/Chat/test_console_voice_ephemerality.py`
-- Create: `Scripts/qualify_speculative_voice.py`
+- Create: `scripts/qualify_speculative_voice.py`
+- Create: `Packaging/speculative_voice_soak.py`
+- Create: `Tests/Packaging/test_speculative_voice_soak.py`
 - Create: `Packaging/compute_voice_source_digest.py`
 - Create: `Packaging/speculative_voice_source_paths.txt`
+- Create: `Tests/Packaging/test_voice_source_digest.py`
 - Create: `Docs/Development/TTS/speculative-voice-durable-owner-inventory.md`
 - Create: `Artifacts/voice_qualification/automated/.gitkeep`
 - Modify: `.github/workflows/voice-aec-wheels.yml`
 
-- [ ] **Step 1: Build a licensed, content-safe DSP corpus and RED qualification tests.**
+- [x] **Step 1: Build a licensed, content-safe DSP corpus and RED qualification tests.**
 
 Use synthetic speech/noise plus redistributable fixtures with source/license/hash in the manifest; never use captured user audio. Cases include stationary/nonlinear echo, delay steps, clock drift, double-talk, underrun/overrun, device reset, and Bluetooth-like latency. Assert:
 
@@ -871,9 +1440,52 @@ Use synthetic speech/noise plus redistributable fixtures with source/license/has
 - double-talk recall at least 95%;
 - any unqualified case closes admission and selects half duplex.
 
-- [ ] **Step 2: Add deterministic end-to-end and latency harnesses.**
+- [x] **Step 2: Add deterministic end-to-end and latency harnesses.**
+
+First close the production-composition gap found during the Task 12A audit: when the
+qualification gate is true and no test factory is injected, the Console must lazily
+construct a real view-scoped speculative session. That session owns the duplex
+transport, AEC/VAD preprocessor, native-live-or-rolling transcript engine, attempt and
+phrase-speech lifecycle, and serialized coordinator; it receives only the app-lifetime
+promotion owner and dispatch supervisor from the runtime. Construction or startup
+failure stays content-free, closes any partially created resource, and never falls
+through to an unsafe qualified mode. The injected factory remains solely a test seam.
 
 The integration path must consume the real lazy TTS byte stream, deliver rendered PCM through the duplex transport, feed synthetic echo plus user speech into capture, revise the rolling transcript, cancel a blocked provider/TTS attempt, and promote exactly one winner through test doubles for the landed ADR-094/097 services.
+
+Build two deterministic ChaChaNotes histories for the completed-pair path: a 1,000-row
+baseline and a 100,000-row large case. Distribute rows across every checked forbidden
+message/revision locator with the same per-locator proportions in both histories; keep
+the promotion-derived IDs absent for fresh-commit measurements and install one exact
+canonical committed pair for uncertain-retry measurements. Require the v56 database's
+promotion census to use indexed `SEARCH` plans only—zero full-table `SCAN`—for every
+checked locator in both cases.
+
+Measure only the interval from successful `BEGIN IMMEDIATE` acquisition through commit
+or reconciled return. Run ten unrecorded warmups for each of the four shapes
+(`baseline/fresh`, `large/fresh`, `baseline/retry`, `large/retry`), then forty measured
+paired trials per fresh/retry operation. Alternate which history runs first on every
+pair and use ABBA ordering across adjacent pairs so machine drift is not charged to one
+arm. Keep database files, SQLite pragmas, payload sizes, and injected promotion facts
+identical except for unrelated-history cardinality.
+
+For fresh commit and uncertain retry separately, qualification passes only when:
+
+- large-history lock-held p95 is at most 100 ms;
+- median paired delta (`large_ms - baseline_ms`) is at most 2 ms; and
+- p95 paired delta is at most 10 ms.
+
+The automated report must carry a `completed_pair_history_gate` object containing the
+checked locator-inventory SHA-256 and count, per-table/column query-plan details,
+`scan_count`, baseline/large row counts, distribution hash, warmup/trial counts,
+measurement order, SQLite pragmas/version, and for both `fresh_commit` and
+`uncertain_retry`: baseline/large median and p95, paired-delta median and p95, the exact
+thresholds above, and pass/fail. The report-schema tests and manifest generator reject a
+missing/unknown field, inventory/hash/count mismatch, `scan_count != 0`, a row/trial/
+warmup count below the required values, a changed threshold, a failed operation shape,
+or `passed=true` when any underlying check fails. Any such rejection keeps
+`speculative_voice_qualified()` false; do not hide it behind a relaxed timeout or a
+summary-only latency field.
 
 Latency tests with warm deterministic fakes assert:
 
@@ -882,13 +1494,13 @@ Latency tests with warm deterministic fakes assert:
 - post-AEC EOS of the added speech→replacement handoff ≤850 ms p95;
 - end of speech→first assistant audio ≤1.5 s median and ≤2.5 s p95.
 
-- [ ] **Step 3: Inventory and probe every default durable owner with sentinel content.**
+- [x] **Step 3: Inventory and probe every default durable owner with sentinel content.**
 
 `speculative-voice-durable-owner-inventory.md` names the concrete owner, backing path/table, writer seam, and test probe for each of these surfaces: Console message/session DB, terminal receipts and unseen marks, ADR-097 traces/capture, provider usage rows, tool/approval state, citations, notifications, replay/trajectory state, chatbook/export serialization, temporary-chat memory and save-later behavior, persistent file logs, stdlib/loguru handlers, in-app log buffers/share-log output, and exception/crash diagnostics.
 
 `test_console_voice_ephemerality.py` runs cancelled attempts with unique user and assistant poison sentinels through the outermost Console voice wiring in an isolated app-data directory. It then inspects every inventory owner—not only mocks—including all SQLite database files/tables, trace/usage repositories, notification and approval repositories, replay/export serializers, temporary-chat stores, file logs, in-memory log views, and captured exception representations. The poison strings must be absent everywhere after cancellation; content-free attempt counts/usage may remain. A control write must prove each probe can detect its sentinel, so an empty or disconnected probe cannot pass.
 
-- [ ] **Step 4: Define the non-self-referential code-under-test identity.**
+- [x] **Step 4: Define the non-self-referential code-under-test identity.**
 
 `speculative_voice_source_paths.txt` explicitly lists every runtime, native source/build, dependency metadata, qualification harness/schema, packaging generator, and test file whose bytes affect the feature. `compute_voice_source_digest.py` sorts those paths and hashes the canonical sequence `relative-path NUL file-sha256 LF`. It fails if a listed path is missing, untracked, or dirty.
 
@@ -898,13 +1510,13 @@ Generated evidence and authority are deliberately outside the digest: `Artifacts
 
 Run: `.venv/bin/python -m pytest -q Tests/Audio/test_voice_aec_corpus.py Tests/integration/test_speculative_voice_pipeline.py Tests/Performance/test_speculative_voice_latency.py Tests/Packaging/test_voice_aec_installed_wheel.py Tests/Chat/test_console_voice_ephemerality.py`
 
-Expected: all automated gates pass after confirming that `.venv/bin/python` has the intended `webrtcvad`, `sounddevice`, and companion wheel. `Scripts/qualify_speculative_voice.py --scenario automated --source-tree-digest $(.venv/bin/python Packaging/compute_voice_source_digest.py) --output /tmp/speculative-voice-automated.json` writes schema version, source-tree digest, optional git provenance, interpreter, companion version/upstream commit/wheel SHA-256, corpus thresholds, latency distributions using the correct clock boundaries, lifecycle results, and durable-owner inventory/report hashes. It contains no transcript, response, audio, raw device name, or credential. This `/tmp` report only validates the harness; Task 12C regenerates authoritative evidence after all qualification/runtime code is committed.
+Expected: all automated gates pass after confirming that `.venv/bin/python` has the intended `webrtcvad`, `sounddevice`, and companion wheel. `scripts/qualify_speculative_voice.py --scenario automated --source-tree-digest $(.venv/bin/python Packaging/compute_voice_source_digest.py) --output /tmp/speculative-voice-automated.json` writes schema version, source-tree digest, optional git provenance, interpreter, companion version/upstream commit/wheel SHA-256, corpus thresholds, latency distributions using the correct clock boundaries, the complete `completed_pair_history_gate` evidence defined in Step 2, lifecycle results, and durable-owner inventory/report hashes. It contains no transcript, response, audio, raw device name, or credential. This `/tmp` report only validates the harness; Task 12C regenerates authoritative evidence after all qualification/runtime code is committed.
 
 - [ ] **Step 6: Run bounded native and lifecycle harness checks.**
 
-Run: `.venv/bin/python Scripts/qualify_speculative_voice.py --scenario duplex-soak --minutes 30 --output Artifacts/voice_qualification/automated/<platform>-duplex-soak.json`
+Run: `.venv/bin/python scripts/qualify_speculative_voice.py --scenario duplex-soak --minutes 30 --output Artifacts/voice_qualification/automated/<platform>-duplex-soak.json`
 
-Run: `.venv/bin/python Scripts/qualify_speculative_voice.py --scenario cancellation-soak --minutes 30 --output Artifacts/voice_qualification/automated/<platform>-cancellation-soak.json`
+Run: `.venv/bin/python scripts/qualify_speculative_voice.py --scenario cancellation-soak --minutes 30 --output Artifacts/voice_qualification/automated/<platform>-cancellation-soak.json`
 
 Expected: no unbounded task/process growth, no audio ring growth, no orphan-set size above two, no post-fence callback, no device-handle leak, and no content-bearing diagnostic output. Include at least one real native-process fixture because injected mocks cannot prove process reaping.
 
@@ -916,25 +1528,29 @@ Apply the dirty-worktree protocol to the Task 12A files, then commit with `git c
 
 **Files:**
 
-- Create: `Scripts/qualify_physical_voice.py`
+- Create: `Packaging/voice_physical_reports.py`
+- Create: `scripts/qualify_physical_voice.py`
 - Create: `Packaging/voice_physical_report.schema.json`
 - Create: `Artifacts/voice_qualification/physical/.gitkeep`
 - Create: `Docs/Development/TTS/speculative-voice-qualification.md`
+- Create: `Tests/Packaging/fixtures/speculative_voice_physical/safe_full_duplex.json`
+- Create: `Tests/Packaging/fixtures/speculative_voice_physical/safe_half_duplex.json`
+- Create: `Tests/Packaging/fixtures/speculative_voice_physical/unsafe_unsuppressed.json`
 - Test: `Tests/Packaging/test_voice_physical_reports.py`
 
-- [ ] **Step 1: Write RED schema and safety tests.**
+- [x] **Step 1: Write RED schema and safety tests.**
 
 The report schema requires source-tree digest, platform/architecture, app and companion versions, upstream commit, generated corpus/latency/soak report hashes, hashed device identity, transport/sample-rate information, AEC health path, ERLE distribution, false-barge rate, double-talk recall, stop latency, degradation behavior, operator checklist, and pass/fail. It rejects raw device names, transcript/response text, PCM, and `passed=true` when any automated prerequisite hash is missing, uses a different source-tree digest, or a full-duplex safety threshold fails.
 
-- [ ] **Step 2: Implement the guided physical harness.**
+- [x] **Step 2: Implement the guided physical harness.**
 
 `qualify_physical_voice.py` guides repeatable rendered-speech, double-talk, interruption, silence, device-switch, and 30-minute soak trials. It hashes device identifiers with a report-local salt, never records microphone or response content, and emits a schema-valid JSON report plus a human-readable summary. A failed or unavailable AEC path is passing only when playback-period speech admission is observably closed and manual interruption remains available.
 
-- [ ] **Step 3: Validate the harness with synthetic pass/fail fixtures.**
+- [x] **Step 3: Validate the harness with synthetic pass/fail fixtures.**
 
 Run the harness in `--fixture` mode against a checked-in synthetic safe-full-duplex case, safe-half-duplex case, and unsafe-unsuppressed case. Only the first two validate as passing. Do not record final physical evidence yet; Task 12C runs the real matrix after all source-digested qualification/runtime code is committed.
 
-The final command shape is: `<absolute-python> Scripts/qualify_physical_voice.py --source-tree-digest <digest> --platform <platform-arch> --device-class <builtin|usb|bluetooth> --automated-report <path> --output Artifacts/voice_qualification/physical/<platform-arch>-<device-class>.json`.
+The final command shape is: `<absolute-python> scripts/qualify_physical_voice.py --source-tree-digest <digest> --platform <platform-arch> --device-class <builtin|usb|bluetooth> --automated-report <path> --output Artifacts/voice_qualification/physical/<platform-arch>-<device-class>.json`.
 
 Bluetooth passes only if healthy full duplex meets the thresholds or explicit safe half duplex closes playback-period admission; unsuppressed interruption is a failure.
 
@@ -960,7 +1576,7 @@ Expected: schema and synthetic harness tests pass with no privacy-forbidden fiel
 - Test: `Tests/Packaging/test_speculative_voice_lint_scope.py`
 - Test: `Tests/Chat/test_console_voice_settings.py`
 
-- [ ] **Step 1: Write RED manifest-generation and fail-closed runtime tests.**
+- [x] **Step 1: Write RED manifest-generation and fail-closed runtime tests.**
 
 Schema version 1 requires exact app/AEC identity and the platform keys `macos-arm64`, `macos-x86_64`, `windows-x86_64`, `linux-x86_64`, and `linux-aarch64`. Hash fields use the JSON Schema constraint `{"type": "string", "pattern": "^[0-9a-f]{64}$"}`. Its logical shape is:
 
@@ -978,6 +1594,7 @@ Schema version 1 requires exact app/AEC identity and the platform keys `macos-ar
   "platforms": {
     "macos-arm64": {
       "qualified": true,
+      "python_tag": "cp312",
       "wheel_sha256": "64-character lowercase SHA-256 constrained by schema",
       "extension_sha256": "64-character lowercase SHA-256 constrained by schema",
       "automated_report_sha256": "64-character lowercase SHA-256 constrained by schema",
@@ -987,23 +1604,41 @@ Schema version 1 requires exact app/AEC identity and the platform keys `macos-ar
 }
 ```
 
-The prose strings above illustrate field meaning; the checked-in manifest must contain concrete schema-valid hashes. Tests prove the generator refuses a missing target platform, device class, report hash, failed threshold, version/commit mismatch, mixed source-tree digest, source-tree digest unequal to the computed included-source digest, unknown field, or privacy-forbidden evidence. Runtime selection returns false on missing/malformed manifest, manifest/build-identity digest mismatch, unknown platform, `qualified=false`, companion import/version/commit mismatch, or installed native-extension file hash mismatch. Environment variables, config values, and CLI arguments cannot override the result.
+The prose strings above illustrate field meaning; the checked-in manifest must contain concrete schema-valid hashes. Tests prove the generator refuses a missing target platform, device class, report hash, failed threshold, version/commit mismatch, mixed source-tree digest, source-tree digest unequal to the computed included-source digest, unknown field, or privacy-forbidden evidence. The automated report is invalid unless its `completed_pair_history_gate` contains the exact inventory hash/count, zero scans, 1,000/100,000 row cases, ten warmups, forty paired trials, ABBA ordering, fixed 100/2/10 ms thresholds, complete fresh/retry distributions, and `passed=true` derived from every underlying check; the generator independently recomputes those predicates rather than trusting the summary flag. Runtime selection returns false on missing/malformed manifest, manifest/build-identity digest mismatch, unknown platform, `qualified=false`, companion import/version/commit mismatch, installed native-extension file hash mismatch, or absent/failing history-gate evidence. Environment variables, config values, and CLI arguments cannot override the result.
 
-- [ ] **Step 2: Implement the deterministic evidence generator.**
+- [x] **Step 2: Implement the deterministic evidence generator.**
 
 `generate_voice_qualification_manifest.py` consumes an explicit `--source-tree-digest`, exact repaired-wheel paths, Task 12A automated/soak reports, and all Task 12B physical reports. It first recomputes the included-source digest and requires every report to use it. It validates report schemas/hashes, requires built-in/USB/Bluetooth evidence for every declared platform key, records the wheel SHA-256, extracts and hashes the platform extension binary for runtime verification, and emits sorted canonical JSON plus `voice_build_identity.json`. It does not accept a manual `--qualified` flag.
+
+The generator derives an exact `cp311`/`cp312`/`cp313` tag from each automated
+report and selects only the matching repaired wheel from a multi-ABI artifact. The
+manifest records that tag; another interpreter ABI on the same platform remains
+fail-closed instead of inheriting evidence for different extension bytes.
 
 The final generation command in Step 6 is: `.venv/bin/python Packaging/generate_voice_qualification_manifest.py --source-tree-digest "$voice_source_digest" --app-version 0.1.8.0 --aec-upstream 109e23c9cec3a44e67c08774874a409741b1e58a --wheelhouse <qualified-wheelhouse> --automated-dir Artifacts/voice_qualification/automated --physical-dir Artifacts/voice_qualification/physical --output tldw_chatbook/Audio/voice_qualification_manifest.json --build-identity-output tldw_chatbook/Audio/voice_build_identity.json`.
 
 Expected: generation succeeds only when all evidence is present and passing; the output is byte-identical on a second run.
 
-- [ ] **Step 3: Implement fail-closed runtime lookup and package the manifest.**
+- [x] **Step 3: Implement fail-closed runtime lookup and package the manifest.**
 
-`speculative_voice_qualified()` maps the current OS/architecture to one manifest key, requires the packaged build-identity digest to equal the manifest digest, validates schema/app/pipeline/companion version and upstream commit, hashes the installed native-extension file and compares it with `extension_sha256`, and returns that platform's `qualified` value. Any exception returns false with a content-free warning. `pyproject.toml` includes both JSON files as package data. `pipeline_aec_enabled=false` remains a local half-duplex troubleshooting switch; it does not bypass qualification.
+`speculative_voice_qualified()` maps the current OS/architecture to one manifest key,
+requires the current CPython ABI to equal that entry's `python_tag`, requires the
+packaged build-identity digest to equal the manifest digest, validates
+schema/app/pipeline/companion version and upstream commit, hashes the installed
+native-extension file and compares it with `extension_sha256`, and returns that
+platform's `qualified` value. Any exception returns false with a content-free warning.
+`pyproject.toml` includes both JSON files as package data.
+`pipeline_aec_enabled=false` remains a local half-duplex troubleshooting switch; it
+does not bypass qualification.
 
-- [ ] **Step 4: Commit all qualification/runtime code before producing final evidence.**
+- [x] **Step 4: Commit all qualification/runtime code before producing final evidence.**
 
 Commit the schema, source-digest tool/list, evidence generators, physical harness, runtime reader, tests, workflow logic, and a checked-in hard-off manifest/build identity with no qualified platforms. No product or qualification code may change after this commit without invalidating and rerunning every Task 12A/12B report.
+
+Implementation note: commit `311b3e80ba` is the consolidated source-bound hard-off
+commit. Earlier task-specific commits were intentionally deferred until the user granted
+commit authorization after the implementation phases had accumulated; overlapping files
+made retroactive partial commits unsafe.
 
 - [ ] **Step 5: Compute one clean source-tree digest and generate final evidence.**
 
@@ -1015,13 +1650,13 @@ Using exactly that digest and source commit, rerun Task 12A automated, duplex-so
 
 Run the Step 2 generation command with `--source-tree-digest "$voice_source_digest"`. Re-run `compute_voice_source_digest.py` before and after staging the generated evidence, qualification docs, manifest, and build identity; both outputs must equal `$voice_source_digest`. This is possible because only generated evidence/authority paths are excluded—the code that produced and consumes them is included and was committed before measurement.
 
-- [ ] **Step 7: Make the release workflow regenerate and compare authority.**
+- [x] **Step 7: Make the release workflow regenerate and compare authority.**
 
 The approval-gated release workflow downloads the exact qualified wheel/evidence artifacts, recomputes the included-source digest, requires it to match every report and the packaged build identity, regenerates the manifest, fails unless it matches the reviewed checked-in file byte-for-byte, installs the built app wheel in a clean environment, and runs `test_voice_qualification_manifest.py` against every supported platform key before publishing the app. Git commit IDs remain provenance only. A missing/unqualified platform keeps legacy hands-free on that platform.
 
-- [ ] **Step 8: Run final targeted verification and complete static checks.**
+- [x] **Step 8: Run final targeted verification and complete static checks.**
 
-Run: `pytest -q Tests/Audio/test_duplex_contracts.py Tests/Audio/test_aec_backend.py Tests/Audio/test_duplex_transport.py Tests/Audio/test_voice_preprocessor.py Tests/Audio/test_rolling_transcript.py Tests/Audio/test_voice_aec_corpus.py Tests/Chat/test_voice_phrase_sequencer.py Tests/Chat/test_console_voice_attempts.py Tests/Chat/test_console_voice_supervisor.py Tests/Chat/test_console_speculative_voice.py Tests/Chat/test_console_speculative_voice_properties.py Tests/Chat/test_console_voice_eligibility.py Tests/Chat/test_console_voice_effect_barrier.py Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_voice_ephemerality.py Tests/UI/test_console_speculative_voice_wiring.py Tests/UI/test_console_voice_preview.py Tests/UI/test_console_voice_accessibility.py Tests/UI/test_settings_speculative_voice_panel.py Tests/integration/test_speculative_voice_pipeline.py Tests/Performance/test_speculative_voice_latency.py Tests/Packaging/test_voice_aec_distribution.py Tests/Packaging/test_voice_aec_installed_wheel.py Tests/Packaging/test_voice_physical_reports.py Tests/Packaging/test_voice_qualification_manifest.py Tests/Packaging/test_speculative_voice_lint_scope.py`
+Run: `pytest -q Tests/Audio/test_duplex_contracts.py Tests/Audio/test_aec_backend.py Tests/Audio/test_duplex_transport.py Tests/Audio/test_voice_preprocessor.py Tests/Audio/test_rolling_transcript.py Tests/Audio/test_voice_aec_corpus.py Tests/DB/test_chachanotes_v69_voice_trace_provenance_migration.py Tests/Chat/test_voice_phrase_sequencer.py Tests/Chat/test_chat_persistence_service.py Tests/Chat/test_console_exchange_capture.py Tests/Chat/test_console_trace_call_lifecycle.py Tests/Chat/test_console_trace_repository.py Tests/Chat/test_console_trace_service.py Tests/Chat/test_console_voice_attempts.py Tests/Chat/test_console_voice_supervisor.py Tests/Chat/test_console_speculative_voice.py Tests/Chat/test_console_speculative_voice_properties.py Tests/Chat/test_console_speculative_voice_promotion_races.py Tests/Chat/test_console_chat_store_atomic_promotion.py Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_runtime_shutdown.py Tests/Chat/test_console_voice_eligibility.py Tests/Chat/test_console_voice_effect_barrier.py Tests/Chat/test_console_voice_promotion.py Tests/Chat/test_console_voice_capture.py Tests/Chat/test_console_voice_ephemerality.py Tests/UI/test_app_quit_guard.py Tests/UI/test_console_runtime_ownership.py Tests/UI/test_console_speculative_voice_wiring.py Tests/UI/test_console_voice_preview.py Tests/UI/test_console_voice_accessibility.py Tests/UI/test_settings_speculative_voice_panel.py Tests/integration/test_speculative_voice_pipeline.py Tests/Performance/test_speculative_voice_latency.py Tests/Packaging/test_voice_aec_distribution.py Tests/Packaging/test_voice_aec_installed_wheel.py Tests/Packaging/test_voice_physical_reports.py Tests/Packaging/test_voice_qualification_manifest.py Tests/Packaging/test_speculative_voice_lint_scope.py`
 
 `Packaging/speculative_voice_python_paths.txt` lists every Python file created or modified by Tasks 1-12, including Audio, Chat, TTS, provider gateway, runtime, controller, persistence/capture, UI/Widgets, config, native wrapper, packaging scripts, and tests. Run: `xargs ruff check < Packaging/speculative_voice_python_paths.txt`
 

@@ -52,7 +52,11 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
 
@@ -104,6 +108,10 @@ class _PersistenceBase:
         self.update_calls.append(kwargs)
         return True
 
+    def replace_assistant_generation_projection(self, **kwargs: Any) -> int:
+        self.update_calls.append(kwargs)
+        return 1
+
 
 class _ReadyCitationPersistence(_PersistenceBase):
     canonical_citation_writes_ready = True
@@ -141,6 +149,12 @@ class _ReadyCitationPersistence(_PersistenceBase):
             if outcome is not None:
                 return str(outcome)
         return message_id or f"msg-{len(self.create_calls)}"
+
+
+class _RefusingUpdatePersistence(_ReadyCitationPersistence):
+    def update_message_content(self, **kwargs: Any) -> bool:
+        self.update_calls.append(kwargs)
+        return False
 
 
 class _NoCitationKwargPersistence(_PersistenceBase):
@@ -967,6 +981,55 @@ def test_ambiguous_first_failure_retries_same_id_and_same_write_once() -> None:
     )
 
 
+def test_exhausted_terminal_create_restores_live_state_and_retries_same_turn() -> None:
+    persistence = _ReadyCitationPersistence(
+        outcomes=[RuntimeError("first"), RuntimeError("second"), None]
+    )
+    store = ConsoleChatStore(persistence=persistence)
+    sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
+    _, message_id = _append_eligible(store, lambda body: sealed_write)
+    store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
+
+    with pytest.raises(
+        ConsoleDispatchSettlementError,
+        match="Terminal assistant persistence was refused",
+    ):
+        store.mark_message_complete(message_id)
+
+    rolled_back = store.get_message(message_id)
+    assert rolled_back == before
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
+
+    completed = store.mark_message_complete(message_id)
+
+    assert completed.status == "complete"
+    assert completed.content == _BODY_SENTINEL
+    assert completed.persisted_message_id == message_id
+    assert len(persistence.create_calls) == 3
+    assert {call["message_id"] for call in persistence.create_calls} == {message_id}
+
+
+def test_refused_empty_deferred_terminal_update_restores_live_state() -> None:
+    persistence = _RefusingUpdatePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    _, message_id = _append_eligible(store)
+    live = store._message_or_raise(message_id)
+    live.persisted_message_id = "durable-assistant"
+    before = store.get_message(message_id)
+
+    with pytest.raises(
+        ConsoleDispatchSettlementError,
+        match="Terminal assistant persistence was refused",
+    ):
+        store.mark_message_complete(message_id)
+
+    assert store.get_message(message_id) == before
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
+
+
 @pytest.mark.parametrize(
     "second_failure",
     [
@@ -975,7 +1038,7 @@ def test_ambiguous_first_failure_retries_same_id_and_same_write_once() -> None:
     ],
     ids=["ambiguous", "citation-unavailable"],
 )
-def test_ambiguous_retry_failure_rolls_back_without_ordinary_insert(
+def test_ambiguous_retry_failure_restores_without_ordinary_insert(
     second_failure: BaseException,
 ) -> None:
     persistence = _ReadyCitationPersistence(
@@ -985,18 +1048,16 @@ def test_ambiguous_retry_failure_rolls_back_without_ordinary_insert(
     sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
     session_id, message_id = _append_eligible(store, lambda body: sealed_write)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
     log_stream, handler_id = _capture_logs()
     try:
-        with pytest.raises(RuntimeError, match="did not commit"):
+        with pytest.raises(ConsoleDispatchSettlementError):
             store.mark_message_complete(message_id)
     finally:
         logger.remove(handler_id)
 
     output = log_stream.getvalue()
-    message = store._nodes_by_session[session_id][message_id]
-    assert message.status == "streaming"
-    assert message.content == ""
-    assert message.persisted_message_id is None
+    assert store.get_message(message_id) == before
     assert len(persistence.create_calls) == 2
     assert all(
         call["message_id"] == message_id and call["citation_write"] is sealed_write
@@ -1004,12 +1065,13 @@ def test_ambiguous_retry_failure_rolls_back_without_ordinary_insert(
     )
     assert message_id in store._pending_persistence_message_ids
     assert message_id in store._terminal_citation_finalizers
-    assert message_id in store._terminal_persistence_deferred_ids
+
     assert "terminal_citation_persistence_abandoned" in output
     _assert_content_free_diagnostics(output, sealed_write=sealed_write)
 
 
-def test_fallback_failure_rolls_back_without_later_polling_create() -> None:
+
+def test_fallback_failure_restores_without_later_polling_create() -> None:
     persistence = _ReadyCitationPersistence(
         outcomes=[
             CitationPersistenceUnavailable("deterministic"),
@@ -1020,44 +1082,44 @@ def test_fallback_failure_rolls_back_without_later_polling_create() -> None:
     sealed_write = _sealed_write_for_body(_BODY_SENTINEL)
     session_id, message_id = _append_eligible(store, lambda body: sealed_write)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
 
-    with pytest.raises(RuntimeError, match="did not commit"):
+    with pytest.raises(ConsoleDispatchSettlementError):
         store.mark_message_complete(message_id)
 
-    message = store._nodes_by_session[session_id][message_id]
-    assert message.status == "streaming"
-    assert message.content == ""
-    assert message.persisted_message_id is None
+    assert store.get_message(message_id) == before
     assert len(persistence.create_calls) == 2
     assert persistence.create_calls[0]["citation_write"] is sealed_write
     assert "citation_write" not in persistence.create_calls[1]
     assert {call["message_id"] for call in persistence.create_calls} == {message_id}
     assert message_id in store._pending_persistence_message_ids
     assert message_id in store._terminal_citation_finalizers
-    assert message_id in store._terminal_persistence_deferred_ids
+    store.get_message(message_id)
+    store.messages_for_session(session_id)
+    assert len(persistence.create_calls) == 2
 
 
-def test_finalizer_none_ordinary_failure_rolls_back_without_later_create() -> None:
+def test_finalizer_none_ordinary_failure_restores_without_later_create() -> None:
     persistence = _ReadyCitationPersistence(
         outcomes=[RuntimeError(_EXCEPTION_SENTINEL)]
     )
     store = ConsoleChatStore(persistence=persistence)
     session_id, message_id = _append_eligible(store, lambda body: None)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
+    before = store.get_message(message_id)
 
-    with pytest.raises(RuntimeError, match="did not commit"):
+    with pytest.raises(ConsoleDispatchSettlementError):
         store.mark_message_complete(message_id)
 
-    message = store._nodes_by_session[session_id][message_id]
-    assert message.status == "streaming"
-    assert message.content == ""
-    assert message.persisted_message_id is None
+    assert store.get_message(message_id) == before
     assert len(persistence.create_calls) == 1
     assert persistence.create_calls[0]["message_id"] == message_id
     assert "citation_write" not in persistence.create_calls[0]
     assert message_id in store._pending_persistence_message_ids
     assert message_id in store._terminal_citation_finalizers
-    assert message_id in store._terminal_persistence_deferred_ids
+    store.get_message(message_id)
+    store.messages_for_session(session_id)
+    assert len(persistence.create_calls) == 1
 
 
 def test_empty_terminal_completion_skips_finalizer_and_keeps_ordinary_pending() -> None:

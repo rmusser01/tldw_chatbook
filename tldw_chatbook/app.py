@@ -7786,6 +7786,7 @@ class TldwCli(
         # `ChatScreen.on_unmount` now ends one VISIT
         # (`leave_console_runtime`); the runtime itself is destroyed once,
         # here, at exit (`_shutdown_console_runtime`).
+        self.console_needs_attention = False
         self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
         self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
         self.generated_video_store = _build_generated_video_store()
@@ -9826,6 +9827,12 @@ class TldwCli(
         self.conversation_local_marks_service = (
             ConversationLocalMarksService(trace_db) if trace_db is not None else None
         )
+        runtime = getattr(self, "console_runtime", None)
+        recompute_attention = getattr(
+            runtime, "recompute_console_attention", None
+        )
+        if callable(recompute_attention):
+            recompute_attention(force_projection=True)
         self.server_chat_conversation_service = (
             ServerChatConversationService.from_server_context_provider(
                 self.server_context_provider,
@@ -13303,6 +13310,26 @@ class TldwCli(
             TAB_CHAT,
             self._current_runtime_identity(),
         )
+
+    def set_console_attention_projection(self, needs_attention: bool) -> None:
+        """Publish one boolean Console-attention value to mounted shell chrome."""
+        self.console_needs_attention = bool(needs_attention)
+        for screen in tuple(getattr(self, "_screen_stack", ())):
+            sync_screen = getattr(screen, "sync_console_attention", None)
+            if callable(sync_screen):
+                try:
+                    sync_screen(self.console_needs_attention)
+                except Exception:
+                    logger.debug("Console overflow attention projection failed")
+            try:
+                nav_bars = tuple(screen.query(MainNavigationBar))
+            except Exception:
+                continue
+            for nav_bar in nav_bars:
+                try:
+                    nav_bar.sync_console_attention(self.console_needs_attention)
+                except Exception:
+                    logger.debug("Console navigation attention projection failed")
 
     def library_rag_search_execution_lock(self) -> asyncio.Lock:
         """Return the app-lifetime admission lock for Library retrieval calls.
@@ -18973,52 +19000,180 @@ class TldwCli(
         """Confirm the active screen, then execute one approved cleanup pass."""
 
         loguru_logger.info("Application quit initiated")
+        runtime = getattr(self, "console_runtime", None)
+        promotion_owner = getattr(runtime, "voice_promotion_owner", None)
+        promotion_token = None
+        promotion_permit = None
+        promotion_permit_consumed = False
         try:
-            current_screen = self.screen
-            confirm_quit = getattr(current_screen, "confirm_quit", None)
-            if callable(confirm_quit):
-                decision = confirm_quit()
-                if inspect.isawaitable(decision):
-                    decision = await decision
-                if decision is False:
+            try:
+                begin_quit = getattr(promotion_owner, "begin_quit", None)
+                if callable(begin_quit):
+                    promotion_token = begin_quit()
+                current_screen = self.screen
+                confirm_quit = getattr(current_screen, "confirm_quit", None)
+                if callable(confirm_quit):
+                    decision = confirm_quit()
+                    if inspect.isawaitable(decision):
+                        decision = await decision
+                    if decision is False:
+                        self._quit_in_progress = False
+                        return
+                if not await self._confirm_console_runtime_quit():
                     self._quit_in_progress = False
                     return
-        except Exception:
-            loguru_logger.warning("Pre-quit confirmation failed; staying in the app")
-            self._quit_in_progress = False
-            try:
-                self.notify(
-                    "Couldn't confirm quitting; staying in Chatbook.",
-                    severity="warning",
-                )
+                if promotion_token is not None:
+                    wait_for_quiescence = getattr(
+                        promotion_owner,
+                        "wait_for_quiescence",
+                        None,
+                    )
+                    if not callable(
+                        wait_for_quiescence
+                    ) or not await wait_for_quiescence(
+                        promotion_token,
+                        2.0,
+                    ):
+                        self._quit_in_progress = False
+                        self.notify(
+                            "A voice response is still being saved; staying in Chatbook.",
+                            severity="warning",
+                        )
+                        return
+                    promotion_permit = promotion_owner.seal_quiescent(promotion_token)
             except Exception:
-                pass
-            return
-
-        try:
-            prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
-            if callable(prepare_for_quit):
-                preparation = prepare_for_quit()
-                if inspect.isawaitable(preparation):
-                    await preparation
-        except Exception:
-            loguru_logger.warning("Pre-quit shutdown guard failed; staying in the app")
-            self._quit_in_progress = False
-            try:
-                self.notify(
-                    "Couldn't prepare a safe shutdown; staying in Chatbook.",
-                    severity="warning",
+                loguru_logger.warning(
+                    "Pre-quit confirmation failed; staying in the app"
                 )
-            except Exception:
-                pass
-            return
+                self._quit_in_progress = False
+                try:
+                    self.notify(
+                        "Couldn't confirm quitting; staying in Chatbook.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
 
-        self._shutting_down = True
-        # TASK-22215: the user has approved the quit -- nothing further from
-        # the staggered boot fleet may start (idempotent with the same call in
-        # `on_shutdown_request`, which the quit path reaches later).
-        self._close_boot_worker_gate("quit")
-        await self._run_approved_quit_cleanup()
+            try:
+                prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
+                if callable(prepare_for_quit):
+                    preparation = prepare_for_quit()
+                    if inspect.isawaitable(preparation):
+                        await preparation
+            except Exception:
+                loguru_logger.warning(
+                    "Pre-quit shutdown guard failed; staying in the app"
+                )
+                self._quit_in_progress = False
+                try:
+                    self.notify(
+                        "Couldn't prepare a safe shutdown; staying in Chatbook.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
+
+            fence_console = getattr(runtime, "begin_dispose", None)
+            from .Chat.console_chat_models import ConsoleLifecycleRevisionChanged
+
+            while callable(fence_console):
+                try:
+                    dispose_kwargs = {
+                        "expected_revision": getattr(
+                            self,
+                            "_console_quit_approved_revision",
+                            None,
+                        )
+                    }
+                    if promotion_permit is not None:
+                        dispose_kwargs["voice_promotion_permit"] = promotion_permit
+                    fence_console(**dispose_kwargs)
+                    promotion_permit_consumed = promotion_permit is not None
+                    break
+                except ConsoleLifecycleRevisionChanged:
+                    self.notify(
+                        "Console activity changed; review the updated impact.",
+                        severity="warning",
+                    )
+                    if await self._confirm_console_runtime_quit():
+                        continue
+                    self._quit_in_progress = False
+                    return
+                except Exception:
+                    loguru_logger.warning(
+                        "Console shutdown fence failed; staying in the app"
+                    )
+                    self._quit_in_progress = False
+                    try:
+                        self.notify(
+                            "Couldn't prepare a safe shutdown; staying in Chatbook.",
+                            severity="warning",
+                        )
+                    except Exception:
+                        pass
+                    return
+            self._shutting_down = True
+            # TASK-22215: the user has approved the quit -- nothing further from
+            # the staggered boot fleet may start (idempotent with the same call in
+            # `on_shutdown_request`, which the quit path reaches later).
+            self._close_boot_worker_gate("quit")
+            await self._run_approved_quit_cleanup()
+        finally:
+            if promotion_token is not None and not promotion_permit_consumed:
+                abort_quit = getattr(promotion_owner, "abort_quit", None)
+                if callable(abort_quit):
+                    abort_quit(promotion_permit or promotion_token)
+            if not promotion_permit_consumed and not getattr(
+                self,
+                "_shutting_down",
+                False,
+            ):
+                self._quit_in_progress = False
+
+    async def _await_console_quit_confirmation(self, dialog: Any) -> bool:
+        """Await one app-level Console-loss dialog from the quit worker."""
+
+        return bool(await self.push_screen_wait(dialog))
+
+    async def _confirm_console_runtime_quit(self) -> bool:
+        """Revision-pin Console loss even when a non-Console screen is mounted."""
+
+        self._console_quit_approved_revision = None
+        runtime = getattr(self, "console_runtime", None)
+        controller = getattr(runtime, "chat_controller", None)
+        if controller is None:
+            return True
+        from .Widgets.confirmation_dialog import ConfirmationDialog
+
+        while True:
+            impact = controller.lifecycle_impact()
+            if not impact.has_loss_risk:
+                self._console_quit_approved_revision = impact.revision
+                return True
+            dialog = ConfirmationDialog(
+                title="Quit Chatbook?",
+                message=(
+                    "Quitting Chatbook will cancel or discard:\n\n"
+                    f"Live agent runs: {impact.live_run_count}\n"
+                    f"Delegated agents: {impact.delegated_child_count}\n"
+                    f"Sessions with queued prompts: {impact.queued_session_count}\n"
+                    f"Unsent queued prompts: {impact.unsent_prompt_count}\n\n"
+                    "Quit Chatbook?"
+                ),
+                confirm_label="Quit",
+                cancel_label="Stay",
+            )
+            if not await self._await_console_quit_confirmation(dialog):
+                return False
+            if controller.lifecycle_impact() == impact:
+                self._console_quit_approved_revision = impact.revision
+                return True
+            self.notify(
+                "Console activity changed; review the updated impact.",
+                severity="warning",
+            )
 
     async def _run_approved_quit_cleanup(self) -> None:
         """Preserve quit ordering without blocking the Textual event loop."""

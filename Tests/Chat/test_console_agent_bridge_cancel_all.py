@@ -26,7 +26,10 @@ published-service/retained-owner split.
 
 from __future__ import annotations
 
+import asyncio
 import threading
+
+import pytest
 
 from Tests.Agents.conftest import pin_agent_settings
 from Tests.Chat.test_console_agent_bridge import (
@@ -39,6 +42,7 @@ from Tests.Chat.test_console_agent_bridge import (
     _second_turn_message,
 )
 from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.agent_models import RUN_DONE
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -63,6 +67,181 @@ def test_cancel_all_returns_zero_for_an_unknown_conversation(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     assert bridge.cancel_all_subagents("never-seen-conversation") == 0
+
+
+@pytest.mark.parametrize("create_first", [False, True])
+def test_fence_fleet_blocks_a_late_child_reservation(
+    tmp_path,
+    monkeypatch,
+    create_first,
+):
+    """A close fence wins whether the coordinator exists before or after it."""
+
+    _pin_outlive_on(monkeypatch)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    existing = (
+        bridge._conversation_fleet_coordinator("closing") if create_first else None
+    )
+
+    bridge.fence_fleet("closing", generation=1)
+    fleet = bridge._conversation_fleet_coordinator("closing")
+
+    assert fleet is not None
+    if existing is not None:
+        assert fleet is existing
+    assert fleet.reserve("too late", None) is None
+
+
+def test_fleet_reservation_publishes_lifecycle_activity_at_admission(
+    tmp_path,
+    monkeypatch,
+):
+    """Destructive consent is invalidated before the child thread starts."""
+
+    _pin_outlive_on(monkeypatch)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    activity: list[str] = []
+    bridge.on_fleet_activity("test", activity.append)
+
+    fleet = bridge._conversation_fleet_coordinator("conversation")
+    assert fleet is not None
+    assert fleet.reserve("new child", None) is not None
+
+    assert activity == ["conversation"]
+
+
+def test_gracefully_drained_close_releases_fence_for_saved_conversation_reopen(
+    tmp_path,
+    monkeypatch,
+):
+    """A provisional close fence must not poison a later saved-chat resume."""
+
+    _pin_outlive_on(monkeypatch)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    original = bridge._conversation_fleet_coordinator("saved")
+    assert original is not None
+
+    bridge.fence_fleet("saved", generation=1)
+    assert original.reserve("blocked during close", None) is None
+
+    assert bridge.release_fleet_fence("saved", generation=1) is True
+    reopened = bridge._conversation_fleet_coordinator("saved")
+
+    assert reopened is not None
+    assert reopened is not original
+    assert reopened.reserve("new incarnation", None) is not None
+
+
+def test_latched_fleet_fence_cannot_be_replaced_by_a_later_close_generation(
+    tmp_path,
+    monkeypatch,
+):
+    """A timed-out incarnation's fence stays authoritative process-wide."""
+
+    _pin_outlive_on(monkeypatch)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    bridge.fence_fleet("saved", generation=1)
+    bridge.fence_fleet("saved", generation=2)
+
+    assert bridge.release_fleet_fence("saved", generation=2) is False
+    assert bridge._conversation_fleet_coordinator("saved").reserve("late", None) is None
+
+
+def test_terminal_waiters_publish_only_after_stale_drain_consumers_are_fenced(
+    tmp_path,
+    monkeypatch,
+):
+    """A graceful close may release its fence only after drain fan-out returns."""
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    order: list[str] = []
+    bridge.on_fleet_drained("order", lambda _event: order.append("fanout"))
+    monkeypatch.setattr(
+        bridge,
+        "_notify_fleet_activity",
+        lambda _conversation_id: order.append("terminal-waiter"),
+    )
+    bridge._unsettled_child_counts["saved"] = 1
+
+    bridge._on_fleet_child_settled(
+        "saved",
+        "old-session",
+        "old-assistant",
+        None,
+        RUN_DONE,
+    )
+
+    assert order == ["fanout", "terminal-waiter"]
+
+
+@pytest.mark.asyncio
+async def test_await_fleet_terminal_returns_immediately_for_idle_conversation(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+
+    assert await bridge.await_fleet_terminal("idle") is True
+
+
+@pytest.mark.asyncio
+async def test_await_fleet_terminal_registers_before_snapshot_race(tmp_path, monkeypatch):
+    """A drain fired by the first snapshot cannot strand the waiter."""
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    snapshots = 0
+
+    def _racing_snapshot(conversation_id: str):
+        nonlocal snapshots
+        snapshots += 1
+        if snapshots == 1:
+            bridge._notify_fleet_activity(conversation_id)
+        return []
+
+    monkeypatch.setattr(bridge, "fleet_snapshot", _racing_snapshot)
+
+    assert await asyncio.wait_for(bridge.await_fleet_terminal("conv"), timeout=1)
+    assert snapshots == 2, (
+        "the activity callback must see the registered waiter before the "
+        "await method completes its own post-registration snapshot"
+    )
+
+
+@pytest.mark.asyncio
+async def test_await_fleet_terminal_resolves_after_real_coordinator_finish(tmp_path):
+    """The child-settled hook observes the already-terminal fleet handle."""
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    fleet = bridge._conversation_fleet_coordinator("conv")
+    assert fleet is not None
+    handle = fleet.reserve("child", None)
+    assert handle is not None
+
+    class _PublishedService:
+        def fleet_snapshot(self):
+            return fleet.snapshot()
+
+    bridge._fleet_services["conv"] = _PublishedService()
+    waiter = asyncio.create_task(bridge.await_fleet_terminal("conv"))
+    await asyncio.sleep(0)
+    assert waiter.done() is False
+
+    fleet.finish(handle.handle_id, RUN_DONE)
+    bridge._on_fleet_child_settled(
+        "conv",
+        "session",
+        "assistant",
+        None,
+        RUN_DONE,
+    )
+
+    assert await asyncio.wait_for(waiter, timeout=1) is True
 
 
 def test_cancel_all_takes_the_published_services_child_and_a_retained_survivor(

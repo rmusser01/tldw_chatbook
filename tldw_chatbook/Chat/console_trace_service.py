@@ -80,6 +80,18 @@ from tldw_chatbook.DB.transaction_observer import (
     register_transaction_completion,
 )
 
+from tldw_chatbook.Chat.console_voice_trace_gateway import (
+    _ClaimReleaseDisposition,
+    ProvisionalTraceEnvelope,
+    ProvisionalTraceManifest,
+    ProvisionalTraceRegistry,
+    ProvisionalTraceUnavailable,
+    VoiceTraceImportContext,
+)
+from tldw_chatbook.Chat.console_voice_trace_promotion import (
+    ConfirmedPreCommitTraceImportError,
+    PostDispatchTraceImportResult,
+)
 TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
 TRACE_VALUE_MEDIA_TYPE = "application/json"
 TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES = 0
@@ -1474,6 +1486,27 @@ class _ChildSurfaceCapability:
     __slots__ = ()
 
 
+class ProvisionalTraceImportRetryableError(RuntimeError):
+    """The same bounded manifest remains available for an explicit retry."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import may be retried.")
+
+
+class ProvisionalTraceImportExpiredError(RuntimeError):
+    """A confirmed rollback crossed the bounded manifest redemption window."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import expired and cannot be retried.")
+
+
+class ProvisionalTraceImportUncertainError(RuntimeError):
+    """An uncertain import could not reconcile and was abandoned safely."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import could not be reconciled.")
+
+
 class ConsoleTraceService:
     """Translate verified provider values into reference-backed trace records."""
 
@@ -1629,6 +1662,57 @@ class ConsoleTraceService:
             database,
             occurred_at=occurred_at,
         )
+
+    def import_provisional_voice_trace(
+        self,
+        database: object,
+        registry: ProvisionalTraceRegistry,
+        manifest: ProvisionalTraceManifest,
+        envelopes: tuple[ProvisionalTraceEnvelope, ...],
+        context: VoiceTraceImportContext,
+    ) -> PostDispatchTraceImportResult:
+        """Redeem one complete gateway manifest after its conversation pair commits.
+
+        A typed confirmed pre-commit failure releases the same manifest.  Every
+        other exception is uncertain, so the repository's deterministic importer
+        is invoked once more to reconcile before the capability is consumed or
+        abandoned.
+        """
+
+        if type(registry) is not ProvisionalTraceRegistry:
+            raise TypeError("registry")
+        if type(context) is not VoiceTraceImportContext:
+            raise TypeError("context")
+        claim = registry.claim(manifest, envelopes)
+
+        def import_once() -> PostDispatchTraceImportResult:
+            return registry._import_claim(
+                claim,
+                context,
+                lambda request: self.repository.import_post_dispatch_trace(
+                    database,
+                    request,
+                ),
+            )
+
+        try:
+            result = import_once()
+        except ConfirmedPreCommitTraceImportError as exc:
+            disposition = registry._release_claim(claim)
+            if disposition is _ClaimReleaseDisposition.RELEASED_RETRYABLE:
+                raise ProvisionalTraceImportRetryableError() from None
+            raise ProvisionalTraceImportExpiredError() from exc
+        except Exception:
+            try:
+                result = import_once()
+            except Exception:
+                try:
+                    registry._abandon_claim(claim)
+                except ProvisionalTraceUnavailable:
+                    pass
+                raise ProvisionalTraceImportUncertainError() from None
+        registry._consume_claim(claim)
+        return result
 
     def reserve_call(
         self,

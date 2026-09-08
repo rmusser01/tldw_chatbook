@@ -96,7 +96,7 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
   command-dispatch orchestration (command registry parsing, skill-blocked
   hints, the keyboard-capture draft stash shared with `on_key`, itself out
   of scope this wave) that only ever REACHES message creation by calling
-  `_dispatch_console_draft_send` -> `_submit_console_native_draft` ->
+  `_dispatch_console_draft_send` -> runtime custody ->
   `ConsoleChatController.submit_draft` (business logic already outside
   `ChatScreen`), none of which are `*message*`-named or move this task.
 """

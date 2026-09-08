@@ -23,6 +23,7 @@ class _Bare:
         )
         self._console_dictation_state = "idle"
         self._console_hands_free = None
+        self._qualified_voice_startup_generation = None
         self._console_realtime = None
 
 

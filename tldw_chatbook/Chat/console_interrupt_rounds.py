@@ -580,6 +580,23 @@ class InterruptRoundHost:
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"
+        is_head = True
+        publish_decision = getattr(self._seams, "_publish_pending_decision", None)
+        retained_decision = (
+            session_id is not None
+            and kind in {"approval", "skill_install", "skill_script"}
+            and callable(publish_decision)
+        )
+        if retained_decision:
+            # The controller's accepted-time metadata uses this same lock.
+            # Enter the hook only after releasing the registration lock.
+            is_head = publish_decision(
+                round_state=state, payload=payload, decision_type=kind,
+                decision_id=round_id,
+                timeout_seconds=float(payload.get("timeout_seconds") or 0),
+                retained_store=self.payloads[kind],
+            )
+            deadline = None
         clock = None
         if deadline is not None:
             now = time.monotonic()
@@ -591,16 +608,25 @@ class InterruptRoundHost:
             )
             with self.lock:
                 state["decision_clock"] = clock
-        is_head = True
         if session_id is not None:
             add = getattr(self._seams, "add_pending_round", None)
             if add is not None:
                 add(session_id, round_id)
-            is_head = self.park_round_payload(kind, round_id, payload)
+            if not retained_decision:
+                is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = getattr(self._seams, "app", None)
             park_toast = getattr(self._seams, "park_pending_approval", None)
-            if announce_detached is not None and announce_detached():
+            if retained_decision:
+                if self._seams._approval_view_is_detached() or is_parked or not is_head:
+                    self._seams._announce_hidden_decision(kind, owning_session_id, round_id)
+                elif getattr(self._seams, "set_pending_decision", None) is not None:
+                    self._seams._marshal_pending_decision_projection()
+                else:
+                    setter = self._setter(kind)
+                    if app is not None and setter is not None:
+                        app.call_from_thread(setter, payload)
+            elif announce_detached is not None and announce_detached():
                 with self.lock:
                     state["attention_announced"] = True
             elif self.view_visible is False:
@@ -645,12 +671,18 @@ class InterruptRoundHost:
                             on_cancelled()
                         outcome = "cancelled"
                         break
+                    if retained_decision:
+                        self._seams.expire_pending_decisions()
                     self.refresh_decision_clocks()
                     if clock is not None and clock.remaining <= 0:
                         if on_timeout is not None:
                             on_timeout()
                         outcome = "timeout"
                         break
+            if retained_decision and state.get("terminal_reason") == "timeout":
+                outcome = "timeout"
+                if on_timeout is not None:
+                    on_timeout()
             if check_revoked:
                 with self.lock:
                     if bool(state.get("revoked")):
@@ -661,6 +693,8 @@ class InterruptRoundHost:
         finally:
             with self.lock:
                 self.registries[kind].pop(round_id, None)
+            if retained_decision:
+                self._seams._forget_hidden_decision(round_id)
             self._note_pending(kind, raised=False)
             # task-31384: a kind may RETAIN its payload past teardown (the
             # approvals bridge keeps a definitive-after-start batch mounted
@@ -674,9 +708,12 @@ class InterruptRoundHost:
                 if discard is not None:
                     discard(session_id, round_id)
             try:
-                self.remount_head(
-                    kind, owning_session_id if session_id is not None else None
-                )
+                if retained_decision and getattr(self._seams, "set_pending_decision", None) is not None:
+                    self._seams._marshal_pending_decision_projection()
+                else:
+                    self.remount_head(
+                        kind, owning_session_id if session_id is not None else None
+                    )
             except Exception:  # noqa: BLE001 -- teardown must never raise
                 logger.opt(exception=True).debug(
                     f"Failed to marshal {kind} remount during teardown"

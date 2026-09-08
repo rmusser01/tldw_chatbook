@@ -49,6 +49,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from textual.css.query import QueryError
 
@@ -68,6 +69,7 @@ from tldw_chatbook.Constants import (
     TAB_PERSONAS,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -75,6 +77,8 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
     ConsoleCharacterContext,
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_voice_preview import VoicePreviewProjection
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
@@ -250,6 +254,72 @@ def _raw_cli_run_log_root() -> Path:
     return get_user_data_dir()
 
 
+def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> str:
+    """Freeze view inputs and synchronously transfer one turn to the runtime."""
+    from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
+
+    record_send_stage("ui_submit")
+    try:
+        store = screen._ensure_console_chat_store()
+        one_shot_prefill, one_shot_prefill_revision = (
+            store.session_one_shot_prefill_snapshot(session_id)
+        )
+        request = ConsoleTurnCustodyRequest(
+            turn_id=str(uuid4()),
+            session_id=session_id,
+            draft=draft,
+            configuration=screen._session._build_console_turn_execution_context(
+                session_id
+            ),
+            attachment_ids=tuple(
+                attachment.attachment_id
+                for attachment in store.pending_attachments(session_id)
+            ),
+            one_shot_prefill=one_shot_prefill,
+            one_shot_prefill_revision=one_shot_prefill_revision,
+            staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence()[
+                0
+            ],
+        )
+        turn_id = screen._console_runtime().accept_turn(request)
+    except Exception as error:
+        record_send_stage("ui_submit", "failed", error=error)
+        raise
+    record_send_stage("ui_submit", "accepted")
+    return turn_id
+
+
+def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> None:
+    """Commit and persist a custody handoff only in its owning session view."""
+    composer = screen._console_composer_or_none()
+    if (
+        composer is not None
+        and screen._console_visible_draft_session_id == session_id
+    ):
+        composer.commit_captured_draft(stash)
+        try:
+            screen._ensure_console_chat_store().set_session_draft(
+                session_id, composer.draft_text()
+            )
+        except KeyError:
+            pass
+    screen._start_console_transcript_sync_timer()
+
+
+def _load_console_turn_recovery(screen: Any, session_id: str) -> None:
+    """Load a restored draft into its matching active composer."""
+
+    store = screen._ensure_console_chat_store()
+    if (
+        store.active_session_id != session_id
+        or screen._console_visible_draft_session_id != session_id
+    ):
+        return
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        composer.load_draft(store.session_draft(session_id))
+
+
 def _console_screen_is_displayed(screen: Any) -> bool:
     """Return whether ``screen`` is displayed, preserving fixture fallback."""
     try:
@@ -311,6 +381,24 @@ def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
     except QueryError:
         return
     speech_controls.sync_hands_free_state(active)
+
+
+def _project_voice_preview(screen: Any, projection: VoicePreviewProjection) -> None:
+    """Project provisional voice text only into the mounted transcript view."""
+    try:
+        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
+    except QueryError:
+        return
+    transcript.set_voice_preview(projection)
+
+
+def _clear_voice_preview(screen: Any) -> None:
+    """Remove provisional voice text without touching durable messages."""
+    try:
+        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
+    except QueryError:
+        return
+    transcript.clear_voice_preview()
 
 
 def _query_console_owner(
@@ -759,9 +847,13 @@ def build_console_controllers(
         ),
         library_rag_source_scope=rag_source_types_accessor,
         library_rag_top_k=rag_top_k_accessor,
-        pending_launch=lambda: screen._pending_console_launch_context,
+        pending_launch=lambda: screen._console_runtime().snapshot_console_staged_evidence()[
+            0
+        ],
         set_pending_launch=(
-            lambda launch: setattr(screen, "_pending_console_launch_context", launch)
+            lambda launch: screen._console_runtime().stage_console_staged_evidence(
+                launch
+            )
         ),
         set_pending_auto_open=(
             lambda value: setattr(
@@ -769,7 +861,9 @@ def build_console_controllers(
             )
         ),
         set_evidence_sent_notice=(
-            lambda value: setattr(screen, "_console_evidence_sent_notice", value)
+            lambda value: screen._console_runtime().set_console_staged_evidence_notice(
+                value
+            )
         ),
         sync_pending_launch_surfaces=(
             lambda: screen._sync_console_pending_launch_surfaces()
@@ -1264,7 +1358,15 @@ def build_console_controllers(
         fleet_teardown_split=(
             lambda: screen._console_chat_controller.fleet_teardown_split()
         ),
-        leave_runtime=(lambda: leave_console_runtime(screen.app_instance, view=screen)),
+        leave_runtime=(
+            lambda: leave_console_runtime(
+                screen.app_instance,
+                view=screen,
+                generation=getattr(
+                    screen, "_console_runtime_attachment_generation", None
+                ),
+            )
+        ),
         stage_teardown_notices=(
             lambda killed, surviving: (
                 setattr(
@@ -1580,6 +1682,11 @@ def build_console_controllers(
         sync_hands_free_state=(
             lambda active: _sync_hands_free_presentation(screen, active)
         ),
+        runtime_accessor=lambda: screen._console_runtime(),
+        project_voice_preview=(
+            lambda projection: _project_voice_preview(screen, projection)
+        ),
+        clear_voice_preview=lambda: _clear_voice_preview(screen),
     )
     screen._realtime = ConsoleRealtimeController(
         ensure_session_settings=(
@@ -2010,12 +2117,16 @@ def build_console_controllers(
     )
     screen._prompt_queue = ConsolePromptQueueUIController(
         chat_controller_accessor=(lambda: screen._ensure_console_chat_controller()),
+        capture_configuration=(
+            lambda session_id: screen._session._build_console_turn_execution_context(
+                session_id
+            )
+        ),
         ensure_active_session=(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
         blocked_reason_accessor=lambda: screen._console_send_blocked_reason(),
         setup_blocked_reason_accessor=(lambda: screen._console_setup_blocked_reason()),
-        restore_stash=lambda stash: screen._restore_console_send_stash(stash),
         append_system_message=(
             lambda text: screen._append_native_console_system_message(text)
         ),
@@ -2023,13 +2134,15 @@ def build_console_controllers(
             lambda text, severity: screen.app_instance.notify(text, severity=severity)
         ),
         focus_composer=(lambda: screen._focus_console_composer_if_needed(force=True)),
-        inflight_stashes_accessor=(lambda: screen._console_inflight_send_stashes),
         note_follow_intent=lambda: screen._note_console_follow_intent(),
         launch_chain=(
-            lambda draft, session_id: screen.run_worker(
-                screen._submit_console_native_draft(draft, session_id),
-                exclusive=True,
-                group=f"console-run-{session_id}",
+            lambda draft, session_id: _admit_console_turn_to_runtime(
+                screen, draft, session_id
+            )
+        ),
+        commit_captured_draft=(
+            lambda session_id, stash: _commit_captured_console_draft(
+                screen, session_id, stash
             )
         ),
         commit_queued_draft=(
@@ -2042,6 +2155,23 @@ def build_console_controllers(
                 store=screen._ensure_console_chat_store(),
                 sync_command_popup=screen._sync_console_command_popup,
             )
+        ),
+        turn_recovery_ids=(
+            lambda session_id: tuple(
+                entry.turn_id
+                for entry in screen._console_runtime().recoveries_for_session(
+                    session_id
+                )
+            )
+        ),
+        restore_turn_recovery=(
+            lambda turn_id: screen._console_runtime().restore_turn_recovery(turn_id)
+        ),
+        discard_turn_recovery=(
+            lambda turn_id: screen._console_runtime().discard_turn_recovery(turn_id)
+        ),
+        load_recovered_turn=(
+            lambda session_id: _load_console_turn_recovery(screen, session_id)
         ),
         edit_refusal=(
             lambda text: (

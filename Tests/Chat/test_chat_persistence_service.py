@@ -39,6 +39,9 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
 )
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
@@ -2934,6 +2937,240 @@ def test_update_roleplay_context_propagates_second_conflict():
         )
 
     assert db.update_attempts == 2
+
+
+_TERMINAL_RECEIPT = "33333333-3333-4333-8333-333333333333"
+_OTHER_TERMINAL_RECEIPT = "44444444-4444-4444-8444-444444444444"
+
+
+@pytest.mark.parametrize("metadata_receipt", [None, _OTHER_TERMINAL_RECEIPT])
+def test_terminal_create_rejects_missing_or_mismatched_receipt_metadata(
+    db_instance, metadata_receipt
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal validation", "character_id": None}
+    )
+    metadata_json = (
+        None
+        if metadata_receipt is None
+        else MessageMetadata(terminal_receipt_id=metadata_receipt).to_json()
+    )
+
+    with pytest.raises(ValueError, match="must match metadata_json"):
+        service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="finished",
+            message_id="terminal-validation-row",
+            metadata_json=metadata_json,
+            terminal_receipt_id=_TERMINAL_RECEIPT,
+            terminal_outcome="complete",
+        )
+
+    assert db_instance.get_message_by_id("terminal-validation-row") is None
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+def test_create_message_commits_terminal_row_and_exact_mark_together(db_instance):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal create", "character_id": None}
+    )
+    metadata = MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT)
+
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="finished",
+        metadata_json=metadata.to_json(),
+        terminal_receipt_id=_TERMINAL_RECEIPT,
+        terminal_outcome="complete",
+    )
+
+    durable = db_instance.get_message_by_id(message_id)
+    assert MessageMetadata.from_json(durable["metadata_json"]) == metadata
+    assert durable["assistant_generation_state"] == "complete"
+    marks = ConversationLocalMarksService(db_instance)
+    assert marks.list_console_unseen_marks() == (
+        (conversation_id, _TERMINAL_RECEIPT),
+    )
+
+
+def test_update_message_commits_terminal_row_and_exact_mark_together(db_instance):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal update", "character_id": None}
+    )
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="partial",
+    )
+    metadata = MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT)
+
+    assert service.update_message_content(
+        message_id=message_id,
+        content="finished",
+        image_data=None,
+        image_mime_type=None,
+        metadata_json=metadata.to_json(),
+        terminal_receipt_id=_TERMINAL_RECEIPT,
+        terminal_outcome="failed",
+    )
+
+    durable = db_instance.get_message_by_id(message_id)
+    assert durable["content"] == "finished"
+    assert MessageMetadata.from_json(durable["metadata_json"]) == metadata
+    assert durable["assistant_generation_state"] == "failed"
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == (
+        (conversation_id, _TERMINAL_RECEIPT),
+    )
+
+
+def test_terminal_update_produces_one_current_sync_intent_with_lifecycle_state(
+    db_instance,
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = service.create_conversation(conversation_title="Terminal sync")
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="streaming",
+    )
+    metadata = MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT)
+
+    assert service.update_message_content(
+        message_id=message_id,
+        content="finished",
+        image_data=None,
+        image_mime_type=None,
+        metadata_json=metadata.to_json(),
+        terminal_receipt_id=_TERMINAL_RECEIPT,
+        terminal_outcome="complete",
+        assistant_generation_state="complete",
+    )
+
+    durable = db_instance.get_message_by_id(message_id)
+    assert durable is not None
+    assert durable["version"] == 2
+    assert durable["assistant_generation_state"] == "complete"
+    current_entries = [
+        entry
+        for entry in db_instance.get_sync_log_entries(entity_type="messages")
+        if entry["entity_id"] == message_id and entry["version"] == 2
+    ]
+    assert len(current_entries) == 1
+    assert current_entries[0]["payload"]["assistant_generation_state"] == "complete"
+    intents = db_instance.list_current_committed_chat_sync_intents(conversation_id)
+    assert len(intents) == 1
+    assert intents[0]["message_id"] == message_id
+    assert intents[0]["message_version"] == 2
+
+
+def test_terminal_update_rolls_back_row_when_mark_insert_fails(db_instance):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal rollback", "character_id": None}
+    )
+    message_id = service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="partial",
+    )
+    before = dict(db_instance.get_message_by_id(message_id))
+    db_instance.get_connection().execute(
+        "CREATE TRIGGER fail_terminal_mark BEFORE INSERT ON "
+        "conversation_local_marks BEGIN SELECT RAISE(ABORT, 'mark failure'); END"
+    )
+    db_instance.get_connection().commit()
+
+    with pytest.raises(Exception, match="mark failure"):
+        service.update_message_content(
+            message_id=message_id,
+            content="finished",
+            image_data=None,
+            image_mime_type=None,
+            metadata_json=MessageMetadata(
+                terminal_receipt_id=_TERMINAL_RECEIPT
+            ).to_json(),
+            terminal_receipt_id=_TERMINAL_RECEIPT,
+            terminal_outcome="failed",
+        )
+
+    assert dict(db_instance.get_message_by_id(message_id)) == before
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+def test_terminal_create_rolls_back_row_when_post_mark_work_fails(
+    db_instance, monkeypatch
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal create rollback", "character_id": None}
+    )
+    original = service.local_marks.set_mark_with_cursor
+
+    def insert_then_fail(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("after mark insertion")
+
+    monkeypatch.setattr(service.local_marks, "set_mark_with_cursor", insert_then_fail)
+
+    with pytest.raises(RuntimeError, match="after mark insertion"):
+        service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="finished",
+            message_id="terminal-create-rollback",
+            metadata_json=MessageMetadata(
+                terminal_receipt_id=_TERMINAL_RECEIPT
+            ).to_json(),
+            terminal_receipt_id=_TERMINAL_RECEIPT,
+            terminal_outcome="complete",
+        )
+
+    assert db_instance.get_message_by_id("terminal-create-rollback") is None
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
+
+
+@pytest.mark.parametrize(
+    ("sender", "terminal_receipt_id", "terminal_outcome", "match"),
+    [
+        ("assistant", _TERMINAL_RECEIPT, None, "terminal outcome"),
+        ("assistant", None, "complete", "terminal receipt"),
+        ("user", _TERMINAL_RECEIPT, "complete", "assistant"),
+        ("assistant", _TERMINAL_RECEIPT, "stopped", "terminal outcome"),
+    ],
+)
+def test_terminal_create_requires_one_valid_assistant_receipt_outcome_pair(
+    db_instance,
+    sender,
+    terminal_receipt_id,
+    terminal_outcome,
+    match,
+):
+    service = ChatPersistenceService(db_instance)
+    conversation_id = db_instance.add_conversation(
+        {"title": "Terminal pair validation", "character_id": None}
+    )
+    metadata_json = (
+        MessageMetadata(terminal_receipt_id=_TERMINAL_RECEIPT).to_json()
+        if terminal_receipt_id is not None
+        else None
+    )
+
+    with pytest.raises(ValueError, match=match):
+        service.create_message(
+            conversation_id=conversation_id,
+            sender=sender,
+            content="finished",
+            metadata_json=metadata_json,
+            terminal_receipt_id=terminal_receipt_id,
+            terminal_outcome=terminal_outcome,
+        )
+
+    assert ConversationLocalMarksService(db_instance).list_console_unseen_marks() == ()
 
 
 @pytest.mark.integration

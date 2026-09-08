@@ -1,0 +1,581 @@
+name: Voice AEC wheels
+
+on:
+  pull_request:
+    paths:
+      - "native/voice_aec/**"
+      - "Packaging/check_voice_aec_*.py"
+      - "Packaging/qualify_installed_voice_aec.py"
+      - "Packaging/voice_aec_corpus.py"
+      - "Packaging/verify_voice_aec_attestations.py"
+      - "Tests/Audio/fixtures/voice_aec/manifest.json"
+      - "Tests/Packaging/test_voice_aec_installed_wheel.py"
+      - ".github/workflows/voice-aec-wheels.yml"
+      - "pyproject.toml"
+  push:
+    branches: [main]
+    paths:
+      - "native/voice_aec/**"
+      - "Packaging/check_voice_aec_*.py"
+      - "Packaging/qualify_installed_voice_aec.py"
+      - "Packaging/voice_aec_corpus.py"
+      - "Packaging/verify_voice_aec_attestations.py"
+      - "Tests/Audio/fixtures/voice_aec/manifest.json"
+      - "Tests/Packaging/test_voice_aec_installed_wheel.py"
+      - ".github/workflows/voice-aec-wheels.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-aec-wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-wheels:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            arch: x86_64
+          - platform: macos-arm64
+            runner: macos-15
+            arch: arm64
+          - platform: windows-x86_64
+            runner: windows-2025
+            arch: AMD64
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            arch: x86_64
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+    env:
+      CIBW_BUILD: "cp311-* cp312-* cp313-*"
+      CIBW_SKIP: "*-musllinux_*"
+      CIBW_ARCHS: ${{ matrix.arch }}
+      CIBW_BUILD_VERBOSITY: "1"
+      CIBW_TEST_REQUIRES: "pytest==8.4.2"
+      # cibuildwheel installs each repaired wheel into its own clean test venv,
+      # outside the checkout, before running the binding and echo-corpus smoke.
+      CIBW_TEST_COMMAND: >-
+        python -m pytest -q
+        {project}/tests/test_binding.py
+        -k "processor_accepts_one or repeated_echo_reference or metrics_are_finite or test_delayed_echo_exposes_refined_fresh_per_instance_delay_evidence"
+        && python {project}/../../Tests/Packaging/test_voice_aec_installed_wheel.py
+      CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+        auditwheel repair -w {dest_dir} {wheel}
+      CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+        delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}
+      CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
+        delvewheel repair --wheel-dir {dest_dir} {wheel}
+    steps:
+      - name: Check out the exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up verification Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Verify pristine WebRTC closure and declared patch
+        run: python native/voice_aec/tools/vendor_webrtc_aec.py --verify-vendor-tree
+
+      - name: Build, repair, install, and smoke-test CPython 3.11-3.13 wheels
+        uses: pypa/cibuildwheel@1828c10ab37f080699c7b81cea34097c684a7074 # v4.2.0
+        with:
+          package-dir: native/voice_aec
+          output-dir: wheelhouse
+
+      - name: Verify repaired wheel metadata, notices, and shared-library closure
+        shell: bash
+        run: python Packaging/check_voice_aec_wheel.py wheelhouse/*.whl
+
+      - name: Stage this platform's immutable wheel bytes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voice-aec-wheel-${{ matrix.platform }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  qualify:
+    name: Assemble unsigned structural qualification
+    needs: build-wheels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up qualification Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Verify pristine WebRTC closure and declared patch
+        run: python native/voice_aec/tools/vendor_webrtc_aec.py --verify-vendor-tree
+
+      - name: Download every already-tested platform wheel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: voice-aec-wheel-*
+          path: qualified/dist
+          merge-multiple: true
+
+      - name: Build the sole source distribution and validate versions
+        run: |
+          python -m pip install --disable-pip-version-check build==1.3.0
+          python -m build native/voice_aec --sdist --outdir qualified/dist
+          python Packaging/check_voice_aec_version_sync.py
+          python Packaging/check_voice_aec_wheel.py qualified/dist/*
+
+      - name: Create closed hashes, legal inventory, and SPDX SBOM
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+
+          root = Path("qualified")
+          dist = root / "dist"
+          distributions = sorted(path for path in dist.iterdir() if path.is_file())
+          if not distributions or not all(
+              path.name.endswith((".whl", ".tar.gz")) for path in distributions
+          ):
+              raise SystemExit("qualified dist contains missing or unexpected files")
+          digests = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in distributions
+          }
+          (root / "SHA256SUMS").write_text(
+              "".join(
+                  f"{digests[name]}  dist/{name}\n" for name in sorted(digests)
+              ),
+              encoding="utf-8",
+          )
+
+          source_sha = os.environ["SOURCE_SHA"]
+          tree_listing = subprocess.run(
+              [
+                  "git",
+                  "ls-tree",
+                  "-r",
+                  "--full-tree",
+                  source_sha,
+                  "--",
+                  "native/voice_aec",
+              ],
+              check=True,
+              capture_output=True,
+          ).stdout
+          source_tree_digest = hashlib.sha256(tree_listing).hexdigest()
+          (root / "source-tree.sha256").write_text(
+              f"{source_tree_digest}  native/voice_aec\n", encoding="utf-8"
+          )
+
+          legal_sources = {
+              "THIRD_PARTY_NOTICES.md": Path(
+                  "native/voice_aec/THIRD_PARTY_NOTICES.md"
+              ),
+              "PYBIND11_LICENSE.txt": Path(
+                  "native/voice_aec/PYBIND11_LICENSE.txt"
+              ),
+              "LICENSE": Path("native/voice_aec/vendor/webrtc/LICENSE"),
+              "PATENTS": Path("native/voice_aec/vendor/webrtc/PATENTS"),
+          }
+          for name, source in legal_sources.items():
+              shutil.copyfile(source, root / name)
+          inventory_dependencies = [
+              {
+                  "name": "WebRTC AEC3",
+                  "version": "109e23c9cec3a44e67c08774874a409741b1e58a",
+                  "license": "BSD-3-Clause",
+                  "source_url": "https://webrtc.googlesource.com/src",
+              },
+              {
+                  "name": "Abseil",
+                  "version": "ac875ae5393d0516243cfd5d078cd4b098388f6b",
+                  "license": "Apache-2.0",
+                  "source_url": (
+                      "https://chromium.googlesource.com/chromium/src/third_party"
+                  ),
+              },
+              {
+                  "name": "Ooura FFT",
+                  "version": "NOASSERTION",
+                  "license": "LicenseRef-Ooura-FFT",
+                  "source_url": (
+                      "http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html"
+                  ),
+              },
+              {
+                  "name": "pybind11",
+                  "version": "3.1.0",
+                  "license": "BSD-3-Clause",
+                  "source_url": (
+                      "https://github.com/pybind/pybind11/tree/v3.1.0"
+                  ),
+              },
+          ]
+          inventory_relationships = [
+              {
+                  "distribution": distribution,
+                  "relationship": "DEPENDS_ON",
+                  "dependency": dependency["name"],
+              }
+              for distribution in sorted(digests)
+              for dependency in inventory_dependencies
+          ]
+          inventory = {
+              "schema_version": 1,
+              "distributions": sorted(digests),
+              "licenses": [
+                  "WebRTC BSD-3-Clause",
+                  "WebRTC PATENTS",
+                  "Abseil Apache-2.0",
+                  "Ooura FFT LicenseRef-Ooura-FFT",
+                  "pybind11 BSD-3-Clause",
+              ],
+              "dependencies": inventory_dependencies,
+              "relationships": inventory_relationships,
+          }
+          (root / "license-inventory.json").write_text(
+              json.dumps(inventory, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          packages = []
+          for index, name in enumerate(sorted(digests), start=1):
+              packages.append(
+                  {
+                      "name": name,
+                      "SPDXID": f"SPDXRef-Distribution-{index}",
+                      "downloadLocation": "NOASSERTION",
+                      "filesAnalyzed": False,
+                      "checksums": [
+                          {
+                              "algorithm": "SHA256",
+                              "checksumValue": digests[name],
+                          }
+                      ],
+                  }
+              )
+          dependency_packages = [
+              {
+                  "name": "WebRTC AEC3",
+                  "SPDXID": "SPDXRef-WebRTC-AEC3",
+                  "versionInfo": "109e23c9cec3a44e67c08774874a409741b1e58a",
+                  "downloadLocation": "https://webrtc.googlesource.com/src",
+                  "filesAnalyzed": False,
+                  "licenseConcluded": "BSD-3-Clause",
+              },
+              {
+                  "name": "Abseil",
+                  "SPDXID": "SPDXRef-Abseil",
+                  "versionInfo": "ac875ae5393d0516243cfd5d078cd4b098388f6b",
+                  "downloadLocation": (
+                      "https://chromium.googlesource.com/chromium/src/third_party"
+                  ),
+                  "filesAnalyzed": False,
+                  "licenseConcluded": "Apache-2.0",
+              },
+              {
+                  "name": "Ooura FFT",
+                  "SPDXID": "SPDXRef-Ooura-FFT",
+                  "versionInfo": "NOASSERTION",
+                  "downloadLocation": (
+                      "http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html"
+                  ),
+                  "filesAnalyzed": False,
+                  "licenseConcluded": "LicenseRef-Ooura-FFT",
+              },
+              {
+                  "name": "pybind11",
+                  "SPDXID": "SPDXRef-pybind11",
+                  "versionInfo": "3.1.0",
+                  "downloadLocation": (
+                      "https://github.com/pybind/pybind11/tree/v3.1.0"
+                  ),
+                  "filesAnalyzed": False,
+                  "licenseConcluded": "BSD-3-Clause",
+              },
+          ]
+          relationships = []
+          dependency_ids = [package["SPDXID"] for package in dependency_packages]
+          for package in packages:
+              for dependency_id in dependency_ids:
+                  relationships.append(
+                      {
+                          "spdxElementId": package["SPDXID"],
+                          "relationshipType": "DEPENDS_ON",
+                          "relatedSpdxElement": dependency_id,
+                      }
+                  )
+          sbom = {
+              "spdxVersion": "SPDX-2.3",
+              "dataLicense": "CC0-1.0",
+              "SPDXID": "SPDXRef-DOCUMENT",
+              "name": "tldw-voice-aec qualified distributions",
+              "documentNamespace": (
+                  "https://github.com/"
+                  + os.environ["REPOSITORY"]
+                  + "/voice-aec/sbom/"
+                  + source_sha
+              ),
+              "creationInfo": {
+                  "creators": ["Tool: tldw-voice-aec-qualifier"],
+                  "created": "1970-01-01T00:00:00Z",
+              },
+              "hasExtractedLicensingInfos": [
+                  {
+                      "licenseId": "LicenseRef-Ooura-FFT",
+                      "extractedText": Path(
+                          "native/voice_aec/vendor/webrtc/OOURA_LICENSE"
+                      ).read_text(encoding="utf-8"),
+                  }
+              ],
+              "packages": packages + dependency_packages,
+              "relationships": relationships,
+          }
+          (root / "sbom.spdx.json").write_text(
+              json.dumps(sbom, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          PY
+
+      - name: Verify the closed unsigned structural bundle
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          WORKFLOW_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          SOURCE_TREE_DIGEST="$(cut -d ' ' -f 1 qualified/source-tree.sha256)"
+          python Packaging/verify_voice_aec_attestations.py qualified \
+            --structural-only \
+            --repository "$REPOSITORY" \
+            --workflow-identity "$WORKFLOW_IDENTITY" \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-digest "$SOURCE_TREE_DIGEST" \
+            --workflow-ref "$WORKFLOW_REF" \
+            --workflow-path ".github/workflows/voice-aec-wheels.yml" \
+            --event-name "$EVENT_NAME" \
+            --repository-id "$REPOSITORY_ID" \
+            --repository-owner-id "$REPOSITORY_OWNER_ID" \
+            --runner-environment "github-hosted" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --expected-version "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+
+      - name: Upload structural-only evidence that is never release eligible
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voice-aec-structural-only-${{ github.sha }}
+          path: qualified
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  attest-qualified:
+    name: Sign trusted default-branch qualification
+    needs: qualify
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the exact trusted source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up attestation Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Download only this run's structural qualification
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: voice-aec-structural-only-${{ github.sha }}
+          path: qualified
+
+      - name: Create official GitHub-workflow SLSA statements
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          WORKFLOW_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("qualified")
+          attestations = root / "attestations"
+          attestations.mkdir()
+          source_sha = os.environ["SOURCE_SHA"]
+          source_tree_digest = (root / "source-tree.sha256").read_text(
+              encoding="utf-8"
+          ).split()[0]
+          repository_url = "https://github.com/" + os.environ["REPOSITORY"]
+          workflow_ref = os.environ["WORKFLOW_REF"]
+          workflow_path = ".github/workflows/voice-aec-wheels.yml"
+          workflow_identity = os.environ["WORKFLOW_IDENTITY"]
+          invocation_id = (
+              repository_url
+              + "/actions/runs/"
+              + os.environ["RUN_ID"]
+              + "/attempts/"
+              + os.environ["RUN_ATTEMPT"]
+          )
+          for distribution in sorted((root / "dist").iterdir()):
+              digest = hashlib.sha256(distribution.read_bytes()).hexdigest()
+              statement = {
+                  "_type": "https://in-toto.io/Statement/v1",
+                  "subject": [
+                      {
+                          "name": f"dist/{distribution.name}",
+                          "digest": {"sha256": digest},
+                      }
+                  ],
+                  "predicateType": "https://slsa.dev/provenance/v1",
+                  "predicate": {
+                      "buildDefinition": {
+                          "buildType": (
+                              "https://actions.github.io/buildtypes/workflow/v1"
+                          ),
+                          "externalParameters": {"workflow": {
+                              "ref": workflow_ref,
+                              "repository": repository_url,
+                              "path": workflow_path,
+                          }},
+                          "internalParameters": {"github": {
+                              "event_name": os.environ["EVENT_NAME"],
+                              "repository_id": os.environ["REPOSITORY_ID"],
+                              "repository_owner_id": os.environ[
+                                  "REPOSITORY_OWNER_ID"
+                              ],
+                              "runner_environment": "github-hosted",
+                          }},
+                          "resolvedDependencies": [{
+                              "uri": f"git+{repository_url}@{workflow_ref}",
+                              "digest": {"gitCommit": source_sha},
+                          }],
+                      },
+                      "runDetails": {
+                          "builder": {"id": workflow_identity},
+                          "metadata": {"invocationId": invocation_id},
+                      },
+                      "tldw_source_tree_digest": source_tree_digest,
+                  },
+              }
+              (attestations / f"{distribution.name}.provenance.json").write_text(
+                  json.dumps(statement, sort_keys=True, separators=(",", ":")),
+                  encoding="utf-8",
+              )
+          PY
+
+      - name: Keyless-sign every per-distribution provenance statement
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: qualified/attestations/*.provenance.json
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.workflow_ref }}
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+
+      - name: Create GitHub OIDC build provenance for every distribution
+        id: github-provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: qualified/dist/*
+
+      - name: Retain the GitHub attestation verification bundle
+        env:
+          BUNDLE_PATH: ${{ steps.github-provenance.outputs.bundle-path }}
+        run: |
+          test -n "$BUNDLE_PATH"
+          cp "$BUNDLE_PATH" qualified/github-build-provenance.jsonl
+
+      - name: Verify the final closed bundle before upload
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          WORKFLOW_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          REPOSITORY_OWNER_ID: ${{ github.repository_owner_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          SOURCE_TREE_DIGEST="$(cut -d ' ' -f 1 qualified/source-tree.sha256)"
+          python Packaging/verify_voice_aec_attestations.py qualified \
+            --repository "$REPOSITORY" \
+            --workflow-identity "$WORKFLOW_IDENTITY" \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree-digest "$SOURCE_TREE_DIGEST" \
+            --workflow-ref "$WORKFLOW_REF" \
+            --workflow-path ".github/workflows/voice-aec-wheels.yml" \
+            --event-name "$EVENT_NAME" \
+            --repository-id "$REPOSITORY_ID" \
+            --repository-owner-id "$REPOSITORY_OWNER_ID" \
+            --runner-environment "github-hosted" \
+            --run-id "$RUN_ID" \
+            --run-attempt "$RUN_ATTEMPT" \
+            --expected-version "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+
+      - name: Upload one immutable qualified artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: voice-aec-qualified-${{ github.sha }}
+          path: qualified
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

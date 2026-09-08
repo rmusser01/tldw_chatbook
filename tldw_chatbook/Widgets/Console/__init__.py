@@ -70,6 +70,12 @@ from .console_terminal_messages import (
     ConsoleTerminalInputRequested,
 )
 from .console_transcript import ConsoleTranscript
+from .console_voice_preview import (
+    ConsoleVoicePreview,
+    VoicePreviewProjection,
+    VoiceStatusAnnouncementThrottle,
+    voice_status_label,
+)
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
 from .console_workspace_tree import (
@@ -167,6 +173,10 @@ __all__ = [
     "TerminalViewport",
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
+    "ConsoleVoicePreview",
+    "VoicePreviewProjection",
+    "VoiceStatusAnnouncementThrottle",
+    "voice_status_label",
     "ConsoleWorkspaceContextTray",
     "ConsoleWorkspaceTree",
     "ConsoleWorkspaceRenameModal",

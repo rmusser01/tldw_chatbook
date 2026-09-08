@@ -6453,10 +6453,8 @@ class AgentService:
                     ok=False,
                     error=f"skill_file: '{skill_name}' is not active in this run",
                 )
-            if bindings.reader is None:
-                return ToolResult(ok=False, error="skill_file: no reader configured")
             try:
-                out = bindings.reader(skill_name, path)
+                out = bindings.read(skill_name, path)
                 # task-4 (skills-fork-reachability) hardening: a reader is
                 # caller-supplied (the bridge's asyncio.run adapter over
                 # SkillsScopeService.read_skill_file) -- a misbehaving one
