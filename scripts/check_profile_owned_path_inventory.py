@@ -436,6 +436,30 @@ def reconcile_inventory(
 
 APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
     ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/profile_paths.py",
+        "function:database_path",
+        "literal:~/.local/share/tldw_cli",
+        1,
+        Disposition.PERSISTED_DEFAULT,
+        "legacy shipped database sentinel comparison, shared with canonical config selectors",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/profile_paths.py",
+        "function:default_base_data_dir",
+        "join:.local/share/tldw_cli",
+        1,
+        Disposition.RESOLVER_SEED,
+        "call-time resolver seed for the default user data directory",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/profile_paths.py",
+        "function:default_config_path",
+        "join:.config/tldw_cli",
+        1,
+        Disposition.RESOLVER_SEED,
+        "resolver seed for the default config path",
+    ),
+    ExceptionRule(
         "tldw_chatbook/Evals/eval_orchestrator.py",
         "function:_warn_if_legacy_data_exists",
         "literal:~/.local/share/tldw_cli",
@@ -669,14 +693,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
     ),
     ExceptionRule(
         "tldw_chatbook/config.py",
-        "function:_default_base_data_dir",
-        "join:.local/share/tldw_cli",
-        1,
-        Disposition.RESOLVER_SEED,
-        "call-time resolver seed for the default user data directory",
-    ),
-    ExceptionRule(
-        "tldw_chatbook/config.py",
         "module:BASE_DATA_DIR_CLI",
         "join:.local/share/tldw_cli",
         1,
@@ -794,14 +810,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         1,
         Disposition.PERSISTED_DEFAULT,
         "shipped config template default for the prompts database",
-    ),
-    ExceptionRule(
-        "tldw_chatbook/config.py",
-        "module:DEFAULT_CONFIG_PATH",
-        "join:.config/tldw_cli",
-        1,
-        Disposition.RESOLVER_SEED,
-        "resolver seed for the default config path",
     ),
 )
 REPO_ROOT = Path(__file__).resolve().parents[1]

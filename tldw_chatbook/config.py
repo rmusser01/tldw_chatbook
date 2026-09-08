@@ -37,6 +37,7 @@ from loguru import logger
 
 #
 # Local Imports
+from tldw_chatbook.Backup_Recovery import profile_paths
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -70,14 +71,12 @@ SERVER_CLIENT_ID = "SERVER_API_V1"
 CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
 
 # --- Path to the CLI's configuration file ---
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
+DEFAULT_CONFIG_PATH = profile_paths.default_config_path()
 
 
 def _get_effective_config_path() -> Path:
     """Return the lexical active CLI config path."""
-    override = os.environ.get("TLDW_CONFIG_PATH")
-    candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
-    return lexical_path(candidate)
+    return profile_paths.effective_config_path(DEFAULT_CONFIG_PATH)
 
 
 def get_cli_config_path() -> Path:
@@ -6365,9 +6364,7 @@ def _default_base_data_dir() -> Path:
     Path.home() is not guaranteed to re-read a post-import HOME monkeypatch
     on every platform/Python version, whereas os.environ is always read live.
     """
-    home = os.environ.get("HOME")
-    base = Path(home).expanduser() if home else Path.home()
-    return base / ".local" / "share" / "tldw_cli"
+    return profile_paths.default_base_data_dir()
 
 
 def get_api_key(api_name: str) -> Optional[str]:
@@ -6455,10 +6452,7 @@ def get_user_folder_name() -> str:
     user_name = get_cli_setting("general", "users_name", default_user)
     # Sanitize user name to make it safe for folder names
     # Replace spaces and special characters with underscores
-    import re
-
-    safe_user_name = re.sub(r"[^a-zA-Z0-9_-]", "_", user_name)
-    return safe_user_name if safe_user_name else "default_user"
+    return profile_paths.user_folder_name(user_name)
 
 
 def get_user_data_dir() -> Path:
@@ -6499,11 +6493,11 @@ def _get_custom_database_path(
     """
     custom_path = get_cli_setting("database", setting_name, None)
     default_path = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(setting_name)
-    if not custom_path or custom_path == default_path:
+    selected_input = profile_paths.custom_database_input(
+        custom_path, default_path, expand_before_validation=expand_before_validation
+    )
+    if selected_input is None:
         return None
-    selected_input = Path(str(custom_path))
-    if expand_before_validation:
-        selected_input = selected_input.expanduser()
     validated = validate_path_simple(
         selected_input,
         require_exists=False,
@@ -6529,10 +6523,10 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
         current profile's user data directory.
     """
     if ignore_override:
-        return get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+        return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
     return (
         _get_custom_database_path("chachanotes_db_path")
-        or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+        or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
     )
 
 
@@ -6548,7 +6542,7 @@ def get_tts_profiles_db_path() -> Path:
             )
         candidate = candidate.expanduser()
         return validate_path_simple(candidate, require_exists=False).resolve()
-    return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
+    return get_user_data_dir() / profile_paths.database_leaf("tts_profiles_db_path")
 
 
 def get_notes_sync_state_db_path() -> Path:
@@ -6576,10 +6570,10 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
         current profile's user data directory.
     """
     if ignore_override:
-        return get_user_data_dir() / "tldw_chatbook_prompts.db"
+        return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
     return (
         _get_custom_database_path("prompts_db_path")
-        or get_user_data_dir() / "tldw_chatbook_prompts.db"
+        or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
     )
 
 
@@ -6598,45 +6592,46 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
         current profile's user data directory.
     """
     if ignore_override:
-        return get_user_data_dir() / "tldw_chatbook_media_v2.db"
+        return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
     return (
         _get_custom_database_path("media_db_path")
-        or get_user_data_dir() / "tldw_chatbook_media_v2.db"
+        or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
     )
 
 
 def get_library_collections_db_path() -> Path:
     return (
         _get_custom_database_path("library_collections_db_path")
-        or get_user_data_dir() / "tldw_chatbook_library_collections.db"
+        or get_user_data_dir() / profile_paths.database_leaf("library_collections_db_path")
     )
 
 
 def get_library_ingest_jobs_db_path() -> Path:
     return (
         _get_custom_database_path("library_ingest_jobs_db_path")
-        or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
+        or get_user_data_dir() / profile_paths.database_leaf("library_ingest_jobs_db_path")
     )
 
 
 def get_workspaces_db_path() -> Path:
     return (
         _get_custom_database_path("workspaces_db_path")
-        or get_user_data_dir() / "tldw_chatbook_workspaces.db"
+        or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
     )
 
 
 def get_subscriptions_db_path() -> Path:
     return (
         _get_custom_database_path("subscriptions_db_path")
-        or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
+        or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
     )
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
     return (
-        _get_custom_database_path("evals_db_path") or get_user_data_dir() / "evals.db"
+        _get_custom_database_path("evals_db_path")
+        or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
     )
 
 
@@ -6644,28 +6639,28 @@ def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
     return (
         _get_custom_database_path("rag_indexing_db_path")
-        or get_user_data_dir() / "rag_indexing.db"
+        or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
     )
 
 
 def get_notifications_db_path() -> Path:
     return (
         _get_custom_database_path("notifications_db_path")
-        or get_user_data_dir() / "tldw_chatbook_notifications.db"
+        or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
     )
 
 
 def get_research_db_path() -> Path:
     return (
         _get_custom_database_path("research_db_path")
-        or get_user_data_dir() / "tldw_chatbook_research.db"
+        or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
     )
 
 
 def get_writing_db_path() -> Path:
     return (
         _get_custom_database_path("writing_db_path")
-        or get_user_data_dir() / "tldw_chatbook_writing.db"
+        or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
     )
 
 
@@ -6675,7 +6670,7 @@ def get_scheduled_tasks_db_path() -> Path:
             "scheduled_tasks_db_path",
             expand_before_validation=False,
         )
-        or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+        or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
     )
 
 
