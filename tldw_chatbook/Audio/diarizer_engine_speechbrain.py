@@ -2,9 +2,14 @@
 
 Split out of `diarizer_worker.py` (task 1: 31827) so the worker's command
 loop (`serve()`) and its `--engine` selection are reachable without torch --
-this module, like `diarizer_worker.py` itself, must import torch/torchaudio/
-speechbrain/numpy ONLY inside `load()` and the functions it calls at runtime
-(never at module scope), so `import`ing it alone never pulls torch in.
+this module, like `diarizer_worker.py` itself, must import torch/speechbrain/
+numpy ONLY inside `load()` and the functions it calls at runtime (never at
+module scope), so `import`ing it alone never pulls torch in.
+
+torchaudio is not used here at all any more (task 9: 31827): the Stop pass
+reads its audio through `diarizer_worker.read_pcm16_span`, since torchaudio
+>= 2.9 needs the separate `torchcodec` package for `load` and returned no
+segments without it. torch remains, for the embedding.
 
 Engine module contract (spec §2): `load(live, max_speakers) -> LoadedEngine`
 plus a `MODEL_ID` constant. `main()` in `diarizer_worker.py` imports this
@@ -108,39 +113,33 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
         read this after a `diarize`; see `diarizer_worker.serve()`).
     """
     from tldw_chatbook.Audio import diarizer_worker
-    from tldw_chatbook.Local_Ingestion.diarization_service import (
-        ClusteringMethod,
-        DiarizationService,
-        _lazy_import_torchaudio,
-    )
+    from tldw_chatbook.Local_Ingestion.diarization_service import ClusteringMethod, DiarizationService
 
-    # Qodo Q4: torchaudio is part of the optional `diarization` extra; go
-    # through the project's centralized loader, not a bare import.
-    torchaudio = _lazy_import_torchaudio()
-    if torchaudio is None:
-        raise RuntimeError("torchaudio unavailable")
-
-    wav, sr = torchaudio.load(wav_path)  # (channels, samples)
-    if wav.shape[0] > 1:
-        wav = wav.mean(dim=0, keepdim=True)
-    if sr != 16000:
-        wav = torchaudio.functional.resample(wav, sr, 16000)
-        sr = 16000
-    total = wav.shape[1]
-    a = max(0, int(start_s * sr))
-    b = min(total, int(end_s * sr)) if end_s else total
+    # Task 9 (31827): read through the shared stdlib reader, not
+    # `torchaudio.load`. torchaudio >= 2.9 routes `load` through the separate
+    # `torchcodec` package -- which the `diarization` extra does not pin -- so
+    # without it this raised and the Stop pass silently returned NO SEGMENTS
+    # (the live path was unaffected, which is what hid it). Nothing is lost:
+    # the meeting recorder always writes 16 kHz mono PCM16, so the mixing and
+    # resampling branches this replaces could never fire. torch is still
+    # needed, for the embedding below.
+    samples, sr = diarizer_worker.read_pcm16_span(wav_path, start_s, end_s)
+    total = samples.shape[0]
     win = int(WINDOW_S * sr)
     floor = int(0.4 * sr)  # skip a too-short tail window
 
     spans: list[tuple[float, float]] = []
     embeddings: list = []
-    for pos in range(a, b, win):
-        chunk = wav[0, pos:pos + win]
+    for pos in range(0, total, win):
+        chunk = samples[pos:pos + win]
         if chunk.shape[0] < floor:
             continue
         with torch.no_grad():
-            emb = encoder.encode_batch(chunk.unsqueeze(0)).squeeze().detach().cpu().numpy()
-        spans.append((pos / sr, min(pos + win, b) / sr))
+            emb = encoder.encode_batch(torch.from_numpy(chunk).unsqueeze(0)).squeeze().detach().cpu().numpy()
+        # `read_pcm16_span` returns the span alone, so window offsets are
+        # relative to it -- `start_s` goes back on here to keep the segment
+        # times absolute, as they were when the whole file was in memory.
+        spans.append((start_s + pos / sr, start_s + min(pos + win, total) / sr))
         embeddings.append(np.asarray(emb, dtype=np.float32))
 
     # Cheap: __init__ loads no models; only _cluster_speakers (sklearn) runs.

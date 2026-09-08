@@ -354,6 +354,58 @@ def _map_final_clusters(final_clusters, live_centroids, threshold=0.25, start_id
     return mapping
 
 
+def read_pcm16_span(path: str, start_s: float, end_s: float):
+    """Read ``[start_s, end_s)`` of a meeting WAV as float32 samples in ``[-1, 1]``.
+
+    Shared by BOTH engines' Stop passes (task 9: 31827). It used to be the
+    ONNX engine's own `_read_wav_span`, while the SpeechBrain engine read its
+    audio through `torchaudio.load`: torchaudio >= 2.9 routes `load` through
+    the SEPARATE `torchcodec` package, and without it the call raises, so the
+    SpeechBrain Stop pass silently returned no segments at all (measured in
+    the bake-off, whose first baseline run scored DER 1.000 for exactly this).
+    The `diarization` extra pins neither `torchaudio < 2.9` nor `torchcodec`,
+    so the fix is to stop needing either: stdlib `wave` reads what the meeting
+    recorder writes, and torch stays only for the embedding itself.
+
+    `wave` + numpy only -- both imported INSIDE, so this module's scope stays
+    stdlib-cheap (module docstring). Only the requested span is read off disk.
+
+    Args:
+        path: A WAV written by the meeting recorder (always mono 16 kHz PCM16).
+        start_s: Span start, seconds from the beginning of the file.
+        end_s: Span end; falsy means "to the end of the file".
+
+    Returns:
+        ``(samples, sr)`` -- a 1-D float32 numpy array and the sample rate.
+
+    Raises:
+        ValueError: ``"unsupported wav"`` -- anything but mono 16 kHz 16-bit
+            PCM, or a `start_s` at or past end-of-file. No resampling and no
+            channel mixing happen here: the meeting pipeline is 16 kHz mono
+            end to end, and `main()`'s framed-error path turns this into a
+            skipped Stop pass (the near-live labels are kept) rather than a
+            silently mis-scaled one.
+    """
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(path), "rb") as wf:
+        sr = wf.getframerate()
+        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or sr != 16000:
+            raise ValueError("unsupported wav")
+        total = wf.getnframes()
+        a = max(0, int(round(start_s * sr)))
+        if a >= total:
+            raise ValueError("unsupported wav")
+        b = min(total, int(round(end_s * sr))) if end_s else total
+        b = max(a, b)
+        wf.setpos(a)
+        raw = wf.readframes(b - a)
+    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    return samples, sr
+
+
 def _write(stdout, obj) -> None:
     stdout.write((json.dumps(obj) + "\n").encode())
     stdout.flush()

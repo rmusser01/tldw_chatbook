@@ -10,7 +10,7 @@ is missing otherwise. Files land under `Tests/Audio/bakeoff/data/`, which is
 git-ignored: the audio is ~370 MB and is not ours to redistribute.
 
 Every WAV must be mono 16 kHz 16-bit PCM -- what the meeting recorder writes
-and the only thing `diarizer_engine_onnx._read_wav_span` accepts. Both
+and the only thing `diarizer_worker.read_pcm16_span` accepts. Both
 sources already are; `check_wav` refuses anything else rather than letting a
 resampling bug show up as a diarization result.
 """

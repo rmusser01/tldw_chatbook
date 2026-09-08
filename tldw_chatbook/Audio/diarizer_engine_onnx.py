@@ -22,7 +22,6 @@ import hashlib
 import os
 import secrets
 import time
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -535,36 +534,6 @@ def ensure_models(
     return seg_path, emb_path
 
 
-def _read_wav_span(path: str, start_s: float, end_s: float):
-    """Read `[start_s, end_s)` of a mono 16 kHz 16-bit PCM WAV as float32
-    samples in `[-1, 1]` (`wave` + numpy only, per spec §5 -- no torchaudio;
-    the meeting always writes 16 kHz mono, so this never resamples).
-
-    Returns:
-        `(samples, sr)`.
-
-    Raises:
-        ValueError: anything but mono 16 kHz 16-bit PCM, or a `start_s` at or
-            past end-of-file (both "unsupported wav").
-    """
-    import numpy as np
-
-    with wave.open(str(path), "rb") as wf:
-        sr = wf.getframerate()
-        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or sr != 16000:
-            raise ValueError("unsupported wav")
-        total = wf.getnframes()
-        a = max(0, int(round(start_s * sr)))
-        if a >= total:
-            raise ValueError("unsupported wav")
-        b = min(total, int(round(end_s * sr))) if end_s else total
-        b = max(a, b)
-        wf.setpos(a)
-        raw = wf.readframes(b - a)
-    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-    return samples, sr
-
-
 def _embed_vector(extractor, np, samples, sr: int):
     """Unit-normalised embedding (np.ndarray) for `samples` at `sr` via the
     sherpa-onnx stream API. A zero-magnitude embedding is returned as-is --
@@ -662,9 +631,9 @@ def _batch(sherpa_onnx, np, extractor, seg_path, emb_path, threshold, live, max_
         `(segments, final_centroids_by_live_id)` -- same shape the
         SpeechBrain engine's `_batch` returns.
     """
-    from tldw_chatbook.Audio.diarizer_worker import _map_final_clusters
+    from tldw_chatbook.Audio.diarizer_worker import _map_final_clusters, read_pcm16_span
 
-    samples, sr = _read_wav_span(wav, start_s, end_s)
+    samples, sr = read_pcm16_span(wav, start_s, end_s)
 
     diar_cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(

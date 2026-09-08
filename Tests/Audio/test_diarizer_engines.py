@@ -70,3 +70,105 @@ def test_main_builds_the_clusterer_at_the_engines_live_threshold(monkeypatch):
 
     assert w.main() == 0
     assert seen["live"].threshold == 0.55
+
+
+# ---- the shared span reader (task 9: 31827) --------------------------------
+
+def _wav(path, *, seconds=4.0, sr=16000, channels=1, width=2, value=None):
+    """A WAV whose sample at index i is `value(i)` -- so a read of a span can
+    be checked to have started where it claims."""
+    import struct
+    import wave
+
+    frames = int(seconds * sr)
+    value = value or (lambda i: 1000 + (i // sr) * 1000)
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(channels); f.setsampwidth(width); f.setframerate(sr)
+        pack = "<h" if width == 2 else "<b"
+        f.writeframes(b"".join(struct.pack(pack, value(i) if width == 2 else 1) * channels for i in range(frames)))
+
+
+def test_read_pcm16_span_reads_only_the_requested_span(tmp_path):
+    """The span offsets are the whole point: the Stop pass asks for
+    `[start, end)` of a meeting recording, and reading from 0 instead would
+    label the wrong audio."""
+    wav = tmp_path / "m.wav"
+    _wav(wav, seconds=4.0)                      # second n holds (n+1)*1000
+
+    samples, sr = w.read_pcm16_span(str(wav), 1.0, 3.0)
+    assert sr == 16000
+    assert len(samples) == 32000                # 2 s, not the whole 4 s file
+    assert samples[0] == pytest.approx(2000 / 32768.0)      # starts at 1.0 s
+    assert samples[-1] == pytest.approx(3000 / 32768.0)     # ends before 3.0 s
+
+    # A falsy `end_s` means "to the end of the file" (the Stop pass's default).
+    tail, _ = w.read_pcm16_span(str(wav), 3.0, 0.0)
+    assert len(tail) == 16000 and tail[0] == pytest.approx(4000 / 32768.0)
+
+
+@pytest.mark.parametrize("kwargs", [{"sr": 8000}, {"channels": 2}, {"width": 1}])
+def test_read_pcm16_span_refuses_anything_but_mono_16k_pcm16(tmp_path, kwargs):
+    """No resampling, no channel mixing (the meeting pipeline is 16 kHz mono
+    end to end). A refused file becomes a framed `ERROR diarize ValueError`
+    and a skipped Stop pass -- never silently mis-scaled audio."""
+    wav = tmp_path / "m.wav"
+    _wav(wav, seconds=1.0, **kwargs)
+    with pytest.raises(ValueError, match="unsupported wav"):
+        w.read_pcm16_span(str(wav), 0.0, 1.0)
+
+
+def test_read_pcm16_span_refuses_a_start_past_end_of_file(tmp_path):
+    wav = tmp_path / "m.wav"
+    _wav(wav, seconds=1.0)
+    with pytest.raises(ValueError, match="unsupported wav"):
+        w.read_pcm16_span(str(wav), 5.0, 6.0)
+
+
+class _FakeTensor:
+    """Just enough tensor for `_batch`: `from_numpy(...).unsqueeze(0)` in, and
+    `.squeeze().detach().cpu().numpy()` out of the encoder."""
+    def __init__(self, arr): self.arr = arr
+    def unsqueeze(self, _dim): return self
+    def squeeze(self): return self
+    def detach(self): return self
+    def cpu(self): return self
+    def numpy(self): return np.array([float(self.arr.mean()), 1.0], dtype=np.float32)
+
+
+def test_speechbrain_batch_reads_through_the_shared_reader(tmp_path, monkeypatch):
+    """Task 9 (31827): the SpeechBrain Stop pass must not need torchaudio.
+
+    It used to call `torchaudio.load`, which torchaudio >= 2.9 routes through
+    the separate `torchcodec` package; without it the call raised and the pass
+    returned NO SEGMENTS while the live path carried on -- the bake-off's
+    first baseline run scored DER 1.000 for exactly this. Here the engine
+    reads a real WAV through `diarizer_worker.read_pcm16_span` with a fake
+    encoder, and only the requested span reaches it.
+    """
+    import contextlib
+    import inspect
+    import types
+
+    from tldw_chatbook.Audio import diarizer_engine_speechbrain as sb
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+    from tldw_chatbook.Local_Ingestion import diarization_service as ds
+
+    class _FakeService:
+        def __init__(self, config=None): self.config = config
+        def _cluster_speakers(self, embeddings, num_speakers): return [0] * len(embeddings)
+
+    monkeypatch.setattr(ds, "DiarizationService", _FakeService)
+    seen = []
+    encoder = types.SimpleNamespace(encode_batch=lambda t: (seen.append(t.arr.shape[0]), t)[1])
+    fake_torch = types.SimpleNamespace(no_grad=contextlib.nullcontext, from_numpy=_FakeTensor)
+
+    wav = tmp_path / "mixed.wav"
+    _wav(wav, seconds=6.0)
+    segments, centroids = sb._batch(encoder, fake_torch, np, OnlineClusterer(), str(wav), 1.0, 3.0, 8)
+
+    assert sum(seen) == 32000            # the 2 s span alone, not the 6 s file
+    # 1.5 s windows over that span, with the times offset back to absolute.
+    assert [(s["start_s"], s["end_s"]) for s in segments] == [(1.0, 2.5), (2.5, 3.0)]
+    assert {s["speaker"] for s in segments} == set(centroids) == {"S1"}
+    source = inspect.getsource(sb)          # prose about it is fine; a load path is not
+    assert "_lazy_import_torchaudio" not in source and "import torchaudio" not in source
