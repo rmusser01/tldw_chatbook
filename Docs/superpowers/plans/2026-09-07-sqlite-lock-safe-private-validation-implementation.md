@@ -1325,6 +1325,76 @@ debt and Requests warning remain disclosed. AC12 checked; no new ADR. Evidence:
 `Docs/superpowers/reviews/2026-09-08-sqlite-final-local-qualification.md`.
 The test-teardown Minor is resolved; resume remaining Task7 qualification only.
 
+### Task 12: Wait for the exact mounted Canvas card in the synthetic action
+
+User approved the bounded retained correction on 2026-09-08 after the preserved
+stage-marker spike. This is a test-harness follow-up, not a production fix or a
+new architectural plan. BASE: `a5b3159b89`.
+
+ADR required: no
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md (unchanged)
+Reason: Test-only readiness correction under TASK-31942; no runtime, authority,
+storage or application interface changes.
+
+**Files:**
+
+- Modify `Tests/Canvas/browser/canvas_live_chatbook_child.py`.
+- Create `Tests/Canvas/test_live_card_readiness.py` for focused behavioral tests.
+- Root owns Backlog, this plan and qualification/evidence documentation.
+
+**Interfaces and binding constraints:**
+
+- The F12 test adapter currently finds the revision with synchronous `next(...)`;
+  its real card button and production open/selection acknowledgement must remain.
+- Wait cooperatively for the exact revision's mounted card belonging to the
+  current active Console session. Capture the successful card/button instance,
+  then dispatch once without a second query/await that can choose a stale target.
+- Keep the existing outer test waits unchanged: first F12 receipt loop is
+  `100 * 0.02` seconds; restored F12 receipt loop is `300 * 0.05` seconds.
+  Bound readiness inside the corresponding existing budget; do not add outer
+  time, action retries, suppressed failures or a new post-readiness allowance.
+- Refuse missing, wrong-revision, unmounted, disabled or wrong-session targets;
+  a nonempty current session identity is required. Read existing store state
+  without creating a new store. Timeout diagnostics are bounded counts/booleans
+  and fixed labels only, never raw session/revision IDs or content.
+- No production edits, persistent instrumentation, dependency/host actions,
+  startup-timeout changes, test assertion weakening, or V2 admission.
+- Use existing pytest pre-import isolation. No full suite, semaphore control,
+  historical test/benchmark/review replay, push/PR/rebase/merge or cleanup of
+  preserved archives. Root and agent serialize tests; root owns live browser runs.
+
+**Implementation and verification:**
+
+- [x] Before implementation, add behavioral RED coverage using the real Textual
+  app/card/button and test adapter helper. Catch missing readiness, wrong-session
+  selection, stale/unmounted/disabled targets, bounded timeout and cancellation.
+  Assertions must observe real returned identity or real card-open events, not
+  mock calls or source strings. Keep the test setup minimal and test-owned.
+- [x] Make the smallest test-only cooperative readiness helper and async F12
+  adapter change. Keep the production handler wrapper and selected/pinned receipt
+  semantics intact; do not turn logical load completion into claimed UI readiness.
+- [x] Run the new focused file plus `Tests/Canvas/test_live_receipt.py`; record
+  exact RED/GREEN results, changed-file Ruff/format checks and whitespace checks.
+  Do not reformat unrelated portions of the existing child. Self-review, then
+  report to root; root is sole Git index/commit owner.
+- [x] Root runs the original exact browser node once after the fix:
+  `Tests/Canvas/browser/test_canvas_served_flow.py::test_actual_chatbook_console_finalizes_canvas_create_and_update[read-publication-False]`.
+  Preserve earlier lifecycle captures before the existing harness reuses their
+  path. If the separate first-byte startup failure blocks the target, report it;
+  do not raise deadlines, blindly retry or change product behavior.
+- [x] Independently review this task's spec compliance and quality only. The
+  whole-correction review already completed and is not reopened here. Record
+  exact result and limits, commit only named files, leave TASK-31942 In Progress
+  and V2 disabled while the other qualification gates remain open.
+
+Task12 completed in `72af5b63bd` with independent spec/quality approval and no
+Critical/Important findings. Root committed unit selection10passed1warning3.10s;
+original actual-browser node1passed1warning49.52s with unchanged assertions and
+budgets. Changed-file Ruff/format/whitespace pass; inherited warning remains.
+Exact evidence and reporting limits:
+`Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-fix.md`.
+This completes only the bounded harness correction, not Task7 or Canvas admission.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -1343,4 +1413,4 @@ The test-teardown Minor is resolved; resume remaining Task7 qualification only.
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 | Helper-aware owner tests and pure Canvas integrity support during maintenance | 10 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. Task10 closes the 26 BASE failures with scoped review and committed verification. Task11 now resolves its test-teardown Minor with independent approval. Fresh affected-selection and checkout benchmarks have completed with the explicit limits in the final-local-qualification report: 1844 affected tests pass, but the five-child Canvas run has one unresolved failure, an exact rerun fails earlier, and aggregate static checks remain nonzero. Eleven semaphore-blocked cases and platform/optional gaps remain. No failed, skipped or deselected gate is passing evidence or permission for host cleanup/unrelated repairs. The user-approved source-free readiness/action spike has now reproduced an empty-card synthetic action before pending UI sync finishes; both temporary test edits were restored exactly. Evidence: Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md. The separate startup failure remains open and a retained harness readiness correction requires approval; no production fix is underway.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. Task10 closes the 26 BASE failures with scoped review and committed verification. Task11 now resolves its test-teardown Minor with independent approval. Fresh affected-selection and checkout benchmarks have completed with the explicit limits in the final-local-qualification report: 1844 affected tests pass, but the five-child Canvas run has one unresolved failure, an exact rerun fails earlier, and aggregate static checks remain nonzero. Eleven semaphore-blocked cases and platform/optional gaps remain. No failed, skipped or deselected gate is passing evidence or permission for host cleanup/unrelated repairs. The user-approved source-free readiness/action spike has now reproduced an empty-card synthetic action before pending UI sync finishes; both temporary test edits were restored exactly. Evidence: Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md. The separate startup failure remains open. The separately approved Task12 harness correction is complete and independently reviewed; the original exact browser node now passes. No production fix or broader qualification replay occurred, and remaining qualification gaps stay open.
