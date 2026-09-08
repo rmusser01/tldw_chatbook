@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     _ProfileMigrationValidationOwner,
     _migration_cleanup_owner,
+    _raise_migration_cleanup_failure,
 )
 from tldw_chatbook.TTS.profile_migration_journal import (
     MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
@@ -733,6 +734,8 @@ def _restore_all(states: Sequence[_PublicationSlotState]) -> list[BaseException]
             _restore_slot(state)
         except BaseException as error:
             errors.append(error)
+            if _migration_cleanup_owner(error) is not None:
+                break
     return errors
 
 
@@ -958,9 +961,10 @@ def publish_profile_migration(
     except BaseException as error:
         body_error = error
 
-    if _migration_cleanup_owner(body_error) is not None:
+    cleanup_owner = _migration_cleanup_owner(body_error)
+    if cleanup_owner is not None:
         _finish_claim(artifacts, destinations, key)
-        raise body_error
+        _raise_migration_cleanup_failure(cleanup_owner, *deferred, body_error)
 
     if completed:
         complete_cleanup_errors: list[BaseException] = []
@@ -1013,6 +1017,23 @@ def publish_profile_migration(
             except BaseException as caught:
                 journal_update_errors.append(caught)
         restore_errors = _restore_all(states)
+        cleanup_owner = next(
+            (
+                owner
+                for error in restore_errors
+                if (owner := _migration_cleanup_owner(error)) is not None
+            ),
+            None,
+        )
+        if cleanup_owner is not None:
+            _finish_claim(artifacts, destinations, key)
+            _raise_migration_cleanup_failure(
+                cleanup_owner,
+                *deferred,
+                body_error,
+                *journal_update_errors,
+                *restore_errors,
+            )
         if restore_errors:
             if (
                 journal_path is not None

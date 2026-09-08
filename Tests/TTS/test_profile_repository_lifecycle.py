@@ -1247,6 +1247,109 @@ async def test_exclusive_validator_close_failure_retains_repository_owner(
 
 
 @pytest.mark.asyncio
+async def test_rollback_validator_close_failure_retains_exclusive_repository_owner(
+    tmp_path, monkeypatch
+):
+    module = _repository_module()
+    publication = importlib.import_module(
+        "tldw_chatbook.TTS.profile_migration_publication"
+    )
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v3_store_at(module._v3_migration_backup_path(database_path))
+    module._v3_migration_backup_path(database_path).chmod(0o600)
+    _build_populated_v3_store_at(database_path)
+    repository = _repository(database_path)
+    real_publish = module.publish_profile_migration
+    real_open = publication._open_exact
+    real_connect = publication.connect_private_sqlite_descriptor
+    armed = False
+    proxies = []
+    pins = []
+    stages = []
+
+    def fail_publication(**kwargs):
+        repository_hook = kwargs.pop("stage_hook", None)
+
+        def stage_hook(stage):
+            nonlocal armed
+            stages.append(stage.value)
+            if repository_hook is not None:
+                repository_hook(stage)
+            if stage is publication.ProfileMigrationPublicationStage.BACKUP_REOPENED:
+                armed = True
+                raise OSError("PRIVATE completion failure")
+
+        real_publish(**kwargs, stage_hook=stage_hook)
+
+    def open_exact(identity):
+        result = real_open(identity)
+        if armed and not proxies:
+            pins.append(result[:2])
+        return result
+
+    def connect(*args, **kwargs):
+        # Test-owned fallback cleanup can settle a lost-owner RED on this thread.
+        connection = real_connect(*args, check_same_thread=False, **kwargs)
+        if armed and not proxies:
+            proxy = _CloseFailingSQLiteProxy(connection, "PRIVATE rollback close")
+            proxies.append(proxy)
+            return proxy
+        return connection
+
+    monkeypatch.setattr(module, "publish_profile_migration", fail_publication)
+    monkeypatch.setattr(publication, "_open_exact", open_exact)
+    monkeypatch.setattr(publication, "connect_private_sqlite_descriptor", connect)
+    try:
+        with pytest.raises(ProfileRepositoryError) as failure:
+            await repository.open()
+        assert proxies, (failure.value.code, stages)
+        assert repository._migration_cleanup_owners
+        assert repository._connection is None
+        assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
+        assert not repository._helper_restart_required
+        assert not repository._exact_authority_quarantined
+        await _assert_exclusive_lease_blocked(database_path)
+        for fd in pins[0]:
+            os.fstat(fd)
+        journal = next(tmp_path.glob("*.migration-publication.json"))
+        journal_before = journal.read_bytes()
+        assert (
+            publication.parse_profile_migration_journal(journal_before).phase
+            == "restoring"
+        )
+        namespace_before = sorted(path.name for path in tmp_path.iterdir())
+        with pytest.raises(ProfileRepositoryError):
+            await repository.close()
+        assert repository._executor is not None
+        assert repository._lease.mode is ProfileStoreLockMode.EXCLUSIVE
+        assert journal.read_bytes() == journal_before
+        assert sorted(path.name for path in tmp_path.iterdir()) == namespace_before
+        proxies[0].fail_close = False
+        await repository.close()
+        assert not repository._migration_cleanup_owners
+        assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+        for fd in pins[0]:
+            with pytest.raises(OSError):
+                os.fstat(fd)
+        assert journal.read_bytes() == journal_before
+        assert sorted(path.name for path in tmp_path.iterdir()) == namespace_before
+        with pytest.raises(sqlite3.ProgrammingError):
+            proxies[0].execute("SELECT 1")
+    finally:
+        for proxy in proxies:
+            proxy.fail_close = False
+        await repository.close()
+        for proxy in proxies:
+            proxy.connection.close()
+        for pair in pins:
+            for fd in pair:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["backup", "restore"])
 @pytest.mark.parametrize(
     "failing_owner",

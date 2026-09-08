@@ -105,6 +105,12 @@ The candidate stepper retains its own failed native close as well as any earlier
 boundary owner; later cancellation preserves its original identity. The outer
 candidate destination joins that carried owner before propagation, retaining its
 raw pins even when a callback itself supplies the cleanup error.
+The multi-slot publication rollback loop also stops at the first carried owner;
+the enclosing publisher retains it before another slot, journal update or
+namespace cleanup. Both that rollback handoff and a direct post-PONR close
+failure preserve the earlier deferred control-flow object. Ordinary rollback
+failure without a retained teardown owner keeps its bounded indeterminate
+`unavailable` reporting policy.
 
 The following is the concrete raw-close census, grouped by exact function. Each
 listed `os.close` is accounted for; directory-only closes cannot cancel SQLite
@@ -141,7 +147,11 @@ Qualification uses the DB/publication/recovery/schema/lifecycle selections and
 real temporary databases: close-once proxies, actual raw-close observations,
 callback escapes/failures, journal-authorized recovery with deferred cancellation,
 repository SHARED contenders refused during exclusive validation, closed source
-handle observations, and repeated cleanup with lease/worker retention. Existing
+handle observations, and repeated cleanup with lease/worker retention. The
+multi-slot rollback evidence includes actual failed-close raw FD observations,
+no later rename/fsync/hash/validation/journal/cleanup work, unchanged retained
+journal/namespace through teardown-only retry, and real initialization retaining
+its EXCLUSIVE lease and worker until that retry succeeds. Existing
 shared-reader refusal, exact tombstone/content checks and source-immutability
 tests remain required. The three unrelated strict inventory failures (Collections
 legacy raw connection, console trace owner mismatch, base_db backup census) remain
