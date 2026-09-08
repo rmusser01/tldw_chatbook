@@ -57,6 +57,23 @@ real playback. Exercise installed wheels as well as editable source. Keep
 observer corrections separate from application failures, and preserve raw ASR
 differences instead of silently turning lexical mismatches into exact matches.
 
+## Import deferral must pass both startup and screen-preload budgets
+
+**TASK-31942, 2026-09-08.** Deferring pure TTS profile-repository construction
+reduced warm UI-ready modules from 979 to 963 against the unchanged 972 limit.
+The separate screen-preimport guard then rose from 500 to 516 against its 500
+limit: the Personas route imported voice-bundle types through the profile library
+and loaded the same repository closure later. Deferring annotation-only types and
+the one real choice constructor at its existing action helper restored preload
+to 499/500; the app still used the genuine class and one first-use repository.
+The controller's committed five-test check independently measured 963/972 and
+499/500 and retained the real ordinary/partial native-exit assertions.
+
+**What to do.** Run all affected import-phase guards together. A lower boot count
+does not prove reduced preload cost. Trace the route that picks up the deferred
+closure, retain real first-action/class-identity coverage, and never raise another
+phase's limit to pay for the first phase's apparent improvement.
+
 ## Lifecycle tests must include startup and cleanup interruptions
 
 **TASK-31942, SQLite helper review, 2026-09-07.** A 118-pass helper selection

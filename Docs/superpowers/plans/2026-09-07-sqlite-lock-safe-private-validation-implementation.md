@@ -796,6 +796,109 @@ final-review gates remain incomplete, with semaphore/inventory failures still
 unresolved. No production-source or host cleanup was included in this repair.
 See `task-7-environment-repair.md` in the preserved SDD evidence directory.
 
+### Task 7b: Repay the startup import excess through first-use TTS construction
+
+**Authorization and evidence:** User approved addressing the startup-import excess
+without raising the limit. Unmodified warm guard measures 979/972; the original
+correction baseline measures 973/972. Actual import-edge tracing identifies the
+repository implementation as a bounded removable closure; the common DB helper
+and identifier-validation leaves have other startup consumers and must remain.
+Read `task-7b-diagnosis.md` in this plan's SDD workspace for the edge evidence.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/028-character-tts-generation-profile-ownership.md; backlog/decisions/125-lock-safe-private-sqlite-validation.md
+Reason: defer pure construction through the existing app-owned first-use seam;
+preserve one owner, captured path, serialized lifecycle and all SQLite admission
+and finalization contracts. The ADR-028 clarification records construction timing.
+
+**Controller ruling:** Replace the test-pinned eager pure repository construction
+with eager app-owned lifecycle state and first-use construction. The repository
+remains app-scoped, not a singleton, proxy, property or new registry. Capture its
+configured path during app construction as before; do not re-read configuration
+on first use. Closing an unused app permanently prevents later construction.
+The cost if this ruling is wrong is localized lifecycle/test rework; it does not
+authorize changing native SQLite policy, Canvas ownership or runtime admission.
+
+**Files:** Modify only `tldw_chatbook/TTS/__init__.py`, `tldw_chatbook/app.py`,
+`tldw_chatbook/UI/stts_profile_library.py`,
+`Tests/TTS/test_tts_app_ownership.py`, and the actual-app fixture in
+`Tests/TTS/test_profile_sqlite_helper_lifecycle.py`. Add
+`Tests/Packaging/test_tts_profile_repository_import_closure.py`. Root owns this
+plan, ADR clarification, Backlog and verification documentation. Ask the root
+before extending production scope. Do not modify low-level repository, schema,
+migration, proof/helper modules, budget constants or snapshots.
+
+- [x] Write behavioral RED tests before production edits: ordinary app construction
+  neither imports nor constructs the repository implementation; package explicit
+  export still resolves to the real class; first ensure constructs one owner at
+  the captured path, with concurrent callers sharing one open task.
+- [x] Reuse the package's existing PEP 562 export pattern and app's existing
+  `_ensure_tts_profile_repository` seam. Construct before the first await so one
+  event-loop owner is installed. Preserve existing injected test owners, open
+  retry, cancellation shielding, service sharing and bounded source-free errors.
+  A close request must latch before awaiting and also when no owner exists, so
+  close-before-use and ensure/close races cannot create or reopen an owner.
+- [x] Repay the measured screen-preimport shift too: the Personas route reaches
+  `UI/stts_profile_library.py`, whose four voice-bundle imports load the repository
+  through the existing package deferred exports. Keep annotation-only exports in
+  `TYPE_CHECKING` and import the real `TTSVoiceBundleImportChoice` locally in the
+  existing `voice_bundle_import_choice` user-decision helper. Preserve the class
+  identity, validation and UI behavior; do not change the service or repository
+  implementation. Extend the new isolated import-closure test to cover the real
+  Personas/profile-library route and first decision-helper use, and run existing
+  `Tests/UI/test_stts_profile_library.py -k bundle` coverage. The observed interim
+  516/500 preload failure is not acceptable startup repayment.
+- [x] Replace the eager-construction assertion with genuine first-use tests,
+  including close-before-use, concurrent ensure, canceled waiter, ensure/close
+  race and idempotent close. Retain existing real lifecycle assertions. Do not
+  add a production API merely to instrument tests.
+  If the existing authority-order fixture lacks already-required app shutdown
+  hooks, add explicit recording doubles and their exact expected positions in
+  that same test. Do not bypass missing hooks or change production shutdown.
+- [x] Adapt the actual-app exit child by setting its owned path before app
+  construction and instrumenting the real repository factory at its existing
+  module seam if pre-open access is required. The app itself must still perform
+  first-use construction; do not substitute a fake repository or skip any native
+  ordinary/abrupt exit, foreign-cohort preservation or original-data recovery gate.
+- [x] Run focused RED/GREEN nodes, then the complete targeted files:
+  `Tests/TTS/test_tts_app_ownership.py`,
+  `Tests/TTS/test_profile_sqlite_helper_lifecycle.py`,
+  `Tests/TTS/test_profile_repository_lifecycle.py`, the new import-closure file,
+  `Tests/test_probe_import_provenance.py`,
+  `Tests/Performance/test_app_startup_performance.py`,
+  `Tests/Performance/test_app_import_weight.py`,
+  `Tests/Performance/test_ui_ready_module_census.py`,
+  `Tests/Performance/test_screen_preimport_payload_budget.py`, and
+  `Tests/Canvas/test_startup_deferral.py`. Keep the unchanged warm limit at 972.
+  Every app import/probe must use collected `Tests.conftest` isolation and owned
+  HOME/XDG/config/database paths. No full sweep or real user-config imports.
+- [x] Run `git diff --check` and Ruff check/format-check on changed Python files;
+  distinguish inherited debt from introduced errors without whole-file formatting.
+  Report exact commands/results, census values, all warnings/failures, provenance,
+  self-review and scope. Commit only named implementation/test files, leaving
+  root-owned governance unstaged. Do not repair shared dependencies or host
+  semaphores, change unrelated inventory tests, or enable Canvas V2.
+- [x] Independent task-scoped spec and quality review.
+- [ ] Complete the existing whole-correction review against original `9bc73ffb3`.
+  This local fix
+  does not waive remaining qualification gaps or mark TASK-31942 Done.
+
+**Task7b checkpoint:** Implemented in `bd96a923c4` and `ae629ed080`, with independent
+spec compliance and quality approval and no Critical/Important findings. Scoped
+groups passed44 ownership,246 native/helper/repository/import,59 bundle UI and50
+final performance/provenance/Canvas tests. The annotation-only follow-up passed
+its two covering tests. Final import625/660, UI963/972, preload499/500 modules,
+364325/378740 LOC and110163/123319 largest-route LOC; thresholds and snapshots
+unchanged. Root's fresh committed five-test check independently confirmed the
+UI/preload counts and actual idle/partial orderly native exit preservation.
+The initial516/500 cost transfer and inherited fixture failures remain documented,
+not relabeled as passing evidence. Changed-span lint is clean; aggregate474
+inherited findings, four formatter-dirty files and environment warnings remain.
+Review cannot-verify items are the existing cross-task/native/platform/Canvas
+qualification gates, not waived by this local approval. All seven final task ACs
+remain unchecked and V2 stays disabled. See `Docs/Canvas/V2_VERIFICATION.md` and
+the preserved Task7b report/review/controller verification.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
