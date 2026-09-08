@@ -154,6 +154,14 @@ class LibraryIngestState:
     last_active_count: int = 0
     batch_baseline: tuple[int, int, int, int] = (0, 0, 0, 0)
 
+    # (task-32054) A settle that has been scheduled but not yet reported.
+    # A folder import submits and dispatches one file at a time, so the
+    # active count really does cross N -> 0 between files -- reporting on
+    # the crossing itself stacked one "Import finished" toast per file.
+    # The settle waits one turn of the event loop, which is long enough for
+    # the whole synchronous submission loop to land.
+    batch_settle_pending: bool = False
+
     # (task-2015) Two-press "Clear finished": first press arms, second
     # clears; any registry mutation disarms.
     clear_finished_armed: bool = False
