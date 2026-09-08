@@ -419,7 +419,7 @@ class ProviderContinuationRecoveryCallout(Vertical):
         height: 3;
         margin-top: 1;
     }
-    ProviderContinuationRecoveryCallout Button {
+    ProviderContinuationRecoveryCallout Button.provider-continuation-action {
         min-width: 10;
         margin-right: 1;
     }
@@ -445,17 +445,24 @@ class ProviderContinuationRecoveryCallout(Vertical):
             yield Button(
                 "Resume",
                 id="console-continuation-resume",
+                classes="provider-continuation-action",
                 variant="warning",
             )
             yield Button(
                 "Take over",
                 id="console-continuation-take-over",
+                classes="provider-continuation-action",
                 variant="warning",
             )
-            yield Button("Discard", id="console-continuation-discard")
+            yield Button(
+                "Discard",
+                id="console-continuation-discard",
+                classes="provider-continuation-action",
+            )
             yield Button(
                 "Reload",
                 id="console-continuation-reload",
+                classes="provider-continuation-action",
                 variant="warning",
             )
 

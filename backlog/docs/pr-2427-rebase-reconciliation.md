@@ -442,12 +442,12 @@ replacement. No numeric cap or UI contract changed.
 Evidence: the original focused test passed; the retargeted test failed for
 the absent owner method, then passed after the move. The complete endpoint
 probe, UI session settings, Chat session settings, and controller wiring
-files pass **750 tests** in343.78seconds, including the real loopback model
+files pass **750 tests** in 343.78 seconds, including the real loopback model
 endpoint. The complete private-delegate architecture file passes **66 tests**.
 Independent spec and correctness reviews, changed-range formatting, scoped
 Ruff, and diff checks pass. Logs:
 `/private/tmp/pr2427-probe-{baseline,owner-red,owner-green,owner-complete,architecture}.log`.
-ChatScreen loses22lines and one method; this is one completed cluster, not
+ChatScreen loses 22 lines and one method; this is one completed cluster, not
 qualification of the remaining screen-size excess.
 
 All six derived-artifact preflight checks pass on this local checkpoint,
@@ -458,5 +458,40 @@ dev at `c37d611368b2c1ac0f137db54085de032fb12b89`; a new rebase remains
 required after saving qualified work. Published head `c27723b623` still fails
 only the two previously identified CSS budget cases in its Perf Guard job
 34192417774, while derived-artifact checks pass. No newly posted inline
-review comments appeared after05:55UTC in that inspection. No merge was
+review comments appeared after 05:55 UTC in that inspection. No merge was
 attempted.
+
+## Approved CSS subject-key paydown
+
+Seven rules now use dedicated classes on their existing Button/VerticalScroll
+subjects while retaining owner ancestry and type matching. IDs, labels,
+variants, nesting and callbacks are unchanged. The builder regenerated only
+the two widget-default sheets. The complete fastpath file passes **5 tests**;
+the parsed ancestor-scoped bare-type census is **274**, at the unchanged cap
+(Button181, VerticalScroll4). Evidence:
+`/private/tmp/css-paydown-final-fastpath.log`.
+
+The complete parity file passes **27 tests**, including ten paired compact
+and wide cases. Both arms load the full app stylesheet union; the baseline
+arm restores only the old six generated selectors and provider callout
+DEFAULT_CSS in memory. Computed styles, container/button regions,
+normal/disabled/focused visual styles, compositor paint/hit ownership, and
+complete painted frames match exactly. Two repeated paired runs pass all ten
+cases. Evidence: `/private/tmp/css-paydown-final27.log` and
+`/private/tmp/css-paydown-paired-fulltier-stable{1,2}.log`.
+
+Review caught that the first harness omitted app-tier sheets: it incorrectly
+treated NewTaskChoice/provider buttons as three rows, whereas app overrides
+make them one row. The corrected full-tier paired controls now pin this
+incumbent behavior. Both independent reviews and scoped static checks pass.
+
+Complete affected non-Scheduling files pass289tests. The Scheduling batch
+passes331/333, exposing an old overflow viewport invalidated by TASK-31712's
+intentional padding reduction and its tooltip's internal reminder noun.
+Separate reconciliation is underway under TASK-31932 plan15. Widget
+consolidation passes32/33; four DEFAULT_CSS declarations already present at
+`c27723b623` remain outside its allowlist (LibraryCharacterRepairDialog,
+RoleplayDraftNavigationDialog, RoleplayDraftRecoveryDialog,
+ConsoleAppearancePickerModal). No allowlist or cap was relaxed. Watchlists
+stylesheet deferral, this consolidation debt, and screen-size gates remain
+open; this checkpoint does not make the PR merge-ready.

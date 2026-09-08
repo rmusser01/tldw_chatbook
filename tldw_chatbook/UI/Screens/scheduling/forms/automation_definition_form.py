@@ -133,7 +133,7 @@ class AutomationDefinitionForm(ModalScreen):
         align: center middle;
     }
 
-    AutomationDefinitionForm > VerticalScroll {
+    AutomationDefinitionForm > VerticalScroll.automation-form-scroll {
         width: 84;
         max-width: 100%;
         height: auto;
@@ -206,7 +206,7 @@ class AutomationDefinitionForm(ModalScreen):
         margin-top: 1;
     }
 
-    .button-container Button {
+    .button-container Button.automation-form-action {
         margin: 0 1;
     }
     """
@@ -282,7 +282,9 @@ class AutomationDefinitionForm(ModalScreen):
     # -- compose --------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="automation-form-box"):
+        with VerticalScroll(
+            id="automation-form-box", classes="automation-form-scroll"
+        ):
             yield Label(
                 "Edit Recurring Question"
                 if self._definition_row is not None
@@ -415,9 +417,22 @@ class AutomationDefinitionForm(ModalScreen):
                 yield Static("", id="automation-preview-text", classes="form-preview")
                 yield Static("", id="automation-form-errors", classes="error-text")
                 with Horizontal(classes="button-container"):
-                    yield Button("Preview", id="automation-preview-btn")
-                    yield Button("Save", variant="success", id="automation-save")
-                    yield Button("Cancel", id="automation-cancel")
+                    yield Button(
+                        "Preview",
+                        id="automation-preview-btn",
+                        classes="automation-form-action",
+                    )
+                    yield Button(
+                        "Save",
+                        variant="success",
+                        id="automation-save",
+                        classes="automation-form-action",
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="automation-cancel",
+                        classes="automation-form-action",
+                    )
 
     def _default_schedule_kind(self) -> str:
         """Create mode's Schedule Kind default (31712 AC#2).
