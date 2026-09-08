@@ -12381,6 +12381,22 @@ a native/ML dependency (the bake-off was that step here, by accident of purpose)
 for a file format you control (the meeting writes 16 kHz mono PCM16) should be stdlib, not a
 media library whose backend can change under a minor version.
 
+### TASK-32043: a new `_media_state.<field>` read in a shared media path must tolerate the SimpleNamespace double
+
+The reader-desync fix added `self._media_state.reader_session` reads to
+`_delete_library_media_selection` (the bulk-delete worker). Three
+`test_library_multiselect_media.py` delete tests drive that worker against a
+hand-built `SimpleNamespace` `_media_state` that carries only the fields the
+pre-existing code touched — so the bare attribute read threw
+`AttributeError: 'types.SimpleNamespace' object has no attribute
+'reader_session'` and turned three green tests red, even though the behaviour
+was correct. The single-item delete path already knew this: it reads
+`getattr(self._media_state, "reader_session", None)` and no-ops on None. Rule:
+any NEW field access you add to a shared `library_screen` media mutation path
+that the multiselect fakes exercise must go through `getattr(..., None)` (and
+guard the None), not a bare attribute — the fakes are deliberately partial and
+will not grow a field just because production did.
+
 ## Verify a named agent's model at the provider boundary (TASK-32026, 2026-09-07)
 
 **Incident.** The bulk-reader pilot needed a cheaper worker model. Existing

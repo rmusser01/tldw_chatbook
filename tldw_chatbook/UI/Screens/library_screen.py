@@ -15765,6 +15765,35 @@ class LibraryScreen(BaseAppScreen):
 
         return LibraryMediaController._restore_library_media_scope(state)
 
+    def _reset_library_media_reader_to_no_selection(self) -> None:
+        """Clear the Reader to its no-selection placeholder (task-32043).
+
+        Called when the item the Reader is painting leaves the visible set --
+        a 0-result filter, or the loaded item deleted -- so the Reader stops
+        showing an item the Items list beside it no longer holds. Mirrors the
+        single-item viewer delete's own "no surviving neighbour" reset
+        (``_delete_library_media_item``): the session is rebuilt empty (its
+        request generation bumped so any in-flight detail settle is rejected,
+        the Reader mode preserved) and the selection anchor plus cached detail
+        are dropped, so the viewer repaints "Select a media item to read it
+        here." and the canvas returns to its list view.
+        """
+        session = self._media_state.reader_session
+        self._media_state.reader_session = LibraryMediaReaderSessionState(
+            request_generation=session.request_generation + 1,
+            mode=session.mode,
+        )
+        self._media_state.selected_media_id = ""
+        self._media_state.view = "list"
+        self._media_state.detail = None
+        self._media_state.composed_detail = None
+        self._media_state.highlights = []
+        self._media_state.editing = False
+        self._media_state.editing_analysis = False
+        self._media_state.confirming_delete = False
+        self._close_library_media_find()
+        self._media_state.content_mode = "raw"
+
     def _sync_library_media_browse_state(self, focus_identity: str | None) -> None:
         """Project accepted Media page/facet state into the mounted list."""
         if (
@@ -15803,6 +15832,22 @@ class LibraryScreen(BaseAppScreen):
                     )
                     applied_selection_id = self._media_state.selected_media_id
                     self._media_state.filter_restore_id = ""
+            # task-32043: a settled page with NO visible rows -- a 0-result
+            # filter -- must stop the Reader painting the item it still holds
+            # (a filter WITH results already re-points the Reader at its first
+            # match above via ``applied_selection_id``, and a non-empty page
+            # the loaded item merely isn't on is a page turn, not a removal).
+            if (
+                not applied_selection_id
+                and not controller.retained_items
+                and not self._media_state.reader_session.external_detail
+                and (
+                    self._media_state.reader_session.selected_id
+                    if self._media_state.reader_session.pending_request is not None
+                    else self._media_state.reader_session.loaded_id
+                )
+            ):
+                self._reset_library_media_reader_to_no_selection()
         if (
             applied_selection_id
             and self._media_state.reader_session.selected_id != applied_selection_id
@@ -23207,6 +23252,28 @@ class LibraryScreen(BaseAppScreen):
                     self._source_record_id(record) or ""
                     for record in self._local_source_records["media"]
                 )
+                # task-32043: if the Reader was painting one of the just-
+                # trashed items, clear it to its no-selection placeholder so
+                # it stops showing an item the Items list beside it has
+                # dropped. The delete receipt/Undo (set just below, in the list
+                # view) is untouched, and a later Undo re-adds the row so it
+                # opens normally again. ``getattr`` mirrors the single-item
+                # delete's own guard so a fixture ``_media_state`` double
+                # without a Reader session is a no-op here.
+                reader = getattr(self._media_state, "reader_session", None)
+                reader_id = (
+                    None
+                    if reader is None
+                    else reader.selected_id
+                    if reader.pending_request is not None
+                    else reader.loaded_id
+                )
+                if (
+                    reader_id
+                    and not reader.external_detail
+                    and reader_id in succeeded_ids
+                ):
+                    self._reset_library_media_reader_to_no_selection()
 
             # task-4022 AC2: the receipt for THIS action -- already cleared
             # at arm-time (``handle_library_media_delete_selected``), so
