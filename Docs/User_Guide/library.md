@@ -729,7 +729,5 @@ canvas; the three Study rows are one row each. task-32072: Get started's
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (fix round:
 task-32063's graduation notice is now the toast and nothing else — the
-in-canvas line that repeated it is gone; task-32066's documented compact
-focus-recovery rule is implemented, so a landing control that had focus when
-the terminal became compact hands it to that action's matching rail row
-instead of keeping it on the hidden canvas.)*
+in-canvas line that repeated it is gone, so one event has one surface and
+nothing is added to the canvas a reader is working in.)*

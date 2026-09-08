@@ -635,6 +635,7 @@ Escape from the editor leaves the Notes list at the visibility it had.)*
 
 *Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32062: a
 Notes refresh that arrives while the title or body has focus is deferred until
-focus leaves, so the editor is never rebuilt and focus never jumps mid-typing.
-task-32061 re-checked on a fresh profile: the list pane survives the first
-note's Escape.)*
+focus leaves, and a snapshot that is a keystroke behind no longer rewrites the
+focused field — measured live, a title and body typed within ~0.4 s used to be
+stored as one scrambled title with an empty body. task-32061 re-checked on a
+fresh profile: the list pane survives the first note's Escape.)*
