@@ -1,5 +1,22 @@
 # Lessons: verifying against the real thing
 
+## Check the target platform's exact interpreter build before pinning CI
+
+**TASK-31942 Task14, 2026-09-08.** A fresh macOS ARM64 evidence job pinned the
+local Python3.12.11 version to keep qualification comparable. The job passed
+checkout, then setup-python failed before any lock control or product test:
+GitHub's manifest contained 3.12.11 only for Linux, not Darwin. The same manifest
+listed 3.12.10 for Darwin ARM64/x64. Fifteen local workflow-contract tests and a
+scoped review validated the intended pin, not external build availability.
+[Run34292597991](https://github.com/rmusser01/tldw_chatbook/actions/runs/34292597991)
+had zero artifacts because setup failed before runtime metadata was written.
+
+**What to do.** Before dispatch, check the official installer manifest for the
+exact version/platform/architecture tuple. A local install or a release version
+does not establish hosted-installer availability. Preserve setup logs when
+runtime evidence cannot be created; do not relabel unrun cases as test failures
+or passes. A different patch pin qualifies that build, not the original one.
+
 ## A mount-started worker may run before is_mounted becomes true
 
 **TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry

@@ -272,3 +272,14 @@ dirty files match baseline edit content and adjacent lines. Explicit py311/py312
 controls distinguish six language-floor-sensitive recommendations. This does
 not make the static gate green or clear modified import blocks by assumption.
 No pytest, browser, benchmark, host-control rerun or admission change occurred.
+
+## Subsequent approved fresh macOS CI attempt
+
+The dedicated Task14 job at `13fe672c64` was independently reviewed and triggered
+once on its evidence branch. [Run34292597991](https://github.com/rmusser01/tldw_chatbook/actions/runs/34292597991)
+failed before the lock control or product tests because the pinned Python3.12.11
+has no GitHub macOS ARM64 build. No JUnit/artifact exists; all eleven cases remain
+unqualified. An available CI-only3.12.10 pin is proposed but not yet authorized
+or applied. The [attempt report](2026-09-08-sqlite-macos-concurrency-evidence.md)
+preserves exact commit/job/log diagnosis and limits. No local host change or
+broader qualification replay occurred; task In Progress, V2 disabled.
