@@ -599,3 +599,22 @@ to baseline. Exact patch, metadata and limits are preserved in the
 [diagnostic report](../superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md).
 A retained harness readiness fix is not part of the spike. No gates are relabeled
 passing, no new broad runs or host changes occurred, and V2 stays disabled.
+
+## Approved restored-card harness correction — 2026-09-08
+
+The separately approved test-only correction is committed in `72af5b63bd`.
+The F12 adapter now waits for and captures the mounted current-session exact
+card/button, then presses once within the existing receipt-wait budget. The
+served-flow assertions and all production files remain unchanged.
+
+Root verification: focused committed selection **10 passed, 1 inherited warning,
+3.10s**; original actual-browser case **1 passed, 1 inherited warning, 49.52s**,
+including restored pin/metadata/provider-count checks and owned cleanup.
+Changed-file Ruff/format and whitespace pass. Independent scoped spec/quality
+review approved with no Critical/Important findings; warning remains documented.
+See the [correction evidence](../superpowers/reviews/2026-09-08-canvas-card-readiness-fix.md)
+for exact commands and the browser reporting-wrapper limitation.
+
+This closes the reproduced premature-card-action harness failure for the tested
+workflow, not the separate historical startup failure or other host/platform/
+static qualification gaps. TASK-31942 remains In Progress and Canvas V2 disabled.

@@ -238,3 +238,13 @@ The diagnostic was removed from live test files, with exact baseline identity
 verified; no fix or green qualification was claimed. See the
 [stage-marker evidence](2026-09-08-canvas-card-readiness-spike.md) for the one-run
 result, in-run comparison, process-exit evidence and inference limits.
+
+## Subsequent bounded harness correction
+
+The user-approved mounted-current-card correction in `72af5b63bd` now passes
+the original exact actual-browser node (1passed1warning49.52s), preserving
+production dispatch, pin/metadata/provider-count assertions and outer waits.
+Root committed unit selection10passed1warning3.10s; scoped review approved.
+See the [correction evidence](2026-09-08-canvas-card-readiness-fix.md) for exact
+commands and limits. This does not erase the earlier failures, explain the
+separate startup miss or close the other qualification gaps recorded above.
