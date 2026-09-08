@@ -357,7 +357,68 @@ module of remaining headroom. No dependency/host repair or full suite was run.
 
 Task-scoped independent review approved spec compliance and quality with no
 Critical/Important findings. The startup-budget breach is
-repaid, but known semaphore/inventory gaps, whole-correction review and Canvas V2
-admission remain separate, incomplete gates. TASK-31942 remains In Progress and
+repaid, but known semaphore/inventory gaps and Canvas V2 admission remain
+separate, incomplete gates. The subsequent whole-correction review and fix wave
+are recorded below. TASK-31942 remains In Progress and
 V2 remains disabled. Exact commands, RED/GREEN evidence and scoped static results
 are preserved in this plan's `task-7b-report.md` and controller verification.
+
+## Whole-correction review and bounded fix wave — 2026-09-08
+
+The independent review of `9bc73ffb35..41f144ab90` inspected all 74 changed
+files. It found no Critical issue, one Important incomplete correction and two
+test Minors. Live-open cleanup could replace an original control-flow signal
+when native close also failed. An isolated real-store/helper probe reproduced
+the lost signal and then safely settled the retained owner. The replacement
+pattern also existed at BASE; this is not a demonstrated new startup regression
+or data-loss event. The two test defects were a borrowed-close assertion that
+could not detect close and a UI-loop guard that skipped teardown on failure.
+
+SQLite Task8 (not Canvas admission Task8), committed as `3b5031012c`, preserves
+the selected exact signal and hands its complete live cleanup owner to the
+repository after reservation settlement. Ordinary cleanup errors retain their
+existing type. Retryable healthy proof and terminal proof loss retain distinct
+classifications, native policy, SHARED lease and worker ownership. Guarded
+exception-local metadata preserves earlier owners on sequentially reused signals
+without stale adoption; settled wrapper references can remain for that exception's
+lifetime, while live helpers remain subject to the existing four retained slots.
+The two test guards now have explicit wrong-behavior sensitivity controls.
+
+Verification on macOS arm64, CPython 3.12.11 / SQLite 3.49.1:
+
+- Ten-file covering selection: **343 passed, 5 warnings, 260.93s**.
+- Fresh final focused selection: **22 passed, 1 warning, 5.51s**, including the
+  terminal-control parameter added after covering collection. Other changes
+  during that run were static-only; no production runtime behavior changed.
+- Controller committed smoke: **8 passed, 1 warning, 1.98s**, covering exact
+  cancellation, hostile reuse, actual repository retries, both borrowed-close
+  controls, combined UI-test failure cleanup and terminal control/proof loss.
+- Budgets unchanged/pass: import 625/660, UI 963/972, preload 499/500 modules;
+  preload 364325/378740 LOC and largest route 110163/123319 LOC.
+- All six changed files pass formatting. BASE-mapped lint finds zero introduced
+  diagnostics and 128 inherited findings; aggregate lint is not green. The
+  controller's full correction-range whitespace check also passes.
+
+Warnings remain the inherited Requests dependency mismatch, joblib's host
+ENOSPC serial fallback and budget-headroom notices. These results are separate
+runs, not counts summed into full affected-selection qualification. Exact
+commands, RED failures (including discarded harness errors), cleanup accounting
+and freshness limits are preserved in `task-8-report.md` and
+`task-8-root-verification.md` in the existing plan's SDD directory.
+
+The single independent fix-only re-review confirms **I1, M1 and M2 addressed**,
+with no new Critical/Important issue identified. It records one limitation:
+simultaneous reuse of the same exception instance by independent workers could
+overwrite the current-owner slot. No such producer was identified in the
+inspected runtime paths; concurrent same-object reuse was not part of the
+approved sequential-reuse cases and is not claimed as supported. The controller
+retains this as a documented limitation, not a demonstrated blocker or permission
+for another automatic fix wave. A future shared-signal producer would require
+an attempt-bound handoff and new coverage before using this interface that way.
+
+Code-review completion does not close the broader qualification gaps. The
+three known strict-inventory failures, eleven pre-body SemLock ENOSPC cases,
+platform/optional coverage and final affected-selection/benchmark qualification
+remain unresolved. No full suite, host cleanup, dependency repair, external PR
+action or Canvas admission was performed in this wave. TASK-31942 remains
+In Progress with all seven final acceptance criteria unchecked; V2 is disabled.
