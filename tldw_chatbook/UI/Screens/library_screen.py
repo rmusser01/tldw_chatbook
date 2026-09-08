@@ -503,6 +503,10 @@ from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_media_state import (
     LibraryMediaState,
 )
+from ..Library_Modules.library_notes_state import (
+    LibraryNotesState,
+    notes_state_shim_attr,
+)
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
@@ -2117,12 +2121,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_graduation_announcement_visible = False
         self._library_lifecycle_pending_persist: LibraryLifecycle | None = None
         self._library_lifecycle_persist_worker: Worker | None = None
-        self._library_notes_source: Literal["database", "files"] = (
-            LIBRARY_NOTES_SOURCE_DATABASE
-        )
-        self._library_notes_work_session_phase = NotesWorkSessionPhase.INACTIVE
-        self._library_notes_work_session_activation_pending = False
-        self._library_file_notes_workspace: LibraryFileNotesWorkspace | None = None
+        # Constructed early -- see LibraryNotesState's own module docstring
+        # (forced-early-construction paragraph): this is the position of the
+        # first removed field, and it must precede the Folder-Files
+        # workspace-factory `if`/`else`, the shared reader-preferences
+        # tuple-unpack, the two reader-layout derivations, the two
+        # persistence-lock dicts and the two controller snapshots -- nine
+        # fields whose original lines keep running untouched at their own
+        # positions and route through the generated shim into this object.
+        # No constructor arguments: unlike Media's three, every default this
+        # cluster folds is a static literal or a pure no-argument factory call.
+        self._notes_state = LibraryNotesState()
         if file_notes_workspace_factory is None:
             def build_file_notes_workspace() -> LibraryFileNotesWorkspace:
                 return LibraryFileNotesWorkspace(
@@ -3215,51 +3224,6 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._media_state.reader_preferences)
         )
-        self._library_notes_view: str = "list"
-        self._library_notes_lasting_origin: str | None = None
-        self._library_notes_select_mode: bool = False
-        self._library_notes_row_selection = RowSelection("notes")
-        self._library_notes_sort: str = "newest"
-        self._library_notes_sort_choices_visible: bool = False
-        self._library_notes_filter: str = ""
-        self._library_notes_filter_records: list | None = None
-        self._library_notes_filter_generation: int = 0
-        self._library_notes_tree_filter_state: LibraryNotesFilterState | None = None
-        self._library_notes_filter_navigation_generation: int | None = None
-        self._library_notes_navigation_status: str = ""
-        self._library_notes_notice: str = ""
-        self._library_notes_tree_expanded_ids: set[str] = set()
-        self._library_notes_tree_branches: dict[
-            NotesBranchKey, NotesBranchSliceState
-        ] = {}
-        self._library_notes_tree_topology_epoch: int = 0
-        self._library_notes_tree_lifecycle_generation: int = 0
-        self._library_notes_tree_request_generations: dict[NotesBranchKey, int] = {}
-        self._library_notes_tree_navigation_requests: dict[NotesBranchKey, int] = {}
-        self._library_notes_tree_target_offsets: dict[NotesBranchKey, int] = {}
-        self._library_notes_tree_status_by_slice: dict[
-            NotesBranchKey, dict[str, tuple[int, str]]
-        ] = {}
-        self._library_notes_tree_status_revision: int = 0
-        self._library_notes_tree_protected_folder_ids: frozenset[str] = frozenset()
-        self._library_notes_tree_inactive_managed_folder_ids: frozenset[str] = (
-            frozenset()
-        )
-        self._library_notes_tree_selected_placement_id: str = ""
-        self._library_notes_tree_pending_target_placement_id: str = ""
-        self._library_notes_filter_browse_receipt: LibraryNotesTreeReceipt | None = None
-        self._library_notes_deleted_folder_receipt = None
-        self._library_note_create_counter: int = 0
-        self._library_note_create_token: str | None = None
-        self._library_note_create_running: bool = False
-        self._library_note_create_status: str = ""
-        # TASK-15100 / ADR-055: create, delete, and Undo all mutate the same
-        # cached Notes rows/count/receipt. One admission flag keeps those
-        # writes serialized instead of letting separate workers race.
-        self._library_notes_mutation_in_flight: bool = False
-        self._library_note_delete_receipt: LibraryNoteDeleteReceipt | None = None
-        self._library_notes_operation_counter: int = 0
-        self._library_notes_operation: LibraryNotesOperationState | None = None
         self._library_note_import_controller = LibraryNoteImportController(
             bounds=ImportBounds(
                 max_files=1_000,
@@ -3399,7 +3363,6 @@ class LibraryScreen(BaseAppScreen):
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
         self._skills_state.reader_mode = coerce_skill_reader_mode(None)
-        self._selected_note_id: str = ""
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
             notes_scope_service=getattr(app_instance, "notes_scope_service", None),
@@ -3411,20 +3374,6 @@ class LibraryScreen(BaseAppScreen):
             note_session_port,
             clock=lambda: datetime.now(timezone.utc),
         )
-        self._library_note_load_state: str = "idle"
-        self._library_note_load_message: str = ""
-        self._library_note_autosave_state: str = "idle"
-        self._library_notes_autosave_timer: Timer | None = None
-        self._library_note_autosave_generation: int = 0
-        self._library_note_confirming_delete: bool = False
-        self._library_note_preview: bool = False
-        self._library_note_context: bool = False
-        self._library_note_delete_origin_context: bool = False
-        self._library_note_delete_origin_preview: bool = False
-        # Task 7 owns measured breakpoint transitions. Task 5 consumes this
-        # explicit presentation input now so compact/wide utility grouping is
-        # testable without coupling the canvas to terminal geometry.
-        self._library_notes_compact: bool = False
         self._library_rail_collapsed: bool = False
         # Every field below is a static literal/no-argument factory call with
         # zero entanglement with another subsystem's shared init code (see
@@ -3432,7 +3381,6 @@ class LibraryScreen(BaseAppScreen):
         # analysis) -- constructed once here, at the position of the first
         # removed field, with no constructor arguments.
         self._ingest_state = LibraryIngestState()
-        self._library_notes_stage: Literal["rail", "notes"] = "rail"
         # TASK-23025: cheap-state gates for the per-frame resize/focus paths.
         # ``_library_layout_ref_cache`` holds positive widget references for
         # the invariant shell chrome (validated by the O(1) ``is_mounted``
@@ -3449,14 +3397,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_layout_ref_cache: dict[str, Widget] = {}
         self._library_compose_ref_cache: dict[str, Widget | None] = {}
         self._library_resize_applied_signature: tuple[Any, ...] | None = None
-        # TASK-23151: the resize legs' stage-visibility call runs ABOVE the
-        # compact-crossing early-out, because the emergency band (64 cells)
-        # is a different band from the compact breakpoint (120) and a 63<->64
-        # crossing must still re-apply geometry. This records the signature
-        # ``_apply_library_notes_stage_visibility`` last settled -- refreshed
-        # by that function on EVERY call, so no seam can leave it stale --
-        # and a resize frame matching it skips the leg entirely.
-        self._library_notes_stage_applied_signature: tuple[Any, ...] | None = None
         self._library_compose_generation = 0
         self._library_reader_shell_ref: Widget | None = None
         self._library_reader_shell_probe_generation = -1
@@ -3465,126 +3405,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_emergency_restore_receipt: (
             _LibraryEmergencyRestoreReceipt | None
         ) = None
-        self._library_notes_explicit_stage_intent = False
-        self._library_notes_pending_focus_identity: LibraryNotesFocusIdentity | None = (
-            None
-        )
-        self._library_notes_pending_focus_waits_for_snapshot = False
-        self._library_notes_navigation_generation = 0
-        self._library_notes_pending_focus_generation: int | None = None
-        self._library_notes_responsive_focus_memory: (
-            LibraryNotesFocusIdentity | None
-        ) = None
-        self._library_notes_last_presented_focus: LibraryNotesFocusIdentity | None = (
-            None
-        )
-        self._library_notes_pre_resize_focus: LibraryNotesFocusIdentity | None = None
         self._library_landing_responsive_focus_id: str = ""
-        self._library_notes_interaction_focus: LibraryNotesFocusIdentity | None = None
-        self._library_notes_resize_epoch = 0
-        self._library_notes_resize_settling = False
         self._library_notes_restoring_focus = False
-        self._library_notes_scroll_intent_generation = 0
-        self._library_notes_transition_scroll_generation = 0
-        self._library_notes_focus_intent_generation = 0
-        self._library_notes_transition_focus_generation = 0
         self._library_notes_programmatic_focus_target: Widget | None = None
-        self._library_notes_authority_focus: dict[
-            Literal["database", "files"], Widget | None
-        ] = {"database": None, "files": None}
-        self._library_notes_last_user_scroll_focus: LibraryNotesFocusIdentity | None = (
-            None
-        )
-        self._library_notes_last_user_focus: LibraryNotesFocusIdentity | None = None
-        self._library_notes_browse_return_receipt: LibraryNotesTreeReceipt | None = None
-        self._library_notes_recompose_generation = 0
-        self._library_note_shortcut_status: str = ""
-        self._library_note_presentation_syncing: bool = False
-        # Guards against the spurious ``Input.Changed`` that Textual fires
-        # when an ``Input(value=...)`` widget mounts with a non-empty
-        # initial value: without this, opening a note (or leaving a
-        # conflict) would immediately mark the note dirty and arm an
-        # autosave even though the user never typed anything. Re-armed via
-        # ``call_after_refresh`` after every notes-editor (re)compose.
-        self._library_note_editor_armed: bool = False
-        # LIB-14: display-only flag for a note created via "Blank note"
-        # that has not been touched YET -- cleared on the FIRST real edit
-        # (``_mark_library_note_dirty``) or an explicit Save. Drives ONLY
-        # the title Input's placeholder-vs-value rendering (see
-        # ``LibraryNotesCanvas``'s ``title_placeholder_only``): while this
-        # is set for the open note, the title Input shows empty with an
-        # "Untitled" placeholder instead of a literal editable "Untitled"
-        # value -- the fix for typing landing at the cursor's end and
-        # producing e.g. "UntitledAtlas follow-ups". Deliberately NOT used
-        # to decide GC-vs-save at exit (see ``_library_note_session_blank_id``
-        # below) -- clearing on the first keystroke is correct for "stop
-        # showing the placeholder" but wrong for "should this be GC'd",
-        # since a user can type then delete everything back to empty
-        # (review round 1, task-2858 T3): that sequence must still GC, so
-        # the GC decision needs a flag that survives edits.
-        self._library_note_pending_blank_gc_id: str | None = None
-        # LIB-14 (review round 1 fix): the id of a note created via "Blank
-        # note" THIS SESSION, tracked for the whole session regardless of
-        # intermediate edits -- unlike ``_library_note_pending_blank_gc_id``
-        # above, ``_mark_library_note_dirty`` never clears this. Read by
-        # ``_flush_library_note_save`` to decide GC-vs-save at exit: when
-        # the note being flushed IS this session's blank AND its FINAL live
-        # state (title/body/keywords, read fresh, never the stale detail)
-        # is empty, the row is GC'd even if it was typed into and emptied
-        # out again mid-session (dirty=True) -- covering "type then delete
-        # everything" the same as "never touched", which the narrower
-        # dirty-gated check above could not. A PRE-EXISTING note the user
-        # empties out is never a session blank (this is only ever set by
-        # the "Blank note" create path), so it still saves via the normal
-        # branch -- the scope guard is structural, not a runtime check.
-        # Cleared by: an explicit Save (the user's own "keep it" act,
-        # regardless of emptiness -- mirrors ``_library_note_pending_blank_
-        # gc_id``'s existing Save-press exemption), or a full editor
-        # reset/note switch (``_reset_library_note_editor_state``, the
-        # note-row-selection and note_id-deep-link switch sites).
-        # Deliberately NOT cleared by autosave persisting non-empty content
-        # mid-session: an autosave is not a deliberate "keep this" signal
-        # the way an explicit Save press is, so a session blank that got
-        # autosaved with real text and was then emptied out again before
-        # exit must still GC -- the row is session-created and finally
-        # empty, which is exactly the row AC#5 forbids, regardless of what
-        # happened to it in between.
-        self._library_note_session_blank_id: str | None = None
-        # (P0, xhigh review + live-verify round) Whether the user has
-        # TOUCHED the title widget during this editor session. The
-        # untouched-blank GC used to key blankness on
-        # ``raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE`` -- a pure string
-        # comparison -- so a note the user deliberately titled "Untitled"
-        # (body still empty) was destroyed on navigate-away with no
-        # prompt and no undo. A string can never distinguish the seed the
-        # create seam wrote from the identical string a human typed; only
-        # provenance can, so the GC reads THIS instead. Set on the first
-        # title edit (``handle_library_note_title_changed``) and cleared
-        # only when a new editor session begins (create / row switch /
-        # deep link / full editor reset) -- deliberately NOT cleared by a
-        # save, so the distinction survives a save round-trip.
-        self._library_note_title_user_edited: bool = False
-        # Notes sync panel state. Seeded from config lazily on first entry
-        # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
-        # here in __init__, so tests/screens that never open the sync panel
-        # never pay for a config read.
-        self._library_notes_sync_config_loaded: bool = False
-        self._library_notes_sync_direction: str = "bidirectional"
-        self._library_notes_sync_conflict: str = "newer_wins"
-        self._library_notes_sync_auto: bool = False
-        self._library_notes_sync_status: str = "idle"
-        self._library_notes_sync_activity: tuple[str, ...] = ()
-        self._library_notes_sync_counter: int = 0
-        self._library_notes_sync_active_token: int | None = None
-        self._library_notes_sync_running: bool = False
-        self._library_notes_auto_sync_timer: Timer | None = None
-        # The folder box's live (possibly uncommitted) text. Typing updates
-        # only this field -- persisting to the TOML config on every
-        # Input.Changed meant a full config rewrite + cache reload per
-        # keystroke. It commits to config on Enter, Browse…, or a validated
-        # Sync now run. None = not edited this panel visit; fall back to the
-        # persisted config value.
-        self._library_notes_sync_folder_text: str | None = None
         self._transcribe_cpp_configured = False
         # One provisional external-root scope exists only while its captured
         # submission is being verified or awaiting VAD consent.
@@ -35775,3 +35598,24 @@ LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 # for where the SAME shape now lives permanently, one layer down, exactly
 # mirroring the collections/search+RAG/skills/ingest/prompts precedents
 # immediately above.
+
+# --- BEGIN generated notes-state shims (delete wholesale at cleanup) ---
+# wave-8 task 1: keeps every original `_library_notes_<field>`/
+# `_library_note_<field>`/`_library_file_notes_<field>`/`_selected_note_id`
+# name working as a property over `self._notes_state`. The four-way prefix
+# mapping is resolved by `notes_state_shim_attr()` -- the single
+# authoritative copy, shared with this subsystem's wiring test (see
+# LibraryNotesState's own module docstring).
+for _lns_field in dataclasses.fields(LibraryNotesState):
+    setattr(
+        LibraryScreen,
+        notes_state_shim_attr(_lns_field.name),
+        property(
+            lambda self, _n=_lns_field.name: getattr(self._notes_state, _n),
+            lambda self, value, _n=_lns_field.name: setattr(
+                self._notes_state, _n, value
+            ),
+        ),
+    )
+del _lns_field
+# --- END generated notes-state shims ---

@@ -228,11 +228,21 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     from tldw_chatbook.UI.Screens.library_screen import (
         LibraryIngestState,
         LibraryMediaState,
+        LibraryNotesState,
         LibraryPromptsState,
         LibraryScreen,
     )
 
     screen = LibraryScreen.__new__(LibraryScreen)
+    # (wave-8 task 1) `_library_notes_autosave_timer` in the string loop below
+    # is now a `LibraryNotesState` field behind a generated screen shim, so the
+    # `setattr` that arms it routes into `_notes_state` -- which an
+    # `object.__new__`/`__new__` screen never constructed. Same explicit seed
+    # as the `_media_state`/`_prompts_state`/`_ingest_state` ones here; zero
+    # assertions changed. The flat name still RESOLVES (the shim is live until
+    # this series' cleanup PR deletes it), so the loop and both assertions stay
+    # non-vacuous, unlike the four names below.
+    screen._notes_state = LibraryNotesState()
     # (wave-7 task 1, retargeted by task 3) Every media name this test seeds
     # -- the two debounce timers, and three of the five settlement fields the
     # focus-disarm helper resets -- lives on `_media_state`. An

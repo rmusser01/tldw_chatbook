@@ -731,7 +731,36 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # auto-merge dropped dev's new flat line in among our retargeted ones
     # without a conflict. That is the case for running the census over the
     # merged tree rather than over the conflict hunks.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35777, 1290),
+    #
+    # (Wave-7's round-3 `origin/dev` merge, `035045364`, then raised the row
+    # 35743 -> 35777 as a merge resolution without extending the narrative
+    # above, so the paragraph and the row disagreed by 34 lines until this
+    # entry. Recorded rather than silently corrected -- recipe §6's "a re-pin
+    # has THREE places the number lives inside the guard file" hazard, from
+    # the merge side this time.)
+    #
+    # 2026-09-08, wave-8 task 1 (notes state PR, notes series 1/N): 100 of the
+    # 105 "note"-named `LibraryScreen` attributes moved verbatim into
+    # `LibraryNotesState` (`UI/Library_Modules/library_notes_state.py`), which
+    # the screen constructs as `self._notes_state` and shims back under every
+    # original flat name. Fresh `_measure()`: 35777/1290 -> 35621/1290. The
+    # METHOD count is unchanged, as every pure field move's must be: zero
+    # `FunctionDef`s were touched. Line delta -156 reconciles EXACTLY, each
+    # term measured off the diff rather than estimated: -192 removed lines
+    # (109 lines of field statements spanning 91 of the 100 moved fields, all
+    # folded into dataclass defaults -- the other 9 KEEP their original
+    # assignment lines, because those run after the forced-early construction
+    # point -- plus the 83 comment lines that moved with them, every one
+    # verified byte-for-byte identical to its relocated copy in the state
+    # module, in BOTH directions);
+    # +4 for the `library_notes_state` import; +11 for the construction site
+    # (`self._notes_state = LibraryNotesState()`, no constructor arguments,
+    # under a 10-line why-this-is-early comment); +21 for the sentinel-wrapped
+    # generated shim block at module end and its preceding blank line (the
+    # same shape the collections/search+RAG/skills/ingest/prompts/media state
+    # PRs each installed and their own cleanup PRs each deleted).
+    # -192 + 4 + 11 + 21 = -156.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35621, 1290),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
