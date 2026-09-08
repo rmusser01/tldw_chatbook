@@ -4,6 +4,7 @@ import asyncio
 import functools
 import json
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -153,21 +154,119 @@ async def _close_owned_agent_swap_resources(
 
     yield
 
+    errors: list[BaseException] = []
     try:
         for controller in reversed(controllers):
-            await controller.shutdown()
+            try:
+                await controller.shutdown()
+            except BaseException as exc:
+                errors.append(exc)
         for database in reversed(chat_databases):
-            with database.quiesce_connections(timeout_seconds=2.0):
-                pass
-            # Prove closure before the existing collection fixture runs:
-            # close() alone misses the agent worker's registered connection.
-            assert database.registered_connection_count() == 0
+            try:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+                # Prove closure before the existing collection fixture runs:
+                # close() alone misses the agent worker's registered connection.
+                assert database.registered_connection_count() == 0
+            except BaseException as exc:
+                errors.append(exc)
         for database in reversed(run_databases):
-            database.close()
+            try:
+                database.close()
+            except BaseException as exc:
+                errors.append(exc)
     finally:
         controllers.clear()
         chat_databases.clear()
         run_databases.clear()
+    if errors:
+        raise BaseExceptionGroup("Agent swap resource cleanup failed", errors)
+
+
+@pytest.mark.parametrize(
+    "shutdown_error",
+    [
+        RuntimeError("shutdown failed"),
+        asyncio.CancelledError("shutdown cancelled"),
+    ],
+    ids=("error", "cancelled"),
+)
+async def test_agent_swap_cleanup_continues_after_controller_failure(
+    monkeypatch, tmp_path, shutdown_error
+):
+    """Every later owner is retired before a shutdown failure is reported."""
+    events = []
+
+    class Controller:
+        def __init__(self, name):
+            self.name = name
+
+        async def shutdown(self):
+            events.append(("shutdown", self.name))
+            if self.name == "second":
+                raise shutdown_error
+
+    class ChatDatabase:
+        def __init__(self, path, name):
+            self.db_path = path
+            self.name = name
+
+        @contextmanager
+        def quiesce_connections(self, *, timeout_seconds):
+            assert timeout_seconds == 2.0
+            events.append(("quiesce", self.name))
+            yield
+
+        def registered_connection_count(self):
+            events.append(("count", self.name))
+            return 0
+
+    class RunDatabase:
+        def __init__(self, path, name):
+            self.db_path = path
+            self.name = name
+
+        def close(self):
+            events.append(("close", self.name))
+
+    monkeypatch.setattr(
+        "Tests.Chat.test_console_agent_swap.ConsoleChatController", Controller
+    )
+    monkeypatch.setattr(
+        "Tests.Chat.test_console_agent_swap.CharactersRAGDB", ChatDatabase
+    )
+    monkeypatch.setattr("Tests.Chat.test_console_agent_swap.AgentRunsDB", RunDatabase)
+    fixture = _close_owned_agent_swap_resources.__wrapped__(monkeypatch, tmp_path, None)
+    await anext(fixture)
+    Controller("first")
+    Controller("second")
+    ChatDatabase(tmp_path / "chat-first.db", "chat-first")
+    ChatDatabase(tmp_path / "chat-second.db", "chat-second")
+    RunDatabase(tmp_path / "run-first.db", "run-first")
+    RunDatabase(tmp_path / "run-second.db", "run-second")
+
+    caught = None
+    try:
+        await anext(fixture)
+    except StopAsyncIteration:
+        pass
+    except BaseException as exc:
+        caught = exc
+    finally:
+        await fixture.aclose()
+
+    assert events == [
+        ("shutdown", "second"),
+        ("shutdown", "first"),
+        ("quiesce", "chat-second"),
+        ("count", "chat-second"),
+        ("quiesce", "chat-first"),
+        ("count", "chat-first"),
+        ("close", "run-second"),
+        ("close", "run-first"),
+    ]
+    assert isinstance(caught, BaseExceptionGroup)
+    assert caught.exceptions == (shutdown_error,)
 
 
 @pytest.fixture(autouse=True)

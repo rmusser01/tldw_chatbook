@@ -779,14 +779,11 @@ async def test_durable_capture_classifies_only_unsaved_leading_system_rows(
         for owner, descriptor in zip(leading, request.provenance.system, strict=True):
             if owner == "saved":
                 assert isinstance(descriptor, SavedRevisionTraceProvenance)
-                revision = (
-                    db.get_connection()
-                    .execute(
+                with db.transaction() as cursor:
+                    revision = cursor.execute(
                         "SELECT source_message_id FROM console_trace_semantic_revisions WHERE revision_id = ?",
                         (descriptor.revision_id,),
-                    )
-                    .fetchone()
-                )
+                    ).fetchone()
                 assert revision[0] == saved.persisted_message_id
             else:
                 assert isinstance(descriptor, ProviderArtifactTraceProvenance)
