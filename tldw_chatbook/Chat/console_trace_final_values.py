@@ -21,6 +21,8 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceOmissionReason,
     TraceProvenance,
     TraceProvenanceSource,
+    current_turn_source_revision_id,
+    saved_response_source_revision_id,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizationResult,
@@ -187,13 +189,14 @@ class VerifiedSurfaceReplacementRange:
 
 @dataclass(frozen=True, slots=True)
 class CompletedToolTurnWitness:
-    """Content-free evidence rechecked against the durable call ledger."""
+    """Completed-run evidence for its source, response and project-context range."""
 
     origin_call_id: str
     terminal_call_id: str
-    assistant_revision_id: str
+    assistant_revision_id: str | None
     user_revision_id: str
-    # None preserves the tool-only transition. Zero explicitly renews a
+    source_revision_id: str | None = None
+    # None preserves the tool/source-only transition. Zero explicitly renews a
     # project turn whose next request no longer contains project context.
     project_context_count: int | None = field(default=None, kw_only=True)
 
@@ -201,10 +204,15 @@ class CompletedToolTurnWitness:
         for identity in (
             self.origin_call_id,
             self.terminal_call_id,
-            self.assistant_revision_id,
             self.user_revision_id,
         ):
             SemanticRevisionRef(identity)
+        if self.source_revision_id is not None:
+            SemanticRevisionRef(self.source_revision_id)
+        if self.assistant_revision_id is not None:
+            SemanticRevisionRef(self.assistant_revision_id)
+        elif self.source_revision_id is None:
+            raise ValueError("completed_turn_source")
         if self.project_context_count is not None and (
             type(self.project_context_count) is not int
             or not 0 <= self.project_context_count <= MAX_SURFACE_REPLACEMENT_SPAN
@@ -213,37 +221,36 @@ class CompletedToolTurnWitness:
 
     @property
     def descriptor_count(self) -> int:
-        """Count the saved response/user pair and declared project context.
-
-        Returns:
-            Two saved revisions plus the number of current project-context
-            rows. A tool-only witness has no additional context rows.
-        """
-        return 2 + (self.project_context_count or 0)
+        """Count the proven source/response/user range and current context."""
+        return (
+            1
+            + int(self.assistant_revision_id is not None)
+            + int(self.source_revision_id is not None)
+            + (self.project_context_count or 0)
+        )
 
     def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
-        """Check the declared provenance shape without granting transition rights.
-
-        Args:
-            descriptors: Ordered replacement provenance to compare with this
-                witness's saved assistant/user pair and project-context count.
-
-        Returns:
-            True when the exact saved pair is followed only by the declared
-            number of project-instruction artifacts; False otherwise. Durable
-            ownership, policy and value checks are performed by the service.
-        """
+        """Match exact saved owners followed only by declared project context."""
+        source_prefix = (
+            ()
+            if self.source_revision_id is None
+            else (SavedRevisionTraceProvenance(self.source_revision_id),)
+        )
+        user_index = len(source_prefix) + int(self.assistant_revision_id is not None)
         return (
             len(descriptors) == self.descriptor_count
-            and descriptors[:2]
-            == (
-                SavedRevisionTraceProvenance(self.assistant_revision_id),
-                SavedRevisionTraceProvenance(self.user_revision_id),
+            and descriptors[: len(source_prefix)] == source_prefix
+            and (
+                self.assistant_revision_id is None
+                or saved_response_source_revision_id(descriptors[user_index - 1])
+                == self.assistant_revision_id
             )
+            and current_turn_source_revision_id(descriptors[user_index])
+            == self.user_revision_id
             and all(
                 type(item) is ProviderArtifactTraceProvenance
                 and item.source is TraceProvenanceSource.PROJECT_INSTRUCTION
-                for item in descriptors[2:]
+                for item in descriptors[user_index + 1 :]
             )
         )
 
@@ -324,12 +331,6 @@ class VerifiedSurfaceDelta:
                 or len(self.items) != witness.descriptor_count - 1
                 or self.route_identity not in {"agent_first", "fresh"}
                 or self.replacement.item.component_name != "messages_payload"
-                or self.items[0].component_name != "messages_payload"
-                or self.items[0].ordinal != self.replacement.item.ordinal + 1
-                or self.replacement.item.provenance
-                != SavedRevisionTraceProvenance(witness.assistant_revision_id)
-                or self.items[0].provenance
-                != SavedRevisionTraceProvenance(witness.user_revision_id)
                 or any(
                     item.component_name != "messages_payload"
                     or item.ordinal != self.replacement.item.ordinal + offset

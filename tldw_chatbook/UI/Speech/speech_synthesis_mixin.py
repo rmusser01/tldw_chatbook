@@ -355,10 +355,6 @@ class SpeechSynthesisMixin:
             return current
         if not isinstance(current, str):
             return None
-        if select_widget.id == "tts-language-select":
-            for language_id, display_name in select_widget._options:
-                if display_name == current:
-                    return str(language_id)
         return current
 
     def _is_valid_voice(self, voice: object) -> bool:
@@ -453,8 +449,9 @@ class SpeechSynthesisMixin:
         extra_params = {}
         if provider == "kokoro":
             language_select = self.query_one("#tts-language-select", Select)
-            language = self._get_select_key(language_select) or language_select.value
-            extra_params["language"] = language
+            language = self._get_select_key(language_select)
+            if isinstance(language, str) and language:
+                extra_params["language"] = language
             # Add ONNX setting
             use_onnx = self.query_one("#tts-kokoro-use-onnx", Switch).value
             extra_params["use_onnx"] = use_onnx

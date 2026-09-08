@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_semantic_revision import (
 )
 from tldw_chatbook.Chat.console_trace_final_values import (
     _SURFACE_VERIFICATION_ISSUER,
+    _checkpoint_semantic_value,
     CompletedToolTurnWitness,
     FinalValueBinding,
     ProviderCredentialSource,
@@ -72,6 +73,7 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceCallRecord,
     TraceEventType,
 )
+from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.transaction_observer import (
     current_managed_transaction,
@@ -186,7 +188,9 @@ class _TraceDispatchWriteError(TraceCallPersistenceError):
 class _TraceDispatchCancelled(asyncio.CancelledError):
     """Carry reconciled write state without authorizing adapter entry."""
 
-    def __init__(self, outcome: TraceCallRecord | Literal["rolled_back", "unknown"]) -> None:
+    def __init__(
+        self, outcome: TraceCallRecord | Literal["rolled_back", "unknown"]
+    ) -> None:
         super().__init__()
         self.outcome = outcome
 
@@ -209,8 +213,12 @@ class ConsoleTraceCallBoundary:
     _accepted_preparation: object | None = field(default=None, repr=False)
     _retired: bool = field(default=False, init=False, repr=False)
     _recovery_transferred: bool = field(default=False, init=False, repr=False)
-    _dispatch_outcome: Literal["not_attempted", "rolled_back", "committed", "unknown"] = field(
-        default="not_attempted", init=False, repr=False,
+    _dispatch_outcome: Literal[
+        "not_attempted", "rolled_back", "committed", "unknown"
+    ] = field(
+        default="not_attempted",
+        init=False,
+        repr=False,
     )
     _started: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _unknown: TraceCallRecord | None = field(default=None, init=False, repr=False)
@@ -297,6 +305,7 @@ class ConsoleTraceCallBoundary:
                 bundle=bundle,
                 surface_delta=surface_delta,
                 occurred_at=self.occurred_at_factory(),
+                response_projection=_response_projection_profile(self._resolution),
             )
             self._dispatch_outcome = "committed"
         except _TraceDispatchCancelled as exc:
@@ -327,7 +336,10 @@ class ConsoleTraceCallBoundary:
         if self._started is None:
             raise TraceCallPersistenceError()
         try:
-            with operation_owned_connection(self.database), self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+            with (
+                operation_owned_connection(self.database),
+                self.database.transaction(immediate=True) as cursor,
+            ):  # type: ignore[attr-defined]
                 self._unknown = self.service.repository.advance_call_state(
                     cursor,
                     call_id=self._started.call_id,
@@ -348,9 +360,17 @@ class ConsoleTraceCallBoundary:
         if self._reserved.state is TraceCallState.NOT_DISPATCHED:
             return self._reserved
         try:
-            with operation_owned_connection(self.database), self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
-                durable = self.service.repository.get_call(cursor, self._reserved.call_id)
-                if durable != self._reserved or durable.state is not TraceCallState.RESERVED:
+            with (
+                operation_owned_connection(self.database),
+                self.database.transaction(immediate=True) as cursor,
+            ):  # type: ignore[attr-defined]
+                durable = self.service.repository.get_call(
+                    cursor, self._reserved.call_id
+                )
+                if (
+                    durable != self._reserved
+                    or durable.state is not TraceCallState.RESERVED
+                ):
                     raise TraceCallPersistenceError(boundary=self)
                 self._reserved = self.service.repository.advance_call_state(
                     cursor,
@@ -1169,9 +1189,24 @@ class _ProjectedProviderValues(Sequence[object]):
             owner_id=self._owner_id,
         )
         values: list[object] = []
+        descriptors = dict(self._descriptor_root.iter_entries())
         for sequence, key, value in selected:
             if key is None:
                 values.append(value)
+            elif (
+                key[0] == "continuation"
+                and (reference := _saved_reference_key(descriptors[sequence]))
+                is not None
+                and reference[:2] == ("continuation", "revision")
+            ):
+                values.append(
+                    self._service._expected_descriptor_value(
+                        self._cursor,
+                        self._owner_id,
+                        descriptors[sequence],
+                        self._retained_artifact_values.get(sequence, resolved.get(key)),
+                    )
+                )
             elif sequence in self._retained_artifact_values:
                 values.append(self._retained_artifact_values[sequence])
             else:
@@ -1223,7 +1258,8 @@ class _PreparedSurfaceBoundary:
                     freeze_json(value) for value in messages_payload
                 ),
                 "provider_continuations": tuple(
-                    freeze_json(value) for value in provider_continuations
+                    parse_provider_continuation_json(_thaw(value))
+                    for value in provider_continuations
                 ),
             }
         )
@@ -1270,10 +1306,26 @@ class _PreparedSurfaceBoundary:
             or not isinstance(actual_values, Mapping)
         ):
             return False
-        return all(
+        if not all(
             actual_values.get(name) is value
             for name, value in self._issued_values.items()
-        )
+        ):
+            return False
+        continuation_offset = 0
+        for item in prepared.items:
+            if item.component_name != "provider_continuations":
+                continue
+            supplied = self._delta_values["provider_continuations"][continuation_offset]
+            continuation_offset += 1
+            reference = _saved_reference_key(item.provenance)
+            if reference is None or reference[:2] != ("continuation", "revision"):
+                continue
+            canonical = _checkpoint_semantic_value(
+                self._issued_values["provider_continuations"][item.ordinal]
+            )
+            if _artifact_bytes(canonical) != _artifact_bytes(supplied):
+                return False
+        return True
 
     def _bind_verified_bundle(
         self,
@@ -1633,6 +1685,7 @@ class ConsoleTraceService:
         bundle: ProviderRequestShadowBundle,
         surface_delta: VerifiedSurfaceDelta,
         occurred_at: str,
+        response_projection: Mapping[str, object] | None = None,
     ) -> TraceCallRecord:
         """Persist, bind, and start one reserved call in one transaction."""
 
@@ -1640,7 +1693,10 @@ class ConsoleTraceService:
         persisted = None
         started = None
         try:
-            with trace_critical_write_checkpoint_policy(database), database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+            with (
+                trace_critical_write_checkpoint_policy(database),
+                database.transaction(immediate=True) as cursor,
+            ):  # type: ignore[attr-defined]
                 reserved_call = self.repository.get_call(cursor, call_id)
                 persisted = self.persist_request(
                     cursor,
@@ -1650,6 +1706,7 @@ class ConsoleTraceService:
                     bundle=bundle,
                     surface_delta=surface_delta,
                     reserved_call=reserved_call,
+                    response_projection=response_projection,
                 )
                 self.repository.bind_call(
                     cursor,
@@ -1665,9 +1722,7 @@ class ConsoleTraceService:
                     call_id=call_id,
                     target=TraceCallState.DISPATCH_STARTED,
                     occurred_at=occurred_at,
-                    integrity_state=(
-                        "complete" if bundle.available else "incomplete"
-                    ),
+                    integrity_state=("complete" if bundle.available else "incomplete"),
                     omission_reason_code=(
                         None
                         if bundle.available or bundle.omission_reason is None
@@ -1677,23 +1732,31 @@ class ConsoleTraceService:
             return started
         except asyncio.CancelledError:
             outcome = self._reconcile_dispatch_write(
-                database, reserved_call=reserved_call, persisted=persisted,
-                started=started, surface_delta=surface_delta,
+                database,
+                reserved_call=reserved_call,
+                persisted=persisted,
+                started=started,
+                surface_delta=surface_delta,
             )
             if not isinstance(outcome, TraceCallRecord):
                 self._discard_failed_surface_delta(surface_delta)
             raise _TraceDispatchCancelled(outcome) from None
         except Exception:  # noqa: BLE001 - write/cleanup errors may contain provider values
             outcome = self._reconcile_dispatch_write(
-                database, reserved_call=reserved_call, persisted=persisted,
-                started=started, surface_delta=surface_delta,
+                database,
+                reserved_call=reserved_call,
+                persisted=persisted,
+                started=started,
+                surface_delta=surface_delta,
             )
             if isinstance(outcome, TraceCallRecord):
                 return outcome
             self._discard_failed_surface_delta(surface_delta)
             raise _TraceDispatchWriteError(outcome) from None
 
-    def _discard_failed_surface_delta(self, surface_delta: VerifiedSurfaceDelta) -> None:
+    def _discard_failed_surface_delta(
+        self, surface_delta: VerifiedSurfaceDelta
+    ) -> None:
         """Discard tentative verifier state without changing durable evidence."""
         self._surface_ref_cache.pop(surface_delta.segment_id, None)
         self._child_capabilities.pop(id(surface_delta.child_binding), None)
@@ -1728,12 +1791,16 @@ class ConsoleTraceService:
                 ):
                     return "rolled_back"
                 if (
-                    persisted is None or started is None or durable != started
+                    persisted is None
+                    or started is None
+                    or durable != started
                     or started.state is not TraceCallState.DISPATCH_STARTED
                     or head != persisted.surface_head_id
                     or durable.surface_node_id != persisted.surface_head_id
                     or durable.request_header_id != persisted.header.header_id
-                    or self.repository.get_request_header(cursor, persisted.header.header_id)
+                    or self.repository.get_request_header(
+                        cursor, persisted.header.header_id
+                    )
                     != persisted.header
                     or any(
                         self.repository.get_surface_node(cursor, node.node_id) != node
@@ -1754,11 +1821,16 @@ class ConsoleTraceService:
                     ).fetchone()
                     if (
                         row is None
-                        or tuple(row) != (
-                            expected.replacement_id, expected.segment_id,
-                            replacement.predecessor_head_id, replacement.start_node_id,
-                            replacement.start_sequence, replacement.end_node_id,
-                            replacement.end_sequence, replacement.replacement_node_id,
+                        or tuple(row)
+                        != (
+                            expected.replacement_id,
+                            expected.segment_id,
+                            replacement.predecessor_head_id,
+                            replacement.start_node_id,
+                            replacement.start_sequence,
+                            replacement.end_node_id,
+                            replacement.end_sequence,
+                            replacement.replacement_node_id,
                         )
                         or replacement.predecessor_head_id
                         != surface_delta.predecessor_surface_head_id
@@ -1778,6 +1850,7 @@ class ConsoleTraceService:
         bundle: ProviderRequestShadowBundle,
         surface_delta: VerifiedSurfaceDelta,
         reserved_call: TraceCallRecord | None = None,
+        response_projection: Mapping[str, object] | None = None,
     ) -> PersistedTraceRequest:
         """Persist one verified request boundary in the caller-owned transaction."""
 
@@ -2110,6 +2183,7 @@ class ConsoleTraceService:
             cursor,
             provenance=provenance,
             bundle=bundle,
+            response_projection=response_projection,
             surface_structure=(
                 child_state.surface_structure
                 if child_state is not None
@@ -2369,6 +2443,7 @@ class ConsoleTraceService:
                 values[incoming_index],
                 key,
                 durable_values,
+                owner_id=owner_id,
                 known_credentials=known_credentials,
             )
             if matched and key[1] == "artifact":
@@ -2408,16 +2483,22 @@ class ConsoleTraceService:
             active_changed = len(active) - prefix - suffix
             compound = (
                 completed_tool_turn is not None
+                and active_changed > 0
                 and incoming_changed == completed_tool_turn.descriptor_count
                 and route_identity in {"agent_first", "fresh"}
                 and domains[prefix : prefix + incoming_changed]
                 == ("messages_payload",) * incoming_changed
             )
-            if incoming_changed == 1 and active_changed == 0:
-                # A later turn adds a message before an unchanged provider
-                # continuation. Append only that message: descriptor domains
+            if (
+                incoming_changed >= 1
+                and active_changed == 0
+                and domains[prefix : prefix + incoming_changed]
+                == ("messages_payload",) * incoming_changed
+            ):
+                # A later turn adds messages before an unchanged provider
+                # continuation. Append only those messages: descriptor domains
                 # reconstruct provider order without rewriting the suffix.
-                admitted_to = prefix + 1
+                admitted_to = prefix + incoming_changed
             elif (
                 incoming_changed != 1 and not compound
             ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
@@ -2460,9 +2541,7 @@ class ConsoleTraceService:
                         domain == domains[prefix] for domain in domains[:prefix]
                     ),
                 )
-                admitted_to = prefix + (
-                    completed_tool_turn.descriptor_count if compound else 1
-                )
+                admitted_to = prefix + (incoming_changed if compound else 1)
 
         if compound:
             assert replacement_range is not None and completed_tool_turn is not None
@@ -2485,6 +2564,19 @@ class ConsoleTraceService:
             expected_head_id=predecessor,
             expected_route=route_identity,
         )
+        if checkpoint is not None and current_policy_id is not None:
+            parent = self._parent_capabilities[id(checkpoint)]
+            current_policy = self.repository.get_policy(cursor, current_policy_id)
+            if any(
+                policy.policy_id != current_policy_id
+                for policy in parent.surface_policies
+            ):
+                if current_policy is None or any(
+                    replace(policy, policy_id=current_policy_id) != current_policy
+                    for policy in parent.surface_policies
+                ):
+                    raise ValueError("trace_policy_mismatch")
+                checkpoint = None
         bootstrap = checkpoint is None and predecessor is not None
         if compound and (
             bootstrap or completed_tool_turn.project_context_count is not None
@@ -2502,15 +2594,21 @@ class ConsoleTraceService:
                 tail=tail,
                 projection=projection,
                 route=route_identity,
-                # Project renewal appends a provider artifact under the new
-                # frozen policy. The proof above established equivalent
-                # filtering; rebind retained descriptors to that same policy
-                # instead of mixing two otherwise-equivalent policy IDs.
-                policy_id=(
-                    current_policy_id
-                    if completed_tool_turn.project_context_count is not None
-                    else terminal.policy_id
-                ),
+                policy_id=current_policy_id,
+                retained_descriptors={
+                    sequence: descriptors[index]
+                    for index, (_ordinal, sequence, _key) in enumerate(
+                        active[:admitted_from]
+                    )
+                }
+                | {
+                    sequence: descriptor
+                    for (_ordinal, sequence, _key), descriptor in zip(
+                        active[len(active) - (len(descriptors) - admitted_to) :],
+                        descriptors[admitted_to:],
+                        strict=True,
+                    )
+                },
             )
             bootstrap = False
         admitted = descriptors[admitted_from:admitted_to]
@@ -2585,6 +2683,40 @@ class ConsoleTraceService:
         self._surface_ref_cache.pop(admission.segment_id, None)
         self._prune_unreferenced_parents()
 
+    def _call_message_tail(
+        self, cursor: sqlite3.Cursor, call: TraceCallRecord
+    ) -> SurfaceNodeRecord | None:
+        """Find the owning message before automatic context at the exact call head."""
+        head = (
+            None
+            if call.surface_node_id is None
+            else self.repository.get_surface_node(cursor, call.surface_node_id)
+        )
+        if (
+            head is None
+            or _surface_reference_domain(self._node_reference_key(head))
+            == "messages_payload"
+            and head.component_kind != "project_instruction"
+        ):
+            return head
+        projection = self._surface_projection(cursor, call.segment_id, head)
+        for sequence, key in reversed(projection.entries):
+            if (
+                _surface_reference_domain(key) != "messages_payload"
+                or key[0] == "project_instruction"
+            ):
+                continue
+            nodes = self.repository.read_lineage_surface_nodes(
+                cursor,
+                segment_id=call.segment_id,
+                start_sequence=sequence,
+                end_sequence=sequence,
+            )
+            if len(nodes) == 1 and self._node_reference_key(nodes[0]) == key:
+                return nodes[0]
+            return None
+        return None
+
     def has_completed_project_context(
         self,
         cursor: sqlite3.Cursor,
@@ -2611,7 +2743,12 @@ class ConsoleTraceService:
         if tail is None:
             return False
         entries = self._surface_projection(cursor, segment_id, tail).entries
-        for _sequence, key in reversed(entries[-MAX_SURFACE_REPLACEMENT_SPAN:]):
+        messages = tuple(
+            entry
+            for entry in entries
+            if _surface_reference_domain(entry[1]) == "messages_payload"
+        )
+        for _sequence, key in reversed(messages[-MAX_SURFACE_REPLACEMENT_SPAN:]):
             if key[1] != "artifact" or key[0] not in {
                 "project_instruction",
                 "tool_call",
@@ -2637,6 +2774,21 @@ class ConsoleTraceService:
         reserved_call: TraceCallRecord | None = None,
     ) -> None:
         """Recheck bounded run evidence; a response link alone grants nothing."""
+        restoring_source = witness.source_revision_id is not None
+        source_after_failure = (
+            restoring_source and witness.assistant_revision_id is None
+        )
+        terminal_states = {TraceCallState.COMPLETE}
+        if restoring_source:
+            terminal_states.update(
+                {
+                    TraceCallState.ERROR,
+                    TraceCallState.STOPPED,
+                    TraceCallState.INTERRUPTED,
+                }
+            )
+        if source_after_failure:
+            terminal_states.remove(TraceCallState.COMPLETE)
         project_transition = witness.project_context_count is not None
         self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
         owner = self.repository.get_owner(cursor, owner_id)
@@ -2740,17 +2892,22 @@ class ConsoleTraceService:
             or chain_terminal is None
             or tail is None
             or latest_id != terminal.call_id
-            or terminal.state is not TraceCallState.COMPLETE
+            or terminal.state not in terminal_states
+            or (restoring_source and terminal.settled_at is None)
             or (
                 chain_terminal.route_identity != "tool_loop"
                 and not (
-                    project_transition
+                    (project_transition or restoring_source)
                     and chain_terminal == origin
                     and chain_terminal.route_identity in {"agent_first", "fresh"}
                 )
             )
             or origin.route_identity
-            not in ({"agent_first", "fresh"} if project_transition else {"agent_first"})
+            not in (
+                {"fresh", "agent_first"}
+                if restoring_source or project_transition
+                else {"agent_first"}
+            )
             or origin.call_sequence != 0
             or self.repository.get_run_origin(cursor, chain_terminal.run_id) != origin
             or (
@@ -2806,46 +2963,89 @@ class ConsoleTraceService:
             )
         ):
             raise ValueError("completed_tool_turn_policy")
-        origin_head = (
+        origin_surface_head = (
             None
             if origin.surface_node_id is None
             else self.repository.get_surface_node(cursor, origin.surface_node_id)
         )
+        origin_head = (
+            self._call_message_tail(cursor, origin)
+            if restoring_source
+            else origin_surface_head
+        )
         if (
             origin_head is None
+            or origin_surface_head is None
             or (
-                plan.start_sequence > origin_head.sequence + 1
+                plan.start_sequence != origin_head.sequence
+                if restoring_source
+                else plan.start_sequence > origin_head.sequence + 1
                 if project_transition
                 else plan.start_sequence != origin_head.sequence + 1
             )
-            or plan.end_sequence != tail.sequence
+            or plan.end_sequence > tail.sequence
             or not 1
             <= plan.end_sequence - plan.start_sequence + 1
             <= MAX_SURFACE_REPLACEMENT_SPAN
         ):
             raise ValueError("completed_tool_turn_range")
-        assistant = self.repository.get_semantic_revision(
-            cursor, witness.assistant_revision_id
+        if restoring_source:
+            source = self.repository.get_semantic_revision(
+                cursor, witness.source_revision_id
+            )
+            pin = cursor.execute(
+                "SELECT semantic_revision_id FROM console_trace_events "
+                "WHERE call_id = ? AND event_type = 'call_boundary'",
+                (origin.call_id,),
+            ).fetchall()
+            if (
+                source is None
+                or len(pin) != 1
+                or pin[0][0] != witness.source_revision_id
+                or source.source_message_id != origin.turn_id
+                or source.source_conversation_id != owner.conversation_id
+                or source.normalized_role != "user"
+                or origin_head.component_kind != "active_request"
+                or origin_head.artifact_id is None
+            ):
+                raise ValueError("completed_turn_source")
+        assistant = (
+            None
+            if witness.assistant_revision_id is None
+            else self.repository.get_semantic_revision(
+                cursor, witness.assistant_revision_id
+            )
         )
         user = self.repository.get_semantic_revision(cursor, witness.user_revision_id)
         link = self.repository.get_response_link(cursor, terminal.call_id)
         if (
-            assistant is None
-            or user is None
-            or link is None
-            or link.link_kind != "revision"
-            or link.verification_outcome != "verified_equal"
-            or link.semantic_revision_id != witness.assistant_revision_id
-            or assistant.normalized_role != "assistant"
+            user is None
+            or (
+                not source_after_failure
+                and (
+                    assistant is None
+                    or link is None
+                    or link.link_kind != "revision"
+                    or link.verification_outcome != "verified_equal"
+                    or link.semantic_revision_id != witness.assistant_revision_id
+                    or assistant.normalized_role != "assistant"
+                    or assistant.source_conversation_id != owner.conversation_id
+                )
+            )
             or user.normalized_role != "user"
-            or assistant.source_conversation_id != owner.conversation_id
             or user.source_conversation_id != owner.conversation_id
             or user.source_message_id != current_turn_id
             or not witness.matches_descriptors(descriptors)
             or len(values) != witness.descriptor_count
         ):
             raise ValueError("completed_tool_turn_revision")
-        for descriptor, value in zip(descriptors[:2], values[:2], strict=True):
+        for descriptor, value in zip(descriptors, values, strict=True):
+            if type(descriptor) is not SavedRevisionTraceProvenance:
+                # The admitted current user and the verified assistant's typed
+                # thinking replay may carry provider artifacts. Their exact
+                # sources, response link and policy are checked above and at
+                # the preparation/final-value boundary.
+                continue
             expected = self._resolve_reference_value(
                 cursor,
                 ("message", "revision", descriptor.revision_id),
@@ -2867,20 +3067,35 @@ class ConsoleTraceService:
                 current_policy.pii_redaction_enabled,
                 current_policy.pii_ruleset_revision_id,
             )
-            for descriptor, value in zip(descriptors[2:], values[2:], strict=True)
+            for descriptor, value in zip(
+                descriptors[
+                    witness.descriptor_count - (witness.project_context_count or 0) :
+                ],
+                values[
+                    witness.descriptor_count - (witness.project_context_count or 0) :
+                ],
+                strict=True,
+            )
         ):
             raise ValueError("completed_project_context_value")
         projection = self._surface_projection(cursor, segment_id, tail)
         suffix = tuple(
             (sequence, key)
             for sequence, key in projection.entries
-            if sequence >= plan.start_sequence
+            if plan.start_sequence <= sequence <= plan.end_sequence
         )
-        if project_transition:
+        if any(
+            sequence > plan.end_sequence
+            and _surface_reference_domain(key) != "provider_continuations"
+            for sequence, key in projection.entries
+        ):
+            raise ValueError("completed_tool_turn_range")
+        if project_transition and not restoring_source:
             prefix = tuple(
                 key
                 for sequence, key in projection.entries
                 if sequence < plan.start_sequence
+                and _surface_reference_domain(key) == "messages_payload"
             )
             prior_user = (
                 self.repository.get_semantic_revision(cursor, prefix[-1][2])
@@ -2899,12 +3114,18 @@ class ConsoleTraceService:
         ) or any(
             key[0]
             not in (
-                {"project_instruction", "tool_call", "tool_result"}
+                {"active_request"}
+                if restoring_source and sequence == origin_head.sequence
+                else {"project_instruction", "tool_call", "tool_result"}
                 if project_transition
                 else {"tool_call", "tool_result"}
             )
             or key[1] != "artifact"
-            or (sequence <= origin_head.sequence and key[0] != "project_instruction")
+            or (
+                sequence <= origin_surface_head.sequence
+                and key[0] != "project_instruction"
+                and not (restoring_source and sequence == origin_head.sequence)
+            )
             for sequence, key in suffix
         ):
             raise ValueError("completed_tool_turn_range")
@@ -2938,7 +3159,12 @@ class ConsoleTraceService:
             )
             or (
                 (row[6], row[7]) != (origin.route_identity, 0)
-                if project_transition and row[0] <= origin_head.sequence
+                if (
+                    restoring_source
+                    and row[0] == origin_head.sequence
+                    or project_transition
+                    and row[0] <= origin_surface_head.sequence
+                )
                 else row[6] != "tool_loop"
                 or not 1 <= row[7] <= chain_terminal.call_sequence
             )
@@ -2975,6 +3201,7 @@ class ConsoleTraceService:
         projection: _SurfaceProjection,
         route: str,
         policy_id: str,
+        retained_descriptors: Mapping[int, TraceProvenance],
     ) -> object:
         """Build a cold compound parent entirely from committed references."""
         policy = self.repository.get_policy(cursor, policy_id)
@@ -2986,7 +3213,9 @@ class ConsoleTraceService:
         message_ordinal = 0
         for sequence, key in projection.entries:
             domain = _surface_reference_domain(key)
-            if key[1] == "revision":
+            if sequence in retained_descriptors:
+                descriptor = retained_descriptors[sequence]
+            elif key[1] == "revision":
                 descriptor = SavedRevisionTraceProvenance(key[2])
                 if domain == "provider_continuations":
                     descriptor = DerivedTraceProvenance(
@@ -3082,6 +3311,7 @@ class ConsoleTraceService:
                 provider_values[ordinal],
                 key,
                 durable_values,
+                owner_id=owner_id,
                 known_credentials=known_credentials,
             ):
                 raise ValueError("surface_prefix_mismatch")
@@ -3289,6 +3519,7 @@ class ConsoleTraceService:
                         value,
                         key,
                         durable_values,
+                        owner_id=admission.owner_id,
                         known_credentials=known_credentials,
                     )
                 ):
@@ -3780,7 +4011,9 @@ class ConsoleTraceService:
             return None
         child = self._child_capabilities.get(id(binding))
         items = (
-            ((delta.replacement.item,) + delta.items) if delta.replacement is not None else delta.items
+            ((delta.replacement.item,) + delta.items)
+            if delta.replacement is not None
+            else delta.items
         )
         signature = tuple(
             (item.component_name, item.ordinal, item.provenance) for item in items
@@ -4535,6 +4768,7 @@ class ConsoleTraceService:
         durable_key: SurfaceReferenceKey,
         durable_values: Mapping[SurfaceReferenceKey, object],
         *,
+        owner_id: str,
         known_credentials: tuple[str, ...] = (),
     ) -> bool:
         artifact = (
@@ -4550,9 +4784,26 @@ class ConsoleTraceService:
                 or durable_key not in durable_values
             ):
                 return False
-            # The provider still receives the original value. Compare only in
-            # the same disclosure projection used by the durable artifact;
-            # otherwise unchanged secret-bearing context looks like an edit.
+            if (
+                type(descriptor) is DerivedTraceProvenance
+                and descriptor.transform is TraceTransformKind.CONTINUATION_ATTACHMENT
+            ):
+                if (_saved_reference_key(descriptor) or ())[:2] != (
+                    "continuation",
+                    "revision",
+                ):
+                    # Masked bytes cannot establish an unsaved attachment's
+                    # source identity. Preserve its exact artifact comparison.
+                    return _artifact_bytes(value) == _artifact_bytes(
+                        durable_values[durable_key]
+                    )
+                canonical = self._expected_descriptor_value(
+                    cursor, owner_id, descriptor, value
+                )
+                if _artifact_bytes(canonical) != _artifact_bytes(value):
+                    return False
+            # Provider input stays raw. Only the durable comparison uses the
+            # frozen disclosure projection, after exact saved-source checks.
             sanitized = CredentialSanitizer(
                 known_credentials=known_credentials
             ).sanitize(value)
@@ -4964,6 +5215,7 @@ class ConsoleTraceService:
         bundle: ProviderRequestShadowBundle,
         surface_structure: Mapping[str, object],
         artifact_policy_id: str | None,
+        response_projection: Mapping[str, object] | None = None,
     ) -> RequestHeaderRecord:
         route = _route(provenance)
         components: list[HeaderComponentRef] = []
@@ -5051,6 +5303,8 @@ class ConsoleTraceService:
         }
         if adapter_system_composition:
             adapter_defaults["system_composition"] = list(adapter_system_composition)
+        if response_projection is not None:
+            adapter_defaults["response_projection"] = dict(response_projection)
         adapter_defaults["artifact_policy_id"] = artifact_policy_id
         literal = bundle.literal_payload_value if bundle.available else None
         if literal is not None:
@@ -5381,6 +5635,43 @@ def _surface_reference_domain(key: SurfaceReferenceKey) -> str:
         if key[0] in {"continuation", TraceTransformKind.CONTINUATION_ATTACHMENT.value}
         else "messages_payload"
     )
+
+
+def _response_projection_profile(resolution: object | None) -> dict[str, object] | None:
+    """Freeze only the existing supported typed-thinking response contract."""
+    if (
+        getattr(resolution, "thinking_stream_disposition", None)
+        not in {"displayable", "proprietary"}
+        or getattr(resolution, "thinking_round_trip_version", None) != 1
+    ):
+        return None
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _DISPLAYABLE_THINKING_EXECUTION_KEYS,
+        _HOSTED_THINKING_FINISH_POLICIES,
+        _thinking_protocol,
+    )
+
+    execution_key = getattr(resolution, "execution_key", "")
+    disposition = getattr(resolution, "thinking_stream_disposition", None)
+    hosted_policy = _HOSTED_THINKING_FINISH_POLICIES.get(execution_key)
+    if (
+        execution_key not in _DISPLAYABLE_THINKING_EXECUTION_KEYS
+        if disposition == "displayable"
+        else hosted_policy is None
+        or hosted_policy.reasoning_disposition != "proprietary"
+    ):
+        return None
+    return {
+        "version": 1,
+        "thinking_stream_disposition": disposition,
+        "thinking_round_trip_version": 1,
+        "provider": execution_key,
+        "model": getattr(resolution, "model", None),
+        "protocol": _thinking_protocol(resolution),
+        "source_format": "start_anchored_think"
+        if disposition == "displayable"
+        else "reasoning_content",
+    }
 
 
 def _saved_reference_key(

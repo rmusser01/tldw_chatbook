@@ -1433,6 +1433,7 @@ def _completed_run_compound_preparation(
             projection=projection,
             route=ConsoleRequestRoute.FRESH.value,
             policy_id=policy.policy_id,
+            retained_descriptors={},
         )
     admission = SurfaceDeltaAdmission(
         owner_id,
@@ -3414,14 +3415,23 @@ def test_continuation_domain_survives_append_and_reopen(
     ]
 
 
+@pytest.mark.parametrize(
+    ("source_label", "forged_label"),
+    [
+        ("canonical", "forged"),
+        ("Bearer sk-proj-" + "x" * 48, "Bearer sk-proj-" + "y" * 48),
+    ],
+)
 def test_saved_continuation_value_mismatch_rejects_before_any_trace_write(
     db: CharactersRAGDB,
     repository: ConsoleTraceRepository,
+    source_label: str,
+    forged_label: str,
 ) -> None:
     owner_id, segment_id = _owned_segment(db, repository)
     owner = repository.get_owner(db.get_connection().cursor(), owner_id)
     assert owner is not None and owner.conversation_id is not None
-    canonical = _continuation_value("canonical")
+    canonical = _continuation_value(source_label)
     message_id = db.add_message(
         {
             "conversation_id": owner.conversation_id,
@@ -3453,7 +3463,7 @@ def test_saved_continuation_value_mismatch_rejects_before_any_trace_write(
         continuations=(descriptor,),
         metadata=(request_route_provenance(ConsoleRequestRoute.FRESH),),
     )
-    forged = _continuation_value("forged")
+    forged = _continuation_value(forged_label)
     service = ConsoleTraceService(repository)
     preparation_identity = new_opaque_id()
     admission = SurfaceDeltaAdmission(

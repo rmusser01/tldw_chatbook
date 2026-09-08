@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-from tldw_chatbook.Chat.console_trace_final_values import CompletedToolTurnWitness
+from tldw_chatbook.Chat.console_trace_final_values import (
+    CompletedToolTurnWitness,
+    _checkpoint_semantic_value,
+)
 from tldw_chatbook.Chat.console_trace_models import TraceCallState, new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
@@ -21,8 +24,11 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     SavedRevisionTraceProvenance,
     TraceProvenance,
     TraceProvenanceSource,
+    TraceTransformKind,
+    current_turn_source_revision_id,
     frozen_policy_from_provenance,
     request_route_provenance,
+    saved_response_source_revision_id,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -49,6 +55,15 @@ def _saved_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
     elif type(descriptor) is DerivedTraceProvenance:
         for nested in descriptor.inputs:
             yield from _saved_revision_ids(nested)
+
+
+def _current_text_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
+    if type(descriptor) is DerivedTraceProvenance:
+        if descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT:
+            yield descriptor.inputs[0].revision_id
+        else:
+            for nested in descriptor.inputs:
+                yield from _current_text_revision_ids(nested)
 
 
 class ConsoleTraceBoundaryFactory:
@@ -124,11 +139,15 @@ class ConsoleTraceBoundaryFactory:
         owner = self.repository.get_owner(cursor, reserved.owner_id)
         policy = frozen_policy_from_provenance(boundary._request.semantic.provenance)
         if (
-            revision is None or owner is None
+            revision is None
+            or owner is None
+            or latest.semantic_revision_id != boundary._current_revision_id
             or revision.source_message_id != reserved.turn_id
             or self.repository.get_attached_owner_by_conversation(
-                cursor, revision.source_conversation_id,
-            ) != owner
+                cursor,
+                revision.source_conversation_id,
+            )
+            != owner
             or policy.policy_id != reserved.policy_id
             or self.repository.get_policy(cursor, policy.policy_id) != policy
         ):
@@ -188,7 +207,8 @@ class ConsoleTraceBoundaryFactory:
                         provenance=request.provenance,
                         values=tuple(request.messages_payload)
                         + tuple(
-                            group.checkpoint for group in request.continuation_groups
+                            _checkpoint_semantic_value(group.checkpoint)
+                            for group in request.continuation_groups
                         ),
                         completed_tool_turn=boundary.admission.completed_tool_turn,
                         current_turn_id=reserved.turn_id,
@@ -331,6 +351,16 @@ class ConsoleTraceBoundaryFactory:
             active_revision_ids = message_revision_ids[-1:]
         if len(active_revision_ids) != 1:
             raise ValueError("trace_turn_unavailable")
+        has_current_text_transform = False
+        for index, descriptor in enumerate(provenance.messages_payload):
+            transformed_sources = tuple(_current_text_revision_ids(descriptor))
+            has_current_text_transform |= bool(transformed_sources)
+            if transformed_sources and (
+                transformed_sources != active_revision_ids
+                or (not tool_loop and index != active_descriptor_index)
+                or request.messages_payload[index].get("role") != "user"
+            ):
+                raise ValueError("trace_current_transform_owner")
         revision_ids = message_revision_ids + tuple(
             revision_id
             for descriptor in provenance.continuations
@@ -420,6 +450,20 @@ class ConsoleTraceBoundaryFactory:
                         )
                     ):
                         raise ValueError("trace_tool_chain_unavailable")
+                    origin_pins = cursor.execute(
+                        "SELECT semantic_revision_id FROM console_trace_events "
+                        "WHERE call_id = ? AND event_type = 'call_boundary'",
+                        (origin.call_id,),
+                    ).fetchall()
+                    if (
+                        len(origin_pins) != 1
+                        or (
+                            origin_pins[0][0] is not None
+                            and origin_pins[0][0] != current_revision_id
+                        )
+                        or (has_current_text_transform and origin_pins[0][0] is None)
+                    ):
+                        raise ValueError("trace_tool_chain_source_mismatch")
                     previous = self.repository.get_call_by_logical_identity(
                         cursor,
                         owner_id=owner.owner_id,
@@ -460,19 +504,18 @@ class ConsoleTraceBoundaryFactory:
                     )
                 self.repository.ensure_policy(cursor, policy)
                 continuation_values = tuple(
-                    group.checkpoint for group in request.continuation_groups
+                    _checkpoint_semantic_value(group.checkpoint)
+                    for group in request.continuation_groups
                 )
                 completed_tool_turn = None
                 if (
                     route_record.route
                     in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.FRESH}
                     and active_descriptor_index >= 1
-                    and all(
-                        type(item) is SavedRevisionTraceProvenance
-                        for item in provenance.messages_payload[
-                            active_descriptor_index - 1 : active_descriptor_index + 1
-                        ]
+                    and current_turn_source_revision_id(
+                        provenance.messages_payload[active_descriptor_index]
                     )
+                    == current_revision_id
                 ):
                     latest = self.repository.get_latest_call_boundary(
                         cursor, owner.root_segment_id
@@ -488,26 +531,57 @@ class ConsoleTraceBoundaryFactory:
                         else self.repository.get_run_origin(cursor, terminal.run_id)
                     )
                     if terminal is not None and origin is not None:
-                        completed_tool_turn = CompletedToolTurnWitness(
-                            origin.call_id,
-                            terminal.call_id,
-                            provenance.messages_payload[
-                                active_descriptor_index - 1
-                            ].revision_id,
-                            current_revision_id,
-                            project_context_count=(
-                                len(provenance.messages_payload)
-                                - active_descriptor_index
-                                - 1
-                                if skipped_project_context
-                                or self.service.has_completed_project_context(
-                                    cursor,
-                                    segment_id=owner.root_segment_id,
-                                    terminal_surface_id=terminal.surface_node_id,
-                                )
-                                else None
-                            ),
+                        source_revision_id = None
+                        origin_head = self.service._call_message_tail(cursor, origin)
+                        if (
+                            origin_head is not None
+                            and origin_head.component_kind == "active_request"
+                        ):
+                            source_row = cursor.execute(
+                                "SELECT semantic_revision_id FROM console_trace_events "
+                                "WHERE call_id = ? AND event_type = 'call_boundary'",
+                                (origin.call_id,),
+                            ).fetchall()
+                            if len(source_row) == 1:
+                                source_revision_id = source_row[0][0]
+                        preceding = provenance.messages_payload[
+                            active_descriptor_index - 1
+                        ]
+                        preceding_id = saved_response_source_revision_id(preceding)
+                        preceding_revision = (
+                            self.repository.get_semantic_revision(cursor, preceding_id)
+                            if preceding_id is not None
+                            else None
                         )
+                        assistant_revision_id = (
+                            preceding_revision.revision_id
+                            if preceding_revision is not None
+                            and preceding_revision.normalized_role == "assistant"
+                            else None
+                        )
+                        if (
+                            assistant_revision_id is not None
+                            or source_revision_id is not None
+                        ):
+                            completed_tool_turn = CompletedToolTurnWitness(
+                                origin.call_id,
+                                terminal.call_id,
+                                assistant_revision_id,
+                                current_revision_id,
+                                source_revision_id=source_revision_id,
+                                project_context_count=(
+                                    len(provenance.messages_payload)
+                                    - active_descriptor_index
+                                    - 1
+                                    if skipped_project_context
+                                    or self.service.has_completed_project_context(
+                                        cursor,
+                                        segment_id=owner.root_segment_id,
+                                        terminal_surface_id=terminal.surface_node_id,
+                                    )
+                                    else None
+                                ),
+                            )
                 admission, surface_boundary = (
                     self.service.prepare_current_surface_delta(
                         cursor,
@@ -547,6 +621,7 @@ class ConsoleTraceBoundaryFactory:
                     sequence=0 if event_tail is None else event_tail.sequence + 1,
                     event_type="call_boundary",
                     call_id=reserved.call_id,
+                    semantic_revision_id=current_revision_id,
                 )
             assert reserved is not None
             return ConsoleTraceCallBoundary(
