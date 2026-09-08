@@ -48,6 +48,10 @@ MAX_MARKDOWN_SNIFF_LINES = 200
 # so the same item reads the same "Updated: <age>" in the list and the viewer.
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
 
+#: task-32068: the placeholder audio/video/PDF/ebook ingestion stores when a
+#: file names no author. Case-folded before comparing.
+_PLACEHOLDER_AUTHOR = "unknown"
+
 _EMPTY_EDIT_FIELDS: dict[str, str] = {
     "title": "",
     "author": "",
@@ -334,7 +338,13 @@ def build_library_media_viewer_state(
         lines.append("Type: markdown (stored as plaintext)")
     else:
         lines.append(f"Type: {media_type}")
-    if author:
+    if author and author.strip().casefold() != _PLACEHOLDER_AUTHOR:
+        # task-32068: "Unknown" is what most local ingest paths write when
+        # they find no author (audio/video/PDF/ebook all do), so a stored
+        # "Unknown" is the ABSENCE of an author, not one. Dropping the line
+        # here drops the Reader's byline with it -- the byline reads these
+        # lines -- without touching ``edit_fields``, which still prefills
+        # what is genuinely stored.
         lines.append(f"Author: {author}")
     if url and not url.startswith("local://"):
         # The synthetic "local://media/{id}" placeholder (and any other

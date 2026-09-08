@@ -550,6 +550,16 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 yield from self._compose_edit_form()
             else:
                 yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                # task-32068: why this item has no Rendered view -- asked
+                # and answered here, once, rather than banner-ed over every
+                # read of every plain item.
+                if not self.viewer.is_markdown and self.viewer.has_content:
+                    yield Static(
+                        RENDERED_VIEW_NOTE,
+                        id="library-media-content-mode-note",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
                 yield Static(
                     "\n".join((
                         f"Backend: {self.viewer.backend}",
@@ -587,16 +597,13 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             there is no toggle (task-31635, task-31958).
         """
         if not self.viewer.is_markdown:
-            # task-31635 (critique #5 item 13): the slot names itself rather
-            # than vanishing. Text only -- there is no rendered view to
-            # offer, so a control here would be an affordance for nothing.
-            if self.viewer.has_content:
-                yield Static(
-                    RENDERED_VIEW_NOTE,
-                    id="library-media-content-mode-note",
-                    classes="destination-purpose",
-                    markup=False,
-                )
+            # task-32068: the note is a FACT ABOUT THE ITEM, so it belongs to
+            # Info (``_compose_active_body``'s info branch), not above the
+            # text on every read. Most items are plain, so critique #8 met it
+            # on nearly every open -- a line about a view the reader never
+            # asked for, above the one they did. Text only either way: there
+            # is no rendered view to offer, so a control here would be an
+            # affordance for nothing (task-31635, critique #5 item 13).
             return
         with Horizontal(id="library-media-content-mode-strip"):
             rendered_selected = self.content_mode == "rendered"
