@@ -54,9 +54,9 @@ Files: `chat_screen.py`, `UI/Console_Modules/session.py`, `wiring.py`, `Tests/UI
 
 Files: `chat_screen.py`, `UI/Console_Modules/message.py`, `wiring.py`, message/presentation tests.
 
-- [ ] Move `_console_presentation_context` and `_console_message_presentation` into `ConsoleMessageController`. Keep screen transcript-style preference/UI refresh hooks, named current-session/global-display-name ports and active-session fallback unchanged.
-- [ ] Retarget exact private receivers; no screen-wide fallback lookup or broad test-helper adaptation. Preserve previously repaired notes owner, Canvas callback identity and citation guards.
-- [ ] Run complete message/presentation/wiring files, review and commit.
+- [x] Move `_console_presentation_context` and `_console_message_presentation` into `ConsoleMessageController`. Keep screen transcript-style preference/UI refresh hooks, named current-session/global-display-name ports and active-session fallback unchanged.
+- [x] Retarget exact private receivers; no screen-wide fallback lookup or broad test-helper adaptation. Preserve previously repaired notes owner, Canvas callback identity and citation guards.
+- [x] Run complete message/presentation/wiring files, review and commit. Seven-file group435 passed; native Console351 passed. Independent spec/correctness reviews pass. TASK-31932 plan15 separately reconciles two pre-existing menu assertions with TASK-31759's new note actions; source presentation semantics remain unchanged.
 
 ## Task 6: Combined qualification
 

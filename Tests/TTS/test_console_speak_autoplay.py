@@ -674,7 +674,7 @@ class _SpeechRequestControllerStub:
     def __init__(self, store: ConsoleChatStore, post_result) -> None:
         self._store = store
         self._screen = MagicMock()
-        self._screen._console_presentation_context.return_value = None
+        self._console_presentation_context = lambda: None
         self.app_instance = MagicMock()
         if isinstance(post_result, Exception):
             self.app_instance.post_message.side_effect = post_result

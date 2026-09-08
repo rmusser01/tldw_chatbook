@@ -1024,7 +1024,9 @@ def test_chat_screen_transcript_fingerprint_tracks_presentation_revision():
         _ensure_console_chat_store=lambda: SimpleNamespace(
             active_session_id="session-1"
         ),
-        _console_presentation_context=lambda: holder["context"],
+        _message=SimpleNamespace(
+            _console_presentation_context=lambda: holder["context"]
+        ),
     )
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT, content="same body", id="a1"
@@ -2013,6 +2015,8 @@ async def test_console_transcript_more_menu_captures_message_and_closes_before_c
             "Helpful",
             "Not helpful",
             "Delete",
+            "Summarize up to here as note",
+            "Save transcript up to here as note",
         ]
 
         await pilot.press("down", "enter")
@@ -2275,17 +2279,34 @@ async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
 
         save = app.query_one("#console-message-more-save-as", Button)
         helpful = app.query_one("#console-message-more-feedback-up", Button)
+        not_helpful = app.query_one("#console-message-more-feedback-down", Button)
         delete = app.query_one("#console-message-more-delete", Button)
+        summarize = app.query_one("#console-message-more-summarize-note", Button)
+        save_transcript = app.query_one(
+            "#console-message-more-save-transcript-note", Button
+        )
         assert save.has_focus
 
         await pilot.press("tab")
         assert helpful.has_focus
         assert app.query("#console-message-more-menu")
 
+        await pilot.press("tab")
+        assert not_helpful.has_focus
+        await pilot.press("shift+tab")
+        assert helpful.has_focus
         await pilot.press("shift+tab")
         assert save.has_focus
         await pilot.press("shift+tab")
+        assert save_transcript.has_focus
+        await pilot.press("shift+tab")
+        assert summarize.has_focus
+        await pilot.press("shift+tab")
         assert delete.has_focus
+        await pilot.press("tab")
+        assert summarize.has_focus
+        await pilot.press("tab")
+        assert save_transcript.has_focus
         await pilot.press("tab")
         assert save.has_focus
         assert app.query("#console-message-more-menu")

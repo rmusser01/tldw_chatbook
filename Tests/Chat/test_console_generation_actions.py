@@ -228,7 +228,11 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         active_session_is_ephemeral=(
             lambda: screen._session._console_active_session_is_ephemeral()
         ),
-        active_native_console_session=_unreached,
+        active_native_console_session=(
+            lambda: screen._session._active_native_console_session()
+        ),
+        global_chat_display_name=lambda: screen._global_chat_display_name(),
+        console_transcript_style=lambda: screen._console_transcript_style(),
         current_console_conversation_id=_unreached,
         active_console_provider_model_display=_unreached,
         console_initial_session_title_for_workspace=lambda workspace_id: "",
