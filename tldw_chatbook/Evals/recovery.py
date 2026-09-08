@@ -18,6 +18,7 @@ from tldw_chatbook.Backup_Recovery.models import (
     storage_logical_id,
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import database_path
+from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
 
 _SCHEMA = (
     (
@@ -107,55 +108,19 @@ class _Adapter:
                     "recovery.domain.evals", candidate, read_only=True
                 )
             ) as conn:
-                conn.execute("PRAGMA trusted_schema=OFF")
-                version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if version not in _VERSIONS:
-                    return ("unsupported_schema_version",)
-                actual = tuple(
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-                    )
-                )
-                if actual != dict(_SCHEMA)[version]:
-                    return ("unsupported_schema",)
-                if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
-                    return ("invalid_domain_reference",)
-                if conn.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-                    return ("invalid_sqlite_integrity",)
-                return ()
+                return _validate_sqlite(conn, _VERSIONS, _SCHEMA)
         except (OSError, ValueError, sqlite3.Error):
             return ("domain_validation_unavailable",)
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
-        from tldw_chatbook.Backup_Recovery.admission import _local
         from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
 
-        if (
-            item.owner != self.owner_id
-            or item.path is None
-            or item.status != "included"
-        ):
-            raise ValueError("invalid_capture_item")
-        scope = getattr(_local, "capture_scope", None)
-        if scope is None:
-            raise ValueError("capture_requires_maintenance")
-        scope.check()
-        if destination.exists():
-            raise FileExistsError("capture_destination_exists")
-
-        def guard():
-            if cancel.is_set():
-                raise InterruptedError("cancelled")
-
-        guard()
-        copy_private_sqlite(
-            "recovery.domain.evals", item.path, destination, progress_guard=guard
-        )
-        guard()
-        issues = self.validate(destination)
-        if issues:
-            raise ValueError(issues[0])
+        with _checked_capture(
+            self.owner_id, item, destination, cancel, self.validate
+        ) as guard:
+            copy_private_sqlite(
+                "recovery.domain.evals", item.path, destination, progress_guard=guard
+            )
 
     def validate_dependencies(
         self, item: StorageItem, candidate: Path, candidates: Mapping[str, Path]

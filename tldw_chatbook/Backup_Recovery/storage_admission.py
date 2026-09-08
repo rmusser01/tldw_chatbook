@@ -444,20 +444,27 @@ class _CaptureFileDescriptors:
         if scope is not None:
             scope.resources.append(self)
 
+    def close_descriptor(self, fd: int) -> None:
+        """Retire once, including parent traversal; ambiguity retains exclusion."""
+        if self.close_failed:
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        try:
+            os.close(fd)
+        except BaseException:
+            # Never retry an FD number after an ambiguous native outcome,
+            # including attempts by traversal's exception cleanup.
+            self.close_failed = True
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired") from None
+
+    def pinned_directory(self, root: Path):
+        return bootstrap.pinned_directory(root, _close=self.close_descriptor)
+
     def retire(self):
         if self.close_failed:
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         while self.fds:
             fd = self.fds[-1]
-            try:
-                os.close(fd)
-            except OSError:
-                # close may have an ambiguous native outcome. Never retry an FD
-                # number that could already identify another resource.
-                self.close_failed = True
-                raise bootstrap.RecoveryRequired(
-                    "capture_resources_not_retired"
-                ) from None
+            self.close_descriptor(fd)
             self.fds.pop()
         if self.scope is not None and self in self.scope.resources:
             self.scope.resources.remove(self)
@@ -491,7 +498,7 @@ def _read_recovery_file(owner_id: str, candidate: Path, *, max_bytes: int) -> by
     try:
         if scope is not None:
             scope.check()
-        with bootstrap.pinned_directory(selected.parent) as parent:
+        with resources.pinned_directory(selected.parent) as parent:
             fd = os.open(
                 selected.name,
                 os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -563,14 +570,14 @@ def copy_capture_file(
     try:
         # Pinned no-follow parent traversal follows the established private-path
         # boundary. Native data descriptors stay tracked across every exception.
-        with bootstrap.pinned_directory(source.parent) as parent:
+        with resources.pinned_directory(source.parent) as parent:
             fd = os.open(
                 source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
             )
             resources.fds.append(fd)
             info = os.fstat(fd)
             _check_capture_file_identity(scope, source, info, source_only=True)
-        with bootstrap.pinned_directory(destination.parent) as parent:
+        with resources.pinned_directory(destination.parent) as parent:
             destination_parent_identity = os.fstat(parent)
             scope.check()
             out = os.open(

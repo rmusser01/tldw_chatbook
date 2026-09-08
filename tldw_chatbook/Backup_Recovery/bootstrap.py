@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import stat
+from typing import Callable
 
 from ..Utils.private_paths import _open_verified_parent
 from .profile_paths import default_config_path, effective_config_path, lexical_path
@@ -29,14 +30,14 @@ def default_bootstrap_root() -> Path:
 
 
 @contextmanager
-def pinned_directory(root: Path):
+def pinned_directory(root: Path, *, _close: Callable[[int], None] | None = None):
     parent, _ = _open_verified_parent(
-        root / ".bootstrap-reader", missing_leaf_allowed=True
+        root / ".bootstrap-reader", missing_leaf_allowed=True, _close=_close
     )
     try:
         yield parent
     finally:
-        os.close(parent)
+        (_close or os.close)(parent)
 
 
 def _read(parent: int, name: str) -> dict:

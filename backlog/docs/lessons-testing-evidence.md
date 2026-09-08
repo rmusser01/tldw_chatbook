@@ -5673,3 +5673,19 @@ are unusable after success and exceptions, and retained committed-WAL observers
 prove both source main/WAL bytes and main mtime survive recovery capture unchanged.
 When proving a storage drain, check native handle lifetime explicitly; a transaction
 context or a service method named `close` is not evidence by itself.
+
+## Fault injection must stay in the intended native owner (TASK-31990 review)
+
+On 2026-09-08, the affected private-path guards reproduced three failures at the
+unchanged Task 7 review base: tests injecting `private_paths.os.unlink`, `.write`
+and `.stat` also changed the shared Python `os` module used by ordinary admission.
+The zero-byte-write test timed out inside admission-record creation, while the
+postcondition/entry-stat tests refused admission before reaching their intended
+path operation. These were fault-target collisions, not evidence about the path
+cleanup under test.
+
+The three tests now replace only `private_paths.os` with a local namespace copy
+before applying their original injection. Actual ordinary admission runs normally;
+the original private-path assertions pass unchanged. Keep simulated native faults
+local to the owner being qualified, and verify the trace reaches that boundary
+before interpreting a failure as lifecycle evidence.

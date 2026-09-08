@@ -279,6 +279,10 @@ def test_create_private_text_never_unlinks_name_after_postcondition_failure(
     tmp_path,
     monkeypatch,
 ):
+    # Fault only this owner; ordinary admission uses the real native primitives.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(private_paths, "os", SimpleNamespace(**vars(os)))
     target = tmp_path / "config.toml"
     unlink_calls = []
 
@@ -313,6 +317,10 @@ def test_create_private_text_zero_byte_write_fails_without_spinning(
     tmp_path,
     monkeypatch,
 ):
+    # Fault only this owner; ordinary admission uses the real native primitives.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(private_paths, "os", SimpleNamespace(**vars(os)))
     target = tmp_path / "config.toml"
     monkeypatch.setattr(private_paths.os, "write", lambda *args, **kwargs: 0)
 
@@ -564,6 +572,10 @@ def test_private_directory_closes_component_fd_when_entry_stat_disappears(
     tmp_path,
     monkeypatch,
 ):
+    # Fault only this owner; ordinary admission uses the real native primitives.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(private_paths, "os", SimpleNamespace(**vars(os)))
     target = tmp_path / "application-config"
     target.mkdir()
     opened_components = set()

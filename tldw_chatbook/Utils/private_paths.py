@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import BinaryIO, Iterator, TextIO, TypeAlias
+from typing import BinaryIO, Callable, Iterator, TextIO, TypeAlias
 
 PathInput: TypeAlias = str | os.PathLike[str]
 
@@ -212,6 +212,7 @@ def _follow_trusted_symlink(
     hops: int,
     selected: Path,
     exc: OSError,
+    _close: Callable[[int], None] | None = None,
 ) -> tuple[int, int]:
     """Splice a trusted symlink's target into the pending walk.
 
@@ -236,7 +237,7 @@ def _follow_trusted_symlink(
     if not absolute:
         return current_fd, hops + 1
     root_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
-    os.close(current_fd)
+    (_close or os.close)(current_fd)
     return root_fd, hops + 1
 
 
@@ -303,7 +304,9 @@ def _open_verified_parent(
     selected: Path,
     *,
     missing_leaf_allowed: bool,
+    _close: Callable[[int], None] | None = None,
 ) -> tuple[int, str]:
+    close = _close or os.close
     parts = selected.parts
     if len(parts) < 2 or parts[0] != os.sep:
         raise PrivatePathError(
@@ -359,6 +362,7 @@ def _open_verified_parent(
                     hops=symlink_hops,
                     selected=selected,
                     exc=exc,
+                    _close=_close,
                 )
                 current_stat = os.fstat(current_fd)
                 continue
@@ -385,11 +389,11 @@ def _open_verified_parent(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                os.close(old_fd)
+                close(old_fd)
                 current_stat = next_stat
             finally:
                 if not transferred:
-                    os.close(next_fd)
+                    close(next_fd)
 
         if not _trusted_directory_owner(current_stat, euid):
             raise PrivatePathError(
@@ -416,7 +420,7 @@ def _open_verified_parent(
             )
         return current_fd, parts[-1]
     except BaseException:
-        os.close(current_fd)
+        close(current_fd)
         raise
 
 

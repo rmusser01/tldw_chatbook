@@ -1450,7 +1450,19 @@ JSON for managed credential locations before portable redaction or encrypted inc
 this task does not claim secret-free captures or perform credential sanitization.
 Task 13 still owns sealed candidate/schema budgets and migration execution safeguards;
 the 16 MiB YAML bound is an owner refusal boundary, not the global archive budget.
-Hard OS FD-close failure is conservatively latched and retains native exclusion but
-was not runtime fault-induced here; this remains explicit release qualification, as
-with the task 6 native-close limit. No Complete backup/publication/replacement UI is
-qualified by this cohort alone.
+Native retirement includes raw source/destination parent directories and all
+private traversal cleanup, including trusted-symlink transitions. The optional
+private close callback follows `bootstrap.pinned_directory` through
+`private_paths._open_verified_parent` / `_follow_trusted_symlink`; default callers
+retain their existing behavior. The raw owner latches actual close uncertainty
+before cleanup can retry an FD number. Ordinary missing/refused paths with
+successful cleanup release their lease normally. Child-local simulated native-close
+failures leave real directory FDs usable and demonstrate independent maintenance
+exclusion until process exit. This is simulated-failure evidence, not actual OS or
+hardware failure qualification; that release limit remains with task 6's native-close
+limit. No Complete backup/publication/replacement UI is qualified by this cohort alone.
+
+Research, writing and EvalsDB retain their literal registered connection/copy sites.
+`DB/recovery_sqlite.py` only shares schema/FK/integrity validation and capture guards;
+it neither opens storage nor chooses dynamic SQLite authority. The exact source and
+copy census rows therefore remain unchanged by this consolidation.

@@ -968,3 +968,245 @@ def test_asset_reference_cannot_resolve_a_valid_identifier_prefix(study_store):
         )
         connection.commit()
     assert adapter("study").validate(source) == ("missing_required_asset",)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "copy_source",
+        "copy_destination",
+        "capture_read",
+        "ordinary_read",
+        "traversal_parent",
+        "symlink_parent",
+    ],
+)
+def test_simulated_parent_close_failure_retains_real_exclusion_until_process_exit(
+    tmp_path, monkeypatch, operation
+):
+    """A child-only close fault leaves a usable FD; an independent process waits."""
+    import os
+    import subprocess
+    import sys
+
+    source_dir = tmp_path / "owned"
+    source_dir.mkdir(mode=0o700)
+    source = source_dir / "definition.yaml"
+    source.write_bytes(b"provider_configs: {}\n")
+    if operation == "symlink_parent":
+        alias = tmp_path / "alias"
+        alias.symlink_to(source_dir, target_is_directory=True)
+        source = alias / source.name
+    application_authority(tmp_path, source, monkeypatch)
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    child_script = r"""
+import os, sys
+from pathlib import Path
+from threading import Event
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+root, source, stage = map(Path, sys.argv[1:4])
+operation = sys.argv[4]
+bootstrap.default_bootstrap_root = lambda: root
+real_os = os
+wanted_path = stage if operation == "copy_destination" else source.parent
+if operation in ("traversal_parent", "symlink_parent"):
+    wanted_path = source.parent.parent
+wanted = wanted_path.stat()
+state = {"active": False, "fd": None, "calls": 0}
+class FaultOS:
+    def __getattr__(self, name):
+        return getattr(real_os, name)
+    def close(self, fd):
+        info = real_os.fstat(fd)
+        if state["active"] and (info.st_dev, info.st_ino) == (wanted.st_dev, wanted.st_ino):
+            state["calls"] += 1
+            state["fd"] = fd
+            raise OSError("simulated ambiguous parent close; descriptor remains open")
+        real_os.close(fd)
+# Module-local proxy only: never mutate shared os.close or the parent environment.
+bootstrap.os = FaultOS()
+storage.os = FaultOS()
+original_init = storage._CaptureFileDescriptors.__init__
+def activate(self, scope):
+    original_init(self, scope)
+    state["active"] = True
+storage._CaptureFileDescriptors.__init__ = activate
+try:
+    if operation == "ordinary_read":
+        storage._read_recovery_file("eval.definitions", source, max_bytes=4096)
+    else:
+        authority = admission_authority(root)
+        with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
+            with session.capture_scope((source,), stage):
+                if operation == "capture_read":
+                    storage._read_recovery_file("eval.definitions", source, max_bytes=4096)
+                else:
+                    storage.copy_capture_file("eval.definitions", source, stage / "copy.yaml", Event(), max_bytes=4096)
+except (OSError, RuntimeError):
+    pass
+assert state["fd"] is not None and state["calls"] == 1, state
+real_os.listdir(state["fd"])
+print("LIVE_PARENT_ONCE", flush=True)
+sys.stdin.readline()
+real_os.listdir(state["fd"])
+assert state["calls"] == 1, state
+print("STILL_LIVE_ONCE", flush=True)
+os._exit(0)
+"""
+    observer_script = r"""
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+from tldw_chatbook.Backup_Recovery import bootstrap
+root = Path(sys.argv[1])
+bootstrap.default_bootstrap_root = lambda: root
+authority = admission_authority(root)
+print("OBSERVER_READY", flush=True)
+with authority.maintenance(("core", "bootstrap.unbound"), 10):
+    print("ACQUIRED", flush=True)
+"""
+    processes = []
+    try:
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                child_script,
+                str(tmp_path / "bootstrap"),
+                str(source),
+                str(stage),
+                operation,
+            ],
+            env=dict(os.environ),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        processes.append(child)
+        assert child.stdout.readline().strip() == "LIVE_PARENT_ONCE"
+        observer = subprocess.Popen(
+            [sys.executable, "-c", observer_script, str(tmp_path / "bootstrap")],
+            env=dict(os.environ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        processes.append(observer)
+        assert observer.stdout.readline().strip() == "OBSERVER_READY"
+        try:
+            stdout, stderr = observer.communicate(timeout=0.3)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            assert observer.returncode == 0 and "ACQUIRED" in stdout, stderr
+            pytest.fail(
+                "independent maintenance acquired while parent FD remained usable"
+            )
+        stdout, stderr = child.communicate(input="exit\n", timeout=5)
+        assert child.returncode == 0 and "STILL_LIVE_ONCE" in stdout, stderr
+        stdout, stderr = observer.communicate(timeout=15)
+        assert observer.returncode == 0 and "ACQUIRED" in stdout, stderr
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_candidate", "missing_parent", "refused_parent"]
+)
+def test_failed_ordinary_definition_read_releases_admission(
+    tmp_path, monkeypatch, failure
+):
+    import os
+    import subprocess
+    import sys
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    owned = tmp_path / "owned"
+    owned.mkdir(mode=0o700)
+    application_authority(tmp_path, owned, monkeypatch)
+    candidate = owned / "missing.yaml"
+    if failure == "missing_parent":
+        candidate = owned / "missing" / "definition.yaml"
+    if failure == "refused_parent":
+        parent = owned / "unsafe"
+        parent.mkdir(mode=0o700)
+        candidate = parent / "definition.yaml"
+        candidate.write_bytes(b"provider_configs: {}\n")
+        parent.chmod(0o777)
+    before = dict(storage_admission._holds)
+    try:
+        with pytest.raises(OSError):
+            storage_admission._read_recovery_file(
+                "eval.definitions", candidate, max_bytes=4096
+            )
+    finally:
+        if failure == "refused_parent":
+            candidate.parent.chmod(0o700)
+    assert storage_admission._holds == before
+    script = r"""
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+with admission_authority(Path(sys.argv[1])).maintenance(("core", "bootstrap.unbound"), 1):
+    print("ACQUIRED")
+"""
+    observer = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path / "bootstrap")],
+        env=dict(os.environ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert observer.returncode == 0 and "ACQUIRED" in observer.stdout, observer.stderr
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["no_authority", "invalid_item", "cancel", "existing", "invalid_snapshot"],
+)
+def test_domain_sqlite_capture_safety_guards_preserved(
+    domain_store, tmp_path, monkeypatch, failure
+):
+    name, source, _ = domain_store
+    a = adapter(name)
+    item = a.discover(context(source, name + "_db_path"))[0]
+    stage = tmp_path / "guard-stage"
+    stage.mkdir(mode=0o700)
+    destination = stage / "snapshot.db"
+    cancel = Event()
+    if failure == "no_authority":
+        with pytest.raises(ValueError, match="capture_requires_maintenance"):
+            a.capture(item, destination, cancel)
+        assert not destination.exists()
+        return
+    authority = application_authority(tmp_path, source, monkeypatch)
+    expected = {
+        "invalid_item": "invalid_capture_item",
+        "cancel": "cancelled",
+        "existing": "capture_destination_exists",
+        "invalid_snapshot": "unsupported_schema",
+    }[failure]
+    if failure == "invalid_item":
+        item = replace(item, owner="unrelated.owner")
+    if failure == "cancel":
+        cancel.set()
+    if failure == "existing":
+        destination.write_bytes(b"preserve existing content")
+    if failure == "invalid_snapshot":
+        with closing(sqlite3.connect(source)) as conn:
+            conn.execute("CREATE TABLE unqualified_schema(value)")
+            conn.commit()
+    with authority.maintenance(("core", "bootstrap.unbound"), 1) as session:
+        with session.capture_scope((source,), stage):
+            with pytest.raises((ValueError, OSError), match=expected):
+                a.capture(item, destination, cancel)
+    if failure == "existing":
+        assert destination.read_bytes() == b"preserve existing content"
+    elif failure != "invalid_snapshot":
+        assert not destination.exists()
