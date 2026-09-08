@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 15:33'
-updated_date: '2026-09-08 01:55'
+updated_date: '2026-09-08 02:11'
 labels:
   - database
   - canvas
@@ -19,6 +19,7 @@ documentation:
     Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md
   - >-
     Docs/superpowers/plans/2026-09-07-sqlite-lock-safe-private-validation-implementation.md
+  - Docs/superpowers/reviews/2026-09-07-sqlite-orderly-exit-gate.md
 priority: high
 ---
 
@@ -52,6 +53,6 @@ Detailed plan: Docs/superpowers/plans/2026-09-07-sqlite-lock-safe-private-valida
 5. Integrate live proof, explicit restore/directory handoffs, shielded-worker ownership and bounded restart-required quarantine; qualify orderly and abrupt exit.
 6. Correct exclusive descriptor/finalizer ownership and complete raw-close census.
 7. Qualify installed-wheel/import isolation, targeted storage/lifetime/performance and actual Canvas workflows; independently review before TASK-31941 resumes.
-Tasks 1–3 passed independent gates through 83f0be4e9/5faa04887/0e5363446. Task4 is reviewed complete at8b4e5c1d4 after staged-capture9fb1e3a4b and typed-parent-refusal8b4e5c1d4 corrections. Approval2a0b206dd preserves exact acquired WAL/main/directory pins; missing SHM binds once, incomplete cohort use/export refused, numeric and typed known authority refusals recover without internal/transport fallback. Fresh targeted selection415passes2existing skips; local parser2passes; root actual parent controls3passes; independent actual-child recovery/reap reproduction and scoped spec/quality pass. Task5 may start, including already-required ParentAuthority metadata adaptation and both orderly/abrupt terminal exit gates.
+Tasks 1–3 passed independent gates through 83f0be4e9/5faa04887/0e5363446. Task4 is reviewed complete at8b4e5c1d4 after staged-capture9fb1e3a4b and typed-parent-refusal8b4e5c1d4 corrections. Approval2a0b206dd preserves exact acquired WAL/main/directory pins; missing SHM binds once, incomplete cohort use/export refused, numeric and typed known authority refusals recover without internal/transport fallback. Fresh targeted selection415passes2existing skips; local parser2passes; root actual parent controls3passes; independent actual-child recovery/reap reproduction and scoped spec/quality pass. Task5 started its required early exit qualification, then STOPPED before product changes: orderly exit unlinks foreign WAL/SHM names in baseline and helper-shaped retained-owner controls; abrupt exits preserve them. Independent focused review reproduces the failure and supports STOP, with native-phase and pristine-helper-first-equivalence limits. User direction on a revised terminal-loss ownership/shutdown contract is required before continuing. No workaround, Task6/7 work, or Canvas admission authorized. Exact diagnostic archived as text outside test collection, matching original blobacf4a816ba75fabb1cfe91e405ea0d2ea6db6094. Evidence: Docs/superpowers/reviews/2026-09-07-sqlite-orderly-exit-gate.md.
 Worktree restored twice after runaway removal; user stopped the process. Committed history survived, exact product hash/reconstructed test ASTs verified and checks rerun. Main checkout untouched; external recovery artifacts retained. Historical ignored evidence not assumed available. Prior repository/lifecycle360passes and11stdlib semaphore ENOSPC failures remain unqualified; fresh stdlib probe still fails. Three unchanged strict inventory gaps also unqualified. No full suite, PR/push/rebase/merge, host or dependency changes. V2 disabled; whole correction not complete.
 <!-- SECTION:PLAN:END -->
