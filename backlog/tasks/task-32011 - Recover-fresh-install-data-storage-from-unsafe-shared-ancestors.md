@@ -1,11 +1,11 @@
 ---
 id: TASK-32011
 title: Recover fresh-install data storage from unsafe shared ancestors
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 00:30'
-updated_date: '2026-09-08 01:10'
+updated_date: '2026-09-08 01:14'
 labels:
   - bug
   - storage
@@ -29,7 +29,7 @@ Fresh installs can fail during configuration import when existing .local or shar
 - [x] #5 Settings storage diagnostics show the selected default data location without creating directories.
 - [x] #6 A one-off Linux CI workflow validates the exact PR head against dev on supported Python versions and retains test evidence.
 - [x] #7 Concurrent first starts share one private interprocess lock across default-root and profile creation, so permission repair cannot create conflicting roots.
-- [ ] #8 Environment-derived existence probes use non-resolving central validation; prompt exports honor fallback and explicit roots; labeled CI reruns on subsequent PR commits.
+- [x] #8 Environment-derived existence probes use non-resolving central validation; prompt exports honor fallback and explicit roots; labeled CI reruns on subsequent PR commits.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,4 +69,6 @@ Qodo follow-up after rebase onto dev 511044368: all six comments addressed. A st
 Restored-source verification: 448 targeted tests passed, 2 Windows-only skips; three changed/new storage test files pass Ruff lint and formatting. Independent review of the restored code and new regression files found no actionable issues. Updated Linux matrix evidence will be recorded after publishing this revision.
 
 All 15 profile-owned path architecture checks pass in the isolated worktree after the prompt helper census update.
+
+Final Qodo remediation evidence: Ubuntu 24.04 run https://github.com/rmusser01/tldw_chatbook/actions/runs/34175776357 tested c36dcd38388d6fe955d79b4f3412b024d17f444d on Python 3.11, 3.12, and 3.13. Every job passed 446 tests with 4 platform skips, passed installed tldw-cli startup under 0775 and 0755 ancestors, and uploaded JUnit artifacts. This synchronize-triggered run verifies the workflow fix. All six Qodo threads received fix/evidence replies and were resolved. Performance and GGUF platform evidence checks passed. Baseline lint comparison for config.py, Prompts_Dump.py, the architecture test, and its scanner finds no new diagnostics; new storage tests pass lint/format. No production or test code changes follow this evidence; this task-completion commit will receive its own exact-head CI run before merge.
 <!-- SECTION:NOTES:END -->
