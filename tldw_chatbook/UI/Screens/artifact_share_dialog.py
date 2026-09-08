@@ -40,7 +40,14 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
 
     BINDINGS: ClassVar = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    BUNDLED_CSS = """
+    # Styling lives in DEFAULT_CSS, not BUNDLED_CSS, on purpose: BUNDLED_CSS
+    # from every widget is merged into the generated boot bundle
+    # (css/widget_defaults_self.tcss), and both the boot-parsed byte budget
+    # and the bare-type rule census (Tests/Performance/
+    # test_boot_css_byte_budget.py, test_textual_css_fastpath.py) sit at zero
+    # headroom. DEFAULT_CSS parses when this dialog mounts — runtime, not
+    # boot — so the share dialog adds zero stylesheet-budget footprint.
+    DEFAULT_CSS = """
     ArtifactShareDialog { align: center middle; background: $background 70%; }
     ArtifactShareDialog > VerticalScroll {
         width: 76; max-width: 96%; height: auto; max-height: 90%;
