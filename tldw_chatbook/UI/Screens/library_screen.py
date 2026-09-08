@@ -9777,6 +9777,16 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        # task-32039 AC#1: a new visit's auto-refresh (below) re-issues the
+        # same scope; the fault episode must not read that as a consecutive
+        # Retry and prepend the reopen recovery step on a first failure.
+        self._library_media_browse_controller.clear_fault_episode()
+        # task-32039 AC#2: the select-mode bulk-Analyze reason is memoised for
+        # the whole select-mode session (resolving it shells out to the
+        # keychain). A provider configured mid-session (while Library was
+        # suspended) leaves that memo stale, so drop it here -- the next
+        # canvas sync re-resolves it exactly once.
+        self._library_media_analyze_reason_cache = None
         self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
         if getattr(self, "_prepared_library_inspection_entry", None) is not None:

@@ -17953,9 +17953,13 @@ def test_generated_stylesheet_includes_library_shell_rules():
 
 
 def test_generated_stylesheet_includes_library_media_rules():
+    # TASK-15450 split library-owned selectors out of the boot bundle
+    # (``tldw_cli_modular.tcss``) into ``screen_agentic_library.tcss``, the
+    # sheet ``LibraryScreen.CSS_PATH`` loads at runtime -- so that split sheet,
+    # not the boot bundle, is where these rules must land now (task-32039 AC#4).
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
-    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    generated_css = (root / "screen_agentic_library.tcss").read_text()
     for selector in (
         "#library-media-title",
         ".library-media-row",

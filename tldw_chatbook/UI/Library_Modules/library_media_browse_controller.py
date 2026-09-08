@@ -252,8 +252,16 @@ class LibraryMediaBrowseController:
         # so it cannot tell a repeat from a first failure). A consecutive
         # failure with the SAME reason names the reopen recovery step; a
         # success on either fence clears its own tracker.
+        # task-32039 AC#1: the reason alone was not enough -- a resume
+        # auto-refresh or a page/query/type change that hit the same reason
+        # read as a consecutive Retry. Each reason is now paired with the
+        # context fingerprint it failed in (the page scope, the facet
+        # request), so "repeated" means the SAME context failed again; a new
+        # visit clears the episode via ``clear_fault_episode``.
         self._page_fault_reason = ""
+        self._page_fault_context = ""
         self._facet_fault_reason = ""
+        self._facet_fault_context = ""
         self._page_generation = 0
 
         self.type_options: tuple[str, ...] = ()
@@ -447,8 +455,13 @@ class LibraryMediaBrowseController:
             if self.freshness != "stale":
                 self.error_copy, failure_what = self._failure_copy(scope)
                 reason = _retry_failure_reason(exc)
-                repeated = reason == self._page_fault_reason
+                fingerprint = scope.fingerprint
+                repeated = (
+                    reason == self._page_fault_reason
+                    and fingerprint == self._page_fault_context
+                )
                 self._page_fault_reason = reason
+                self._page_fault_context = fingerprint
                 self.page_failure = _raised_failure(
                     failure_what, exc, repeated=repeated
                 )
@@ -479,6 +492,7 @@ class LibraryMediaBrowseController:
         self.error_copy = ""
         self.page_failure = None
         self._page_fault_reason = ""
+        self._page_fault_context = ""
         self.stale_copy = ""
         self.stale_reason = ""
         self._sync(focus_identity)
@@ -661,8 +675,12 @@ class LibraryMediaBrowseController:
             self.facet_loading = False
             self.facet_error_copy = _FACET_ERROR
             reason = _retry_failure_reason(exc)
-            repeated = reason == self._facet_fault_reason
+            repeated = (
+                reason == self._facet_fault_reason
+                and fingerprint == self._facet_fault_context
+            )
             self._facet_fault_reason = reason
+            self._facet_fault_context = fingerprint
             self.facet_failure = _raised_failure(_FACET_WHAT, exc, repeated=repeated)
             self._sync(None)
             return
@@ -677,7 +695,23 @@ class LibraryMediaBrowseController:
         self.facet_error_copy = ""
         self.facet_failure = None
         self._facet_fault_reason = ""
+        self._facet_fault_context = ""
         self._sync(None)
+
+    def clear_fault_episode(self) -> None:
+        """Forget the repeated-fault history so a new visit is not a Retry.
+
+        task-32039 AC#1: ``begin``/``request_facets`` cannot tell a Library
+        screen-RESUME auto-refresh from a consecutive Retry -- both re-issue
+        the same scope with the same fingerprint. The screen clears the
+        episode on resume, so the first failure of a new visit never wears the
+        reopen recovery step even when its reason matches the last visit's. A
+        genuine same-context Retry within a visit still escalates.
+        """
+        self._page_fault_reason = ""
+        self._page_fault_context = ""
+        self._facet_fault_reason = ""
+        self._facet_fault_context = ""
 
     def invalidate_facets(self, *, fingerprint: str = "") -> int:
         self._facet_generation += 1
