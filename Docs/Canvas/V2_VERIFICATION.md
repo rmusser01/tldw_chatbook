@@ -584,3 +584,18 @@ diagnosis disposition: [final local qualification](../superpowers/reviews/2026-0
 TASK-31942 remains In Progress and V2 disabled. Host semaphore, platform/optional,
 nonzero static and fresh Canvas readiness gates remain explicit; no PR/external
 action, host cleanup or full repository sweep occurred.
+
+## Approved restored-card diagnostic spike — 2026-09-08
+
+One source-free, test-only instrumented run reproduced the recovery failure
+(`1 failed, 1 inherited warning, 59.36s`). Both F10 completion and F12 entry
+46ms later observed zero Canvas cards and pending/coalesced UI sync. The
+synthetic adapter's immediate lookup failed before real card dispatch; this run
+does not demonstrate a native SQLite crash. Its first-byte observation was
+4.883s after login, but the separate earlier startup failure remains unexplained.
+
+All temporary test edits were reversed and both files verified byte-identical
+to baseline. Exact patch, metadata and limits are preserved in the
+[diagnostic report](../superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md).
+A retained harness readiness fix is not part of the spike. No gates are relabeled
+passing, no new broad runs or host changes occurred, and V2 stays disabled.
