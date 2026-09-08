@@ -2876,9 +2876,15 @@ ConsoleRunLogModal {
     max-width: 100%;
 }
 
+/* task-32042 (critique #7 P1) mirrors task-30043 on the Media canvas: a 1fr
+   squeeze chopped every select-action label to fragments ("Selec"/"Exp") and
+   wrapped "0 selected" at the narrow conversations list pane. The toolbar now
+   splits into content-width rows (library_conversations_canvas.py), so each
+   action keeps its own width (auto, min-width:0 lifting Button's 16-cell floor)
+   and every label paints in full. */
 #library-conversations-canvas > .ds-toolbar > .library-toolbar-count,
 #library-conversations-canvas > .ds-toolbar > .library-canvas-action {
-    width: 1fr;
+    width: auto;
     min-width: 0;
 }
 
