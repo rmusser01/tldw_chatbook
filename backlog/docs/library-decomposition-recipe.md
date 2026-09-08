@@ -2023,13 +2023,26 @@ have reported as a uniform regression. Read the load-INDEPENDENT columns
 (`recompose`, `full-update`, `nodes`) as the verdict and the wall-clock
 columns as context; a real per-frame regression shows up in the former.
 
-**And probe the BRANCH from a scratch worktree too — both sides must sit on
-the same filesystem.** Added at the wave-8 close (§23), which spent 118
-probe runs across five trees discovering that its one drifting wall-clock
-row was caused entirely by WHERE the tree was checked out. §3 puts the
-isolated baseline at a scratch path; the branch is the working worktree
-under the user's home directory. That means every probe pair this program
-ran for eight waves compared two different filesystems. Measured: the
+**And probe the BRANCH from a scratch worktree too — both sides must sit at
+the same KIND of checkout location.** Added at the wave-8 close (§23), which
+spent 118 probe runs across five trees discovering that its one drifting
+wall-clock row was caused entirely by WHERE the tree was checked out. §3
+puts the isolated baseline at a scratch path; the branch is the working
+worktree under the user's home directory. That means every probe pair this
+program ran for eight waves compared two different checkout locations.
+(**Erratum, added at the reconciliation merge:** this rule was first written
+as "two different *filesystems*". It is not — `~/Documents/...` and
+`/private/tmp/...` are the same APFS volume, `/dev/disk3s5` mounted at
+`/System/Volumes/Data`, `stat -f %d` identical on both. The MEASUREMENT
+below is unaffected and the rule stands; only the stated cause was wrong,
+and §24's own rule is that a wrong reason is worse than a thin one, because
+the next series inherits it as precedent. Candidate mechanisms, none of them
+yet established: per-path Spotlight importer scope, directory metadata and
+tree density under a large home-directory checkout, and endpoint/AV scanners
+that scope on user-data paths. One candidate is already ELIMINATED on the
+machine that took the readings — `~/Documents` is a plain local directory
+there, not a "Desktop & Documents" iCloud file-provider root — so do not
+inherit that explanation either.) Measured: the
 IDENTICAL HEAD source (`git worktree add --detach <scratch> HEAD`, `diff -r`
 against the working tree empty) came out **+23 ms** in the working worktree
 and **−6 ms** in a scratch worktree, against the same baseline, on the same
@@ -7036,7 +7049,13 @@ each round did not move it either (branch last: still +23).
 **The remaining variable was the checkout LOCATION, and it was the whole
 effect.** §3 puts the isolated baseline at a scratch path; the branch is the
 working worktree under the user's home directory. Every probe pair this
-program has ever run therefore compared two different filesystems. Checking
+program has ever run therefore compared two different checkout LOCATIONS.
+(It does **not** compare two filesystems: `~/Documents/...` and
+`/private/tmp/...` are the same APFS volume — `/dev/disk3s5` on
+`/System/Volumes/Data`, identical `stat -f %d`. The close first labelled it
+"two filesystems"; the label failed its spot-check at the final review and
+was corrected here. See the erratum in §9 for the candidate mechanisms and
+for the one already eliminated.) Checking
 the IDENTICAL HEAD source out into a scratch worktree
 (`git worktree add --detach <scratch> HEAD`, `diff -r` against the working
 tree empty) and re-running the same interleaved batch:
@@ -7054,11 +7073,11 @@ slower on all sixteen measurements", read then as a first-run artifact, is
 equally consistent with this.
 
 **The rule §9 now carries: probe the BRANCH from a scratch worktree too, so
-both sides sit on the same filesystem.** It costs one `git worktree add
+both sides sit at the same kind of checkout location.** It costs one `git worktree add
 --detach <scratch> HEAD` plus a `uv venv` (~5 s) and it is the only thing
 that makes the wall-clock columns comparable at all.
 
-**The valid pair, same filesystem, n=10 interleaved** (branch = HEAD at a
+**The valid pair, same checkout location, n=10 interleaved** (branch = HEAD at a
 scratch path; base = `889e12b86` at a scratch path), medians:
 
 | interaction | settle br / base | max gap br / base | recompose | full-update | mounts br / base | nodes |
@@ -7100,8 +7119,13 @@ the end than at the start, which is why absolute medians here sit below
    way") is wrong because a real regression normally lands INSIDE a noisy
    batch. Folded into §7 as the ladder's fourth rung.
 2. **The probe's wall-clock columns are sensitive to the checkout's
-   FILESYSTEM, and this program has been comparing two of them for eight
-   waves.** Identical HEAD source measured +23 ms in the working worktree and
+   LOCATION, and this program has been comparing two of them for eight
+   waves.** (Written first as "FILESYSTEM"; corrected at the reconciliation
+   merge — both paths are the same APFS volume. The phenomenon and the rule
+   are unchanged, the mechanism is unidentified, and §9 carries the erratum
+   with the candidates. Recorded rather than quietly fixed, because §24 item
+   3 is this section's own rule: a wrong reason is worse than a thin one.)
+   Identical HEAD source measured +23 ms in the working worktree and
    −6 ms in a scratch worktree against the same baseline. Five trees and 118
    probe runs to establish it, because each cheaper explanation — warm-up,
    run order, the wave's own moves, this close's own commits — had to be
@@ -7111,7 +7135,9 @@ the end than at the start, which is why absolute medians here sit below
    media defect this close fixed had been live for two days behind an
    `except Exception`, and the census that found it was a question nobody had
    asked of `canvas_sync.py`: *which objects reach this leg?* §3 carries the
-   resolution table, and TASK-32041 carries the standing guard.
+   resolution table, and TASK-32047 carries the standing guard (filed as
+   TASK-32041; renumbered at the reconciliation merge — `dev` had minted its
+   own 32041 in the interim).
 4. **A `file:line` is a number and nothing in the battery reads one.** Four
    citation defects in one wave, one of them inside the review round convened
    to fix citation defects. §24 is the ledger.
@@ -7215,10 +7241,24 @@ The screen went 45,134 → 32,230, a net of −12,904 — and the 4,640-line gap
 between those two figures is the fact this table exists to make visible:
 
 > **Dev put 4,640 lines and 118 methods back into `library_screen.py`
-> BETWEEN the waves.** Every inter-wave gap is positive except one
-> (wave 6 → wave 7, −37): +1,566, +285, +419, +1,299, −37, +1,108. The
+> BETWEEN the waves.** There are **seven** inter-wave gaps and they are
+> **five positive, one ZERO, one negative**: `0` (wave 1 → 2), +1,566,
+> +285, +419, +1,299, −37 (wave 6 → 7), +1,108. The
 > arithmetic closes exactly: 45,134 − 17,544 + 4,640 = 32,230, and
 > 1,300 − 160 + 118 = 1,258.
+>
+> *Footnote on the zero-width window.* Wave 1 ended at `847cdde7f` and
+> wave 2 started at `2b20ebbb9`, both **43965 / 1282** — the only gap in
+> which dev landed nothing that touched `LibraryScreen`. It is not a
+> measurement artifact and it is not evidence against the give-back; it is
+> one narrow window. Called out because this line first read "every gap is
+> positive except one" and listed only six values — the zero was silently
+> absorbed into the positives. On the METHOD side there are **two** zeros
+> (`0, +49, +7, +7, +25, 0, +30`): wave 6 → 7 is flat in methods while
+> −37 in lines, i.e. that window was pure body churn inside existing
+> methods. Corrected at the reconciliation merge; every one of the sixteen
+> boundary cells above re-reproduced to the digit at the same time, so
+> only the classification was ever wrong.
 
 That is a **26.4% give-back** (4,640 / 17,544) against the program's own
 extraction, landed by ordinary feature work in the windows between waves,
@@ -7348,7 +7388,7 @@ now are), and its first motivated candidates remain **media and notes**.
 **1. The probe baseline, and it is the last pre-phase-C measurement.**
 `Helper_Scripts/library_click_probe.py` (§9) is the acceptance instrument
 for the click-freeze fix. The numbers phase C will be measured against, from
-§23's same-filesystem n=10 interleaved pair on a quiet machine (load
+§23's same-checkout-location n=10 interleaved pair on a quiet machine (load
 3.5–4.8), median settle / max gap in ms:
 
 | interaction | settle | max gap | recompose | full-update | mounts | nodes |
@@ -7366,7 +7406,7 @@ Overall band across both trees: **settle 243–494 ms, max gap 37–179 ms.**
 Read the load-INDEPENDENT columns as the verdict (`recompose`,
 `full-update`, `nodes`, `mounts`) and the wall-clock columns as context.
 Run the pair TWICE with the tree order swapped — and **check out the branch
-into a scratch worktree so both sides sit on the same filesystem**, which
+into a scratch worktree so both sides sit at the same kind of location**, which
 §9 now requires and which this close had to discover the hard way: without
 it, the wall-clock columns carry a ~30 ms location artifact that looks
 exactly like a regression.

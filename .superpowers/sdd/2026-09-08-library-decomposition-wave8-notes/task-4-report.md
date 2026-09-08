@@ -302,9 +302,22 @@ that closes exactly:
 ```
 
 **Dev put 4,640 lines and 118 methods back between the waves — a 26.4%
-give-back against the program's own extraction**, positive in six of the
+give-back against the program's own extraction**, positive in five of the
 seven inter-wave gaps. That is the strongest argument for the ratchet in
 the document, and it is visible only from a whole-program table.
+
+> **Erratum (reconciliation merge).** This paragraph first read "positive in
+> six of the seven". It is **five**. Re-derived with the ratchet's own
+> `_measure` semantics over `git show <commit>:library_screen.py` for all
+> sixteen boundary commits, the seven gaps are `0, +1566, +285, +419,
+> +1299, −37, +1108` — **five positive, ONE ZERO (`w1→w2`, 43965 → 43965),
+> one negative (`w6→w7`, −37)**. The zero was the one being miscounted as
+> positive. Nothing else moves: the sum is still exactly +4,640, the
+> arithmetic still closes to 32,230 / 1,258, and 4,640/17,544 is still
+> 26.4%. The method-side gaps are `0, +49, +7, +7, +25, 0, +30` — five
+> positive and **two** zeros, `w6→w7` being flat in methods while −37 in
+> lines. All sixteen boundary cells re-reproduced to the digit at this
+> merge; only the gap CLASSIFICATION was wrong.
 
 The landed architecture: **9 state dataclasses (2,698 lines) and 10
 controllers (28,329 lines measured, not pinned), 368 fields and 795 method
@@ -343,6 +356,56 @@ surface.
 ## 4. Filings
 
 Commit `bad16ab8f`.
+
+> ### ERRATUM — TASK-32041 was renumbered to TASK-32047
+>
+> **Everything below that says "TASK-32041" means the task now filed as
+> `backlog/tasks/task-32047 - canvas_syncs-shared-dispatchers-take-two-receiver-types-with-no-guard-8-of-10-Library-controllers-have-no-state-accessor.md`.**
+> The historical text is left standing rather than rewritten, because the
+> commit `bad16ab8f` really did file it as 32041 and that is the fact this
+> report records.
+>
+> **What happened.** The sweep below was correct when it ran and still
+> minted a colliding id, because the collision was created *after* it, in
+> parallel, on `dev`: `553960448` ("file critique #7 fix tasks 32041-32046")
+> minted its own TASK-32041 — *Library media: at 235 wide, arrow-Down leaks
+> focus into the reader and Escape will not close it* — and `973b4c039`
+> then CLOSED that one. Two unrelated tasks, two different filenames, so
+> `git merge` takes both without a conflict and the duplicate only surfaces
+> as the `preflight.sh` / CI duplicate-backlog-task-id check going red after
+> the merge. Caught by the final whole-branch review, before the merge.
+>
+> **The re-sweep, run immediately before choosing the replacement id**, this
+> time over `git rev-list --objects --all` (every blob path reachable from
+> all 655 local + remote refs, so renamed and deleted task files count too,
+> not just the tips): true max **32046**. Next free: **32047**. Verified
+> free both as a filename and as a content reference (`git grep task-32047`
+> across every ref: no hits).
+>
+> **The lesson this adds to `lessons-backlog-hygiene.md`'s probe habit.** A
+> sweep of ids is a snapshot, and a long-lived branch invalidates it the
+> moment another branch files anything. The sweep is necessary and it is not
+> sufficient: **re-sweep at the merge, not only at the filing.** Leapfrogging
+> past the swept max (which this close did — 32033 → 32040/32041) buys a
+> gap, not immunity; dev consumed 32041-32046 inside that same gap. The
+> cheap, durable check is the one that caught it: the duplicate-id check is
+> already in `preflight.sh`, so run `preflight.sh` **after** the
+> reconciliation merge, never only before it.
+>
+> **Also noted, not fixed (no collision has fired, and it is not in this
+> merge).** TASK-32040 — the other id filed by `bad16ab8f` — is unique in
+> both trees being merged here, but the same all-refs sweep shows **two
+> other, unrelated** `task-32040` files on unmerged branches:
+> *Console-Assistant-turn-harness-omits-the-split-production-stylesheet* on
+> `origin/codex/dev-test-review-20260904` and
+> *Preserve-selected-private-history-when-Console-trace-capture-is-enabled*
+> on `origin/codex/kokoro-speech-trace-recovery`. Those two collide with each
+> other regardless of this branch. Whichever lands on `dev` first turns our
+> 32040 into the same red. Flagged for whoever merges those branches.
+>
+> Three references updated with the renumber:
+> `backlog/tasks/task-31249 - ...md` (the wave-8 census block),
+> `backlog/docs/library-decomposition-recipe.md` §25, and this section.
 
 **The id sweep, run IMMEDIATELY before filing.** Local max: **32013**. Max
 across all **647** local + remote refs (`git for-each-ref` × `git ls-tree`
@@ -508,13 +571,13 @@ Identical bytes. A 30 ms median swing and a visibly dirtier distribution
 (max 702 vs 490) purely from where the tree sits. **§3 puts the isolated
 baseline at a scratch path and the branch is the working worktree, so every
 probe pair this program has run for eight waves compared two different
-filesystems.** The order swap protects against warm-up; nothing protected
+checkout LOCATIONS.** The order swap protects against warm-up; nothing protected
 against this, and from the numbers alone the two are indistinguishable —
 wave-6's "branch slower on all sixteen measurements" is equally consistent
 with it. Recipe §9 now requires probing the branch from a scratch worktree
 too.
 
-### 7.2 The valid pair — same filesystem, n=10 interleaved, medians
+### 7.2 The valid pair — same checkout location, n=10 interleaved, medians
 
 | interaction | settle br / base | max gap br / base | recompose | full-update | mounts br / base | nodes |
 |---|---|---|---|---|---|---|
@@ -625,6 +688,46 @@ methodology defect that has silently affected every probe pair this program
 ran. The alternative — reporting "branch slower on 15 of 16 measurements,
 probably warm-up" — would have been the fourth time in this program that a
 confident cheaper explanation was wrong.
+
+> **ERRATUM — the finding was labelled "two different FILESYSTEMS"; it is
+> "two different CHECKOUT LOCATIONS".** The final whole-branch review
+> spot-checked the label and it failed. Re-verified here: the working
+> worktree (`~/Documents/GitHub/ppqq/...`) and the scratch path
+> (`/private/tmp/...`) are the **same** APFS volume — `df` reports
+> `/dev/disk3s5` mounted at `/System/Volumes/Data` for both, and
+> `stat -f %d` returns the identical device id **16777234** for both. Same
+> volume, therefore the same mount options too (`apfs, local, journaled,
+> nobrowse, protect, root data`), so no mount-flag difference can be
+> reached for either.
+>
+> **What survives untouched:** the phenomenon (a **30 ms** median swing and
+> max 702 ms vs 490 ms on `media (switch-in)` from **byte-identical** source
+> — `diff -r` empty), the 118 runs across five trees, the elimination ladder
+> that ruled out warm-up / the wave / this close's own commits / run order,
+> and the §9 rule that both sides must be probed from scratch worktrees.
+> The rule was never load-bearing on the word "filesystem"; it is
+> load-bearing on "same kind of location", which is what it now says.
+>
+> **What does not survive is the stated mechanism, and that is the point.**
+> §24 item 3 — *a citation used as a REASON is load-bearing, and a wrong
+> reason is worse than a thin one* — is this close's own contribution, and
+> it applies to this close. "Different filesystems" is a mechanism a reader
+> can act on (mount an APFS volume, done), and it would have sent the next
+> investigator somewhere with nothing in it. The honest statement is that
+> **the mechanism is unidentified.** Candidates, named as candidates:
+> per-path Spotlight importer scope (indexing is enabled on
+> `/System/Volumes/Data`, which covers both paths, but the two paths are not
+> necessarily in scope alike); directory metadata and tree density under a
+> large, long-lived home-directory checkout; endpoint/AV or
+> `EndpointSecurity` scanners scoped to user-data paths. **One candidate is
+> already ELIMINATED on the machine that took the readings:**
+> file-provider/iCloud sync on `~/Documents` — that directory is a plain
+> local directory there (`drwx------`, not a symlink; no
+> `Library/Mobile Documents/com~apple~CloudDocs/Documents`), so
+> "Desktop & Documents" sync is not on and cannot be the cause. Recorded so
+> the next investigator does not spend a round re-eliminating it.
+>
+> Relabelled in §7.1 and §7.2 above, and in recipe §9, §23 and §25.
 
 **Process notes.** Staging was from explicit path lists, never `git add -A`
 (wave-7's erratum), and `git status` was checked for untracked files before
