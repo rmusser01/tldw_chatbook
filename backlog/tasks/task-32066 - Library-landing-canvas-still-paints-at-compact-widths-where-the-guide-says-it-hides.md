@@ -3,9 +3,10 @@ id: TASK-32066
 title: >-
   Library landing canvas still paints at compact widths where the guide says it
   hides
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-08 18:25'
+updated_date: '2026-09-08 18:47'
 labels:
   - library
   - docs
@@ -25,3 +26,12 @@ At 100x30 the landing canvas ('Search everything…', counts, From your Library,
 <!-- AC:BEGIN -->
 - [ ] #1 library.md and the landing behaviour at compact widths agree (either hide the canvas or document that it stays)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Failing test at (100,30): the landing canvas still paints beside the rail.
+2. Hide the canvas host while the landing canvas is mounted below LIBRARY_NOTES_COMPACT_BREAKPOINT, so the existing RAIL_ONLY width contract gives the rail the columns.
+3. Keep the wide route unchanged (regression test at 170x48).
+4. Stamp Docs/User_Guide/library.md.
+<!-- SECTION:PLAN:END -->

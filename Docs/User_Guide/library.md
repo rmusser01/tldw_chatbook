@@ -692,3 +692,8 @@ time) can be fixed in one action once a provider IS configured — "Analyze
 N skipped" above the import queue, over every skipped id currently in the
 queue. Details on the
 [import & export](library/import-and-export.md) page.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32066:
+below 120 columns the landing canvas no longer paints beside the rail — the
+rail takes the full width and owns navigation, matching the compact contract
+this page already described.)*
