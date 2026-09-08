@@ -1594,7 +1594,11 @@ class MeetingSessionOwner:
 
     # ---- explicit enrollment ----------------------------------------------
     def _embedding_diarizer(
-        self, progress: Callable[[str], None] | None = None, *, borrow: bool = True
+        self,
+        progress: Callable[[str], None] | None = None,
+        *,
+        borrow: bool = True,
+        cancel: threading.Event | None = None,
     ) -> tuple[Any | None, bool]:
         """A diarizer able to embed audio, spawning (and warming) one if needed.
 
@@ -1645,14 +1649,29 @@ class MeetingSessionOwner:
         # SpeechBrain path, which never reports "downloading".
         fetch_deadline = time.monotonic() + MODELS_DOWNLOAD_BUDGET_S
         while str(getattr(spawned, "warmup_status", "")).startswith("downloading"):
+            if cancel is not None and cancel.is_set():
+                # Final re-review: without this, Cancel during a first-run
+                # download did nothing for the whole fetch budget.
+                self._close_diarizer(spawned)
+                return None, False
             if time.monotonic() >= fetch_deadline or spawned.wait_ready(ENROLL_FETCH_POLL_S):
                 break
             self._report(progress, spawned.warmup_status)
-        if not spawned.wait_ready(READY_TIMEOUT_S):
-            # The models are on disk by now (or the fetch failed and the
-            # backend has already given up), so this bounds only the worker's
-            # own load. Giving up here is the only honest answer -- the embed
-            # op would silently return None anyway.
+        # The models are on disk by now (or the fetch failed and the backend
+        # has already given up), so this bounds only the worker's own load.
+        # Giving up here is the only honest answer -- the embed op would
+        # silently return None anyway. With a cancel event the wait is
+        # sliced so Cancel also works while the worker loads its models.
+        if cancel is None:
+            ready = spawned.wait_ready(READY_TIMEOUT_S)
+        else:
+            ready_deadline = time.monotonic() + READY_TIMEOUT_S
+            ready = False
+            while not ready:
+                ready = spawned.wait_ready(ENROLL_FETCH_POLL_S)
+                if not ready and (cancel.is_set() or time.monotonic() >= ready_deadline):
+                    break
+        if not ready:
             self._close_diarizer(spawned)
             return None, False
         return spawned, True
@@ -1739,12 +1758,15 @@ class MeetingSessionOwner:
         try:
             # The worker FIRST (review M8): warm-up can fail, and giving up
             # then must not have opened the microphone at all.
-            diarizer, spawned = self._embedding_diarizer(progress=progress, borrow=False)
+            diarizer, spawned = self._embedding_diarizer(progress=progress, borrow=False, cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                # Checked BEFORE the "unavailable" verdict: a cancelled
+                # warm-up returns (None, False) too, and the user asked for
+                # "cancelled", not a diagnosis (final re-review).
+                return EnrollResult(ok=False, reason="cancelled")
             if diarizer is None:
                 return EnrollResult(ok=False, reason="diarizer_unavailable")
             spawned_diarizer = diarizer if spawned else None
-            if cancel is not None and cancel.is_set():
-                return EnrollResult(ok=False, reason="cancelled")
             try:
                 recorder = self._mic_factory(use_vad=False, retain_audio=True, chunk_size=320)
                 if self.settings.mic_device:

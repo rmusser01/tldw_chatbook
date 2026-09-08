@@ -1315,7 +1315,9 @@ class MeetingsScreen(BaseAppScreen):
                 self._enroll_timer = self.set_interval(1.0, self._tick_countdown)
             return
         self._stop_countdown()
-        self._set_enroll_progress(f"{status.capitalize()}…")
+        # Only the first character: `str.capitalize()` would turn
+        # "downloading 3 / 44 MB" into "... mb" (final re-review).
+        self._set_enroll_progress(f"{status[:1].upper()}{status[1:]}…")
 
     def _tick_countdown(self) -> None:
         if not self.is_mounted:

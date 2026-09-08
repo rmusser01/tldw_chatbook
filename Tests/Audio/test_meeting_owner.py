@@ -2026,6 +2026,37 @@ def test_enrollment_waits_out_the_model_fetch_before_starting_the_ready_clock(tm
     assert any(s.startswith("downloading") for s in seen)   # ... and said so
 
 
+def test_enrollment_cancel_during_the_model_fetch_returns_promptly_and_closes_the_worker(tmp_path, monkeypatch):
+    """Final re-review: the fetch-wait ignored the user's cancel event, so a
+    Cancel during a first-run download did nothing for up to the whole 600 s
+    fetch budget. The wait must break on cancel, close the worker it spawned,
+    and report "cancelled" -- not "diarizer_unavailable"."""
+    import threading
+    import time
+
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    class StuckDownloading(FakeBackend):
+        warmup_status = "downloading 3 / 44 MB"
+
+        def wait_ready(self, timeout):
+            time.sleep(min(float(timeout), 0.05))
+            return False
+
+    backend = StuckDownloading()
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda **kw: backend)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    cancel = threading.Event()
+    threading.Timer(0.2, cancel.set).start()
+
+    t0 = time.monotonic()
+    result = owner.enroll_from_mic(seconds=1.0, cancel=cancel)
+
+    assert result.ok is False and result.reason == "cancelled"
+    assert time.monotonic() - t0 < 3.0                 # promptly, not after 600 s
+    assert backend.closed == 1                         # the spawned worker is released
+
+
 def test_enroll_from_mic_reports_a_failed_embed_without_saving(tmp_path, monkeypatch):
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
