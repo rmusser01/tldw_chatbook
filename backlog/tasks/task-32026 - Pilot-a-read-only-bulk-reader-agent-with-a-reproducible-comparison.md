@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-08 04:45'
-updated_date: '2026-09-08 06:20'
+updated_date: '2026-09-08 06:30'
 labels: []
 dependencies: []
 ---
@@ -40,7 +40,7 @@ A real-gateway reproducer showed Console discarded named-agent model overrides. 
 
 Added a pinned four-case synthetic repository/transcript comparison through real AgentService, Console adapter, local tools and scratch SQLite. It records each main/worker call, requires named-worker content access, flags token-limited or incomplete results, and keeps missing usage/prices unknown. The live runner supports Moonshot/ZAI through their bounded timeout/retry seam; other preset providers are unchanged. Guide: Docs/Examples/agents/bulk-reader/README.md.
 
-Worktree evidence: 19 focused preset/UI/adapter/regression tests passed, including production CSS at 120x40 and 70x40. After evaluator review fixes, 20 focused evaluator/preset/adapter tests passed. Changed-file lint, formatting, compilation and CLI help/refusal checks passed. One pre-existing requests dependency warning remains. Targeted integration checks and final review follow before handoff.
+Worktree evidence: 19 focused preset/UI/adapter/regression tests passed, including production CSS at 120x40 and 70x40. After evaluator review fixes, 20 focused evaluator/preset/adapter tests passed. Changed-file lint, formatting, compilation and CLI help/refusal checks passed. One pre-existing requests dependency warning remains. Integration evidence: 37 targeted tests passed in the user checkout, covering the preset, Settings UI, evaluator, worker model override, provider continuation and concurrent subagents. Changed-file Ruff checks and new-file formatting passed. The final review found a test-only hardcoded interpreter path; replacing it with sys.executable passed the affected CLI subprocess test and Ruff/format checks in the integrated checkout. Scoped re-review confirmed all findings addressed with no new Critical/Important breakage. All 16 task files were integrated while preserving staged changes and concurrent edits; the initial patch round trip verified the original bytes for 15 files, and the testing lesson was appended without altering existing entries.
 
 ADR required: no. ADR path: N/A. Existing named-agent/provider contracts are reused; no schema, dependency or automatic routing is introduced. Added an incident-based testing lesson about verifying model selection at the provider boundary.
 

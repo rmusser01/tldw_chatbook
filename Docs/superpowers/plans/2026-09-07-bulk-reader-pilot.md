@@ -150,8 +150,8 @@ BULK_READER_PRESET = AgentDefinition(
 ### Completion
 
 - [ ] After user model choice, run the live comparison and review expected facts.
-- [ ] Review the combined diff, integrate only this task's files into the user's
+- [x] Review the combined diff, integrate only this task's files into the user's
   checkout without overwriting concurrent edits, and recheck integration.
-- [ ] Add task implementation notes and test/live evidence; check only satisfied
+- [x] Add task implementation notes and test/live evidence; check only satisfied
   ACs. Mark Done only when all required work including chosen live evaluation
   is actually complete; otherwise keep live model selection explicit.
