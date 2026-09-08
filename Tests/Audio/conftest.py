@@ -100,3 +100,41 @@ def meeting_session_with_fake_capture(tmp_path):
         )
 
     return _build
+
+
+# --- opt-in real-worker helpers (task 8: 31827) -----------------------------
+#: Engine name -> the packages its worker needs to be importable.
+REAL_ENGINE_PACKAGES = {
+    "speechbrain": ("torch", "torchaudio", "speechbrain", "sklearn"),
+    "onnx": ("sherpa_onnx", "numpy"),
+}
+
+
+def real_engine_available(engine: str) -> bool:
+    """True when every package `engine`'s worker imports is importable here."""
+    import importlib.util
+
+    for name in REAL_ENGINE_PACKAGES[engine]:
+        try:
+            if importlib.util.find_spec(name) is None:
+                return False
+        except (ImportError, ValueError):
+            return False
+    return True
+
+
+def real_engine_kwargs(engine: str, models_dir) -> dict:
+    """`LocalDiarizer` kwargs for an opt-in real-worker run of `engine`.
+
+    The ONNX engine needs its models on disk. `$TLDW_DIARIZER_MODELS_DIR`
+    points at an already-populated directory (how these are run repeatedly);
+    with it unset they are downloaded into the test's own `tmp_path`. Never
+    the user's real data dir -- an opt-in test must not write there.
+    """
+    import os
+    from pathlib import Path
+
+    if engine != "onnx":
+        return {}
+    env_dir = os.environ.get("TLDW_DIARIZER_MODELS_DIR")
+    return {"models_dir_override": Path(env_dir) if env_dir else Path(models_dir)}
