@@ -11,7 +11,11 @@ whole transcript again on every send.
 Provider-only material has no transcript row to point at. Rendered project
 instructions, RAG or memory context, tool schemas, tool arguments and results,
 provider transformations, and unmatched responses are filtered and saved once
-as trace artifacts. Repeated calls reuse those artifacts where possible.
+as trace artifacts. This includes automatic `AGENTS.md` and `AGENTS.override.md`
+context: each captured call preserves the instructions supplied to that call,
+even if the file changes or project instructions are later disabled. These
+instructions do not become saved user messages. Repeated calls reuse artifacts
+where possible.
 
 A trace describes the final semantic values handed to Chatbook's provider
 adapter. It is not generally a byte-for-byte HTTP log: provider-library framing,
