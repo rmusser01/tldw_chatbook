@@ -146,6 +146,72 @@ async def test_resource_cleanup_attempts_every_owner_before_reporting_errors(
         assert [type(error) for error in caught.exceptions] == expected_types
 
 
+@pytest.mark.parametrize(
+    "fail_before_teardown", [False, True], ids=("normal", "forced")
+)
+async def test_resource_cleanup_retires_real_sqlite_after_earlier_owner_failure(
+    monkeypatch, tmp_path, fail_before_teardown
+):
+    """A failed controller shutdown cannot strand later real SQLite owners."""
+    shutdown_error = RuntimeError("shutdown failed")
+
+    class Controller:
+        def __init__(self):
+            pass
+
+        async def shutdown(self):
+            raise shutdown_error
+
+    monkeypatch.setattr(resources, "ConsoleChatController", Controller)
+    fixture = resources.close_owned_console_resources.__wrapped__(
+        monkeypatch, tmp_path, None
+    )
+    await anext(fixture)
+    databases = []
+    forced_error = (
+        AssertionError("forced failure before fixture teardown")
+        if fail_before_teardown
+        else None
+    )
+    operation_error = None
+    caught = None
+    try:
+        Controller()
+        databases = [
+            resources.CharactersRAGDB(
+                tmp_path / f"real-{index}.sqlite", client_id=f"real-{index}"
+            )
+            for index in range(2)
+        ]
+        for database in databases:
+            with database.transaction() as cursor:
+                assert cursor.execute("SELECT 1").fetchone()[0] == 1
+            assert database.registered_connection_count() == 1
+        if forced_error is not None:
+            raise forced_error
+    except BaseException as exc:
+        operation_error = exc
+    finally:
+        try:
+            await anext(fixture)
+        except StopAsyncIteration:
+            pass
+        except BaseException as exc:
+            caught = exc
+        finally:
+            await fixture.aclose()
+
+    assert isinstance(caught, ExceptionGroup)
+    assert caught.exceptions == (shutdown_error,)
+    if operation_error is not None and operation_error is not forced_error:
+        raise operation_error
+    assert [database.registered_connection_count() for database in databases] == [
+        0,
+        0,
+    ]
+    assert operation_error is forced_error
+
+
 @pytest.mark.parametrize("failure", [None, "runtime", "runtime_cancel", "database"])
 async def test_app_cleanup_owns_only_importing_module_builder_products(
     monkeypatch, failure

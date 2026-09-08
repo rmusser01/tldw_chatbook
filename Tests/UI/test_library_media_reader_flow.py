@@ -867,6 +867,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="The first authoritative filter result was not selected in Reader.",
         )
+        await _wait_for_selector(screen, pilot, "#library-media-filter-clear")
         screen.query_one("#library-media-filter-clear", Button).press()
         await _wait_for_condition(
             pilot,

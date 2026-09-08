@@ -1060,3 +1060,45 @@ All six derived-artifact checks pass, including all 3,603 Backlog task records
 (`/private/tmp/pr2427-keyboard-rebase-preflight.log`). The full rebased shell
 and fourteen-file mounted cohort are running on frozen sources; they remain
 required before a merge-ready claim.
+
+## September 8 mounted qualification and Qodo round 4
+
+On published `91f4122884`, the complete Library shell passes **846 tests in
+1,579.00s**, but its unchanged descriptor sentinel reports **12 to 475 handles
+(+463, limit 200)**. This is functional coverage, not resource clearance;
+native-owner attribution remains open. The fourteen-file mounted cohort finishes
+**681 passed / 10 failed in 912.39s**. Logs are
+`/private/tmp/pr2427-shell-rebased-final.log` and
+`/private/tmp/pr2427-mounted-rebased-final.log`. No warnings are suppressed.
+
+The four navigation failures assumed every visit constructed a fresh Screen,
+contrary to accepted installed-screen reuse. Step 35 preserves the cold-path
+assertions with scoped route metadata and adds default warm-path identity,
+retained-input/typing and full staged-launch payload checks. All 134 unrelated
+functions remain AST-identical and all 27 old mounted-journey assertions remain.
+The complete navigation and three reuse files pass **162 tests in 164.74s**;
+independent review passes. The Reader filter failure observed settled domain
+state before its Clear button's recompose settled. The existing stable-selector
+wait immediately precedes the unchanged lookup and real press. Its complete
+file passes **84 tests in 88.51s**, and independent review passes.
+
+Qodo round 4's four verified findings are repaired in tests only: transaction
+cursors for proof reads, cold-restart cleanup on early failure, exhaustive
+agent-swap owner cleanup with error aggregation, and real SQLite evidence
+complementing the unchanged synthetic fault matrix. Four complete files pass
+**115 tests in 50.55s**. Independent review then found a missing early-failure
+cleanup guard in the new real-SQLite control. A forced failure reproduces it;
+the corrected complete resource-fixture file passes **15 tests in 2.11s**,
+including that new control. The other three files remain unchanged. All
+pre-existing assertions are retained, scoped Ruff checks pass, and independent
+review passes the corrective increment. These findings still require published
+inline responses and final-revision review.
+
+Four Trash focus/layout failures and the descriptor warning remain open. The
+Live Trash walkthrough's startup resets its preinstalled logging sinks; fixing
+capture/cleanup exposes a previously masked Items-pane toggle failure. Its
+latest complete run is **4 passed / 1 failed**, not qualification. Task step 37
+records the capture repair and non-vacuous privacy requirements. New dev
+`e38b44acee` also requires reconciliation; its two review-created Backlog ID
+collisions need the requested user exception before renumbering. No merge-ready
+claim is made at this checkpoint.

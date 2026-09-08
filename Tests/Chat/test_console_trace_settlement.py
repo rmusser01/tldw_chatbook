@@ -1430,53 +1430,57 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
     path = tmp_path / "trace-restart.sqlite"
     repository = ConsoleTraceRepository()
     first = CharactersRAGDB(str(path), "trace-restart-first")
-    _conversation_id, _segment_id, reserved_id = _call(
-        first, repository, sequence=0, state=TraceCallState.RESERVED
-    )
-    _conversation_id, _segment_id, dispatched_id = _call(
-        first, repository, sequence=1, state=TraceCallState.DISPATCH_STARTED
-    )
-    _conversation_id, _segment_id, response_id = _call(
-        first, repository, sequence=2, state=TraceCallState.RESPONSE_STARTED
-    )
-    _conversation_id, _segment_id, terminal_id = _call(
-        first, repository, sequence=3, state=TraceCallState.RESPONSE_STARTED
-    )
-    ConsoleTraceSettlementCoordinator(repository).settle(first, _request(terminal_id))
-    # RESERVED has a real SQLite created_at, unlike the explicit historical
-    # dispatch timestamps above. Recover after that reservation is stale too.
-    recovery_at, repeat_recovery_at = (
-        first.get_connection()
-        .execute(
-            """SELECT strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day'),
+    try:
+        _conversation_id, _segment_id, reserved_id = _call(
+            first, repository, sequence=0, state=TraceCallState.RESERVED
+        )
+        _conversation_id, _segment_id, dispatched_id = _call(
+            first, repository, sequence=1, state=TraceCallState.DISPATCH_STARTED
+        )
+        _conversation_id, _segment_id, response_id = _call(
+            first, repository, sequence=2, state=TraceCallState.RESPONSE_STARTED
+        )
+        _conversation_id, _segment_id, terminal_id = _call(
+            first, repository, sequence=3, state=TraceCallState.RESPONSE_STARTED
+        )
+        ConsoleTraceSettlementCoordinator(repository).settle(
+            first, _request(terminal_id)
+        )
+        # RESERVED has a real SQLite created_at, unlike the explicit historical
+        # dispatch timestamps above. Recover after that reservation is stale too.
+        with first.transaction() as cursor:
+            recovery_at, repeat_recovery_at = cursor.execute(
+                """SELECT strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day'),
                   strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '+1 day', '+1 second')
              FROM console_trace_calls WHERE call_id = ?""",
-            (reserved_id,),
-        )
-        .fetchone()
-    )
-    first.close_connection()
+                (reserved_id,),
+            ).fetchone()
+    finally:
+        first.close_connection()
 
     reopened = CharactersRAGDB(str(path), "trace-restart-second")
-    coordinator = ConsoleTraceSettlementCoordinator(repository)
-    recovered = recover_console_trace_calls(
-        reopened,
-        occurred_at=recovery_at,
-        repository=repository,
-    )
-    assert {record.call_id: record.state for record in recovered} == {
-        reserved_id: TraceCallState.NOT_DISPATCHED,
-        dispatched_id: TraceCallState.DISPATCH_UNKNOWN,
-        response_id: TraceCallState.INTERRUPTED,
-    }
-    assert (
-        coordinator.recover_open_calls(reopened, occurred_at=repeat_recovery_at) == ()
-    )
-    assert (
-        repository.get_call(reopened.get_connection().cursor(), terminal_id).state
-        is TraceCallState.COMPLETE
-    )  # type: ignore[union-attr]
-    reopened.close_connection()
+    try:
+        coordinator = ConsoleTraceSettlementCoordinator(repository)
+        recovered = recover_console_trace_calls(
+            reopened,
+            occurred_at=recovery_at,
+            repository=repository,
+        )
+        assert {record.call_id: record.state for record in recovered} == {
+            reserved_id: TraceCallState.NOT_DISPATCHED,
+            dispatched_id: TraceCallState.DISPATCH_UNKNOWN,
+            response_id: TraceCallState.INTERRUPTED,
+        }
+        assert (
+            coordinator.recover_open_calls(reopened, occurred_at=repeat_recovery_at)
+            == ()
+        )
+        assert (
+            repository.get_call(reopened.get_connection().cursor(), terminal_id).state
+            is TraceCallState.COMPLETE
+        )  # type: ignore[union-attr]
+    finally:
+        reopened.close_connection()
 
 
 def test_startup_recovery_leaves_recent_cross_process_call_open(
