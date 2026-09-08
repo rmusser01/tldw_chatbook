@@ -11,6 +11,7 @@ import os
 import re
 import sqlite3
 import types
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from html import unescape
 from pathlib import Path
@@ -33,6 +34,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseScope,
     MediaTrashScope,
+    build_media_browse_result,
     build_media_trash_result,
 )
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
@@ -481,9 +483,7 @@ async def _wait_for_trash_page(
 async def _ensure_items_open(screen: LibraryScreen, pilot) -> None:
     if screen._media_state.reader_layout.items_open:
         return
-    grip = screen.query_one("#library-browse-items-grip", Button)
-    grip.focus()
-    await pilot.press("enter")
+    await _toggle_pane(screen, pilot, pane="items", expected_open=True)
     await _wait_for_condition(
         pilot,
         lambda: (
@@ -497,13 +497,20 @@ async def _ensure_items_open(screen: LibraryScreen, pilot) -> None:
 async def _toggle_pane(
     screen: LibraryScreen, pilot, *, pane: str, expected_open: bool
 ) -> None:
-    grip = screen.query_one(f"#library-browse-{pane}-grip", Button)
+    selector = f"#library-browse-{pane}-grip"
+    grip = await _current_widget(screen, pilot, selector, Button)
     grip.focus()
+    # A settled page can still own an after-paint focus handoff.
+    await pilot.pause()
+    grip = screen.query_one(selector, Button)
+    grip.focus()
+    assert screen.focused is grip
     await pilot.press("enter")
     await _wait_for_condition(
         pilot,
-        lambda: getattr(screen._media_state.reader_layout, f"{pane}_open")
-        is expected_open,
+        lambda: (
+            getattr(screen._media_state.reader_layout, f"{pane}_open") is expected_open
+        ),
         message=f"{pane} pane never reached open={expected_open}.",
     )
 
@@ -606,20 +613,25 @@ def _target_sqlite_handles(db_path: Path) -> tuple[Path, ...]:
 
 
 async def _walk_size_on_owned_loop(
-    *, db: MediaDatabase, size: tuple[int, int]
+    *, db: MediaDatabase, size: tuple[int, int], start_log_capture: Callable[[], None]
 ) -> dict[str, Any]:
     """Run one size with one known default-executor connection owner."""
     loop = asyncio.get_running_loop()
     loop.set_default_executor(
         ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"trash-{size[0]}")
     )
-    return await _walk_size(db=db, size=size)
+    try:
+        return await _walk_size(db=db, size=size, start_log_capture=start_log_capture)
+    finally:
+        # Close on the same single executor thread, including pre-mount failures.
+        await asyncio.to_thread(db.close_connection)
 
 
 async def _walk_size(
     *,
     db: MediaDatabase,
     size: tuple[int, int],
+    start_log_capture: Callable[[], None],
 ) -> dict[str, Any]:
     width, _height = size
     local_service = LocalMediaReadingService(db)
@@ -669,11 +681,14 @@ async def _walk_size(
     probe = _LiveTrashProbe(scope_service, local_service)
     probe.install()
     delete_log = io.StringIO()
+    delete_stdlib_log = io.StringIO()
     delete_loguru_sink: int | None = None
     delete_stdlib_handler: logging.Handler | None = None
 
     try:
         async with app.run_test(size=size) as pilot:
+            # TldwCli.on_mount resets both logging APIs' handlers.
+            start_log_capture()
             await _wait_for_condition(
                 pilot,
                 lambda: isinstance(app.screen, LibraryScreen),
@@ -698,6 +713,7 @@ async def _walk_size(
                 message="Normal Media page 2 never settled.",
             )
             normal_retained = normal.state.retained_items
+            normal_applied = normal.state.applied_result
             assert len(normal_retained) == 20
             selected_normal_id = str(normal_retained[7]["id"])
             await _wait_for_condition(
@@ -1173,9 +1189,11 @@ async def _walk_size(
             delete_loguru_sink = logger.add(
                 delete_log, format="{message}", level="DEBUG"
             )
-            delete_stdlib_handler = logging.StreamHandler(delete_log)
+            delete_stdlib_handler = logging.StreamHandler(delete_stdlib_log)
             delete_stdlib_handler.setLevel(logging.DEBUG)
             logging.getLogger().addHandler(delete_stdlib_handler)
+            logger.warning("delete-loguru-start")
+            logging.getLogger().warning("delete-stdlib-start")
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
@@ -1212,13 +1230,16 @@ async def _walk_size(
                 total=46,
                 expected_ids=after_delete_ids,
             )
+            assert delete_stdlib_handler in logging.getLogger().handlers
+            logger.warning("delete-loguru-complete")
+            logging.getLogger().warning("delete-stdlib-complete")
             logging.getLogger().removeHandler(delete_stdlib_handler)
             delete_stdlib_handler.flush()
             delete_stdlib_handler.close()
             delete_stdlib_handler = None
             logger.remove(delete_loguru_sink)
             delete_loguru_sink = None
-            delete_log_text = delete_log.getvalue()
+            delete_log_text = delete_log.getvalue() + delete_stdlib_log.getvalue()
             db_path = Path(db.db_path).resolve()
             delete_private_values = (
                 str(db_path),
@@ -1234,18 +1255,25 @@ async def _walk_size(
             )
             for private_value in delete_private_values:
                 assert private_value not in delete_log_text
-            permanent_lines = tuple(
-                line
-                for line in delete_log_text.splitlines()
-                if "operation=permanent_delete" in line
-            )
-            assert permanent_lines == (
-                "Media mutation operation=permanent_delete status=started count=1",
-                "Media mutation operation=permanent_delete status=committed count=1",
-            )
+            # Production forwards Loguru into stdlib: verify each channel,
+            # without counting the same event twice in a shared buffer.
+            for captured_log in (delete_log, delete_stdlib_log):
+                for checkpoint in ("start", "complete"):
+                    assert f"delete-loguru-{checkpoint}" in captured_log.getvalue()
+                permanent_lines = tuple(
+                    line
+                    for line in captured_log.getvalue().splitlines()
+                    if "operation=permanent_delete" in line
+                )
+                assert permanent_lines == (
+                    "Media mutation operation=permanent_delete status=started count=1",
+                    "Media mutation operation=permanent_delete status=committed count=1",
+                )
+            for checkpoint in ("start", "complete"):
+                assert f"delete-stdlib-{checkpoint}" in delete_stdlib_log.getvalue()
 
-            # Restore mutates the real DB, stales but does not splice the
-            # retained normal-Media page, and keeps Back's captured context.
+            # TASK-31275: an owned Restore authoritatively refreshes normal
+            # Media without a manual Retry, preserving Back's captured context.
             restore_id = "local:media:44"
             restore_row = _row_for_media(screen, restore_id)
             restore_row.focus()
@@ -1273,8 +1301,39 @@ async def _walk_size(
                 expected_ids=after_restore_ids,
             )
             assert db.get_media_by_id(44, include_trash=False) is not None
-            assert normal.state.freshness == "stale"
-            assert normal.state.retained_items is normal_retained
+            expected_scope = MediaBrowseScope(page=2)
+            expected_normal = build_media_browse_result(
+                expected_scope,
+                await scope_service.search_media(
+                    mode="local",
+                    query="",
+                    limit=20,
+                    offset=20,
+                    sort_by="last_modified_desc",
+                    library_summary=True,
+                    match_reasons=True,
+                ),
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    normal.state.freshness == "fresh"
+                    and not normal.state.loading
+                    and normal.state.applied_scope == expected_scope
+                    and normal.state.applied_result is not normal_applied
+                ),
+                message="Owned Restore never refreshed authoritative normal Media.",
+            )
+            assert normal.state.retained_items is not normal_retained
+            assert normal.state.retained_items != normal_retained
+            assert normal.state.retained_items == expected_normal.items
+            assert normal.state.applied_result.total == expected_normal.total == 46
+            assert screen._media_state.selected_media_id == selected_normal_id
+            assert selected_normal_id in {
+                str(item["id"]) for item in normal.state.retained_items
+            }
+            assert normal.state.pager.title_count == 46
+            assert normal.state.pager.retry_visible is False
             assert all(
                 str(item["id"]) != restore_id for item in normal.state.retained_items
             )
@@ -1328,6 +1387,13 @@ async def _walk_size(
                 int(restored_scroll.scroll_x),
                 int(restored_scroll.scroll_y),
             ) == saved_scroll
+            assert tuple(
+                row.media_id for row in screen.query(".library-media-row")
+            ) == tuple(item["id"] for item in expected_normal.items)
+            assert not screen.query("#library-media-retry")
+            painted = _painted_text(screen)
+            assert "Media changed" not in painted
+            assert "Page boundary is unknown" not in painted
             opener = screen.query_one("#library-media-trash-open", Button)
             assert screen.focused is opener
             assert opener.is_mounted and opener.region.area > 0
@@ -1358,9 +1424,6 @@ async def _walk_size(
             delete_stdlib_handler.close()
         if delete_loguru_sink is not None:
             logger.remove(delete_loguru_sink)
-        # The live runner gives this loop one default-executor worker, so
-        # this closes the service connection on the same thread that owns it.
-        await asyncio.to_thread(db.close_connection)
 
     return {
         "size": size,
@@ -1419,25 +1482,60 @@ def test_live_real_database_media_trash_walkthrough(
         db = _seed_real_media_database(
             db_path, width=width
         )
-        assert db_path.resolve() in sqlite_authority.observed
-        log_path = tmp_path / "logs" / f"media-trash-live-{width}.log"
-        _assert_path_allowed(log_path, authority_roots)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        loguru_sink = logger.add(log_path, format="{message}", level="DEBUG")
-        root_handler = logging.FileHandler(log_path, encoding="utf-8")
-        root_handler.setLevel(logging.DEBUG)
-        logging.getLogger().addHandler(root_handler)
+        loguru_sinks: list[int] = []
+        root_handlers: list[logging.FileHandler] = []
+
         try:
-            observation = asyncio.run(_walk_size_on_owned_loop(db=db, size=size))
+            assert db_path.resolve() in sqlite_authority.observed
+            log_path = tmp_path / "logs" / f"media-trash-live-{width}.log"
+            _assert_path_allowed(log_path, authority_roots)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            def start_log_capture() -> None:
+                phase = len(loguru_sinks)
+                assert phase in (0, 1)
+                loguru_sinks.append(
+                    logger.add(log_path, format="{message}", level="DEBUG")
+                )
+                root_handler = logging.FileHandler(log_path, encoding="utf-8")
+                root_handlers.append(root_handler)
+                root_handler.setLevel(logging.DEBUG)
+                logging.getLogger().addHandler(root_handler)
+                logger.warning("walkthrough-loguru-phase-{}", phase)
+                logging.getLogger().warning("walkthrough-stdlib-phase-%s", phase)
+
+            start_log_capture()
+            observation = asyncio.run(
+                _walk_size_on_owned_loop(
+                    db=db, size=size, start_log_capture=start_log_capture
+                )
+            )
+            assert len(loguru_sinks) == 2
+            assert root_handlers[1] in logging.getLogger().handlers
+            assert root_handlers[1].stream is not None
+            assert not root_handlers[1].stream.closed
+            logger.warning("walkthrough-loguru-complete")
+            logging.getLogger().warning("walkthrough-stdlib-complete")
         finally:
-            logging.getLogger().removeHandler(root_handler)
-            root_handler.flush()
-            root_handler.close()
-            logger.remove(loguru_sink)
+            try:
+                for root_handler in root_handlers:
+                    logging.getLogger().removeHandler(root_handler)
+                    root_handler.flush()
+                    root_handler.close()
+                for phase, loguru_sink in enumerate(loguru_sinks):
+                    try:
+                        logger.remove(loguru_sink)
+                    except ValueError:
+                        if phase != 0:
+                            raise
+            finally:
+                db.close_connection()
         size_log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        for api in ("loguru", "stdlib"):
+            for checkpoint in ("phase-0", "phase-1", "complete"):
+                assert f"walkthrough-{api}-{checkpoint}" in size_log_text
         for sentinel in PRIVACY_SENTINELS:
             assert sentinel not in size_log_text
-        db.close_connection()
         del db
         # `_run_library_service_call(isolate_in_worker=True)` creates nested
         # event-loop cycles whose thread-local connections become collectible
