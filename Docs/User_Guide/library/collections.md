@@ -194,6 +194,12 @@ and **Escape** returns focus to the rail, as on every Library canvas;
   that paints on every canvas. See [Library overview](../library.md).
 
 —
+*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Collections
+reader's two pane grips are one column each, painting `‹`/`›` instead of the
+five-column `<---`/`--->` run; opened live at 235x52, and collapsing the
+Library pane repainted its grip as a one-cell `›`. Retained across the
+2026-09-08 rewrite: it records THIS captures reader's grips, not the
+superseded manager's.)*
 *Verified against fix/library-crit8-docs — 2026-09-08 (task-32057 /
 task-32073: whole-page rewrite. The previous page described a
 create/rename/delete Collections manager that no longer ships; the row
@@ -206,3 +212,12 @@ canvas painted `Quick Capture` / `Filters` / `Sort: saved desc` /
 URL with Quick Capture." / `0–0 of 0`. The `legacy_read_only` reason and
 its recovery path are now on the canvas. AC#1 — what the row should BE —
 is a product decision and is deliberately left open.)*
+
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32057 fix round 1:
+the rail's Collections count is now withheld, not replaced by the unfiltered
+whole-library total, while a scoped page is loading or stale -- so the
+"Showing the last good page … the exact total is withheld" behaviour above
+holds for the rail row too, and a narrower scope's count no longer flashes the
+whole-library number mid-load. The obsolete screenshot of the superseded
+Collections manager was deleted rather than left orphaned.)*

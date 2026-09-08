@@ -11439,32 +11439,62 @@ class LibraryScreen(BaseAppScreen):
         indistinguishable from Search / RAG, whose count is absent by
         design.
 
-        Two deliberate constraints:
+        Three deliberate constraints:
 
         * It reads page 1 through the SAME scope-service enumerator the
-          canvas lists from (so the rail count and the list can never
-          disagree) but NOT through the reader controller -- a count read
-          must not pre-select a capture or arm an applied scope for the
-          Continue receipt, i.e. decide any part of a visit the user has
-          not made yet. The controller's own total wins the moment the
-          canvas has one.
+          canvas lists from, but NOT through the reader controller -- a
+          count read must not pre-select a capture or arm an applied scope
+          for the Continue receipt, i.e. decide any part of a visit the
+          user has not made yet. This is the UNFILTERED page-1 total, so it
+          answers only "how much is in Collections"; once the canvas owns a
+          scope, its own total is the authority and this value is not
+          consulted (see ``_build_library_shell_input``).
         * It runs INSIDE the local-source snapshot pass rather than as its
           own worker, so the count arrives with every other count and the
           screen still reconciles exactly once per snapshot
           (``Tests/UI/test_library_entry_compose_once.py``).
+        * Every path that does not produce a fresh total CLEARS the stored
+          one. ``CollectionsCaptureScopeService.deactivate()`` nulls the
+          active authority on an authority switch or teardown, and a
+          retained number would go on painting the previous authority's
+          count under the new one's name (fix round 1, finding 2).
+
+        The read carries its OWN deadline. It sits outside the shared
+        gather below (whose all-or-nothing failure branches would drop this
+        count whenever an unrelated source seam failed), so it would
+        otherwise be the one unbounded await in the snapshot pass -- and in
+        server mode ``list_page`` is an HTTP round trip with no timeout of
+        its own, which would hang every rail count in "Checking existing
+        Library content…" with no deadline sentence and no Retry (fix round
+        1, finding 3). A timeout is treated exactly like a failed read.
         """
         collections = self._collections_controller
         controller = collections._ensure_library_collections_capture_controller()
-        if controller is None:
-            return
-        scope_service = controller.scope_service
+        scope_service = (
+            controller.scope_service if controller is not None else None
+        )
         authority = getattr(scope_service, "active_authority", None)
         if authority is None:
+            self._library_collections_prefetched_total = None
             return
         try:
-            page = await scope_service.list_page(CapturePageRequest(authority.key))
-        except Exception:
-            logger.debug("Library Collections count read failed.")
+            page = await asyncio.wait_for(
+                scope_service.list_page(CapturePageRequest(authority.key)),
+                timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            # Reason, not raw text: in server mode this seam is an HTTP
+            # round trip, and an httpx exception's own message carries the
+            # server URL. ``_retry_failure_reason`` is the shared leak rule
+            # already applied to the Media callout -- it keeps an OS/SQLite
+            # message (paths redacted, 80 chars) and reduces anything else
+            # to its KIND, so the log gains context without a URL or a
+            # private path reaching a persistent sink.
+            logger.debug(
+                "Library Collections count read failed: {}",
+                _retry_failure_reason(exc),
+            )
+            self._library_collections_prefetched_total = None
             return
         self._library_collections_prefetched_total = page.total
 
@@ -13153,7 +13183,9 @@ class LibraryScreen(BaseAppScreen):
         # of the shared gather below on purpose: that gather's deadline and
         # its all-or-nothing failure branches would drop the count whenever
         # an UNRELATED source seam fails, which is precisely the "counts
-        # disagree" complaint this fixes.
+        # disagree" complaint this fixes. It carries its own
+        # ``asyncio.wait_for`` on the same constant so being outside that
+        # gather does not mean being unbounded.
         await self._read_library_collections_count()
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
@@ -15217,17 +15249,22 @@ class LibraryScreen(BaseAppScreen):
         collections_state = (
             collections_controller.state if collections_controller is not None else None
         )
-        collections_count = (
-            collections_state.exact_total
-            if collections_state is not None
-            else None
-        )
-        if collections_count is None:
-            # task-32057 AC#2: before (and between) canvas visits the rail
-            # reads the prefetched total from the same enumerator, so the
-            # row never paints a countless "Collections" beside its
-            # counted siblings.
+        if collections_state is None or collections_state.page is None:
+            # task-32057 AC#2: until the canvas has loaded a page at least
+            # once, the rail reads the unfiltered prefetched total so the
+            # row never paints a countless "Collections" beside its counted
+            # siblings.
+            #
+            # Fix round 1, finding 1: the gate is "has NEVER loaded a page",
+            # not "has no total right now". ``exact_total`` is also None
+            # while a page is loading or stale, so gating on it substituted
+            # the UNFILTERED total on every page turn and scope switch --
+            # "Favorites (2)" flashed the whole-library count mid-load --
+            # and gave a stale page a number the canvas deliberately
+            # withholds.
             collections_count = self._library_collections_prefetched_total
+        else:
+            collections_count = collections_state.exact_total
         counts = self._local_source_counts
         known = self._local_source_total_known
         counts_loading = not self._library_loaded and not self._library_lookup_error
