@@ -218,6 +218,52 @@ def test_env_overrides_both_thresholds_for_the_bakeoff(fake_sherpa, tmp_path, mo
     assert _Diarizer.last_config["clustering"]["threshold"] == 0.7
 
 
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "5.0", "0", "-0.3"])
+def test_out_of_range_threshold_env_values_are_ignored(bad, fake_sherpa, tmp_path, monkeypatch):
+    """A float that parses is not automatically a usable threshold.
+
+    These are cosine DISTANCES: `nan` makes `(1 - sim) <= nan` false for every
+    window, so the live clusterer mints a new speaker per window until the cap;
+    `inf` (or any value past 2.0, the widest possible cosine distance)
+    collapses every voice into S1. Both are silent, and both destroy live
+    labelling for the whole meeting -- so an unusable value falls back to the
+    manifest default exactly like an unparseable one (review Minor 3).
+    """
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    _place(eng, tmp_path)
+    monkeypatch.setenv("TLDW_DIARIZER_LIVE_THRESHOLD", bad)
+    monkeypatch.setenv("TLDW_DIARIZER_CLUSTER_THRESHOLD", bad)
+    wav = tmp_path / "mixed.wav"; _wav(wav)
+
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.live_threshold == eng.LIVE_THRESHOLD["titanet_small"]
+    loaded.batch(str(wav), 0.0, 4.0)
+    assert _Diarizer.last_config["clustering"]["threshold"] == eng.CLUSTER_THRESHOLD["titanet_small"]
+
+
+def test_speechbrain_engine_ignores_the_bakeoff_threshold_env_vars(monkeypatch):
+    """The sweep knobs are the ONNX engine's alone (review Minor 5).
+
+    Pinned rather than left to grep: the SpeechBrain engine builds its
+    `LoadedEngine` without a `live_threshold`, so it inherits the 0.25 it has
+    always run at no matter what the environment says.
+    """
+    import inspect
+
+    from tldw_chatbook.Audio import diarizer_engine_speechbrain as sb
+    from tldw_chatbook.Audio.diarizer_worker import LoadedEngine
+
+    monkeypatch.setenv("TLDW_DIARIZER_LIVE_THRESHOLD", "0.9")
+    monkeypatch.setenv("TLDW_DIARIZER_CLUSTER_THRESHOLD", "0.9")
+    source = inspect.getsource(sb)
+    assert "TLDW_DIARIZER_LIVE_THRESHOLD" not in source
+    assert "TLDW_DIARIZER_CLUSTER_THRESHOLD" not in source
+    assert "live_threshold" not in source.split("return LoadedEngine(")[1]
+    assert LoadedEngine(lambda p, s: [1.0], lambda *a: ([], {}), "x").live_threshold == 0.25
+
+
 def test_invalid_threshold_env_values_are_ignored(fake_sherpa, tmp_path, monkeypatch):
     from tldw_chatbook.Audio import diarizer_engine_onnx as eng
     from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer

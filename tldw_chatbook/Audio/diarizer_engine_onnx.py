@@ -137,18 +137,35 @@ def model_id_for_embedder(key: str) -> str:
 MODEL_ID = model_id_for_embedder(DEFAULT_EMBEDDER)
 
 
-def _threshold_from_env(name: str, default: float) -> float:
-    """`os.environ[name]` as a float, or `default` (task 8: 31827).
+#: Widest possible cosine distance (1 - cos, cos in [-1, 1]). A threshold at
+#: or past it matches every voice to every other.
+_MAX_THRESHOLD = 2.0
 
-    An unset, empty or unparseable value is IGNORED rather than raising: this
-    is a sweep knob, and a typo in it must never take the worker's load path
-    down (`main()` would frame it as `ERROR load ValueError` and the meeting
-    would silently lose live labels).
+
+def _threshold_from_env(name: str, default: float) -> float:
+    """`os.environ[name]` as a cosine distance in ``(0, 2]``, or `default`.
+
+    An unset, empty, unparseable or UNUSABLE value is IGNORED rather than
+    raising: this is a sweep knob, and a typo in it must never take the
+    worker's load path down (`main()` would frame it as `ERROR load
+    ValueError` and the meeting would silently lose live labels).
+
+    "Unusable" is not just "unparseable" (task 8 review, Minor 3): `nan`,
+    `inf`, `-1` and `5.0` all parse as floats and all wreck live labelling
+    silently. `nan` makes ``(1 - sim) <= threshold`` false for every window, so
+    the clusterer mints a fresh speaker per window up to the cap; anything at
+    or past `_MAX_THRESHOLD` collapses every voice into one id; anything <= 0
+    can never match. Only a distance in ``(0, 2]`` is accepted.
     """
     try:
-        return float(os.environ[name])
+        value = float(os.environ[name])
     except (KeyError, TypeError, ValueError):
         return default
+    # This also rejects NaN, without a separate test: every comparison with NaN
+    # is False, so the chain is False and `not` makes it True.
+    if not (0.0 < value <= _MAX_THRESHOLD):
+        return default
+    return value
 
 
 def models_dir(override: Path | None = None) -> Path:
