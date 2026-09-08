@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field, ValidationError
 from loguru import logger
 from jinja2.sandbox import SandboxedEnvironment
 
+from ..Backup_Recovery.raw_participants import _scope, _selected, _mkdirs, _file
+
 
 class ChunkingOperation(BaseModel):
     """Represents a single operation in a chunking pipeline stage."""
@@ -86,11 +88,9 @@ class ChunkingTemplateManager:
 
     def _get_user_templates_dir(self) -> Path:
         """Get the user templates directory, creating it if necessary."""
-        from ..config import get_cli_data_dir
-
-        user_dir = get_cli_data_dir() / "chunking_templates"
-        user_dir.mkdir(parents=True, exist_ok=True)
-        return user_dir
+        with _scope(self, "template_directory", writing=True) as operation:
+            _mkdirs(operation)
+            return _selected(operation)
 
     def _register_builtin_operations(self):
         """Register built-in chunking operations."""
@@ -141,9 +141,10 @@ class ChunkingTemplateManager:
     def _load_template_from_file(self, path: Path) -> Optional[ChunkingTemplate]:
         """Load a template from a JSON file."""
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return ChunkingTemplate(**data)
+            with _scope(self, "template_read", selected_read=path) as operation:
+                with _file(operation, path, "r") as f:
+                    data = json.load(f)
+                    return ChunkingTemplate(**data)
         except (json.JSONDecodeError, ValidationError) as e:
             logger.error(f"Invalid template file {path}: {e}")
             return None
@@ -202,8 +203,12 @@ class ChunkingTemplateManager:
         save_path = save_dir / f"{template.name}.json"
 
         try:
-            with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(template.dict(), f, indent=2, ensure_ascii=False)
+            with _scope(
+                self, "template_save", writing=True, template=template,
+                user_template=user_template,
+            ) as operation:
+                with _file(operation, _selected(operation), "w") as f:
+                    json.dump(template.dict(), f, indent=2, ensure_ascii=False)
             logger.info(f"Saved template: {template.name} to {save_path}")
         except Exception as e:
             logger.error(f"Error saving template {template.name}: {e}")

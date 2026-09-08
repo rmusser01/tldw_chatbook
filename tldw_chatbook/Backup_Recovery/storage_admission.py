@@ -37,6 +37,7 @@ _forked_with_owners = False
 _pending_acquisitions: set["_Acquisition"] = set()
 _live_leases: set["StorageLease"] = set()
 _operations: set["_Operation"] = set()
+_raw_operations: set[object] = set()
 _pause: "_LocalPause | None" = None
 _changed = threading.Condition(_lock)
 _operation_local = threading.local()
@@ -224,6 +225,7 @@ class _LocalPause:
                 if (
                     not _pending_acquisitions
                     and not _operations
+                    and not _raw_operations
                     and not (_live_leases - startups)
                     and not _retiring_holds
                     and all(lease._key is not None for lease in startups)
@@ -534,14 +536,20 @@ def _after_fork() -> None:
     # Forked children cannot inherit a fictitious live lease thread/refcount.
     # Spawn imports establish their own leases before loading runtime modules.
     global _lock, _holds, _retiring_holds, _startups, _forked_with_owners
-    global _pending_acquisitions, _live_leases, _operations, _pause
+    global _pending_acquisitions, _live_leases, _operations, _raw_operations, _pause
     global _changed, _operation_local
     _forked_with_owners = bool(
-        _holds or _retiring_holds or _pending_acquisitions or _operations or _live_leases
+        _holds
+        or _retiring_holds
+        or _pending_acquisitions
+        or _operations
+        or _raw_operations
+        or _live_leases
     )
     _pending_acquisitions = set()
     _live_leases = set()
     _operations = set()
+    _raw_operations = set()
     _pause = None
     _operation_local = threading.local()
     _lock = threading.RLock()

@@ -7,6 +7,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..Backup_Recovery.raw_participants import (
+    _service_mutation,
+    _service_file,
+    _file,
+    _mkdirs,
+    _replace,
+    _remove_temporary,
+)
+
 
 class LocalFeedbackService:
     """Persist feedback for local/offline Chatbook conversations and RAG queries."""
@@ -31,11 +40,13 @@ class LocalFeedbackService:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    @_service_mutation
     def _load(self) -> None:
         if not self.store_path.exists():
             return
         try:
-            payload = json.loads(self.store_path.read_text(encoding="utf-8"))
+            with _file(_service_file(self, "r"), self.store_path, "r") as stream:
+                payload = json.load(stream)
         except (OSError, json.JSONDecodeError):
             self._records = []
             self._next_id = 1
@@ -56,14 +67,17 @@ class LocalFeedbackService:
                     continue
         self._next_id = max_id + 1
 
+    @_service_mutation
     def _persist(self) -> None:
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        operation = _service_file(self, "w")
+        _mkdirs(operation)
         temp_path = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
-        temp_path.write_text(
-            json.dumps({"items": self._records}, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        temp_path.replace(self.store_path)
+        try:
+            with _file(operation, temp_path, "w") as stream:
+                json.dump({"items": self._records}, stream, indent=2, sort_keys=True)
+            _replace(operation, temp_path, self.store_path)
+        finally:
+            _remove_temporary(operation, temp_path)
 
     @staticmethod
     def _record_view(record: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +118,7 @@ class LocalFeedbackService:
                 return record
         return None
 
+    @_service_mutation
     async def submit_feedback(
         self,
         *,
@@ -177,6 +192,7 @@ class LocalFeedbackService:
         self._enforce("feedback.detail.local")
         return self._record_view(self._find(feedback_id))
 
+    @_service_mutation
     async def update_feedback(
         self,
         feedback_id: str,
@@ -196,6 +212,7 @@ class LocalFeedbackService:
         response.update({"ok": True, "feedback_id": feedback_id})
         return response
 
+    @_service_mutation
     async def delete_feedback(self, feedback_id: str) -> dict[str, Any]:
         self._enforce("feedback.delete.local")
         record = self._find(feedback_id)

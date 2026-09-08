@@ -5740,3 +5740,17 @@ runtime drain remains task10's responsibility.
 writer has drained. A `with connection` block, a successful transaction, and delayed
 fixture garbage collection establish different properties. Keep writer exclusion
 and deliberately drained snapshot setup as separate behavioral tests.
+
+## A consumed fixed-name sidecar is not owned by the previous writer (TASK-31993)
+
+**Incident.** Raw service lifetime integration added finally-cleanup around the
+Feedback/Grammar fixed `.tmp` publication file. A real second process started a
+new service write immediately after the first rename, while the first call had
+not yet reached finally. The first cleanup unlinked the second process's open
+sidecar, so its later rename failed. The regression used both actual services and
+native files; a one-process path lock could not reproduce this ownership transfer.
+
+**What to do.** Record the inode of exclusively created temporary bytes and consume
+that ownership when publication succeeds. Cleanup may act only on an operation's
+still-owned inode. A successful rename permits the next process to create a new
+same-name file immediately; the filename alone is never cleanup authority.

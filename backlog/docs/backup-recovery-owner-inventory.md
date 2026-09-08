@@ -285,8 +285,15 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chat/prompt_history.py | PromptHistory.load.read_history | open | 1 | unsupported | chat.prompt_history; participant-task10 |
 | tldw_chatbook/Chat/prompt_template_manager.py | load_template | open | 1 | unsupported | files |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | mkdir | 1 | unsupported | files |
-| tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | write_text | 1 | unsupported | files |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _remove_temporary | os.unlink | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _replace | os.replace | 2 | generic_boundary | source-bound raw native IO; phase4 lifetime only |
+| tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
+| tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
+| tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
+| tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator.__init__ | secure_private_directory | 2 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._add_character_dependency | dump | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._add_character_dependency | mkdir | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
@@ -340,10 +347,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chatbooks/database_paths.py | secure_chatbook_directory | secure_private_directory | 1 | generic_boundary | chatbooks.archives-default-or-explicit-external-destination |
 | tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._load_registry | open | 1 | unsupported | chatbooks.registry; participant-task10 |
 | tldw_chatbook/Chunking/Chunk_Lib.py | load_document | open | 1 | unsupported | files |
-| tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager._get_user_templates_dir | mkdir | 1 | unsupported | chunking.templates; participant-task10 |
-| tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager._load_template_from_file | open | 1 | unsupported | chunking.templates; participant-task10 |
-| tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | chunking.templates; participant-task10 |
-| tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | open | 1 | unsupported | chunking.templates; participant-task10 |
 | tldw_chatbook/Chunking/engine/chunker.py | Chunker.chunk_file_stream | open | 1 | unsupported | files |
 | tldw_chatbook/Coding/code_mapper.py | SimpleIO.read_text | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | dump | 1 | unsupported | miscellaneous |
@@ -442,8 +445,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/notes_events.py | load_note_templates | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | mkdir | 1 | unsupported | files |
-| tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | write_text | 1 | unsupported | files |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | ComfyUIImageAdapter._download_output | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | _load_packaged_workflow | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/adapters/image_format_utils.py | maybe_convert_format | open | 1 | unsupported | miscellaneous |
@@ -1125,10 +1126,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog.on_select_changed | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/emoji_picker.py | load_recent_emojis | open | 1 | unsupported | ui.emoji_recents; participant-task10 |
-| tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | dump | 1 | unsupported | ui.emoji_recents; participant-task10 |
-| tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | mkdir | 1 | unsupported | ui.emoji_recents; participant-task10 |
-| tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | open | 1 | unsupported | ui.emoji_recents; participant-task10 |
 | tldw_chatbook/Widgets/file_extraction_dialog.py | FileExtractionDialog._save_files | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/project_skills_import_modal.py | _read_loose_skill_file_sync | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.__init__ | mkdir | 1 | unsupported | ui.themes; participant-task10 |
@@ -1875,3 +1872,63 @@ coverage still refuses, and no app/headless responder or Complete capability is
 installed. The phase2 combined-order app callback/bootstrap failure remains an
 explicit Task10 app/lifecycle obligation. The separately reproduced pre-phase3
 Media historical-schema fixture belongs to later schema/migration qualification.
+
+### Task10 phase4 — installed raw source lifetimes, runtime composition still pending
+
+`Backup_Recovery/raw_participants.py` now enrolls the actual Feedback/Chat Grammar
+services, default user ChunkingTemplateManager directory, and emoji module's selected
+profile file. This is source-bound ordinary admission, not a capture permission or
+runtime-coverage promotion. Every existing `participant_pending` remains in place.
+
+Feedback and Grammar constructors/direct `_load`/`_persist` and full create/update/
+delete methods admit the exact target, fixed `.tmp` publication path and every missing
+parent before cached state or disk changes. A process-local physical-path lock covers
+these synchronous bodies; rejection/failure restores `_records` and `_next_id`.
+An existing `.tmp` is preserved/refused. Newly created sidecars have actual inode
+ownership; successful rename consumes that ownership, so cleanup cannot unlink the
+next process's same-name sidecar. This preserves last-writer-wins cached-store
+semantics across independent service instances; it does not add cross-process CRUD
+transactions or refresh stale cached records.
+
+Native directory pins/descriptor-relative operations retain checked ancestor identity
+through mkdir/open/rename/unlink. Actual file descriptors and text/native wrappers
+remain strongly recorded until explicit native close. Failed close, ambiguous
+publication, or failed owned-sidecar cleanup retain evidence and ordinary native
+exclusion; later conflicting mutations refuse. They require explicit recovery/restart,
+not garbage collection, a zero operation count, or a worker cancellation flag.
+
+`ChunkingTemplateManager._get_user_templates_dir`, `save_template`, and direct
+`_load_template_from_file` are gated. Built-in/custom directories retain ordinary
+selected-path use; they receive no installed default-owner coverage or pause
+descendant authority. The inventory remains `data/chunking_templates`, never package
+templates or a caller-selected directory. Missing explicit custom save directories
+still fail rather than being silently created. Linked/nonregular native targets
+refuse before truncation; template names cannot escape the selected directory.
+
+`save_recent_emoji` acquires its full read/modify/write lifetime on the actual app-owned
+worker. Picker dismissal and Future/Worker cancellation do not retire that native
+thread. Refusal before IO stays best-effort/silent; a still-running or uncertain
+worker remains a drain blocker. Unserialized last-write-wins recents remain deliberate.
+The direct read helper also holds its actual file lifetime. A changing selector
+cannot bind one profile while writing another.
+
+Local drain/fork accounting includes raw operations, pending selector/native/lock
+acquisition, actual leases and failed retirement. Tokens have registry-backed exact
+PID/Thread/asyncio Task identity, fixed scope and original native holder; copied,
+foreign-task/thread, same-name/forged callback and sibling paths grant no authority.
+Different core/raw operations get independent admission only while gates remain open.
+No startup hold is retired and `_LocalPause.require_runtime_coverage` still refuses.
+App/headless aggregation, remaining raw/compound/SQLite callers, dirty editors and
+whole-task all-owner review remain required. Native filesystem evidence here is for
+this POSIX host; unqualified platforms are not advertised as covered.
+
+On platforms missing raw pinning primitives, explicit capability detection selects
+ordinary path IO before any source access (ruling57). Existing verified-disjoint
+bootstrap and enrolled-scope checks still govern all actual leases, including any
+stronger native lease available. This mode keeps exact source/sidecar/resource
+accounting but installs no raw participant or across-pause helper authority. Active
+or uncertain work blocks drain; positive ordinary retirement does not qualify
+capture, runtime coverage or startup retirement. Simulated missing-primitives
+functional tests are not Windows qualification. Existing parent aliases are accepted
+only while the selected path resolves to the same positively checked physical parent;
+changed targets still refuse. Capture link policy is unchanged.

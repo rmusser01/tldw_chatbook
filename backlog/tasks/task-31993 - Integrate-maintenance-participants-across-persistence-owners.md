@@ -179,3 +179,62 @@ are required next integration work, not reduced final acceptance. Updated owner
 inventory names the exact caller handoffs without promoting syntax rows. Existing
 ADR-126/design references remain authoritative; all31993 ACs remain unchecked and
 status In Progress pending whole-task implementation and independent review.
+
+### Phase4 implementation plan (before code)
+
+1. Establish behavioral RED for full Feedback/Grammar mutation refusal before cached state changes, template mkdir/save admission, and actual emoji worker lifetime.
+2. Add separate exact source-bound raw participants and pre-selector reservations. Admit fixed target/publication sidecar/missing-directory scope before memory or storage mutation; pin and recheck existing ancestor identity, retaining actual native leases and resource-close uncertainty. No repository token reuse or caller callback authority.
+3. Integrate constructors/direct helpers and full service mutations; preserve ordinary custom/built-in template destinations without expanding capture ownership, subclass ordinary behavior without installed pause descendants, and emoji app-owned unsynchronized last-write-wins behavior.
+4. Verify real temporary files/workers, native maintenance observers, pause/acquisition races, same-source serialization, failure/close uncertainty, cancellation and safe resume. Run only new focused tests, affected producer/domain/admission/participant and exact census guards.
+5. Self-review, record exact evidence/remaining cohorts, update inventory, and scoped commit. Retain In Progress and all unchecked ACs; no runtime coverage promotion, startup retirement, Complete capability or responder.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct approved raw storage lifetime integration, retaining ADR-004 mapping and ADR-036 ownership; controller approved separate raw registry and directional multi-target scope before shared edits.
+
+### Phase4 implementation notes
+
+Under ADR-126 and the controller-approved separate raw-source strategy, Feedback and
+Grammar full mutations/constructor reads/direct helpers, default Chunking template
+mkdir/read/save and actual emoji workers now retain source-bound ordinary admission.
+Fixed file/sidecar/mkdir paths are admitted before state or IO changes; native pins
+and descriptor-relative IO preserve parent identity, while real descriptors/wrappers
+and leases remain until positive native retirement. Cached service mutations roll
+back on refusal/error. Existing sidecars are preserved, successful publication
+consumes exact temporary inode ownership, and failed close/publication/cleanup
+preserves unresolved evidence and refuses later conflicting writes. No GC/callback/
+Future-cancellation authority or core-token transfer was introduced.
+
+Custom/built-in template paths and subclasses retain ordinary selected-path behavior
+without installed default-owner or pause-descendant coverage. Missing raw pinning
+primitives select ordinary path IO before access under ruling57; actual admission
+leases (including stronger native leases) and resource accounting remain, but no
+installed participant, pause-descendant grant, capture or startup qualification is
+created. Simulations do not qualify Windows. Existing trusted parent aliases retain
+physical identity checks; caller-owned aliases on the pinned route still refuse.
+Emoji stays app-owned,
+best-effort and unsynchronized last-write-wins; a canceled worker can remain an actual
+native drain blocker. Exact selector/callback/Thread/Task/native-scope identity is
+checked. All participant_pending declarations, startup holds and incomplete runtime
+coverage remain; no Complete/replacement capability, responder or app-wide coverage.
+
+Evidence: final raw+Feedback/Grammar domain run64 passed (58 raw cases +6 service
+cases); final exact producer census11 passed; earlier affected producer run30 passed/2 pre-existing server-only module
+skips; affected admission/participant/core/bootstrap/census guards182 passed.
+Behavioral RED/GREEN covers paused mutation/constructor/mkdir, native observers,
+parent/selector races, exact-file sidecar refusal, cancellation, path/native-close
+uncertainty, spoofed callback identity and actual two-process sidecar ownership.
+The initial native-observer test selected the wrong ambient hold and was corrected;
+three native-failure red checks required missing explicit descriptor metadata while
+already retaining native exclusion. These are disclosed separately from behavioral
+false-drain regressions. The portable disjoint fixture initially omitted its claimed
+config file; the alias fixture initially assumed an untrusted caller-owned alias
+was permitted. Corrected fixtures preserve bootstrap/link policy; the positive
+trusted-alias case explicitly simulates trust classification only. Requests/Pydantic/AST and joblib semaphore ENOSPC warnings
+remain; skips are not substituted for release evidence and no full suite ran.
+
+Changed six production modules including new raw_participants.py, the focused raw
+lifetime tests, source inventory and the actual sidecar-race testing lesson. Exact
+commands, overlapping run counts, scoped static/self-review checks, platform limits
+and remaining full Task10 integration are recorded in task-10-phase4-report.md.
+Task31993 remains In Progress, all ACs unchecked, pending remaining cohorts and
+independent whole-task review; ADR-126/design references are preserved.
