@@ -2310,6 +2310,15 @@ class ConsoleTraceService:
             provenance: Descriptors aligned with the complete provider surface.
             values: Provider values aligned with message and continuation
                 descriptors.
+            completed_tool_turn: Optional witness for a bounded completed
+                project/tool turn replacement; all evidence is revalidated.
+            current_turn_id: Saved user message that owns the incoming call.
+            current_policy_id: Frozen disclosure policy for the incoming call.
+            reserved_call: Existing live reservation when rebuilding an owned
+                retry, or None for an initial preparation.
+            known_credentials: Transient runtime secrets used only to compare
+                original provider artifacts with their filtered durable values.
+                They are never stored in the admission or trace ledger.
 
         Returns:
             The admitted surface delta and its verification boundary.
@@ -2583,7 +2592,19 @@ class ConsoleTraceService:
         segment_id: str,
         terminal_surface_id: str | None,
     ) -> bool:
-        """Find a candidate project suffix; this grants no transition authority."""
+        """Find a candidate project suffix without granting transition authority.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for ledger reads.
+            segment_id: Trace segment whose active surface should be inspected.
+            terminal_surface_id: Surface head of the prior terminal call, or
+                None when that call has no recorded surface.
+
+        Returns:
+            True if the bounded active project/tool suffix contains a project
+            artifact; False if no such suffix or surface exists. A true result
+            is only a candidate hint and does not authorize a transition.
+        """
         if terminal_surface_id is None:
             return False
         tail = self.repository.get_surface_node(cursor, terminal_surface_id)
@@ -3144,9 +3165,35 @@ class ConsoleTraceService:
     ) -> _PreparedSurfaceBoundary:
         """Derive one full structural projection from an opaque parent and delta.
 
-        ``provenance`` is deliberately delta-only for the surface fields.  The
-        returned object is the only provenance object that can extend this
-        capability; callers cannot bless an arbitrary full prefix.
+        ``provenance`` is delta-only for a warm parent. Cold reconstruction
+        also verifies the retained prefix. Callers cannot bless an arbitrary
+        full prefix.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used to verify refs.
+            capability: Opaque parent checkpoint, or None for a new or cold
+                surface whose parent must be reconstructed from the ledger.
+            provenance: Descriptors for the incoming delta, including the
+                retained prefix when cold reconstruction requires it.
+            admission: Preparation-owned surface delta and optional replacement
+                witness to validate against the parent.
+            values: Original provider values aligned with provenance.
+            reserved_call: Existing live reservation for an owned retry, if any.
+            known_credentials: Transient runtime secrets used to compare raw
+                artifacts with their filtered durable projection; never stored.
+            retained_artifact_values: Optional original artifact values keyed
+                by active physical sequence. Each is independently verified;
+                saved revisions cannot be overridden. Values remain local to
+                the immutable dispatch boundary and are not persisted.
+
+        Returns:
+            An owned boundary with verified provenance and original dispatch
+            values that can extend the admitted parent surface.
+
+        Raises:
+            TypeError: If admission is not a SurfaceDeltaAdmission.
+            ValueError: If the parent, values, provenance or replacement witness
+                cannot be verified against the durable ledger.
         """
 
         if type(admission) is not SurfaceDeltaAdmission:

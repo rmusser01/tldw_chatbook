@@ -213,11 +213,26 @@ class CompletedToolTurnWitness:
 
     @property
     def descriptor_count(self) -> int:
-        """Number of saved response/user and current project-context rows."""
+        """Count the saved response/user pair and declared project context.
+
+        Returns:
+            Two saved revisions plus the number of current project-context
+            rows. A tool-only witness has no additional context rows.
+        """
         return 2 + (self.project_context_count or 0)
 
     def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
-        """Require the exact saved pair followed only by declared context."""
+        """Check the declared provenance shape without granting transition rights.
+
+        Args:
+            descriptors: Ordered replacement provenance to compare with this
+                witness's saved assistant/user pair and project-context count.
+
+        Returns:
+            True when the exact saved pair is followed only by the declared
+            number of project-instruction artifacts; False otherwise. Durable
+            ownership, policy and value checks are performed by the service.
+        """
         return (
             len(descriptors) == self.descriptor_count
             and descriptors[:2]

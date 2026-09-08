@@ -181,15 +181,20 @@ class ConsoleTraceBoundaryFactory:
                     self.service._retire_preparation(boundary.admission)
                     admission, surface = self.service.prepare_current_surface_delta(
                         cursor,
-                        owner_id=reserved.owner_id, segment_id=reserved.segment_id,
+                        owner_id=reserved.owner_id,
+                        segment_id=reserved.segment_id,
                         route_identity=boundary.admission.route_identity,
-                        preparation_identity=new_opaque_id(), provenance=request.provenance,
-                        values=tuple(request.messages_payload) + tuple(
+                        preparation_identity=new_opaque_id(),
+                        provenance=request.provenance,
+                        values=tuple(request.messages_payload)
+                        + tuple(
                             group.checkpoint for group in request.continuation_groups
                         ),
                         completed_tool_turn=boundary.admission.completed_tool_turn,
-                        current_turn_id=reserved.turn_id, current_policy_id=reserved.policy_id,
+                        current_turn_id=reserved.turn_id,
+                        current_policy_id=reserved.policy_id,
                         reserved_call=reserved,
+                        known_credentials=(getattr(resolution, "api_key", None) or "",),
                     )
                 recovered = ConsoleTraceCallBoundary(
                     service=self.service, database=self.database, identity=boundary.identity,

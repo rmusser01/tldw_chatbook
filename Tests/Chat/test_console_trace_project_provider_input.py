@@ -11,9 +11,16 @@ from Tests.Chat.test_console_trace_runtime import (
     _semantic_request,
 )
 from tldw_chatbook.Chat.console_prepared_request import thaw_json
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
+)
 from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
-from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_models import (
+    FrozenTracePolicy,
+    TraceCallState,
+    new_opaque_id,
+)
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
@@ -29,15 +36,19 @@ make_gateway = runtime_fixtures.make_gateway
 
 
 @pytest.mark.parametrize(
-    "cold_factory, pii_enabled, retained_tamper",
+    "cold_factory, pii_enabled, retained_tamper, owned_retry",
     [
-        (False, False, None),
-        (True, False, None),
-        (False, True, None),
-        (True, True, None),
-        (False, True, "context"),
-        (False, True, "saved"),
-        (False, True, "inactive"),
+        (False, False, None, False),
+        (True, False, None, False),
+        (False, True, None, False),
+        (True, True, None, False),
+        (False, True, "context", False),
+        (False, True, "saved", False),
+        (False, True, "inactive", False),
+        (False, False, None, True),
+        (True, False, None, True),
+        (False, True, None, True),
+        (True, True, None, True),
     ],
 )
 async def test_generic_tool_request_retains_raw_project_context(
@@ -48,6 +59,7 @@ async def test_generic_tool_request_retains_raw_project_context(
     cold_factory,
     pii_enabled,
     retained_tamper,
+    owned_retry,
 ):
     database = make_database(tmp_path / "provider-input.sqlite", "provider-input")
     conversation_id = database.add_conversation({"title": "provider input"})
@@ -147,7 +159,7 @@ async def test_generic_tool_request_retains_raw_project_context(
             capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
         )
 
-        async def dispatch(request=prepared, dispatch_route=route):
+        async def dispatch(request=prepared, dispatch_route=route, call_signals=None):
             return [
                 item
                 async for item in gateway.stream_chat(
@@ -157,6 +169,7 @@ async def test_generic_tool_request_retains_raw_project_context(
                     route_actor_id=actor,
                     route_chain_id=chain,
                     capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                    signals=call_signals,
                 )
             ]
 
@@ -165,7 +178,47 @@ async def test_generic_tool_request_retains_raw_project_context(
                 await dispatch()
             assert len(adapter_inputs) == 2
             return
-        assert await dispatch() == ["ok"]
+        if owned_retry and call_index == 1:
+            accepted_owner = object()
+            signals = ConsoleProviderStreamSignals()
+            gateway._bind_trace_preparation(signals, accepted_owner)
+            original_bind = type(factory.repository).bind_call
+
+            def fail_bind(
+                instance,
+                *args,
+                _original=original_bind,
+                _repository=factory.repository,
+                **kwargs,
+            ):
+                result = _original(instance, *args, **kwargs)
+                if instance is _repository:
+                    raise RuntimeError("synthetic trace bind rollback")
+                return result
+
+            with monkeypatch.context() as patch:
+                patch.setattr(type(factory.repository), "bind_call", fail_bind)
+                with pytest.raises(TraceCallPersistenceError) as failure:
+                    await dispatch(call_signals=signals)
+            failed = failure.value.boundary
+            assert failed.dispatch_outcome == "rolled_back"
+            reserved = failed.reserve()
+            assert len(adapter_inputs) == 1
+            gateway._bind_trace_preparation(signals, accepted_owner, boundary=failed)
+            assert await dispatch(call_signals=signals) == ["ok"]
+            assert len(adapter_inputs) == 2
+            with database.transaction() as cursor:
+                recovered = factory.repository.get_call(cursor, reserved.call_id)
+                assert recovered.idempotency_key == reserved.idempotency_key
+                assert recovered.state is TraceCallState.COMPLETE
+                assert (
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM console_trace_calls"
+                    ).fetchone()[0]
+                    == 2
+                )
+        else:
+            assert await dispatch() == ["ok"]
         assert adapter_inputs[-1] == messages
 
     captures = ConsoleTraceNativeReader(database).read_calls(user_id)
