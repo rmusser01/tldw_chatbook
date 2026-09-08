@@ -1033,6 +1033,122 @@ TASK-31942 stays In Progress with all seven final ACs unchecked, and Canvas V2
 remains disabled. No host cleanup, unrelated repair, dependency change, full
 suite or external PR action was authorized or performed by this wave.
 
+### Task 9: Reconcile the three authorized inventory failures
+
+This is the user's separately approved Q1 continuation, not another automatic
+Task8 final-review fix wave. Immutable BASE is
+`50a57004220645665f528edad31f7a31f9a608f2`. The read-only diagnosis reproduced the
+three failures (3 failed, 1 warning, 30.35s) and is preserved at this plan's SDD
+directory in `task-9-diagnosis.md`. Preserve reviewed Tasks1–8 and their evidence.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/029-local-private-data-boundary.md;
+backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md;
+backlog/decisions/125-lock-safe-private-sqlite-validation.md
+Reason: restore the existing module-owned, no-follow, read-only and quiescence
+contracts; no new runtime, schema, security or backup authority.
+
+**Permitted implementation files:**
+
+- `tldw_chatbook/DB/private_sqlite.py` (two owner registry entries only).
+- `tldw_chatbook/Library/collections_legacy_recovery.py` (path retention,
+  checked opening, transaction setup and owned cleanup only).
+- `tldw_chatbook/Chat/console_trace_maintenance.py` (owner literal only).
+- `Tests/DB/test_private_sqlite_inventory.py`.
+- `Tests/DB/test_chachanotes_connection_quiescence.py`.
+- `Tests/Library/test_collections_legacy_recovery.py`.
+- `backlog/docs/sqlite-private-owner-inventory.md`.
+
+Root owns all other governance/evidence files. Do not modify production
+`base_db.py`, the helper protocol, native close policy, prior raw-call exceptions,
+or backup semantics. Off-current-history commits `de3cd120e2` and `fd26ea5238`
+corroborate the diagnosis but are not current evidence and must not be
+cherry-picked wholesale. Implement from the current failing tests and contracts.
+
+Binding interfaces and limits:
+
+- Register `library.legacy_recovery` to its exact module with only
+  `_READ_ONLY_URI`, source-mode preservation and no backup authority. Keep the
+  original absolute lexical Path so the existing no-follow seam can reject leaf
+  and parent aliases. Open with `read_only=True, must_exist=True`; preserve the
+  live `LibraryCollectionsDB` branch and schema-independent recovery. Opening
+  OSError/ValueError/SQLite failures map to the existing path-free
+  `legacy_database_unavailable` error. Setup belongs inside owned cleanup;
+  rollback failure must not skip close. No migration or writable fallback.
+- Register `chat.trace_maintenance` to its exact module with only `_PRIVATE_FILE`
+  and no backup authority. Change only the existing maintenance call's owner ID;
+  preserve its separate connection, target, options, PRAGMAs and quiescence flow.
+- Append C55 (trace) and C56 (legacy); retain retired C10/C48. There must be 54
+  connection rows through C56 excluding those IDs. B rows remain unchanged.
+- Qualify backup calls with exact `(module, qualified symbol, receiver)` Counter
+  entries and multiplicity: one `private_sqlite._backup_pages` on `source`, and
+  one `base_db._QuiescentSQLiteConnection.backup` on zero-argument `super()`.
+  This is delegation of the same checked backup, not another backup owner.
+  Reject extra, duplicate, moved-symbol, other-module and changed-receiver calls.
+  Preserve Task6's helper and raw-connection census protections.
+- Use collected pytest isolation and owned temporary resources. No real user
+  config/data, shared dependency changes, host cleanup, process termination,
+  semaphore unlinking, full suite, external PR action or Canvas V2 admission.
+  Do not repeat the eleven blocked spawned cases while the independent stdlib
+  allocation control fails. Read-only host diagnosis is recorded separately in
+  `Docs/superpowers/reviews/2026-09-08-semaphore-allocation-diagnosis.md`.
+
+- [x] Add regression tests first and record meaningful RED before production
+  edits. Existing three RED nodes protect owner/census drift. Cover read-only
+  enforcement with query_only disabled, unchanged source bytes/mode, constructor
+  leaf/parent aliases, post-construction missing/alias/shared-parent substitution,
+  path-free errors and real connection closure after setup failure. Keep the
+  existing future-schema recovery/export tests. For the unchanged backup wrapper,
+  add real in-memory success/callback-abort reservation coverage and demonstrate
+  scanner sensitivity without inventing a production behavior change.
+- [x] Apply only the scoped corrections, update the inventory narrative and
+  self-review current C48 retirement and cross-module ownership boundaries.
+- [x] Run the complete targeted selection: `Tests/DB/test_private_sqlite_inventory.py`,
+  `Tests/DB/test_private_sqlite.py`, `Tests/DB/test_core_sqlite_owner_privacy.py`,
+  `Tests/DB/test_chachanotes_connection_quiescence.py`,
+  `Tests/Library/test_collections_legacy_recovery.py`,
+  `Tests/Chat/test_console_trace_compaction.py`, and
+  `Tests/Chat/test_console_trace_compaction_admission.py`. Then rerun the exact
+  three originally failing nodes. Report failures without unrelated repairs.
+- [x] Check scoped format, BASE-mapped introduced Ruff diagnostics and diff
+  whitespace. Do not wholesale-format inherited files. Commit only the seven
+  named files with serialized index ownership. Record exact commands/results,
+  RED/GREEN, behavioral sensitivity, cleanup and residuals in `task-9-report.md`.
+- [x] Independent task-scoped spec/quality review of the immutable Task9 diff,
+  bounded fixes if required, then root committed smoke of the three original
+  failures and critical privacy/backup regressions. Refresh the unchanged startup
+  import/UI-ready/preload guards for the registry/import additions. Root records
+  inventory evidence and host diagnosis, leaving overall qualification open.
+
+**Host diagnosis checkpoint:** Independent stdlib `spawn.Lock()` fails with
+errno28 inside and outside the sandbox, before any Chatbook import. The host's
+named-semaphore maximum is 10000; only 48 open semaphore handles were visible,
+which does not measure cached names or identify their creators. No host resources
+were changed. A clean qualification host or a user-coordinated restart is needed
+before rerunning the allocation control and, only if it passes, the eleven cases.
+No cleanup or restart is authorized by this diagnosis.
+
+**Task9 checkpoint:** Commit `a6388ed5c4` changes exactly the seven permitted
+files. Independent review approves spec compliance and quality, with no
+Critical/Important finding. The two review Minors are inherited Requests warning
+and static debt; the root accepts that classification from the BASE comparison
+and does not broaden this task into dependencies or whole-file formatting.
+Original three inventory nodes pass; root committed smoke8passed/1warning40.54s
+and unchanged startup3passed/4warnings12.70s. Budgets remain625/660,963/972,
+499/500 modules and364325/378740,110163/123319 LOC. Covering selection is explicitly
+not all-green:426passed/2skipped/26failed75.11s. Root paused the commit to verify
+attribution, then an import-verified immutable BASE archive reproduced all26
+assertions (26failed/1warning4.95s). Those22core-owner and4compaction failures
+remain qualification gaps, not Task9 regressions or repair authorization.
+Current/BASE Ruff both58inherited diagnostics and one formatter-dirty file;
+zero introduced diagnostics, whitespace clean. Exact evidence is in Task9's
+preserved implementation/review/root reports and `Docs/Canvas/V2_VERIFICATION.md`.
+AC8/9 are checked for this scoped continuation; original seven ACs remain
+unchecked, Task31942 In Progress and V2 disabled. No full suite, host/dependency
+change or external action. The clean-host, platform and final qualification gates
+still require further work; do not restart already-reviewed implementation or
+the prior review. Resume only the open qualification work after direction.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -1047,7 +1163,7 @@ suite or external PR action was authorized or performed by this wave.
 | Healthy rollback/PASSIVE partial/BUSY/error, residual WAL and restore checkpoint distinction | 5b, 7 |
 | Restore export, directory handoff and exact cohort checks | 5b |
 | Terminal proof loss, bounded retention, healthy siblings, both exit modes and finalizer data recovery | 5b, 7 |
-| Exclusive descriptor finalizers and complete consumer inventory | 6 |
+| Exclusive descriptor finalizers and complete consumer inventory | 6, 9 |
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Remaining semaphore ENOSPC, strict-inventory, platform and final affected-selection/benchmark gaps are not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. The26BASE failures,11semaphore-blocked cases, platform and final affected-selection/benchmark gaps are not passing tests or permission for host cleanup/unrelated repairs.
