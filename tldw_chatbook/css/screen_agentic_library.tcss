@@ -650,6 +650,12 @@ $ds-library-source-browser-width: 31;
     margin: 0 0 1 0;
 }
 
+/* task-32056: the actions row now sits directly under Read/Info, so the
+   two read as one header block rather than two unrelated groups. */
+.library-conversation-reader-modes {
+    margin: 0;
+}
+
 .library-conversation-reader-modes > Button,
 .library-conversation-reader-actions > Button {
     width: auto;

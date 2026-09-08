@@ -64,9 +64,39 @@ class LibraryConversationReader(Vertical):
         self.selected_metadata = dict(selected_metadata or {})
         self._message_sync_generation = 0
 
+    def _workspace_block(self) -> str:
+        """Return the short workspace refusal reason, or empty when eligible.
+
+        Injected by the controller alongside the other computed metadata
+        keys (``_list_status``/``_list_summary``): the reason is derived
+        from the workspace registry, which this pure widget never reads.
+        """
+        return str(self.loaded_metadata.get("_workspace_block") or "").strip()
+
+    def _actions_enabled(self) -> bool:
+        """Whether the Console hand-off may run right now."""
+        return self.state.loaded_actions_eligible and not self._workspace_block()
+
+    def _open_console_label(self) -> str:
+        """Return the hand-off label, naming a block on the control itself."""
+        blocked = self._workspace_block()
+        label = library_disabled_action_label(
+            "Open in Console", not self._actions_enabled()
+        )
+        return f"{label} · {blocked}" if blocked else label
+
+    def _open_console_tooltip(self) -> str | None:
+        """Return the current reason the hand-off cannot run."""
+        blocked = self._workspace_block()
+        if blocked:
+            return (
+                f"This conversation is {blocked}. Press 'Link to workspace' "
+                "to add it to the active workspace."
+            )
+        return _open_console_disabled_tooltip(self.state)
+
     def compose(self) -> ComposeResult:
         """Compose stable controls and the initially available transcript."""
-        eligible = self.state.loaded_actions_eligible
         yield Static("Conversation reader", classes="destination-section", markup=False)
         with Horizontal(classes="ds-toolbar library-conversation-reader-modes"):
             read = Button(
@@ -85,6 +115,38 @@ class LibraryConversationReader(Vertical):
             )
             info.set_class(self.state.mode == "info", "-selected")
             yield info
+        # (task-32056) The hand-off is header chrome, beside Read/Info,
+        # where Media puts "Use in Console" -- it used to sit at the very
+        # bottom of the pane, below a 30-message transcript. Stacked, not
+        # a row: the blocked label carries its reason, and at 100 and 60
+        # columns a row clipped both it and the remedy beside it (live
+        # verification) -- the exact failure this task exists to close.
+        with Vertical(classes="ds-toolbar library-conversation-reader-actions"):
+            open_console = Button(
+                self._open_console_label(),
+                id="library-conversation-open-console",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            open_console.disabled = not self._actions_enabled()
+            open_console.tooltip = self._open_console_tooltip()
+            yield open_console
+            link = Button(
+                "Link to workspace",
+                id="library-conversation-link-workspace",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            link.display = bool(self._workspace_block())
+            yield link
+            retry = Button(
+                "Try again",
+                id="library-conversation-reader-retry",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            retry.display = bool(self.state.error or self.state.unavailable)
+            yield retry
         yield Static(
             self._status_text(),
             id="library-conversation-reader-status",
@@ -109,24 +171,6 @@ class LibraryConversationReader(Vertical):
         )
         info_body.display = self.state.mode == "info"
         yield info_body
-        with Horizontal(classes="ds-toolbar library-conversation-reader-actions"):
-            open_console = Button(
-                library_disabled_action_label("Open in Console", not eligible),
-                id="library-conversation-open-console",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            open_console.disabled = not eligible
-            open_console.tooltip = _open_console_disabled_tooltip(self.state)
-            yield open_console
-            retry = Button(
-                "Try again",
-                id="library-conversation-reader-retry",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            retry.display = bool(self.state.error or self.state.unavailable)
-            yield retry
 
     def on_mount(self) -> None:
         """Project initial labels and visibility without replacing this widget."""
@@ -293,6 +337,7 @@ class LibraryConversationReader(Vertical):
             )
             info_body = self.query_one("#library-conversation-reader-info-body", Static)
             open_console = self.query_one("#library-conversation-open-console", Button)
+            link = self.query_one("#library-conversation-link-workspace", Button)
             retry = self.query_one("#library-conversation-reader-retry", Button)
         except (NoMatches, QueryError):
             # A retained-reader recompose can briefly leave the mounted
@@ -310,12 +355,10 @@ class LibraryConversationReader(Vertical):
         info_body.update(self._metadata_text())
         info_body.display = state.mode == "info"
 
-        eligible = state.loaded_actions_eligible
-        open_console.disabled = not eligible
-        open_console.label = library_disabled_action_label(
-            "Open in Console", not eligible
-        )
-        open_console.tooltip = _open_console_disabled_tooltip(state)
+        open_console.disabled = not self._actions_enabled()
+        open_console.label = self._open_console_label()
+        open_console.tooltip = self._open_console_tooltip()
+        link.display = bool(self._workspace_block())
         retry.display = bool(state.error or state.unavailable)
 
         self._message_sync_generation += 1

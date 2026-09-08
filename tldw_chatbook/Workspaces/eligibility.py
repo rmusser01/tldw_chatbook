@@ -82,6 +82,31 @@ def evaluate_workspace_eligibility(
     )
 
 
+#: (task-32056) Short, inline-safe labels for the reason codes a workspace
+#: LINK can resolve. Rendered on the blocked control itself ("○ Open in
+#: Console · not in this workspace"), beside the action that fixes it --
+#: ``recovery_copy`` is a whole sentence and belongs in a tooltip, not on a
+#: button. Codes absent from this map (``no_active_workspace``) are not
+#: fixable by linking, so no link affordance is offered for them.
+_LINKABLE_REASON_LABELS = {
+    "not_in_active_workspace": "not in this workspace",
+    "cross_workspace": "in another workspace",
+}
+
+
+def linkable_ineligibility_label(reason_code: str) -> str:
+    """Return the short inline label for a link-resolvable block.
+
+    Args:
+        reason_code: A ``WorkspaceEligibility.reason_code``.
+
+    Returns:
+        A short phrase for a blocked control's own label, or an empty
+        string when the item is eligible or linking would not resolve it.
+    """
+    return _LINKABLE_REASON_LABELS.get(str(reason_code or "").strip(), "")
+
+
 def _normalize_operation(operation: WorkspaceOperation | str) -> WorkspaceOperation:
     try:
         return (

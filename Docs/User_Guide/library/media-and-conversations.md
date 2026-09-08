@@ -623,7 +623,8 @@ requested load.
 | "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
-| "Open in Console" | Stages the conversation as **source context** in Console — see below. |
+| "Open in Console" | In the reader header, beside **Read** and **Info** (keyboard: `c`). Stages the conversation as **source context** in Console — see below. |
+| "Link to workspace" | Appears in the same header row only while the open conversation is not in the active workspace. One press links it, and "Open in Console" enables in place. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
@@ -665,7 +666,9 @@ setting**; it supplies one bundle of **staged context** for the next send.
 3. Press "Add highlight" — it appears in the list with a ● swatch.
 
 ### Stage a conversation as Console context
-1. In **Conversations**, click a row, then "Open in Console" in the preview.
+1. In **Conversations**, click a row, then "Open in Console" in the reader
+   header (beside Read/Info, or press `c`). If it reads "○ Open in Console ·
+   not in this workspace", press "Link to workspace" first.
 2. Console opens with the conversation staged and the prompt "Use this
    conversation as source context for my next question." ready to go — edit
    or replace it, then send.
@@ -784,11 +787,13 @@ Escape's return to the list live at 100x30).*
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
   an exact Retry action. See [Library prompts](prompts.md).
-- **"Open in Console" can refuse with "Copy or link blocked Library
-  sources into the active workspace before using them in Console."** The
-  handoff requires the conversation to be eligible for the active
-  workspace; until your sources are linked into it, staging is blocked
-  (the same gate guards the other "Use in Console" actions).
+- **A conversation outside the active workspace says so on the button.**
+  The handoff requires the conversation to be eligible for the active
+  workspace. When it is not, the reader header reads "○ Open in Console ·
+  not in this workspace" (or "· in another workspace") with the action
+  disabled, and a **"Link to workspace"** button beside it performs the
+  remedy — the refusal is never delivered only as a toast. The same gate
+  guards the other "Use in Console" actions.
 - **Staging now actually reaches the model.** "Use in Console" (media)
   and "Open in Console" (conversations) used to stage content that
   displayed as attached but never made it into what the model was sent
@@ -916,3 +921,10 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32056:
+"Open in Console" moved from the bottom of the reader into its header beside
+Read/Info and gained the `c` accelerator; a conversation outside the active
+workspace now states that on the disabled action and offers "Link to
+workspace" right beside it, instead of raising a toast naming a workspace
+with nothing on screen to link into.)*
