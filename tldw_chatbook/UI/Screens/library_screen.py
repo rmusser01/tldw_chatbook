@@ -35542,20 +35542,54 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     def _restore_library_media_loaded_progress(self, expected_id: str) -> None:
-        """Restore only while the expected local identity still owns Reader."""
+        """Restore the local content offset once its body has laid out.
+
+        task-31968: the rendered Markdown body parses in an executor and
+        mounts its blocks across later refreshes (Textual's
+        ``Markdown.update``), so the scroll container's ``max_scroll_y`` can
+        still be 0 when this first runs on the viewer's post-recompose hook.
+        A single deferred ``scroll_to`` then applies against an unlaid (or
+        still-short) body, clamps the saved offset to the top, and never
+        re-applies once the body grows -- the reader loses its place on a
+        mode change. So apply immediately, and while the offset has not
+        landed on the laid-out body, re-apply after the next refresh until it
+        does (or the bounded budget proves it genuinely cannot).
+
+        This stays task-31954's ONE restore owner: the settle-and-re-apply is
+        an inner continuation of this single call, not a second scheduler --
+        it never re-enters this method, so ``_library_media_progress_restored_id``
+        is still claimed exactly once (by the mode handler) and this restore
+        is still invoked exactly once per owner.
+        """
         session = self._library_media_reader_session
         if session.external_detail or session.loaded_id != expected_id:
             return
         offset = self._library_media_read_scroll_by_id.get(expected_id)
         if offset is None:
             return
-        try:
-            body = self.query_one(
-                "#library-media-viewer-content", LibraryMediaContentBody
+
+        def settle(remaining: int) -> None:
+            # A newer navigation may have superseded this restore while the
+            # body was still laying out; only the loaded owner may land.
+            if self._library_media_reader_session.loaded_id != expected_id:
+                return
+            try:
+                body = self.query_one(
+                    "#library-media-viewer-content", LibraryMediaContentBody
+                )
+            except (NoMatches, QueryError):
+                return
+            scroller = body.scroller
+            # ``immediate=True`` so the clamp happens now against the current
+            # layout -- that synchronous outcome is what lets the guard below
+            # tell an unlaid body (offset clamped short) from a landed one.
+            scroller.scroll_to(
+                x=offset[0], y=offset[1], animate=False, force=True, immediate=True
             )
-        except (NoMatches, QueryError):
-            return
-        body.scroller.scroll_to(x=offset[0], y=offset[1], animate=False, force=True)
+            if remaining > 0 and offset[1] > 0 and int(scroller.scroll_y) < offset[1]:
+                self.call_after_refresh(settle, remaining - 1)
+
+        settle(8)
 
     def _close_library_media_find(self) -> None:
         """Reset the content Find bar: collapsed, no query, first match.
