@@ -111,7 +111,17 @@ class FakeJobRegistry:
             callback()
 
 
-def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, voiceprint_store=None, **over):
+def _owner(
+    tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, voiceprint_store=None,
+    watchdog_interval_s=0.01, stall_after_s=0.05, **over,
+):
+    """The owner under test. The watchdog timings are deliberately tiny so a
+    test can observe a `mic_lost` stop -- but `FakeCapture.audio_position_s`
+    is frozen, so EVERY meeting looks stalled ~50 ms in. A test whose body
+    keeps running past that (final review I2: `accept_learning` spends longer
+    than that inside the real `VoiceprintStore.merge_sample`'s AES + key
+    derivation) has to pass a `stall_after_s` well past its own work, or the
+    watchdog stops the meeting out from under its assertions."""
     marshalled: list[tuple] = []
     submitted: list[dict] = []
 
@@ -136,8 +146,8 @@ def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, v
         tap_builder=lambda mode, **kw: None,
         mic_recorder_factory=FakeRecorder,
         vad_factory=EnergyVad,
-        watchdog_interval_s=0.01,
-        stall_after_s=0.05,
+        watchdog_interval_s=watchdog_interval_s,
+        stall_after_s=stall_after_s,
         voiceprint_store_factory=(lambda: voiceprint_store) if voiceprint_store is not None else None,
     )
     return owner, marshalled, submitted
@@ -2214,12 +2224,22 @@ def test_enroll_from_mic_refuses_a_second_concurrent_enrollment(tmp_path, monkey
 def test_accepting_an_offer_after_a_new_start_leaves_the_live_worker_open(tmp_path, monkeypatch):
     """The reviewer's repro 1: Accept is in flight (an export can take up to
     10 s) when the user starts the next meeting. The lapse closes the offer's
-    worker; Accept's cleanup must not then close the NEW meeting's worker."""
+    worker; Accept's cleanup must not then close the NEW meeting's worker.
+
+    `stall_after_s` is generous here (final review I2): the nested
+    `owner.start()` below arms a watchdog against the frozen
+    `FakeCapture.audio_position_s`, and at the module default (50 ms) it
+    stopped the SECOND meeting with `mic_lost` -- closing `second` from a
+    background thread -- while `accept_learning` was still inside the real
+    store's AES key derivation. That is the product working correctly on a
+    capture whose clock never advances; only the test's window was wrong."""
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     first, second = FakeBackend(), FakeBackend()
     built = iter([first, second])
     monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: next(built))
-    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path), stall_after_s=30.0,
+    )
     owner.prepare()
     session = owner.start()
     session.meta.matched_self = "S1"
@@ -2241,12 +2261,18 @@ def test_accepting_an_offer_after_a_new_start_leaves_the_live_worker_open(tmp_pa
 
 def test_dismissing_a_lapsed_offer_leaves_the_live_worker_open(tmp_path, monkeypatch):
     """The reviewer's repro 2 -- the likely Task-5 wiring: a new meeting hides
-    the offer card, and the screen calls `dismiss_learning()` afterwards."""
+    the offer card, and the screen calls `dismiss_learning()` afterwards.
+
+    Same generous `stall_after_s` as its sibling above, and for the same
+    reason (final review I2): the nested `owner.start()` arms a watchdog
+    against a capture clock that never advances."""
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     first, second = FakeBackend(), FakeBackend()
     built = iter([first, second])
     monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: next(built))
-    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path), stall_after_s=30.0,
+    )
     owner.prepare()
     session = owner.start()
     session.meta.matched_self = "S1"
