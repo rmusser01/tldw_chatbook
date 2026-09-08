@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from textual.widgets import Button
 
@@ -25,6 +27,68 @@ from tldw_chatbook.Chat.console_library_destination import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_canvas_card import ConsoleCanvasCard
+
+
+async def _wait_for_exact_canvas_card(
+    screen: Any,
+    *,
+    target_revision: str | None,
+    attempts: int,
+    interval: float,
+) -> tuple[ConsoleCanvasCard, Button]:
+    """Wait for the exact mounted card action in the current Console session."""
+
+    cards: list[ConsoleCanvasCard] = []
+    revision_matches: list[ConsoleCanvasCard] = []
+    mounted_matches: list[ConsoleCanvasCard] = []
+    session_matches: list[ConsoleCanvasCard] = []
+    exact_pairs: list[tuple[ConsoleCanvasCard, Button]] = []
+    enabled_pairs: list[tuple[ConsoleCanvasCard, Button]] = []
+    store = None
+    active_session = None
+    for attempt in range(attempts):
+        store = getattr(screen, "_console_chat_store", None)
+        active_session = getattr(store, "active_session_id", None)
+        cards = list(screen.query(ConsoleCanvasCard))
+        revision_matches = [
+            card for card in cards if card.presentation.revision_id == target_revision
+        ]
+        if type(target_revision) is not str or not target_revision:
+            revision_matches = []
+        mounted_matches = [card for card in revision_matches if card.is_mounted]
+        session_matches = (
+            [card for card in mounted_matches if card.session_id == active_session]
+            if type(active_session) is str and active_session
+            else []
+        )
+        exact_pairs = [
+            (card, button)
+            for card in session_matches
+            for button in card.query(Button)
+            if button.id == f"canvas-open-revision-{card._id_suffix}"
+        ]
+        enabled_pairs = [
+            (card, button)
+            for card, button in exact_pairs
+            if button.is_mounted and not button.disabled
+        ]
+        if enabled_pairs:
+            return enabled_pairs[0]
+        if attempt + 1 < attempts:
+            await asyncio.sleep(interval)
+
+    raise RuntimeError(
+        "canvas_card_not_ready("
+        f"cards={min(len(cards), 32)},"
+        f"revision_matches={min(len(revision_matches), 32)},"
+        f"mounted_matches={min(len(mounted_matches), 32)},"
+        f"store_present={'true' if store is not None else 'false'},"
+        "active_session="
+        f"{'true' if type(active_session) is str and bool(active_session) else 'false'},"
+        f"session_matches={min(len(session_matches), 32)},"
+        f"buttons={min(len(exact_pairs), 32)},"
+        f"enabled_buttons={min(len(enabled_pairs), 32)})"
+    )
 
 
 def _document(version: str) -> str:
@@ -448,14 +512,15 @@ def main() -> None:
         app.action_canvas_fixture_load_saved = load_saved_conversation
         app._bindings.bind("f10", "canvas_fixture_load_saved", priority=True)
 
-        def reopen_exact_created_card():
+        async def reopen_exact_created_card():
             # Test keyboard adapter presses the real transcript-card button;
             # routing, selected revision and authority remain production-owned.
             target_revision = recovered_root_revision or gateway._revision_id
-            card = next(
-                card
-                for card in app.screen.query(ConsoleCanvasCard)
-                if card.presentation.revision_id == target_revision
+            _card, button = await _wait_for_exact_canvas_card(
+                app.screen,
+                target_revision=target_revision,
+                attempts=300 if recovered_root_revision is not None else 100,
+                interval=0.05 if recovered_root_revision is not None else 0.02,
             )
             screen = app.screen
             original_open = screen._open_console_canvas_selection
@@ -485,7 +550,7 @@ def main() -> None:
                 return result
 
             screen._open_console_canvas_selection = observe_open_completion
-            card.query_one("Button", Button).press()
+            button.press()
 
         app.action_canvas_fixture_reopen = reopen_exact_created_card
         app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
