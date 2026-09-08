@@ -749,3 +749,10 @@ unrelated routes. All 13 zero-width paint/readiness/evidence failures pass with
 their original assertions; the complete live-work file is **69 passed / 1 failed**
 (`/private/tmp/pr2427-task4-live-complete.log`). The remaining Watchlists
 latest-active-run mock failure is independent and still under investigation.
+
+Full settings-file qualification now passes **417/417** in 247.73 seconds
+(`/private/tmp/pr2427-settings-full.log`), including the uninstrumented retired
+Screen collection test with the isolated real poll timer. Independent review
+confirms that a retained application-owned writer/controller reference would
+still fail the unchanged weakref assertion. This closes that recorded cleanup
+failure; it does not qualify the separate outstanding Library/Watchlists gates.
