@@ -258,10 +258,10 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
         content_signature = screen._library_media_content_signature()
         layout_signature = screen._library_media_layout_signature()
         assert content_signature == (
-            screen._library_media_browse_controller.applied_scope,
+            screen._library_media_browse_controller.state.applied_scope,
             tuple(
                 str(item["id"])
-                for item in screen._library_media_browse_controller.retained_items
+                for item in screen._library_media_browse_controller.state.retained_items
             ),
         )
         # task-31979: the signature is derived from the canonical item-open
@@ -1692,7 +1692,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         service = app.media_reading_scope_service
         removed_id = next(
             str(item["id"])
-            for item in controller.retained_items
+            for item in controller.state.retained_items
             if str(item["id"]) != media_id
         )
         removed_backing = int(removed_id.rsplit(":", 1)[1])
@@ -1702,12 +1702,12 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
             if service._backing_id(item, index) != removed_backing
         ]
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            controller.state.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading
+            lambda: not controller.state.loading
             and screen._library_media_content_signature()
             != old_request.content_signature,
             message="Authoritative reordered Media content never applied.",

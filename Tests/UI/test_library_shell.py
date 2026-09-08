@@ -10189,7 +10189,7 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
                 f"view={screen._media_state.view!r}"
             )
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
-        assert screen._library_media_browse_controller.applied_result is None
+        assert screen._library_media_browse_controller.state.applied_result is None
 
         # task-31272: "‹ Back" is compact-only; this drives the seam it
         # shares with Escape's compact exit.
@@ -10197,14 +10197,14 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_result is not None
-                and not screen._library_media_browse_controller.facet_loading
+                screen._library_media_browse_controller.state.applied_result is not None
+                and not screen._library_media_browse_controller.state.facet_loading
             ),
             message="Deep-link Back never loaded the Media page and facets.",
         )
 
         assert screen._media_state.view == "list"
-        assert screen._library_media_browse_controller.type_options == (
+        assert screen._library_media_browse_controller.state.type_options == (
             "audio",
             "video",
         )
@@ -11984,7 +11984,7 @@ async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
             await pilot.pause()
             if row_id == LIBRARY_ROW_BROWSE_MEDIA:
                 assert (
-                    screen._library_media_browse_controller.applied_scope.media_type
+                    screen._library_media_browse_controller.state.applied_scope.media_type
                     == "video"
                 )
             elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
@@ -12678,7 +12678,7 @@ async def test_library_media_exact_page_ignores_gated_failing_broad_snapshot(
                 pilot,
                 lambda: (
                     entered.is_set()
-                    and screen._library_media_browse_controller.applied_result
+                    and screen._library_media_browse_controller.state.applied_result
                     is not None
                 ),
                 message="Exact Media page did not apply ahead of broad snapshot.",
@@ -12716,8 +12716,8 @@ async def test_library_media_exact_page_owns_rows_not_broad_snapshot() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_result is not None
-                and not screen._library_media_browse_controller.facet_loading
+                screen._library_media_browse_controller.state.applied_result is not None
+                and not screen._library_media_browse_controller.state.facet_loading
             ),
             message="Exact Media page and complete facets never settled.",
         )
@@ -12764,8 +12764,8 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_result is not None
-                and controller.applied_result.total == 45
+                controller.state.applied_result is not None
+                and controller.state.applied_result.total == 45
                 and len(screen.query(".library-media-row")) == 20
             ),
             message="Exact first Media page never reached the mounted canvas.",
@@ -12785,7 +12785,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
                 f"host={screen.query_one('#library-canvas').region!r}"
             ),
         )
-        assert canvas.pager == controller.pager
+        assert canvas.pager == controller.state.pager
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
             "Media (45)"
         )
@@ -12800,8 +12800,8 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         assert pager in host.screen._compositor.visible_widgets
         previous = screen.query_one("#library-media-previous", Button)
         assert previous.disabled is True
-        assert str(previous.tooltip) == controller.pager.previous_reason
-        assert controller.pager.previous_reason in str(
+        assert str(previous.tooltip) == controller.state.pager.previous_reason
+        assert controller.state.pager.previous_reason in str(
             screen.query_one("#library-media-disabled-reason", Static).renderable
         )
 
@@ -12822,7 +12822,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=2)
+                controller.state.applied_scope == MediaBrowseScope(page=2)
                 and str(
                     screen.query_one("#library-media-page-status", Static).renderable
                 )
@@ -12841,7 +12841,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=3)
+                controller.state.applied_scope == MediaBrowseScope(page=3)
                 and str(
                     screen.query_one("#library-media-page-status", Static).renderable
                 )
@@ -12858,7 +12858,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         assert len(screen.query(".library-media-row")) == 5
         next_page = screen.query_one("#library-media-next", Button)
         assert next_page.disabled is True
-        assert str(next_page.tooltip) == controller.pager.next_reason
+        assert str(next_page.tooltip) == controller.state.pager.next_reason
 
 
 @pytest.mark.asyncio
@@ -12878,7 +12878,7 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.error_copy
+                controller.state.error_copy
                 and len(screen.query("#library-media-retry")) == 1
                 # task-31632: the one Retry now mounts INSIDE the failure
                 # callout, which composes before the pager -- so the Retry
@@ -12904,8 +12904,8 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_result is not None
-                and controller.applied_result.total == 2
+                controller.state.applied_result is not None
+                and controller.state.applied_result.total == 2
                 and not screen.query("#library-media-retry")
                 and getattr(screen.focused, "id", None) == "library-media-type-filter"
             ),
@@ -12946,8 +12946,8 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                 pilot,
                 lambda: (
                     service.page_entered.is_set()
-                    and controller.loading
-                    and controller.type_options == ("ALL", "All", "all")
+                    and controller.state.loading
+                    and controller.state.type_options == ("ALL", "All", "all")
                 ),
                 message="Complete Media facets did not settle ahead of page 1.",
             )
@@ -12971,13 +12971,13 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                 await _wait_for_condition(
                     pilot,
                     lambda: (
-                        bool(controller.error_copy)
+                        bool(controller.state.error_copy)
                         and bool(screen.query("#library-media-type-filter"))
                     ),
                     message="Initial page failure never reached recovery state.",
                 )
 
-            requested_before = controller.requested_scope
+            requested_before = controller.state.requested_scope
             opener = screen.query_one("#library-media-type-filter", Button)
             opener.press()
             chooser = await _wait_for_selector(
@@ -12998,14 +12998,14 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
             chooser.highlighted = selected_index
             chooser.focus()
             await pilot.pause()
-            assert controller.requested_scope == requested_before
+            assert controller.state.requested_scope == requested_before
             assert len(service.search_calls) == 1
 
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.requested_scope
+                    controller.state.requested_scope
                     == MediaBrowseScope(media_type=requested_type)
                     and len(service.search_calls) == 2
                     and not screen.query("#library-media-type-choices")
@@ -13049,7 +13049,7 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_result is not None
+                    controller.state.applied_result is not None
                     and len(screen.query(".library-media-row")) == 20
                 ),
                 message="Initial retained Media page never rendered.",
@@ -13067,7 +13067,7 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
                 pilot,
                 lambda: (
                     service.page_two_entered.is_set()
-                    and controller.loading
+                    and controller.state.loading
                     and len(screen.query(".library-media-row")) == 20
                     and screen.query_one("#library-media-previous", Button).disabled
                     and screen.query_one("#library-media-next", Button).disabled
@@ -13082,7 +13082,7 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    bool(controller.error_copy)
+                    bool(controller.state.error_copy)
                     and len(screen.query("#library-media-retry")) == 1
                     # task-31632: the callout (and its Retry) composes before
                     # the row scroll; wait for the retained rows too.
@@ -13119,7 +13119,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_result is not None
+                controller.state.applied_result is not None
                 and len(screen.query(".library-media-row")) == 20
             ),
             message="Initial Media page never rendered.",
@@ -13131,14 +13131,14 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.freshness == "stale"
+                controller.state.freshness == "stale"
                 and bool(screen.query("#library-media-retry"))
                 and bool(screen.query("#library-media-bulk-delete-undo"))
             ),
             message="External double shrink never rendered stale recovery state.",
         )
         stale_reason = "List changed while paging; retry to load a current page."
-        assert controller.stale_copy == stale_reason
+        assert controller.state.stale_copy == stale_reason
         assert not screen.query_one("#library-media-type-filter", Button).disabled
         assert not screen.query_one("#library-media-retry", Button).disabled
 
@@ -13228,8 +13228,8 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_scope == MediaBrowseScope()
-                    and bool(controller.type_options)
+                    controller.state.applied_scope == MediaBrowseScope()
+                    and bool(controller.state.type_options)
                     and bool(screen.query("#library-media-next"))
                 ),
                 message="Initial Media page and facets never settled.",
@@ -13238,7 +13238,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_scope == MediaBrowseScope(page=2)
+                    controller.state.applied_scope == MediaBrowseScope(page=2)
                     and len(screen.query(".library-media-row")) == 5
                 ),
                 message="Media page 2 never applied.",
@@ -13298,15 +13298,15 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 assert action.disabled, selector
                 assert str(action.label).startswith("○"), selector
                 assert str(action.tooltip) == reason, selector
-            assert controller.requested_scope == MediaBrowseScope(page=2)
-            assert controller.applied_scope == MediaBrowseScope(page=2)
+            assert controller.state.requested_scope == MediaBrowseScope(page=2)
+            assert controller.state.applied_scope == MediaBrowseScope(page=2)
 
             service.delete_release.set()
             await _wait_for_condition(
                 pilot,
                 lambda: (
                     not screen._media_state.bulk_delete_in_flight
-                    and controller.freshness == ("stale" if refresh_fails else "fresh")
+                    and controller.state.freshness == ("stale" if refresh_fails else "fresh")
                     and len(service.search_calls) == initial_searches + 1
                     and len(service.type_calls) == initial_facets + 1
                     and (
@@ -13318,14 +13318,14 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
 
             assert service.delete_calls[-1]["media_id"] == 5
             assert service.search_calls[-1]["offset"] == 20
-            assert controller.type_options == ("video",)
+            assert controller.state.type_options == ("video",)
             if refresh_fails:
                 # task-31220: the post-mutation refresh failed, and the copy
                 # says so instead of repainting the unchanged "Media changed"
                 # line that made recovery read as inert. Rows stay openable.
                 # task-31944: the mapped fallback reason, not the
                 # exception class name the reader could not act on.
-                assert controller.stale_copy == (
+                assert controller.state.stale_copy == (
                     "Couldn't retry · an unexpected error"
                 )
                 assert not screen.query_one(
@@ -13338,12 +13338,12 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 screen.query_one("#library-media-retry", Button).press()
                 await _wait_for_condition(
                     pilot,
-                    lambda: controller.freshness == "fresh",
+                    lambda: controller.state.freshness == "fresh",
                     message="Retry never cleared committed mutation staleness.",
                 )
-            assert controller.applied_scope == MediaBrowseScope(page=2)
-            assert controller.applied_result is not None
-            assert controller.applied_result.total == 24
+            assert controller.state.applied_scope == MediaBrowseScope(page=2)
+            assert controller.state.applied_result is not None
+            assert controller.state.applied_result.total == 24
     finally:
         service.delete_release.set()
 
@@ -13371,7 +13371,7 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
         controller = screen._library_media_browse_controller
         await _wait_for_condition(
             pilot,
-            lambda: controller.type_options == ("video",),
+            lambda: controller.state.type_options == ("video",),
             message="Initial Media facet never settled.",
         )
 
@@ -13390,7 +13390,7 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
 
         await _wait_for_condition(
             pilot,
-            lambda: controller.type_options == ("audio", "video"),
+            lambda: controller.state.type_options == ("audio", "video"),
             message="Restored Media type never reappeared in complete facets.",
         )
 
@@ -13415,8 +13415,8 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
                 message="Initial Media page/facet reads never reached their gates.",
             )
             controller = screen._library_media_browse_controller
-            assert controller.loading is True
-            assert controller.applied_result is None
+            assert controller.state.loading is True
+            assert controller.state.applied_result is None
             assert screen._build_library_media_state().rows == ()
 
             screen._request_library_media_type("audio", focus_identity=None)
@@ -13424,8 +13424,8 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_scope == MediaBrowseScope(media_type="audio")
-                    and controller.type_options == ("audio", "video")
+                    controller.state.applied_scope == MediaBrowseScope(media_type="audio")
+                    and controller.state.type_options == ("audio", "video")
                 ),
                 message="Newer Media page/facet generations never applied.",
             )
@@ -13434,8 +13434,8 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
             await pilot.pause()
             await pilot.pause()
 
-            assert controller.applied_scope == MediaBrowseScope(media_type="audio")
-            assert controller.type_options == ("audio", "video")
+            assert controller.state.applied_scope == MediaBrowseScope(media_type="audio")
+            assert controller.state.type_options == ("audio", "video")
     finally:
         service.page_release.set()
         service.facet_release.set()
@@ -13462,13 +13462,13 @@ async def test_library_media_unmount_fences_gated_reads_before_await() -> None:
             )
             old_controller = screen._library_media_browse_controller
             await screen.on_unmount()
-            assert old_controller.loading is False
+            assert old_controller.state.loading is False
             service.page_release.set()
             service.facet_release.set()
             await pilot.pause()
             await pilot.pause()
-            assert old_controller.applied_result is None
-            assert old_controller.type_options == ()
+            assert old_controller.state.applied_result is None
+            assert old_controller.state.type_options == ()
             assert (
                 LibraryScreen(app)._library_media_browse_controller
                 is not old_controller
@@ -13496,8 +13496,8 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_browse_controller.applied_result is not None
-                    and not screen._library_media_browse_controller.facet_loading
+                    screen._library_media_browse_controller.state.applied_result is not None
+                    and not screen._library_media_browse_controller.state.facet_loading
                 ),
                 message="Initial Media page/facets never settled.",
             )
@@ -13530,9 +13530,9 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
             await pilot.pause()
 
             assert "local:media:1" not in {
-                item["id"] for item in controller.retained_items
+                item["id"] for item in controller.state.retained_items
             }
-            assert controller.freshness == "stale"
+            assert controller.state.freshness == "stale"
             assert len(service.search_calls) == initial_searches
             assert len(service.type_calls) == initial_facets
             assert len(sync_calls) == initial_syncs
@@ -13558,20 +13558,20 @@ def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> N
     )
 
     controller = screen._library_media_browse_controller
-    assert controller.requested_scope == MediaBrowseScope(
+    assert controller.state.requested_scope == MediaBrowseScope(
         query="needle", media_type="All", sort_by="title_asc", page=3
     )
-    assert controller.applied_result is None
-    assert controller.retained_items == ()
-    assert controller.loading is False
-    assert controller.error_copy == ""
+    assert controller.state.applied_result is None
+    assert controller.state.retained_items == ()
+    assert controller.state.loading is False
+    assert controller.state.error_copy == ""
 
     invalid = LibraryScreen(app)
     invalid.restore_state(
         {"library_media_scope": {"query": 7, "media_type": [], "page": True}}
     )
     assert (
-        invalid._library_media_browse_controller.requested_scope == MediaBrowseScope()
+        invalid._library_media_browse_controller.state.requested_scope == MediaBrowseScope()
     )
 
 
@@ -13593,7 +13593,7 @@ def test_library_media_restore_normalizes_only_invalid_page(page: object) -> Non
         }
     )
 
-    assert screen._library_media_browse_controller.requested_scope == MediaBrowseScope(
+    assert screen._library_media_browse_controller.state.requested_scope == MediaBrowseScope(
         query="needle",
         media_type="All",
         sort_by="title_asc",
@@ -13640,7 +13640,7 @@ async def test_library_media_mounted_type_change_clears_page_selection() -> None
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope
+                screen._library_media_browse_controller.state.applied_scope
                 == MediaBrowseScope(media_type="audio")
             ),
             message="Media type scope never applied.",
@@ -13669,7 +13669,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
 ) -> None:
     screen = LibraryScreen(_build_test_app())
     screen._media_state.type_filter = initial
-    screen._library_media_browse_controller.type_options = ("All", "video")
+    screen._library_media_browse_controller.state.type_options = ("All", "video")
     requested: list[str | None] = []
     screen._request_library_media_type = lambda value, **_kwargs: requested.append(
         value
@@ -25271,15 +25271,15 @@ async def test_library_shell_search_result_open_media_switches_to_viewer(
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
             await _wait_for_condition(
                 pilot,
-                lambda: browse.applied_result is not None and not browse.loading,
+                lambda: browse.state.applied_result is not None and not browse.state.loading,
                 message="Warm Media page did not load.",
             )
-            assert [item["id"] for item in browse.retained_items] == [
+            assert [item["id"] for item in browse.state.retained_items] == [
                 "local:media:2",
                 "local:media:1",
             ]
         else:
-            assert browse.applied_result is None
+            assert browse.state.applied_result is None
         await _run_library_search_and_wait_for_open_result(screen, pilot, "interview")
 
         screen.query_one("#library-rag-open-result-0").press()
@@ -25290,8 +25290,8 @@ async def test_library_shell_search_result_open_media_switches_to_viewer(
                 and screen._media_state.view == "viewer"
                 and screen._media_state.reader_session.selected_id == "local:media:1"
                 and screen._media_state.reader_session.loaded_id == "local:media:1"
-                and browse.applied_result is not None
-                and not browse.loading
+                and browse.state.applied_result is not None
+                and not browse.state.loading
             ):
                 break
             await pilot.pause(0.02)
@@ -27152,9 +27152,9 @@ def _apply_continue_media_scope(
         },
     )
     controller = screen._library_media_browse_controller
-    controller.applied_result = result
-    controller.retained_items = result.items
-    controller.freshness = "fresh"
+    controller.state.applied_result = result
+    controller.state.retained_items = result.items
+    controller.state.freshness = "fresh"
 
 
 def _apply_continue_prompt_scope(
@@ -27257,7 +27257,7 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
 
     assert restored._library_selected_row_id == ""
     assert restored._library_continue_receipt == state["library_continue_receipt"]
-    assert restored._library_media_browse_controller.requested_scope == scope
+    assert restored._library_media_browse_controller.state.requested_scope == scope
     assert restored._media_state.view == "list"
     assert restored._media_state.selected_media_id == ""
 
@@ -27485,8 +27485,8 @@ def test_library_landing_attention_prefers_recoverable_import_and_never_persists
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_lifecycle = LibraryLifecycle.GRADUATED
-    screen._library_media_browse_controller.freshness = "stale"
-    screen._library_media_browse_controller.stale_copy = "PRIVATE MEDIA COPY"
+    screen._library_media_browse_controller.state.freshness = "stale"
+    screen._library_media_browse_controller.state.stale_copy = "PRIVATE MEDIA COPY"
     job = app.library_ingest_jobs.submit(source_path="/PRIVATE/path/report.pdf")
     app.library_ingest_jobs.mark_failed(
         job.job_id,
@@ -27617,8 +27617,8 @@ async def test_library_landing_attention_retries_stale_media_through_source_owne
     app = _build_test_app()
     _seed_conversations(app, [], media=_two_media_items())
     screen = LibraryScreen(app)
-    screen._library_media_browse_controller.freshness = "stale"
-    screen._library_media_browse_controller.stale_copy = "private stale detail"
+    screen._library_media_browse_controller.state.freshness = "stale"
+    screen._library_media_browse_controller.state.stale_copy = "private stale detail"
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -27632,7 +27632,7 @@ async def test_library_landing_attention_retries_stale_media_through_source_owne
             pilot,
             lambda: (
                 screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and screen._library_media_browse_controller.freshness == "fresh"
+                and screen._library_media_browse_controller.state.freshness == "fresh"
             ),
             message="Landing Retry did not use the existing Media refresh path.",
         )
@@ -28065,7 +28065,7 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     # attr and into the browse controller's applied scope -- seed an applied
     # result whose scope carries the filter; save_state serializes that
     # scope and restore republishes it onto the attr.
-    original._library_media_browse_controller.applied_result = MediaBrowseResult(
+    original._library_media_browse_controller.state.applied_result = MediaBrowseResult(
         scope=MediaBrowseScope(media_type="audio"),
         items=(),
         total=0,

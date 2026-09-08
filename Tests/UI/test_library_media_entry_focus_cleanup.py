@@ -19,7 +19,11 @@ def test_replaced_entry_callback_releases_guard(monkeypatch, replacement_accepte
         _library_selected_row_id=screen_module.LIBRARY_ROW_BROWSE_MEDIA,
         _media_state=LibraryMediaState(view="list"),
         _mounted_library_media_viewer=lambda: None,
-        _library_media_browse_controller=SimpleNamespace(applied_scope=None),
+        _library_media_browse_controller=SimpleNamespace(
+            state=SimpleNamespace(
+                applied_scope=None,
+            ),
+        ),
         _build_library_media_state=lambda: SimpleNamespace(selected_id="media-1"),
         focused=None,
         _library_pending_list_entry_media_return=None,
@@ -62,7 +66,11 @@ def test_suppressed_entry_sync_releases_guard(monkeypatch):
         _library_selected_row_id=screen_module.LIBRARY_ROW_BROWSE_MEDIA,
         _media_state=LibraryMediaState(view="list"),
         _mounted_library_media_viewer=lambda: None,
-        _library_media_browse_controller=SimpleNamespace(applied_scope=None),
+        _library_media_browse_controller=SimpleNamespace(
+            state=SimpleNamespace(
+                applied_scope=None,
+            ),
+        ),
         _build_library_media_state=lambda: SimpleNamespace(selected_id="media-1"),
         focused=None,
         _library_pending_list_entry_media_return=None,

@@ -814,7 +814,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope.page == 2
+                screen._library_media_browse_controller.state.applied_scope.page == 2
                 and bool(screen.query("#library-media-next"))
             ),
             message="Page 2 did not apply and settle its pager.",
@@ -823,7 +823,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope.page == 3
+                screen._library_media_browse_controller.state.applied_scope.page == 3
                 and bool(screen.query("#library-media-row-10"))
             ),
             message="Page 3 did not apply and settle its rows.",
@@ -851,13 +851,13 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope.query
+                screen._library_media_browse_controller.state.applied_scope.query
                 == "Media item 03"
             ),
             message="Filter result did not apply.",
         )
         filtered_id = str(
-            screen._library_media_browse_controller.retained_items[0]["id"]
+            screen._library_media_browse_controller.state.retained_items[0]["id"]
         )
         await _wait_for_condition(
             pilot,
@@ -871,7 +871,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope
+                screen._library_media_browse_controller.state.applied_scope
                 == MediaBrowseScope(page=3)
             ),
             message="Unfiltered page 3 was not restored.",

@@ -306,7 +306,7 @@ async def test_a_clear_whose_request_failed_can_be_pressed_again():
 
         # The state a failed clear leaves behind: requested is the target,
         # applied still carries the filter the rows and the Clear came from.
-        controller = screen._library_media_browse_controller
+        controller = screen._library_media_browse_controller.state
         controller.requested_scope = dataclasses.replace(
             controller.requested_scope, query="", media_type=None, page=1
         )
@@ -315,7 +315,7 @@ async def test_a_clear_whose_request_failed_can_be_pressed_again():
         screen.query_one("#library-media-scope-clear", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_media_browse_controller.applied_scope.query,
+            lambda: not screen._library_media_browse_controller.state.applied_scope.query,
             message="A second Clear press after a failed request did nothing.",
         )
 

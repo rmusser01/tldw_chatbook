@@ -687,17 +687,17 @@ async def _walk_size(
             normal = screen._library_media_browse_controller
             await _wait_for_condition(
                 pilot,
-                lambda: normal.applied_scope == MediaBrowseScope(),
+                lambda: normal.state.applied_scope == MediaBrowseScope(),
                 message="Initial real normal-Media page never settled.",
             )
             await _ensure_items_open(screen, pilot)
             screen._request_library_media_page(2, focus_identity=None)
             await _wait_for_condition(
                 pilot,
-                lambda: normal.applied_scope == MediaBrowseScope(page=2),
+                lambda: normal.state.applied_scope == MediaBrowseScope(page=2),
                 message="Normal Media page 2 never settled.",
             )
-            normal_retained = normal.retained_items
+            normal_retained = normal.state.retained_items
             assert len(normal_retained) == 20
             selected_normal_id = str(normal_retained[7]["id"])
             await _wait_for_condition(
@@ -1273,10 +1273,10 @@ async def _walk_size(
                 expected_ids=after_restore_ids,
             )
             assert db.get_media_by_id(44, include_trash=False) is not None
-            assert normal.freshness == "stale"
-            assert normal.retained_items is normal_retained
+            assert normal.state.freshness == "stale"
+            assert normal.state.retained_items is normal_retained
             assert all(
-                str(item["id"]) != restore_id for item in normal.retained_items
+                str(item["id"]) != restore_id for item in normal.state.retained_items
             )
             trash_return = screen._media_state.trash_return
             assert trash_return is not None
@@ -1301,7 +1301,7 @@ async def _walk_size(
                 == "library-media-trash-open",
                 message="Back never restored opener focus.",
             )
-            assert normal.applied_scope == MediaBrowseScope(page=2)
+            assert normal.state.applied_scope == MediaBrowseScope(page=2)
             assert screen._media_state.selected_media_id == selected_normal_id
             await _wait_for_condition(
                 pilot,

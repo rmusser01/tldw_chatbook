@@ -985,3 +985,48 @@ with only two existing dependency warnings
 (`/private/tmp/pr2427-qodo-round3-complete.log`). Independent spec/correctness
 review passes; scoped lint and diff-check pass. Production database behavior,
 standalone SQLite bootstrap fixtures and dependency choices are unchanged.
+
+Checkpoint `9c6a003fc6` publishes those three fixes and their inline replies.
+GitHub reports all nine review threads resolved; the new revision's Fast Lane
+was still running at inspection, so this is not final-head CI qualification.
+
+The approved Watchlists repair remains scoped to the two exact Select IDs.
+The conservative CSS splitter leaves their mixed-prefix rule in the generated
+boot bundle. This small measured eager cost is preferable to broadening the
+rule to every Select in ArticleListPane merely to force lazy classification.
+The existing 804,000-byte and 274-subject caps are unchanged; snapshot refresh
+and rendered-theme qualification must follow an under-cap measurement.
+
+The Media state extraction's frozen focused qualification passes **410 tests
+in 42.80s** across eleven complete files, with the three existing dependency
+warnings (`/private/tmp/pr2427-media-state-final-focused.log`). The controller
+pin falls from 371 to its measured 323 lines; the new state is pinned at 295.
+All 19 initial values and five constructor ports are preserved. The ten moved
+pure methods and two helpers are text-identical; thirteen runtime methods and
+all eighteen existing consumer files are AST-identical after receiver/fake
+normalization, preserving 6,768 assertions. Independent review passes the
+extraction and final exact-ID Watchlists nested-painter rule. Complete mounted
+Library qualification is still pending.
+
+The separate complete packaging guard fails because Screen still eagerly
+re-exports Conversation Reader. History proves the original assembly test
+looked up that alias, but the rebase changed the test to canonical class
+imports without deleting the now-unused re-export. The three-line import is
+identical at 9c6a003fc6 and is not introduced by Media state. Task step 32
+records its narrow removal before implementation, with unchanged packaging,
+assembly, wiring and Screen-size checks. The pre-import payload guard itself
+passes at 497/500 modules; all six derived-artifact checks also pass at this
+checkpoint. Neither result overrides the failed deferred-import contract.
+
+Removing that exact stale re-export makes all four complete packaging/assembly/
+conversations-wiring/Screen-size files pass **22 tests in 3.49s** (two existing
+dependency warnings; `/private/tmp/pr2427-reader-import-final.log`). Independent
+review passes. Screen is now 35,389 lines / 1,260 methods; the separate import
+cleanup is explicitly excluded from the pure Media receiver-equivalence audit.
+
+Before long qualification completed, dev advanced to `9a54013f07` with the
+TASK-32046 canvas-filter keyboard repair and four shell tests. Root interrupted
+only its own two fresh pytest processes with SIGINT and observed both exit 2:
+119 and 82 cases had passed, respectively, with no failures. Those interrupted
+runs are not complete-file qualification. Reviewed fixes will be checkpointed
+and rebased before restarting all affected complete mounted files on new dev.

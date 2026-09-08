@@ -19,7 +19,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 def _apply_page(screen, ids=(1, 2)):
     browse = screen._library_media_browse_controller
-    browse.applied_result = build_media_browse_result(
+    browse.state.applied_result = build_media_browse_result(
         MediaBrowseScope(),
         {
             "items": [summary_row(id=identity) for identity in ids],
@@ -28,7 +28,7 @@ def _apply_page(screen, ids=(1, 2)):
             "offset": 0,
         },
     )
-    browse.retained_items = browse.applied_result.items
+    browse.state.retained_items = browse.state.applied_result.items
 
 
 def _select_reader(screen, identity=2, *, external=False):
