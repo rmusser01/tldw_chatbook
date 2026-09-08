@@ -390,7 +390,17 @@ silently replacing it with a partial or broad Library snapshot.
 Reader stays mounted beside Items and keeps one mode visible at a time:
 **Read**, **Analysis**, **Highlights**, or **Info**. The chosen mode persists
 while you move through items. Missing analysis or highlights produces an
-item-specific empty state; it does not silently switch modes.
+item-specific empty state; it does not silently switch modes. Leaving **Read**
+for another mode and returning drops you back at the same place in the text —
+the reading position is restored even though the rendered body has to lay out
+again first.
+
+*Verified against fix/media-crit6-scroll — 2026-09-07 (task-31968: the
+Read → Analysis → Read reading-position restore. Pinned in tests at 235x52 —
+the offset is restored on the real, re-laid-out scroll container after the
+round-trip, and the restore lands synchronously against a laid-out body rather
+than racing the Markdown parse. Confirmed against the scroll container in the
+harness, not re-verified live.)*
 
 Its header is deliberately short: **‹ Back**, the title, the action row, and
 the mode row — five rows above the reading surface, border included. A byline

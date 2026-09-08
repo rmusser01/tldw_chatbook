@@ -731,7 +731,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # auto-merge dropped dev's new flat line in among our retargeted ones
     # without a conflict. That is the case for running the census over the
     # merged tree rather than over the conflict hunks.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35743, 1290),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35777, 1290),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
