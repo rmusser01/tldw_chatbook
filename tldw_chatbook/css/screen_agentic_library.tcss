@@ -2555,7 +2555,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* task-31980 (critique #6 P2): the Reader's More strip zeroes every button's
    margin (`#library-media-reader-more-actions > Button` above, (1,0,1)), which
    also swallows the danger class's own left margin. Restore it id-scoped
-   (1,1,1 beats that) so "Move to trash" reads apart from the neutral actions
+   (1,1,0 beats that) so "Move to trash" reads apart from the neutral actions
    -- mirrors the RAG-profile delete-button separation (`margin-left: 2`). */
 #library-media-reader-more-actions > .library-media-action-danger {
     margin: 0 0 0 2;
