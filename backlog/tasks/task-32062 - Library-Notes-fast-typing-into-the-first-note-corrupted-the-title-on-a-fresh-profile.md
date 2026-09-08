@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:24'
-updated_date: '2026-09-08 21:26'
+updated_date: '2026-09-08 21:52'
 labels:
   - library
   - notes
@@ -41,11 +41,15 @@ Typing 'My first note', Tab, and a body within ~0.4 s produced the stored title 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Root cause was not the graduation toast. Every Notes refresh routes through LibraryNotesCanvas.sync_state, which ended in an unconditional refresh(recompose=True): with the editor open that rebuilt the title Input and body TextArea and dropped focus onto the Notes list grip, so keystrokes still in flight landed in the wrong box (the reported 'Mhello from jordan, testing the libraryy first note'). Measured: with the title focused and 'My first note' typed, one sync_state call replaces the Input instance and leaves focus on #library-notes-items-grip.
+Two defects, one of them the reported one. Live evidence on the fresh profile at 235x52 (captures 21-26 in the group's caps/, stored rows read back with sqlite3).
 
-Fix: sync_state defers the recompose when the surface is not changing mode AND this canvas's own #library-note-title / #library-note-body has focus. Every compose input is stored before the deferral, so the rebuild is postponed, not dropped -- on_descendant_blur runs it once focus leaves the editor. A mode change still paints immediately (that is navigation the reader asked for). Known ceiling, recorded in the code: a banner that recompose would have painted (a 'changed elsewhere' conflict) also waits for the field to lose focus.
+1. NOT the graduation. Reproduced the exact reported corruption live -- title 'Mhello from jordan, testing the libraryy first note', body empty -- and then reproduced it AGAIN on the same profile after it had already graduated ('Mbody text herey second note'). The trigger is the editor's own refresh path, not the STARTER -> GRADUATED transition. Measured separately: that transition reaches the editor with zero LibraryNotesCanvas recomposes, on this branch and at base 232a59fdc4.
 
-Also measured and recorded: the STARTER -> GRADUATED transition itself reaches the editor with ZERO LibraryNotesCanvas recomposes -- the title Input keeps its identity and focus through it, on this branch and at base 232a59fdc4. AC#2's test types across that transition anyway (title, Tab, body) and pins that both fields land, and the sibling test pins the sync_state hazard that the live incident actually hit.
+Root cause: LibraryNotesCanvas.apply_session_state rewrote the title Input from the screen's snapshot, which during a fast sentence is a keystroke or more behind. Assigning Input.value clamps the cursor to the shorter text, so the rest of the sentence was then typed at that stale position -- 'M' + the body + 'y first note'. A focused field is now skipped: it is its own authority, and the snapshot is built from its Changed events, so it can only be behind. Same guard for the body TextArea. Pinned by test_a_stale_snapshot_never_rewrites_the_field_that_has_focus (RED at base: the typed title came back as ''). Live after the fix: the title kept its text in order and nothing was lost.
 
-Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py; Tests/UI/test_library_crit8_polish_shell.py (3 tests); Docs/User_Guide/library/notes.md.
+2. AC#1's other half: sync_state ended in an unconditional refresh(recompose=True), which with the editor open rebuilt the title Input and body TextArea and dropped focus onto the Notes list grip. Deferred now while this canvas's own title/body has focus and the mode is unchanged; on_descendant_blur applies it when focus leaves. Known ceiling recorded in the code: a banner that recompose would have painted also waits for the field to lose focus.
+
+RESIDUAL, needs its own task (not this AC): with title, Tab and body sent as one uninterrupted burst, the Tab focus move lands AFTER the burst, so the body text is appended to the title ('My third notehello from jordan, testing the library'). Nothing is scrambled or lost now, and with ~1 s between the three sends it is correct ('My fourth note' / 'a real body'). A bare two-Input Textual app routes the same burst correctly, so this is this screen's key-dispatch cost, not a Textual given.
+
+Files: tldw_chatbook/Widgets/Library/library_notes_canvas.py; Tests/UI/test_library_crit8_polish_shell.py (4 tests); Docs/User_Guide/library/notes.md. Commits 086e76e813 (deferral) and ab929759cc (the focused-field guard, folded in by a parallel commit on this branch).
 <!-- SECTION:NOTES:END -->
