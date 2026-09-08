@@ -52,7 +52,7 @@ _TOKEN_FIELDS = frozenset(
         # label vocabulary in Metrics/metrics_logger.py rather than inventing a
         # second dialect for the same idea.
         "component",
-        "attempt_token",
+        "attempt_id",
         "app_version",
         "python_version",
         "sqlite_version",

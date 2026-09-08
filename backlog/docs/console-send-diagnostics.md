@@ -20,12 +20,17 @@ At INFO, look for `event=console_send_stage` under `diagnostics.console`:
 - `provider_entry`: the provider adapter was entered. This is not proof that a
   remote server received the request or that a response completed.
 
-A random `attempt_token` connects the UI's first submission with its worker and
+A random `attempt_id` connects the UI's first submission with its worker and
 provider stages. Further submissions in a queued prompt chain receive separate
-tokens and event allowances. Tokens are unrelated to stored conversation,
+IDs and event allowances. These IDs are unrelated to stored conversation,
 message, workspace or provider-request identifiers. Durations are relative to
 the diagnostic attempt. `dispatched` means queued for execution;
 `not_dispatched` may be an empty input or a handled command, not a send error.
+
+Older builds use `attempt_token`. Their descriptive Logs view treats that label
+as a credential and removes the rest of the line, including stage and error
+fields; Copy all retains those fields. The `attempt_id` spelling keeps the same
+random correlation value visible without exempting any record from redaction.
 
 Failed stages are ERROR events, preserving their phase, application/Python/SQLite
 versions, capture mode when already resolved, exception class, and a safe failure

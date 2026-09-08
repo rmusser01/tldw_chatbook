@@ -12136,3 +12136,39 @@ emitted partial spans, alongside full-screen updates, and then completes the sen
 The first implementation caught only one of two heading writers; the real-paint
 assertion remained red until both were guarded. Keep responsive width and
 visibility recalculation outside text equality guards.
+
+## A diagnostic field name can erase the rest of a descriptive log line
+
+**TASK-31977.1, Console flicker investigation, 2026-09-07.** The file and
+Copy all tests retained every send stage, but a full-app Copy visible probe
+lost phase, status and failure fields. Its generic credential redactor treats
+an unquoted `*_token` assignment through end-of-line as sensitive; the random
+`attempt_token` correlation label therefore swallowed every following field.
+Extending the real collector regression to both copy actions reproduced the
+failure. Renaming the emitted field to `attempt_id` preserved the same random
+correlation value across send and refresh events without bypassing redaction.
+
+**What to do.** Exercise each export's actual transformation chain. A
+metadata-only bulk export passing does not prove the descriptive live view
+retains that metadata. Avoid credential-like labels for non-credential IDs;
+keep credential redaction intact and verify both privacy and diagnostic detail.
+
+## Equal widget geometry can hide text moving on every caret blink
+
+**TASK-32012.1, Console flicker investigation, 2026-09-07.** Settled-screen
+probes showed no full-screen updates or repeated geometry changes, and the
+composer's existing blink tests passed. Comparing the text in both phases
+instead found 763 mismatches across 4,092 sampled caret positions. At width 11,
+`hello world` painted `hello ` / `world▌` while visible, then `hello world` /
+` ` while hidden: a space and a block have equal cell widths but different
+word boundaries. Mounted Enter-failure tests reproduced the moving word at
+80×24 and 97×30. Hit testing also missed that word because it wrapped the
+space-based layout. This establishes composer text movement, not the external
+reporter's exact whole-screen flicker.
+
+**What to do.** Compare actual painted characters and their positions across
+animation phases, alongside geometry and compositor activity. Wrap with one
+stable caret glyph and hide its mapped character afterward. Pasted-tab cases
+caught an offset mistake in the initial fix: tab expansion must be reflected
+in caret/style offsets and reversed for click mapping. Keep these cases plus
+literal caret-like text, Unicode and history suggestions in the regression.
