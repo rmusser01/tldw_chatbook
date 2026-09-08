@@ -1,0 +1,100 @@
+name: TASK-32011 one-off Linux storage evidence
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  linux-storage:
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'task-32011-linux-evidence') &&
+      (github.event.action == 'synchronize' || github.event.label.name == 'task-32011-linux-evidence')
+    name: Linux storage - Python ${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - name: Check out the exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install core application and test dependencies
+        run: python -m pip install -e '.[dev]'
+
+      - name: Record tested revision and platform
+        run: |
+          git rev-parse HEAD
+          python --version
+          uname -a
+
+      - name: Run storage, bootstrap, Settings, and logging regressions
+        run: |
+          python -m pytest \
+            Tests/test_database_path_privacy.py \
+            Tests/test_data_root_concurrency.py \
+            Tests/test_prompt_dump_storage.py \
+            Tests/test_user_data_dir_isolation.py \
+            Tests/test_config_private_bootstrap.py \
+            Tests/Utils/test_private_paths.py \
+            Tests/DB/test_private_sqlite.py \
+            Tests/UI/test_profile_owned_settings_paths.py \
+            Tests/test_logging_private_files.py \
+            --timeout=60 --junitxml="$RUNNER_TEMP/storage-tests.xml" -q
+
+      - name: Prove installed CLI bootstrap under shared-writable ancestors
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          import stat
+          import subprocess
+          import sys
+          import tempfile
+
+          assert sys.platform == "linux"
+          cli = shutil.which("tldw-cli")
+          assert cli is not None
+          with tempfile.TemporaryDirectory(prefix="tldw-fresh-install-") as tmp:
+              home = Path(tmp) / "home"
+              share = home / ".local/share"
+              share.mkdir(parents=True)
+              share.chmod(0o775)
+              env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"))
+              env.pop("TLDW_CONFIG_PATH", None)
+              env.pop("XDG_DATA_HOME", None)
+              for mode in (0o775, 0o755):
+                  share.chmod(mode)
+                  result = subprocess.run(
+                      [cli, "--help"], env=env, capture_output=True,
+                      text=True, check=False, timeout=60,
+                  )
+                  assert result.returncode == 0, result.stderr
+                  assert "usage:" in result.stdout.lower(), result.stdout
+                  fallback = home / ".tldw_cli-data"
+                  assert stat.S_IMODE(fallback.stat().st_mode) == 0o700
+                  assert stat.S_IMODE(share.stat().st_mode) == mode
+                  assert not (share / "tldw_cli").exists()
+                  print(f"Installed CLI passed with ancestor mode {mode:04o}; private fallback retained")
+          PY
+
+      - name: Retain test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-32011-linux-python-${{ matrix.python }}
+          path: ${{ runner.temp }}/storage-tests.xml
+          if-no-files-found: warn

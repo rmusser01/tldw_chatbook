@@ -203,7 +203,7 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_type_filter == "audio"
+        assert screen._media_state.type_filter == "audio"
         assert not screen.query("#library-media-type-choices")
         opener = screen.query_one("#library-media-type-filter", Button)
         assert str(opener.label) == "type: audio"
@@ -229,7 +229,7 @@ async def test_media_type_strip_escape_closes_without_change():
         await pilot.pause()
 
         assert not screen.query("#library-media-type-choices")
-        assert screen._library_media_type_filter is None
+        assert screen._media_state.type_filter is None
         # The opener regains focus so Escape round-trips for keyboard users.
         await _wait_for_condition(
             pilot,
@@ -276,7 +276,7 @@ async def test_media_type_strip_works_in_both_layouts():
             chooser.action_select()
             await pilot.pause()
             await pilot.pause()
-            assert screen._library_media_type_filter == "video"
+            assert screen._media_state.type_filter == "video"
             assert not screen.query("#library-media-type-choices")
 
 
@@ -320,7 +320,7 @@ async def test_media_type_strip_keyboard_only_path():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_type_filter == "audio"
+        assert screen._media_state.type_filter == "audio"
         assert not screen.query("#library-media-type-choices")
 
 

@@ -3,13 +3,18 @@ from __future__ import annotations
 import inspect
 import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook import config
-from tldw_chatbook.Utils.private_paths import PrivatePathError
-
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    PrivatePathResult,
+    PrivatePathStatus,
+)
 
 DB_PATH_HELPERS = {
     "chachanotes_db_path": (
@@ -98,9 +103,7 @@ def test_default_data_base_falls_back_to_home(
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("HOME", str(home))
 
-    assert (
-        config._default_base_data_dir() == home / ".local" / "share" / "tldw_cli"
-    )
+    assert config._default_base_data_dir() == home / ".local" / "share" / "tldw_cli"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
@@ -142,6 +145,256 @@ def test_existing_default_data_directories_are_hardened(
     assert config.get_user_data_dir() == user_dir
     assert _mode(default_base) == 0o700
     assert _mode(user_dir) == 0o700
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+@pytest.mark.parametrize("ancestor", [".local", ".local/share"])
+@pytest.mark.parametrize("mode", [0o775, 0o770, 0o777, 0o2775])
+def test_fresh_data_root_recovers_without_changing_shared_ancestors(
+    tmp_path, monkeypatch, ancestor, mode
+):
+    home = tmp_path / "home"
+    shared = home / ancestor
+    shared.mkdir(parents=True)
+    shared.chmod(mode)
+    original_mode = _mode(shared)  # Some filesystems strip setgid on chmod.
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    selected = config.get_user_data_dir()
+
+    assert selected == home / ".tldw_cli-data" / "alice"
+    assert _mode(selected.parent) == 0o700
+    assert _mode(selected) == 0o700
+    assert _mode(shared) == original_mode
+    assert not (home / ".local/share/tldw_cli").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+@pytest.mark.parametrize("entry_kind", ["directory", "file", "dangling-symlink"])
+def test_recovery_never_bypasses_existing_conventional_data(
+    tmp_path, monkeypatch, entry_kind
+):
+    home = tmp_path / "home"
+    conventional = home / ".local/share/tldw_cli"
+    conventional.parent.mkdir(parents=True)
+    if entry_kind == "directory":
+        conventional.mkdir()
+        (conventional / "saved-conversation").write_text("keep me")
+    elif entry_kind == "file":
+        conventional.write_text("keep me")
+    else:
+        conventional.symlink_to(home / "missing")
+    conventional.parent.chmod(0o775)
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    with pytest.raises(PrivatePathError, match="shared_writable_parent"):
+        config.get_user_data_dir()
+
+    assert not (home / ".tldw_cli-data").exists()
+    if entry_kind == "directory":
+        assert (conventional / "saved-conversation").read_text() == "keep me"
+
+
+def test_two_default_roots_require_explicit_selection(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    conventional = home / ".local/share/tldw_cli"
+    fallback = home / ".tldw_cli-data"
+    conventional.mkdir(parents=True)
+    fallback.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    with pytest.raises(PrivatePathError, match="ambiguous_default_data_roots"):
+        config.get_user_data_dir()
+
+    assert not (conventional / "alice").exists()
+    assert not (fallback / "alice").exists()
+    _patch_data_dir_settings(monkeypatch, conventional)
+    assert config.get_user_data_dir() == conventional / "alice"
+    _patch_data_dir_settings(monkeypatch, fallback)
+    assert config.get_user_data_dir() == fallback / "alice"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX symlink contract")
+def test_recovery_rejects_a_fallback_symlink(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    shared = home / ".local/share"
+    shared.mkdir(parents=True)
+    shared.chmod(0o775)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (home / ".tldw_cli-data").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    with pytest.raises(PrivatePathError):
+        config.get_user_data_dir()
+
+    assert list(outside.iterdir()) == []
+
+
+def test_recovery_does_not_mask_unrelated_storage_errors(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+    attempted = []
+    failure = PrivatePathError(
+        PrivatePathResult(
+            home / ".local/share/tldw_cli",
+            PrivatePathStatus.OPERATION_FAILED,
+            reason="injected_io_error",
+        )
+    )
+
+    def refuse(path, **kwargs):
+        attempted.append(path)
+        raise failure
+
+    monkeypatch.setattr(config, "secure_private_directory", refuse)
+    with pytest.raises(PrivatePathError) as caught:
+        config.get_user_data_dir()
+
+    assert caught.value is failure
+    assert attempted == [home / ".local/share/tldw_cli"]
+
+
+def test_recovery_does_not_treat_inaccessible_data_as_missing(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    shared = home / ".local/share"
+    shared.mkdir(parents=True)
+    shared.chmod(0o775)
+    conventional = shared / "tldw_cli"
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+    original_lstat = Path.lstat
+
+    def denied_lstat(path):
+        if path == conventional:
+            raise PermissionError("injected inaccessible data root")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", denied_lstat)
+    with pytest.raises(PermissionError, match="inaccessible data root"):
+        config.get_user_data_dir()
+
+    assert not (home / ".tldw_cli-data").exists()
+
+
+def test_data_root_probe_validates_before_accessing_the_filesystem(
+    tmp_path, monkeypatch
+):
+    def unexpected_probe(path):
+        pytest.fail("invalid environment-derived path reached lstat")
+
+    monkeypatch.setattr(Path, "lstat", unexpected_probe)
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        config._data_root_entry_exists(tmp_path / "unsafe;home" / "data")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private lock contract")
+def test_default_root_lock_is_private_stable_and_does_not_chmod_home(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    first = config.get_user_data_dir()
+    lock = home / ".tldw_cli-data-root.lock"
+    identity = lock.stat().st_ino
+    assert config.get_user_data_dir() == first
+    assert lock.stat().st_ino == identity
+    assert _mode(lock) == 0o600
+    assert _mode(home) == 0o755
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX no-follow lock contract")
+def test_default_root_selection_rejects_symlinked_lock(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("keep me")
+    (home / ".tldw_cli-data-root.lock").symlink_to(outside)
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    with pytest.raises(PrivatePathError):
+        config.get_user_data_dir()
+
+    assert outside.read_text() == "keep me"
+    assert not (home / ".local").exists()
+    assert not (home / ".tldw_cli-data").exists()
+
+
+def test_explicit_root_does_not_create_a_default_selection_lock(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, custom)
+
+    assert config.get_user_data_dir() == custom / "alice"
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX fresh-install contract")
+def test_fresh_config_import_and_database_survive_restart_and_permission_repair(
+    tmp_path,
+):
+    home = tmp_path / "home"
+    shared = home / ".local/share"
+    shared.mkdir(parents=True)
+    shared.chmod(0o775)
+    # Exercise default config bootstrap too, with no inherited test override.
+    env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"))
+    env.pop("TLDW_CONFIG_PATH", None)
+    env.pop("XDG_DATA_HOME", None)
+    script = """
+import sys
+from tldw_chatbook import config
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+path = config.get_chachanotes_db_path()
+assert path.parent.parent.name == '.tldw_cli-data', path
+db = connect_private_sqlite('db.chachanotes.primary', path)
+try:
+    if sys.argv[1] == 'create':
+        with db:
+            db.execute('CREATE TABLE recovery_probe (value TEXT)')
+            db.execute('INSERT INTO recovery_probe VALUES (?)', ('survived restart',))
+    assert db.execute('SELECT value FROM recovery_probe').fetchone() == ('survived restart',)
+finally:
+    db.close()
+print('RECOVERY_OK')
+"""
+    for phase in ("create", "restart", "repaired"):
+        if phase == "repaired":
+            shared.chmod(0o755)
+        result = subprocess.run(
+            [sys.executable, "-c", script, phase],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=40,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "RECOVERY_OK" in result.stdout
+        assert _mode(shared) == (0o755 if phase == "repaired" else 0o775)
+
+    fallback = home / ".tldw_cli-data"
+    assert _mode(fallback) == 0o700
+    assert _mode(home / ".config/tldw_cli/config.toml") == 0o600
+    databases = list(fallback.glob("*/tldw_chatbook_ChaChaNotes.db"))
+    assert len(databases) == 1
+    assert _mode(databases[0]) == 0o600
+    assert not (shared / "tldw_cli").exists()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")

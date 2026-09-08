@@ -4473,3 +4473,81 @@ async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
         # A 30-line terminal is below every growth step: the historical
         # ceiling is back.
         assert expected_small_budget == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+
+
+class _AppearanceService:
+    """Spy appearance service for the PR #2480 review-fix regressions."""
+
+    def __init__(self, appearances=None):
+        from tldw_chatbook.Chat.console_appearance import (
+            ConsoleConversationAppearance,
+        )
+
+        self.calls: list[list[str]] = []
+        self._appearances = appearances or {
+            "conv-1": ConsoleConversationAppearance(icon="🧪", color="#f87171")
+        }
+
+    def get_conversation_appearances(self, conversation_ids):
+        self.calls.append(list(conversation_ids))
+        return dict(self._appearances)
+
+
+def _appearance_row(key, title="Row"):
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        ConsoleConversationBrowserInputRow,
+    )
+
+    return ConsoleConversationBrowserInputRow(
+        row_key=key,
+        conversation_id=key,
+        native_session_id=None,
+        title=title,
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+    )
+
+
+def test_merge_console_browser_rows_accepts_generator_groups():
+    """PR #2480 review (#4): one-shot generator inputs must survive the
+    merge's two passes -- the appearance pre-pass used to exhaust them and
+    silently drop every row they carried."""
+    service = _AppearanceService()
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            conversation_local_marks_service=None,
+            local_chat_conversation_service=service,
+        )
+    )
+
+    def _generator():
+        yield _appearance_row("conv-1", "Generated row")
+        yield _appearance_row("conv-2", "Also generated")
+
+    merged = controller._merge_console_browser_rows(_generator())
+    assert [row.row_key for row in merged] == ["conv-1", "conv-2"]
+    # Appearance from the (single) batched read is applied.
+    assert merged[0].icon == "🧪"
+    assert merged[0].color == "#f87171"
+
+
+def test_console_appearance_map_caches_within_ttl_and_refetches_new_ids():
+    """PR #2480 review (#7): recurring merges share one batched read within
+    the TTL window; unknown ids trigger exactly one refetch."""
+    service = _AppearanceService()
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            conversation_local_marks_service=None,
+            local_chat_conversation_service=service,
+        )
+    )
+
+    first = controller._console_conversation_appearance_map(["conv-1"])
+    second = controller._console_conversation_appearance_map(["conv-1"])
+    assert first == second == {"conv-1": ("🧪", "#f87171")}
+    assert len(service.calls) == 1
+
+    # An id outside the cached map must refetch (once), not serve a stale miss.
+    controller._console_conversation_appearance_map(["conv-1", "conv-9"])
+    assert len(service.calls) == 2

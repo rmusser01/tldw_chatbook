@@ -84,24 +84,24 @@ async def test_reader_substate_presses_are_viewer_scoped() -> None:
 
         # Move to trash: arm the confirm, then cancel it.
         await press("#library-media-delete", "#library-media-delete-confirm")
-        assert screen._library_media_confirming_delete is True
+        assert screen._media_state.confirming_delete is True
         await press("#library-media-delete-cancel", "#library-media-delete")
-        assert screen._library_media_confirming_delete is False
+        assert screen._media_state.confirming_delete is False
 
         # Edit metadata: enter the Info-mode form, then cancel it.
         await press("#library-media-edit", "#library-media-edit-cancel")
-        assert screen._library_media_editing is True
-        assert screen._library_media_reader_session.mode == "info"
+        assert screen._media_state.editing is True
+        assert screen._media_state.reader_session.mode == "info"
         await press("#library-media-edit-cancel", "#library-media-reader-select-read")
-        assert screen._library_media_editing is False
+        assert screen._media_state.editing is False
 
         # Edit analysis: the analysis mode owns its own edit/cancel pair.
         screen.query_one("#library-media-reader-select-analysis", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
         await press("#library-media-analysis-edit", "#library-media-analysis-cancel")
-        assert screen._library_media_editing_analysis is True
+        assert screen._media_state.editing_analysis is True
         await press("#library-media-analysis-cancel", "#library-media-analysis-edit")
-        assert screen._library_media_editing_analysis is False
+        assert screen._media_state.editing_analysis is False
 
         assert len(recomposes) == 6, recomposes
         assert all(count == 0 for count in recomposes.values()), recomposes
@@ -184,4 +184,4 @@ async def test_resize_on_the_media_route_still_carries_the_focus_intent() -> Non
 
         assert with_intent["count"] >= 1, with_intent
         # ...and the resize really did settle the mounted shell's geometry.
-        assert shell.effective_layout == screen._library_media_reader_layout
+        assert shell.effective_layout == screen._media_state.reader_layout

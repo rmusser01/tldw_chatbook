@@ -55,10 +55,15 @@ READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
 
 #: task-31635 (critique #5 item 13): a non-Markdown text item simply dropped
 #: the Rendered|Raw strip, so nothing said whether a rendered view existed.
-#: Scoped to the text types a reader could plausibly expect one for -- a
-#: transcript that failed the Markdown sniff is already named by the copy.
-RENDERED_VIEW_NOTE = "Rendered view is for Markdown and transcripts"
-RENDERED_VIEW_NOTE_TYPES = frozenset({"article", "document"})
+#: task-31958: the note is gated on CONTENT, not on the media type -- an
+#: allowlist of article/document left a plaintext, video or audio item that
+#: failed the Markdown sniff with the same silent blank slot, while an empty
+#: article got the note above "No stored content.", explaining nothing.
+#: The copy is type-neutral for the same reason (batch-3 review ruling 1):
+#: naming the types a rendered view IS for read as a contradiction above a
+#: plain-prose transcript -- "for transcripts", withheld from a transcript.
+#: It now says why THIS item has none.
+RENDERED_VIEW_NOTE = "No Markdown formatting to render — showing the stored text"
 
 
 def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
@@ -439,7 +444,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     yield Button("Open original", id="library-media-open-original", compact=True)
                 if not self.external_detail:
                     yield Button("Open manager", id="library-media-open", compact=True)
-                    yield Button("Move to trash", id="library-media-delete", compact=True)
+                    # task-31980 (critique #6 P2): the one destructive action
+                    # in this strip takes the Library's quiet-danger class --
+                    # muted ink + a left margin (the more-actions rule zeroes
+                    # button margins, so the class's own is restored by an
+                    # id-scoped rule) -- so it reads apart from the neutral
+                    # actions instead of ending the row unmarked and flush.
+                    yield Button(
+                        "Move to trash",
+                        id="library-media-delete",
+                        classes="library-media-action-danger",
+                        compact=True,
+                    )
 
     def _compose_mode_toolbar(self) -> ComposeResult:
         """Render one explicit mode selector; external detail remains read-only."""
@@ -552,8 +568,12 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         The toggle itself is offered only when ``self.viewer.is_markdown``
         is true -- a non-markdown item always shows the plain Raw view (no
         behavior change from before LIB-13). Since task-31635 a non-markdown
-        ``article``/``document`` gets a one-line note in the same slot
-        instead of nothing at all. Mirrors the
+        item gets a one-line note in the same slot instead of nothing at
+        all, and since task-31958 that covers any media type -- whatever
+        the item is, if there is content and it cannot render, the slot
+        says why. An item with NO stored content is the one exception: the
+        body already says "No stored content.", and there is no rendered
+        view to explain the absence of. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
@@ -563,14 +583,14 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
 
         Returns:
             ComposeResult for the toggle strip, or -- for a non-markdown
-            ``article``/``document`` -- the one-line note that names why
-            there is no toggle (task-31635).
+            item that has content -- the one-line note that names why
+            there is no toggle (task-31635, task-31958).
         """
         if not self.viewer.is_markdown:
             # task-31635 (critique #5 item 13): the slot names itself rather
             # than vanishing. Text only -- there is no rendered view to
             # offer, so a control here would be an affordance for nothing.
-            if self.viewer.media_type.strip().lower() in RENDERED_VIEW_NOTE_TYPES:
+            if self.viewer.has_content:
                 yield Static(
                     RENDERED_VIEW_NOTE,
                     id="library-media-content-mode-note",
@@ -1039,6 +1059,17 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 generate.disabled = True
                 generate.tooltip = reason
             yield generate
+        if reason:
+            # task-31981: the reason must reach a keyboard-first user, not
+            # only a mouse tooltip. Same inline-reason grammar as the Export
+            # gate's "No destination chosen" line under its blocked button
+            # (library_export_canvas.py). The tooltip above stays as a bonus.
+            yield Static(
+                reason,
+                id="library-media-analysis-generate-reason",
+                classes="library-media-action-reason",
+                markup=False,
+            )
 
     def _compose_analysis_edit_form(self) -> ComposeResult:
         """Render the analysis edit ``TextArea`` prefilled with the current analysis.

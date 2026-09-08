@@ -17,11 +17,12 @@ import hmac
 import json
 import re
 import secrets
+from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from rich.cells import cell_len
+from rich.cells import cell_len, split_graphemes
 from rich.markup import escape
 from rich.text import Text
 from textual import on
@@ -86,6 +87,7 @@ _PLACEHOLDER_CANDIDATE_PATTERN = re.compile(r"\[\[TLDW_PROTECTED:[^\]]*\]\]")
 #: chunk (terminal cells instead of characters), not in where it is willing
 #: to break.
 _DRAFT_WORD_SPLIT_RE = re.compile(r"([\t\n\x0b\x0c\r ]+)")
+_DRAFT_TAB_WIDTH = 8
 
 #: Modifier prefixes that make a key a CHORD rather than text input, even
 #: when it carries a printable ``character``. Textual's terminal parser
@@ -1909,14 +1911,14 @@ class ConsoleComposerBar(Horizontal):
             # never re-parsed as markup, so a future reason carrying "[...]"
             # cannot smuggle in styling or a second action.
             if self.has_class("console-composer-setup-blocked"):
-                strip.update(
-                    Content.from_markup(
-                        "[@click=app.run_setup_wizard]$reason ›[/]",
-                        reason=reason,
-                    )
+                reason_content = Content.from_markup(
+                    "[@click=app.run_setup_wizard]$reason ›[/]",
+                    reason=reason,
                 )
             else:
-                strip.update(Content(reason))
+                reason_content = Content(reason)
+            if strip.content != reason_content:
+                strip.update(reason_content)
             # TASK-24415: the cap is a function of the live row width so the
             # draft keeps its floor; below a legible budget the strip hides
             # entirely (the Send tooltip still carries the reason).
@@ -1936,7 +1938,8 @@ class ConsoleComposerBar(Horizontal):
                 strip.styles.height = 0
                 strip.styles.min_height = 0
         else:
-            strip.update(Content(""))
+            if strip.content != Content(""):
+                strip.update(Content(""))
             strip.styles.display = "none"
             strip.styles.width = 0
             strip.styles.min_width = 0
@@ -2586,7 +2589,9 @@ class ConsoleComposerBar(Horizontal):
         # caller in this module) regardless of `replace_whitespace`, which
         # only controls whether *other* whitespace becomes plain spaces.
         chunks = [
-            chunk for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(8)) if chunk
+            chunk
+            for chunk in _DRAFT_WORD_SPLIT_RE.split(line.expandtabs(_DRAFT_TAB_WIDTH))
+            if chunk
         ]
         chunks.reverse()
         lines: list[str] = []
@@ -2704,11 +2709,11 @@ class ConsoleComposerBar(Horizontal):
         """Return the wrapped row containing a source-text offset.
 
         For SPLICED offsets only -- callers that pass `line_slices` wrapped
-        from a caret-glyph- or placeholder-spliced `render_text`, together
+        from a caret-glyph-spliced `render_text`, together
         with the matching spliced offset into it (the two current
         production callers, both via `_visible_draft_line_slices(...,
         cursor_index=...)`: `_draft_renderable`'s glyph splice and
-        `_display_index_at`'s space splice). A real character always
+        `_display_index_at`'s glyph splice). A real character always
         occupies the exact offset being looked up under that contract, so
         the "no row contains this offset" fallback below (unconditionally
         the LAST row) is never actually reachable there.
@@ -2848,22 +2853,12 @@ class ConsoleComposerBar(Horizontal):
         ghost_suffix: str = "",
     ) -> Text:
         if text:
-            # While focused, exactly one display cell is always reserved at
-            # the caret position inside the wrapped draft -- the caret glyph
-            # during the visible blink phase, an ordinary space during the
-            # hidden phase -- and it is wrapped in the *same* pass as the
-            # draft itself (rather than appended afterward). That keeps the
-            # two blink phases layout-identical: whichever character reserves
-            # the cell is decided by wrap width alone, never by which literal
-            # character it is, so a blink tick can never change how many
-            # visual rows the draft occupies (which previously could clip or
-            # jitter the composer when the last wrapped line landed exactly
-            # at the wrap width). The glyph is left unstyled: the block
-            # character is prominent enough on its own, and leaving it
-            # unstyled keeps it from being mistaken for a stateful paste
-            # token.
+            # Reserve the same glyph in BOTH blink phases. A space has the
+            # same cell width but different word boundaries: wrapping it
+            # instead makes whole words jump on every blink (TASK-32012.1).
+            # Hide only the mapped caret character AFTER wrapping/windowing.
             if focused:
-                caret_cell = resolve_glyph(cls.CURSOR_GLYPH) if cursor_visible else " "
+                caret_cell = resolve_glyph(cls.CURSOR_GLYPH)
                 caret_position = (
                     len(text)
                     if cursor_index is None
@@ -2897,11 +2892,43 @@ class ConsoleComposerBar(Horizontal):
             else:
                 caret_position = None
                 render_text = text
+            if "\t" in render_text:
+                # Wrapping expands tabs. Put caret/style offsets in that same
+                # coordinate space before selecting or masking a visible row.
+                if caret_position is not None:
+                    caret_position = len(
+                        render_text[:caret_position].expandtabs(_DRAFT_TAB_WIDTH)
+                    )
+                if style_ranges:
+                    style_ranges = [
+                        (
+                            len(render_text[:start].expandtabs(_DRAFT_TAB_WIDTH)),
+                            len(render_text[:end].expandtabs(_DRAFT_TAB_WIDTH)),
+                            style,
+                        )
+                        for start, end, style in style_ranges
+                    ]
+                render_text = render_text.expandtabs(_DRAFT_TAB_WIDTH)
             line_slices = cls._visible_draft_line_slices(
                 render_text,
                 width,
                 cursor_index=caret_position,
             )
+            if caret_position is not None and not cursor_visible:
+                for index, line_slice in enumerate(line_slices):
+                    if line_slice.start <= caret_position < line_slice.end:
+                        offset = (
+                            caret_position
+                            - line_slice.start
+                            + line_slice.synthetic_prefix_columns
+                        )
+                        line_slices[index] = replace(
+                            line_slice,
+                            text=line_slice.text[:offset]
+                            + " "
+                            + line_slice.text[offset + 1 :],
+                        )
+                        break
             # `no_wrap`/`overflow="crop"`: defense-in-depth, not the fix for
             # any known bug reachable through this file's own call sites.
             # Each joined row is already budgeted to fit `width` by
@@ -2985,7 +3012,11 @@ class ConsoleComposerBar(Horizontal):
         # while focused, computed once here (at focus/blur/mutation time,
         # never on a blink tick) so the exactly-at-width case gets its extra
         # row up front instead of only discovering it needs one mid-blink.
-        measured_text = f"{text} " if reserve_trailing_cell else text
+        measured_text = (
+            f"{text}{resolve_glyph(cls.CURSOR_GLYPH)}"
+            if reserve_trailing_cell
+            else text
+        )
         return max(
             cls.MIN_DRAFT_ROWS,
             min(
@@ -3469,9 +3500,8 @@ class ConsoleComposerBar(Horizontal):
         draft plus `_ghost_suffix`'s linear scan over up to 1000 history
         entries -- measured 1.58 ms/tick with a 20 KB draft -- just to flip
         one caret cell. A tick with an unchanged key is now a dict hit; the
-        two phases are cached separately because the caret cell (glyph vs
-        space) participates in the word wrap, so their wrapped output is not
-        derivable from one another by substitution.
+        two phases cache their final caret character separately, while
+        sharing the same wrapping policy.
         """
         phase = bool(getattr(self, "_cursor_visible", True))
         memo_key = self._visible_render_memo_key(draft, width)
@@ -3524,10 +3554,9 @@ class ConsoleComposerBar(Horizontal):
         miss per tick. ``layout=False`` is sound here because the rendered
         SIZE cannot differ between the two blink phases:
 
-        * ``_draft_renderable`` reserves exactly one display cell at the
-          caret position in BOTH phases -- the glyph while visible, a plain
-          space while hidden -- and wraps it in the same pass, so the two
-          phases are cell-identical by construction (see its comment). Both
+        * ``_draft_renderable`` wraps the same caret glyph in BOTH phases,
+          then masks only that character with a space while hidden, so the
+          two phases retain identical word positions and cell widths. Both
           ``CURSOR_GLYPH`` and its ASCII fallback ``|`` are single-width.
         * The Static's geometry is pinned by inline styles rather than
           derived from its content: ``width: 1fr``, ``text_wrap = "nowrap"``,
@@ -5367,28 +5396,56 @@ class ConsoleComposerBar(Horizontal):
                 0, min(self._cursor_display_index(), len(display_text))
             )
             render_text = (
-                f"{display_text[:caret_position]} {display_text[caret_position:]}"
+                f"{display_text[:caret_position]}"
+                f"{resolve_glyph(self.CURSOR_GLYPH)}{display_text[caret_position:]}"
             )
         else:
             render_text = display_text
         visible_slices = self._visible_draft_line_slices(
-            render_text,
+            render_text.expandtabs(_DRAFT_TAB_WIDTH),
             self._draft_render_width(),
-            cursor_index=caret_position,
+            cursor_index=(
+                len(render_text[:caret_position].expandtabs(_DRAFT_TAB_WIDTH))
+                if caret_position is not None
+                else None
+            ),
         )
         if click_y >= len(visible_slices):
             return None
         clicked_slice = visible_slices[click_y]
-        if click_x >= len(clicked_slice.text):
+        if click_x >= cell_len(clicked_slice.text):
+            return None
+        # The terminal reports cells; slice and tab-source offsets count
+        # characters. Keep clicks on either cell of an emoji at its start,
+        # using whole grapheme boundaries with the wrapper's cell measurement.
+        for click_index, end, _ in split_graphemes(clicked_slice.text)[0]:
+            if cell_len(clicked_slice.text[:end]) > click_x:
+                break
+        else:
             return None
         if clicked_slice.synthetic_prefix_columns:
-            if click_x < clicked_slice.synthetic_prefix_columns:
+            if click_index < clicked_slice.synthetic_prefix_columns:
                 return None
             source_index = (
-                clicked_slice.start + click_x - clicked_slice.synthetic_prefix_columns
+                clicked_slice.start
+                + click_index
+                - clicked_slice.synthetic_prefix_columns
             )
         else:
-            source_index = clicked_slice.start + click_x
+            source_index = clicked_slice.start + click_index
+        if "\t" in render_text:
+            # Map expanded display positions back to the original source.
+            # A click inside a tab's spaces belongs to that tab character.
+            source_index = (
+                bisect_right(
+                    range(len(render_text) + 1),
+                    source_index,
+                    key=lambda index: len(
+                        render_text[:index].expandtabs(_DRAFT_TAB_WIDTH)
+                    ),
+                )
+                - 1
+            )
         if caret_position is not None:
             if source_index == caret_position:
                 return caret_position

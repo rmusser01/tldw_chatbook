@@ -14,8 +14,9 @@ See backlog/docs/design-library-review-sets.md.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Iterator, Sequence
 from uuid import uuid4
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
@@ -65,6 +66,41 @@ class ReviewSetService:
         self._db = db
         self._id_factory = id_factory or (lambda: f"reviewset-{uuid4().hex}")
         self._now = now or _utc_now
+        self._revision = 0
+
+    @property
+    def revision(self) -> int:
+        """Count of committed writes through this service (task-31956).
+
+        A cache-invalidation stamp for readers that would otherwise re-load
+        a whole set to answer a question the last load already answered --
+        the Media list's reviewed decoration is the first. Bumped by
+        :meth:`_write`, which every mutating method opens its transaction
+        through, so a new writer cannot forget to invalidate.
+
+        ponytail: per-INSTANCE, so it counts this service's own writes. The
+        screen builds exactly one service over the collections DB (
+        ``LibraryScreen._review_set_service``); a second writer against the
+        same file would need a stamp read from the DB instead.
+
+        A racing ``+= 1`` losing a count is harmless: every bump happens
+        after its own commit, so a reader that stamped an older value still
+        mismatches and re-reads. What a reader must NOT do is stamp a
+        revision read AFTER its own load -- that claims a write it never
+        saw (fix round 1).
+
+        Returns:
+            int: the number of writes committed through this instance so
+            far; equal values mean nothing has changed since the last read.
+        """
+        return self._revision
+
+    @contextmanager
+    def _write(self) -> Iterator[sqlite3.Connection]:
+        """Open a write transaction and bump :attr:`revision` on commit."""
+        with self._db.transaction() as conn:
+            yield conn
+        self._revision += 1
 
     # -- creation -------------------------------------------------------------
 
@@ -117,7 +153,7 @@ class ReviewSetService:
 
         set_id = self._id_factory()
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             self._deactivate_all(conn, timestamp)
             conn.execute(
                 "INSERT INTO review_sets("
@@ -214,7 +250,7 @@ class ReviewSetService:
             The new absolute cursor position.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             review_set = self._read_review_set(conn, set_id)
             if review_set is None:
                 return 0
@@ -248,7 +284,7 @@ class ReviewSetService:
             done: ``True`` to mark reviewed, ``False`` to clear the mark.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             conn.execute(
                 "UPDATE review_set_items SET done = ?, done_at = ? "
                 "WHERE set_id = ? AND backing_media_id = ?",
@@ -275,7 +311,7 @@ class ReviewSetService:
             ``True`` when the set is now complete.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             # Read and write in ONE transaction so a concurrent mark cannot
             # commit between the completion check and the stamp (task-28241
             # review).
@@ -311,7 +347,7 @@ class ReviewSetService:
             set_id: The set to activate.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             exists = conn.execute(
                 "SELECT 1 FROM review_sets "
                 "WHERE set_id = ? AND deleted_at IS NULL",
@@ -333,7 +369,7 @@ class ReviewSetService:
             set_id: The completed set to reopen.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             conn.execute(
                 "UPDATE review_sets SET completed_at = NULL, updated_at = ? "
                 "WHERE set_id = ?",
@@ -347,7 +383,7 @@ class ReviewSetService:
             set_id: The set to dismiss.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             conn.execute(
                 "UPDATE review_sets SET deleted_at = ?, active = 0, updated_at = ? "
                 "WHERE set_id = ?",
@@ -367,7 +403,7 @@ class ReviewSetService:
             reactivate: Whether the set was active when dismissed.
         """
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             conn.execute(
                 "UPDATE review_sets SET deleted_at = NULL, updated_at = ? "
                 "WHERE set_id = ?",
@@ -394,7 +430,7 @@ class ReviewSetService:
         stops being the one the Reader walks; a later ``activate`` resumes it at
         its saved cursor. A no-op when nothing is active.
         """
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             self._deactivate_all(conn, self._now())
 
     # -- internals ------------------------------------------------------------
@@ -428,7 +464,7 @@ class ReviewSetService:
 
     def _set_cursor(self, set_id: str, cursor: int) -> None:
         timestamp = self._now()
-        with self._db.transaction() as conn:
+        with self._write() as conn:
             conn.execute(
                 "UPDATE review_sets SET cursor = ?, updated_at = ? "
                 "WHERE set_id = ?",

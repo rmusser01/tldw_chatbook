@@ -338,3 +338,68 @@ async def test_toggle_preserves_markup_escaped_titles():
     assert rendered.startswith("☑")
     assert "[draft] weird title" in rendered  # renders literally, not as markup
     assert "weird title" in rendered
+
+
+def test_media_row_toggle_resolves_the_dotted_state_path():
+    """wave-7 task 3: the media row-selection object moved to
+    ``screen._media_state.row_selection``, so the dispatcher's COMPUTED name
+    (``f"_library_{kind}_row_selection"``) can no longer reach it and the
+    "media" branch must take the DOTTED form -- exactly as "conversations"
+    already does one line above it.
+
+    This is the guard the fifth census spelling needs (recipe §3): a name
+    built at runtime appears nowhere in the source, so no reference census
+    can see it go stale, and the failure is SILENT -- the ``attrgetter``
+    raises, ``_apply_library_row_toggle``'s own ``except Exception`` swallows
+    it, and the targeted patch degrades into the full-screen recompose the
+    Tier-1 design exists to avoid. Making ``refresh`` raise is what turns
+    that silent degradation into a red test (the
+    ``test_toggle_preserves_markup_escaped_titles`` precedent above).
+
+    Notes is the next subsystem to move; it will inherit this shape.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import _apply_library_row_toggle
+
+    class _Selection:
+        count = 1
+
+        @staticmethod
+        def is_selected(_row_id):
+            return True
+
+    class _Recorder:
+        disabled = True
+        tooltip = None
+
+        @staticmethod
+        def update(_text):
+            return None
+
+    class _MediaState:
+        row_selection = _Selection()
+
+    class _Screen:
+        _media_state = _MediaState()
+
+        @staticmethod
+        def query_one(_selector, _cls=None):
+            return _Recorder()
+
+        @staticmethod
+        def _library_media_analyze_reason():
+            return ""
+
+        @staticmethod
+        def refresh(**_kwargs):
+            raise AssertionError("fallback recompose must not fire")
+
+    label_rest = " Quarterly review\n    audio"
+    button = Button(f"☐{label_rest}")
+    button._library_row_label_rest = label_rest  # as the canvas stashes it
+
+    _apply_library_row_toggle(_Screen(), "media", button, "local:media:1")
+
+    # Reached the real patch path: marker flipped in place, and the media-only
+    # checked flag the canvas reads back was set.
+    assert str(button.label).startswith("☑")
+    assert button._library_media_checked is True

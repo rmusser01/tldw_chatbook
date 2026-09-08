@@ -159,8 +159,8 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
             screen.query_one("#library-media-viewer", LibraryMediaViewer)
             is viewer_before
         )
-        assert screen._library_media_editing is False
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.editing is False
+        assert screen._media_state.view == "viewer"
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
         assert calls == []
         assert screen.query_one("#library-rail") is rail_before
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
 
 
 @pytest.mark.asyncio

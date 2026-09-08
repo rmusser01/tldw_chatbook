@@ -771,8 +771,14 @@ def _apply_navigation_context_state(
             }[open_source_type]
         )
         if open_source_type == "media":
-            self._selected_media_id = open_source_id
-            self._library_media_view = "list"
+            # wave-7 (media) retarget: the flat ``_selected_media_id`` and
+            # ``_library_media_view`` attributes these two lines wrote on dev
+            # were deleted by the media cleanup PR; both fields now live on
+            # ``LibraryMediaState``. Left flat these were SILENT stray
+            # attributes -- a write, not a read -- so the deep link would have
+            # painted the wrong media surface with no exception anywhere.
+            self._media_state.selected_media_id = open_source_id
+            self._media_state.view = "list"
         elif open_source_type == "notes":
             self._selected_note_id = open_source_id
             self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)

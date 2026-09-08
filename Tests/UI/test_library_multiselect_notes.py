@@ -28,6 +28,7 @@ from tldw_chatbook.UI.Screens.library_screen import (
     _apply_library_row_toggle,
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+from Tests.UI.test_library_shell import _painted_text
 
 
 def _fake(select_mode):
@@ -303,3 +304,59 @@ async def test_export_selected_tooltip_follows_its_disabled_state():
         export_btn = pilot.app.query_one("#library-notes-export-selected", Button)
         assert export_btn.disabled is False
         assert "export" in str(export_btn.tooltip).lower()
+
+
+# ---------------------------------------------------------------------------
+# task-31959: the select-mode "Export selected" label must not move when the
+# first selection enables it. The "○ " disabled marker is part of the label,
+# so crossing 0 -> 1 selected shifted the word two cells left, right under
+# the row the user had just checked (PR J padded Media's bulk row only).
+# ---------------------------------------------------------------------------
+
+
+class _PaintableNotesCanvasApp(_NotesCanvasApp):
+    """Notes canvas mounted so its select-mode toolbar actually paints.
+
+    The app's own ``.library-toolbar-count { width: auto; }`` rule does
+    not resolve against a bare canvas mount, so the "N selected" counter
+    keeps Textual's ``1fr`` default and consumes the whole row, pushing
+    every action off-screen (the same runaway task-2853 fixed on the real
+    screen). Restated here verbatim, because what this test measures is
+    the LABEL's column, not the counter's width -- which has its own pins.
+    """
+
+    CSS = ".library-toolbar-count { width: auto; }"
+
+
+def _painted_word_column(app, button, word: str) -> int:
+    """Absolute column where ``word`` is painted inside ``button``."""
+    painted = _painted_text(app, button.region)
+    assert word in painted, (word, painted)
+    return button.region.x + painted.index(word)
+
+
+@pytest.mark.asyncio
+async def test_notes_export_label_holds_its_column_across_the_first_selection():
+    """The painted "Export" column is identical before and after selecting.
+
+    Driven through ``_apply_library_row_toggle`` -- the in-place patch a
+    row press takes, and the exact path where a padded compose-time label
+    would be rebuilt unpadded.
+    """
+    app = _PaintableNotesCanvasApp(selected_count=0)
+    app._library_notes_row_selection = RowSelection("notes")
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        export = app.query_one("#library-notes-export-selected", Button)
+        assert export.disabled
+        before = _painted_word_column(app, export, "Export")
+
+        row = app.query(".library-notes-row").first(Button)
+        app._library_notes_row_selection.toggle("n1")
+        _apply_library_row_toggle(app, "notes", row, "n1")
+        await pilot.pause()
+
+        export = app.query_one("#library-notes-export-selected", Button)
+        assert not export.disabled
+        after = _painted_word_column(app, export, "Export")
+        assert after == before, (before, after)

@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
@@ -417,14 +418,14 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
             preferences.library_width,
         )
         for preferences in (
-            screen._library_media_reader_preferences,
+            screen._media_state.reader_preferences,
             screen._conversations_state.reader_preferences,
             screen._library_notes_reader_preferences,
             screen._prompts_state.reader_preferences,
         )
     }
     assert shared == {(False, True, 35)}
-    assert screen._library_media_reader_preferences.items_open is False
+    assert screen._media_state.reader_preferences.items_open is False
     assert screen._conversations_state.reader_preferences.items_open is True
     assert screen._library_notes_reader_preferences.items_open is False
     assert screen._prompts_state.reader_preferences.items_open is True
@@ -9173,7 +9174,7 @@ async def test_library_shell_media_type_filter_narrows_list():
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
         await _pick_media_type(screen, pilot, "audio")
-        assert screen._library_media_type_filter == "audio"
+        assert screen._media_state.type_filter == "audio"
         filter_button = screen.query_one("#library-media-type-filter", Button)
         assert str(filter_button.label) == "type: audio"
         rows = list(screen.query(".library-media-row"))
@@ -9181,7 +9182,7 @@ async def test_library_shell_media_type_filter_narrows_list():
         assert "Interview Recording" in str(rows[0].label)
 
         await _pick_media_type(screen, pilot, "video")
-        assert screen._library_media_type_filter == "video"
+        assert screen._media_state.type_filter == "video"
         filter_button = screen.query_one("#library-media-type-filter", Button)
         assert str(filter_button.label) == "type: video"
         rows = list(screen.query(".library-media-row"))
@@ -9191,7 +9192,7 @@ async def test_library_shell_media_type_filter_narrows_list():
 
 @pytest.mark.asyncio
 async def test_library_shell_media_row_switches_selection():
-    """Selecting a different media row updates ``_selected_media_id``.
+    """Selecting a different media row updates ``_media_state.selected_media_id``.
 
     Re-anchored for the in-canvas viewer rebuild: pressing a media row now
     replaces the list with the full ``LibraryMediaViewer`` (no more inline
@@ -9213,12 +9214,12 @@ async def test_library_shell_media_row_switches_selection():
             screen.query_one("#library-media-preview-lines").renderable
         )
         assert "Product Demo Video" in preview_before
-        assert screen._selected_media_id == "local:media:2"
+        assert screen._media_state.selected_media_id == "local:media:2"
 
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
 
-        assert screen._selected_media_id == "local:media:1"
+        assert screen._media_state.selected_media_id == "local:media:1"
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
         assert app.media_reading_scope_service.detail_calls[-1]["media_id"] == 1
@@ -9246,7 +9247,7 @@ async def test_library_shell_media_row_opens_full_viewer_with_content():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
 
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert screen.query_one("#library-media-list")
 
         title = str(screen.query_one("#library-media-viewer-title").renderable)
@@ -9387,7 +9388,7 @@ async def test_library_shell_media_use_in_chat_without_open_item_notifies():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        assert screen._library_media_detail is None
+        assert screen._media_state.detail is None
         screen._open_selected_media_handoff()
         await pilot.pause()
 
@@ -9421,7 +9422,7 @@ async def test_library_shell_media_back_returns_to_list():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_view == "list"
+        assert screen._media_state.view == "list"
         assert screen.query_one("#library-media-list")
         assert screen.query_one("#library-media-viewer-title")
         assert getattr(screen.focused, "id", None) == "library-media-row-1"
@@ -9485,7 +9486,7 @@ async def test_library_shell_media_viewer_shows_loading_before_detail_loads(
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_detail is None
+        assert screen._media_state.detail is None
         loading = screen.query_one("#library-media-reader-empty", Static)
         assert str(loading.renderable) == "Loading media…"
         assert not screen.query("#library-media-viewer-title")
@@ -9529,7 +9530,7 @@ async def test_library_shell_media_summary_open_in_viewer_stays_in_library():
         screen.query_one("#library-media-open-viewer").press()
         await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
 
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert "media" not in seen
 
 
@@ -9585,7 +9586,7 @@ async def test_library_shell_media_edit_shows_prefilled_form():
         screen.query_one("#library-media-edit").press()
         await _wait_for_selector(screen, pilot, "#library-media-edit-title")
 
-        assert screen._library_media_editing is True
+        assert screen._media_state.editing is True
         assert (
             screen.query_one("#library-media-edit-title", Input).value
             == "Interview Recording"
@@ -9630,7 +9631,7 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
 
         service = app.media_reading_scope_service
         for _ in range(150):
-            if service.update_calls and not screen._library_media_editing:
+            if service.update_calls and not screen._media_state.editing:
                 break
             await pilot.pause(0.02)
         else:
@@ -9653,7 +9654,7 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         # production.
         assert "version" not in call
 
-        assert screen._library_media_editing is False
+        assert screen._media_state.editing is False
         assert not screen.query("#library-media-edit-title")
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording (Revised)"
@@ -9697,7 +9698,7 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
                 service.detail_entered.is_set,
                 message="Media edit never entered its detail refresh.",
             )
-            assert screen._library_media_bulk_delete_in_flight is True
+            assert screen._media_state.bulk_delete_in_flight is True
             assert screen.query_one("#library-media-edit-save", Button).disabled is True
             screen.query_one("#library-media-edit-save", Button).press()
             await pilot.pause()
@@ -9706,13 +9707,13 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
             service.detail_release.set()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_media_bulk_delete_in_flight,
+                lambda: not screen._media_state.bulk_delete_in_flight,
                 message="Media edit interlock never released after detail refresh.",
             )
             assert len(service.update_calls) == 1
             assert len(service.search_calls) == initial_searches + 1
             assert len(service.type_calls) == initial_facets + 1
-            assert screen._library_media_mutation_scope is None
+            assert screen._media_state.mutation_scope is None
     finally:
         service.update_release.set()
         service.detail_release.set()
@@ -9733,7 +9734,7 @@ async def _open_media_edit_and_save_title(screen, pilot, new_title):
 
     service = screen.app_instance.media_reading_scope_service
     for _ in range(150):
-        if service.update_calls and not screen._library_media_editing:
+        if service.update_calls and not screen._media_state.editing:
             break
         await pilot.pause(0.02)
     else:
@@ -9810,19 +9811,19 @@ async def test_library_shell_media_detail_race_discards_stale_fetch():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(150):
-            detail = screen._library_media_detail
+            detail = screen._media_state.detail
             if isinstance(detail, dict) and str(detail.get("id")) == "media-1":
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError("media-1 detail never loaded.")
-        assert screen._selected_media_id == "local:media:1"
+        assert screen._media_state.selected_media_id == "local:media:1"
 
         # Simulate a slower in-flight fetch for the previously-selected media-2
         # completing now: it must not overwrite media-1's detail.
         await screen._refresh_library_media_detail("media-2")
 
-        detail = screen._library_media_detail
+        detail = screen._media_state.detail
         assert isinstance(detail, dict)
         assert str(detail.get("id")) == "media-1"
 
@@ -9854,9 +9855,9 @@ async def test_library_shell_open_deleted_media_shows_recoverable_reader_error()
             "#library-media-viewer-error",
         )
 
-        assert screen._library_media_view == "viewer"
-        assert screen._library_media_detail is None
-        assert screen._library_media_reader_session.error == (
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.detail is None
+        assert screen._media_state.reader_session.error == (
             "Media item is unavailable."
         )
         assert "Media item is unavailable." in str(error.render())
@@ -9880,15 +9881,15 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         for _ in range(150):
-            if screen._library_media_detail is not None:
+            if screen._media_state.detail is not None:
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError(
                 "Deep-link detail never loaded: "
                 f"calls={app.media_reading_scope_service.detail_calls!r}, "
-                f"selected={screen._selected_media_id!r}, "
-                f"view={screen._library_media_view!r}"
+                f"selected={screen._media_state.selected_media_id!r}, "
+                f"view={screen._media_state.view!r}"
             )
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._library_media_browse_controller.applied_result is None
@@ -9905,7 +9906,7 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
             message="Deep-link Back never loaded the Media page and facets.",
         )
 
-        assert screen._library_media_view == "list"
+        assert screen._media_state.view == "list"
         assert screen._library_media_browse_controller.type_options == (
             "audio",
             "video",
@@ -9973,7 +9974,7 @@ async def test_library_shell_media_edit_cancel_discards():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_editing is False
+        assert screen._media_state.editing is False
         assert not screen.query("#library-media-edit-title")
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
@@ -10002,12 +10003,12 @@ async def test_library_shell_media_delete_shows_inline_confirm_without_deleting(
         screen.query_one("#library-media-delete").press()
         await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
 
-        assert screen._library_media_confirming_delete is True
+        assert screen._media_state.confirming_delete is True
         assert screen.query_one("#library-media-delete-cancel")
 
         service = app.media_reading_scope_service
         assert service.delete_calls == []
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
 
 
 @pytest.mark.asyncio
@@ -10034,7 +10035,7 @@ async def test_library_shell_media_delete_confirm_uses_raw_backing_id():
 
         service = app.media_reading_scope_service
         for _ in range(150):
-            if service.delete_calls and not screen._library_media_bulk_delete_in_flight:
+            if service.delete_calls and not screen._media_state.bulk_delete_in_flight:
                 break
             await pilot.pause(0.02)
         else:
@@ -10045,9 +10046,9 @@ async def test_library_shell_media_delete_confirm_uses_raw_backing_id():
 
         assert service.delete_calls, "delete_media_item was never called"
         assert service.delete_calls[-1]["media_id"] == 1
-        assert screen._library_media_confirming_delete is False
-        assert screen._library_media_view == "viewer"
-        assert screen._selected_media_id == "local:media:2"
+        assert screen._media_state.confirming_delete is False
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.selected_media_id == "local:media:2"
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Product Demo Video"
 
@@ -10080,8 +10081,8 @@ async def test_library_media_delete_escape_is_inert_during_durable_write() -> No
             )
 
             await pilot.press("escape")
-            assert screen._library_media_confirming_delete is True
-            assert screen._library_media_view == "viewer"
+            assert screen._media_state.confirming_delete is True
+            assert screen._media_state.view == "viewer"
             assert screen.check_action("library_media_viewer_back", ()) is False
     finally:
         service.delete_release.set()
@@ -10111,7 +10112,7 @@ async def test_library_shell_media_delete_cancel_leaves_item_intact():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_confirming_delete is False
+        assert screen._media_state.confirming_delete is False
         assert not screen.query("#library-media-delete-confirm")
         assert screen.query_one("#library-media-delete")
         title = str(screen.query_one("#library-media-viewer-title").renderable)
@@ -10334,7 +10335,7 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
             "action": "save",
             "media_id": 1,
         }
-        assert screen._library_media_detail["is_read_it_later"] is True
+        assert screen._media_state.detail["is_read_it_later"] is True
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
             == "Remove later"
@@ -10382,7 +10383,7 @@ async def test_library_shell_media_read_later_removes_when_already_saved():
             "action": "remove",
             "media_id": 1,
         }
-        assert "is_read_it_later" not in screen._library_media_detail
+        assert "is_read_it_later" not in screen._media_state.detail
         assert (
             str(screen.query_one("#library-media-read-later", Button).label)
             == "Read later"
@@ -10450,7 +10451,7 @@ async def test_library_shell_media_analysis_edit_shows_prefilled_textarea():
         screen.query_one("#library-media-analysis-edit").press()
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
 
-        assert screen._library_media_editing_analysis is True
+        assert screen._media_state.editing_analysis is True
         text_area = screen.query_one("#library-media-analysis-edit-text", TextArea)
         assert text_area.text == "Existing analysis"
         assert screen.query_one("#library-media-analysis-save")
@@ -10490,7 +10491,7 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
 
         service = app.media_reading_scope_service
         for _ in range(150):
-            if service.analysis_calls and not screen._library_media_editing_analysis:
+            if service.analysis_calls and not screen._media_state.editing_analysis:
                 break
             await pilot.pause(0.02)
         else:
@@ -10508,7 +10509,7 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
             == "Full transcript: the interview recording covers the quarterly roadmap."
         )
 
-        assert screen._library_media_editing_analysis is False
+        assert screen._media_state.editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
         # task-28026: a non-empty analysis renders in the searchable content
         # body (its raw text is on ``.content``), not the plain Static.
@@ -10551,7 +10552,7 @@ async def test_library_shell_media_analysis_cancel_discards():
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_editing_analysis is False
+        assert screen._media_state.editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
         # task-28026: a non-empty analysis renders in the searchable content
         # body (its raw text is on ``.content``), not the plain Static.
@@ -10633,7 +10634,7 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
         call = service.analysis_calls[-1]
         assert call["analysis_content"] == "Generated summary of the interview."
         assert call["media_id"] == 1
-        assert screen._library_media_generating_analysis is False
+        assert screen._media_state.generating_analysis is False
 
 
 @pytest.mark.asyncio
@@ -10692,7 +10693,10 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
             generate = screen.query_one("#library-media-analysis-generate", Button)
             assert generate.disabled is True
             assert str(generate.label) == "○ Generate"
-            assert str(generate.tooltip) == "No analysis provider is configured."
+            assert str(generate.tooltip) == (
+                "No analysis provider is configured "
+                "· Set one in Settings ▸ Providers & Models."
+            )
             screen.handle_library_media_analysis_generate(
                 SimpleNamespace(stop=lambda: None)
             )
@@ -10701,7 +10705,7 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
 
         assert dispatched == []
         assert app.media_reading_scope_service.analysis_calls == []
-        assert screen._library_media_generating_analysis is False
+        assert screen._media_state.generating_analysis is False
         assert notify.called
         message = str(notify.call_args[0][0]) if notify.call_args[0] else ""
         assert "provider" in message.lower()
@@ -10806,6 +10810,21 @@ def _painted_text(host, region) -> str:
     )
 
 
+def _painted_label_column(host, button) -> int:
+    """Absolute column of the first glyph ``button`` paints (task-31959).
+
+    The Library's select-mode action rows clip their labels at the pane's
+    40-column floor, so the whole word is often not painted; what a user
+    sees move is where the label STARTS. The "○ " disabled marker is part
+    of the label, so an unpadded enabled spelling starts two cells left of
+    the disabled one it replaces.
+    """
+    painted = _painted_text(host, button.region)
+    stripped = painted.lstrip()
+    assert stripped, (button.id, painted)
+    return button.region.x + (len(painted) - len(stripped))
+
+
 def _row_is_painted_focused(host, row) -> bool:
     """Whether ``row`` really carries the media row focus cue on screen.
 
@@ -10839,7 +10858,7 @@ async def test_library_media_sort_chooser_applies_the_selected_order():
             screen, pilot, "#library-media-sort-choices"
         )
         assert isinstance(chooser, OptionList)
-        assert screen._library_media_sort_choices_visible is True
+        assert screen._media_state.sort_choices_visible is True
 
         # Pick "Title A-Z" -> the chooser closes and a page-one fetch runs
         # under sort_by=title_asc.
@@ -10859,7 +10878,7 @@ async def test_library_media_sort_chooser_applies_the_selected_order():
             raise AssertionError(
                 f"Sort was never applied. Calls: {service.search_calls[-3:]}"
             )
-        assert screen._library_media_sort_choices_visible is False
+        assert screen._media_state.sort_choices_visible is False
         last = service.search_calls[-1]
         assert last["sort_by"] == "title_asc"
         assert last.get("page", 1) == 1
@@ -10884,8 +10903,8 @@ async def test_library_media_sort_and_type_choosers_are_mutually_exclusive():
         await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         screen.query_one("#library-media-sort", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-sort-choices")
-        assert screen._library_media_sort_choices_visible is True
-        assert screen._library_media_type_choices_visible is False
+        assert screen._media_state.sort_choices_visible is True
+        assert screen._media_state.type_choices_visible is False
 
         # The open chooser advertises its own footer keys through the shared seam.
         footer = screen._library_footer_shortcuts_for_current_state()
@@ -10895,7 +10914,7 @@ async def test_library_media_sort_and_type_choosers_are_mutually_exclusive():
         # Escape closes the chooser.
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_media_sort_choices_visible is False
+        assert screen._media_state.sort_choices_visible is False
         assert not screen.query("#library-media-sort-choices")
 
 
@@ -10972,8 +10991,8 @@ async def test_library_shell_media_content_search_shows_match_count():
             screen.query_one("#library-media-content-search-status").renderable
         )
         assert status == "Match 1 of 2"
-        assert screen._library_media_content_query == "budget"
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_query == "budget"
+        assert screen._media_state.content_match_index == 0
 
 
 @pytest.mark.asyncio
@@ -10990,13 +11009,13 @@ async def test_library_shell_media_content_search_enter_advances_to_next_match()
         await _wait_for_library_shell(screen, pilot)
 
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_match_index == 0
 
         # Same query, Enter again -> advance (find-bar convention).
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_content_match_index == 1
+        assert screen._media_state.content_match_index == 1
         assert str(
             screen.query_one("#library-media-content-search-status").renderable
         ) == "Match 2 of 2"
@@ -11005,7 +11024,7 @@ async def test_library_shell_media_content_search_enter_advances_to_next_match()
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_match_index == 0
 
 
 @pytest.mark.asyncio
@@ -11109,7 +11128,7 @@ async def test_library_shell_media_content_search_empty_query_hides_status_and_n
         # focused Input. Hidden means the orphaned nav still does not linger.
         assert not screen.query_one("#library-media-content-search-status").display
         assert not screen.query_one("#library-media-content-search-nav").display
-        assert screen._library_media_content_query == ""
+        assert screen._media_state.content_query == ""
 
 
 @pytest.mark.asyncio
@@ -11126,13 +11145,13 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         await _wait_for_library_shell(screen, pilot)
 
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_match_index == 0
 
         screen.query_one("#library-media-content-search-next").press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_content_match_index == 1
+        assert screen._media_state.content_match_index == 1
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
@@ -11143,7 +11162,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_match_index == 0
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
@@ -11154,7 +11173,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_content_match_index == 1
+        assert screen._media_state.content_match_index == 1
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
@@ -11224,7 +11243,7 @@ async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter()
         search_input.value = "setup"
         await pilot.pause()
 
-        assert screen._library_media_content_query == ""
+        assert screen._media_state.content_query == ""
         assert screen.query_one("#library-media-content-search", Input) is search_input
         # task-28002: the status child persists display-gated (tearing it
         # down recomposed away the focused Input); "inactive" means hidden.
@@ -11432,7 +11451,7 @@ async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_render
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
 
         # The composed viewer records the exact detail it rendered.
-        assert screen._library_media_composed_detail is screen._library_media_detail
+        assert screen._media_state.composed_detail is screen._media_state.detail
 
         # A detail arrival for the detail already on screen must not recompose.
         parses_before = len(markdown_updates)
@@ -11450,10 +11469,10 @@ async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_render
         # and parses the changed document exactly once. Clearing only the
         # legacy compose marker is no longer sufficient to force redundant
         # work because the targeted sync compares the mounted display state.
-        updated_detail = dict(screen._library_media_detail)
+        updated_detail = dict(screen._media_state.detail)
         updated_detail["content"] = f"{updated_detail['content']}\n\nFresh detail"
-        screen._library_media_detail = updated_detail
-        screen._library_media_composed_detail = None
+        screen._media_state.detail = updated_detail
+        screen._media_state.composed_detail = None
         screen._recompose_library_media_detail_if_unrendered()
         await pilot.pause()
         await pilot.pause()
@@ -11931,15 +11950,15 @@ async def test_library_shell_media_content_search_resets_on_back():
         await _wait_for_library_shell(screen, pilot)
 
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
-        assert screen._library_media_content_query == "budget"
+        assert screen._media_state.content_query == "budget"
 
         # task-31272: "‹ Back" is compact-only; the exit seam is shared.
         screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_content_query == ""
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_query == ""
+        assert screen._media_state.content_match_index == 0
 
 
 # --- LIB-13: media viewer markdown rendering + Rendered|Raw toggle ---------
@@ -12013,7 +12032,7 @@ async def test_library_shell_media_viewer_defaults_markdown_item_to_rendered():
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
-        assert screen._library_media_content_mode == "rendered"
+        assert screen._media_state.content_mode == "rendered"
         assert not screen.query("#library-media-viewer-content-text")
         heading = screen.query_one(MarkdownH1)
         heading_text = _markdown_text_widget_plain(heading)
@@ -12051,7 +12070,7 @@ async def test_library_media_rendered_content_is_keyboard_focusable_for_scroll()
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
-        assert screen._library_media_content_mode == "rendered"
+        assert screen._media_state.content_mode == "rendered"
         assert not screen.query("#library-media-viewer-content-text")
 
         body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
@@ -12122,7 +12141,7 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_content_mode == "raw"
+        assert screen._media_state.content_mode == "raw"
         raw = screen.query_one(
             "#library-media-viewer-content-text", VirtualizedRawContent
         )
@@ -12137,7 +12156,7 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._library_media_content_mode == "rendered"
+        assert screen._media_state.content_mode == "rendered"
         assert screen.query_one("#library-media-viewer-content-markdown") is markdown
         assert screen.query_one("#library-media-viewer-content-text") is raw
         assert markdown_scroll.display
@@ -12192,7 +12211,7 @@ async def test_library_shell_media_viewer_non_markdown_item_never_shows_toggle()
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
-        assert screen._library_media_content_mode == "raw"
+        assert screen._media_state.content_mode == "raw"
         assert not screen.query("#library-media-content-mode-strip")
         assert not screen.query("#library-media-content-mode-rendered")
         assert screen.query_one("#library-media-viewer-content-text")
@@ -12217,7 +12236,7 @@ async def test_library_shell_media_viewer_plaintext_without_markdown_syntax_defa
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
-        assert screen._library_media_content_mode == "raw"
+        assert screen._media_state.content_mode == "raw"
         assert not screen.query("#library-media-content-mode-strip")
 
 
@@ -12256,13 +12275,13 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
-        assert screen._library_media_content_mode == "rendered"
+        assert screen._media_state.content_mode == "rendered"
 
         # task-31272: "‹ Back" is compact-only; the exit seam is shared.
         screen._exit_library_media_viewer()
         await pilot.pause()
         await pilot.pause()
-        assert screen._library_media_content_mode == "raw"
+        assert screen._media_state.content_mode == "raw"
 
         # Row 1 is the markdown item just opened/exited (items[0], the
         # older-timestamp row under the default newest-first sort); row 0
@@ -12270,7 +12289,7 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         screen.query_one("#library-media-row-0").press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-find")
         await _open_media_find(screen, pilot)
-        assert screen._library_media_content_mode == "raw"
+        assert screen._media_state.content_mode == "raw"
         assert not screen.query("#library-media-content-mode-strip")
 
 
@@ -12645,7 +12664,7 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
             )
             await pilot.pause()
             assert len(service.search_calls) == 2
-            assert screen._library_media_type_filter == requested_type
+            assert screen._media_state.type_filter == requested_type
             assert requested_type is not None
             assert "private-initial-page-failure" not in _visible_text(screen)
     finally:
@@ -12749,7 +12768,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
             message="Initial Media page never rendered.",
         )
 
-        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._media_state.delete_receipt_ids = ("local:media:1",)
         app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(media)
         screen._request_library_media_page(3, focus_identity=None)
         await _wait_for_condition(
@@ -12798,8 +12817,8 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         )
         assert not screen.query_one("#library-media-row-0", Button).disabled
 
-        screen._library_media_select_mode = True
-        screen._library_media_row_selection.toggle("local:media:45")
+        screen._media_state.select_mode = True
+        screen._media_state.row_selection.toggle("local:media:45")
         screen._sync_library_media_browse_state(None)
         await _wait_for_condition(
             pilot,
@@ -12900,7 +12919,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 pilot,
                 lambda: (
                     service.delete_entered.is_set()
-                    and screen._library_media_bulk_delete_in_flight
+                    and screen._media_state.bulk_delete_in_flight
                     and screen.query_one(
                         "#library-media-bulk-delete-confirm", Button
                     ).disabled
@@ -12929,7 +12948,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    not screen._library_media_bulk_delete_in_flight
+                    not screen._media_state.bulk_delete_in_flight
                     and controller.freshness == ("stale" if refresh_fails else "fresh")
                     and len(service.search_calls) == initial_searches + 1
                     and len(service.type_calls) == initial_facets + 1
@@ -12947,7 +12966,11 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 # task-31220: the post-mutation refresh failed, and the copy
                 # says so instead of repainting the unchanged "Media changed"
                 # line that made recovery read as inert. Rows stay openable.
-                assert controller.stale_copy == "Couldn't retry · RuntimeError"
+                # task-31944: the mapped fallback reason, not the
+                # exception class name the reader could not act on.
+                assert controller.stale_copy == (
+                    "Couldn't retry · an unexpected error"
+                )
                 assert not screen.query_one(
                     "#library-media-row-0", Button
                 ).disabled
@@ -13001,7 +13024,7 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
             "type": "audio",
             "last_modified": "2026-08-20T01:00:00Z",
         }
-        screen._library_media_bulk_delete_in_flight = True
+        screen._media_state.bulk_delete_in_flight = True
         screen._begin_library_media_mutation()
         service.media_items = (*service.media_items, restored)
         screen._complete_library_media_mutation(
@@ -13132,7 +13155,7 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
                 original_sync(focus)
 
             screen._sync_library_media_browse_state = record_sync
-            screen._library_media_bulk_delete_in_flight = True
+            screen._media_state.bulk_delete_in_flight = True
             screen._begin_library_media_mutation()
             initial_syncs = len(sync_calls)
             mutation = asyncio.create_task(
@@ -13224,16 +13247,16 @@ def test_library_media_restore_normalizes_only_invalid_page(page: object) -> Non
 def test_library_media_scope_change_clears_page_selection_with_notice() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen._library_media_select_mode = True
-    screen._library_media_confirming_bulk_delete = True
-    screen._library_media_row_selection.toggle("local:media:1")
+    screen._media_state.select_mode = True
+    screen._media_state.confirming_bulk_delete = True
+    screen._media_state.row_selection.toggle("local:media:1")
 
     screen._clear_library_media_selection_for_scope_change()
 
-    assert screen._library_media_select_mode is False
-    assert screen._library_media_confirming_bulk_delete is False
-    assert screen._library_media_row_selection.count == 0
-    assert screen._library_media_selection_notice == "Selection cleared."
+    assert screen._media_state.select_mode is False
+    assert screen._media_state.confirming_bulk_delete is False
+    assert screen._media_state.row_selection.count == 0
+    assert screen._media_state.selection_notice == "Selection cleared."
 
 
 @pytest.mark.asyncio
@@ -13254,7 +13277,7 @@ async def test_library_media_mounted_type_change_clears_page_selection() -> None
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
         screen.query_one("#library-media-row-0").press()
         await pilot.pause()
-        assert screen._library_media_row_selection.count == 1
+        assert screen._media_state.row_selection.count == 1
 
         screen._request_library_media_type("audio", focus_identity=None)
         await _wait_for_condition(
@@ -13266,8 +13289,8 @@ async def test_library_media_mounted_type_change_clears_page_selection() -> None
             message="Media type scope never applied.",
         )
 
-        assert screen._library_media_select_mode is False
-        assert screen._library_media_row_selection.count == 0
+        assert screen._media_state.select_mode is False
+        assert screen._media_state.row_selection.count == 0
         assert "Selection cleared." in notified
 
 
@@ -13288,7 +13311,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
     choice: str | None, initial: str | None
 ) -> None:
     screen = LibraryScreen(_build_test_app())
-    screen._library_media_type_filter = initial
+    screen._media_state.type_filter = initial
     screen._library_media_browse_controller.type_options = ("All", "video")
     requested: list[str | None] = []
     screen._request_library_media_type = lambda value, **_kwargs: requested.append(
@@ -13302,7 +13325,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
 
     LibraryScreen.handle_library_media_type_choice(screen, event)
 
-    assert screen._library_media_type_filter is choice
+    assert screen._media_state.type_filter is choice
     assert requested == [choice]
 
 
@@ -16175,10 +16198,14 @@ async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
 
 
 @pytest.mark.asyncio
-async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_class():
-    """task-31632 AC#2/#3: a hard failure is tinted as an error and names the
-    exception CLASS as its reason -- never the exception text, which can carry
-    a private path (the ``private-media-failure`` rule).
+async def test_source_snapshot_hard_failure_paints_an_error_callout_with_a_reason():
+    """task-31632 AC#2/#3: a hard failure is tinted as an error and carries a
+    reason -- never the exception text, which can carry a private path (the
+    ``private-media-failure`` rule).
+
+    task-31944: that reason was the exception CLASS name ("RuntimeError"),
+    which told the reader nothing they could act on; the shared mapper now
+    gives an unmapped class the same fallback the Media callout uses.
     """
     app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
     host = LibraryHarness(app)
@@ -16192,7 +16219,8 @@ async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_cla
         )
         state = screen._library_lookup_recovery_state
         assert state.severity == "error"
-        assert state.why == "RuntimeError"
+        assert state.why == "an unexpected error"
+        assert "private-snapshot-failure" not in _visible_text(screen)
         assert state.unavailable_what == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
         assert state.retry_id == "library-source-retry"
 
@@ -16252,6 +16280,278 @@ async def test_source_snapshot_repeated_identical_failure_still_repaints():
             screen.query_one("#library-hub-load-failure-copy", Static).renderable
         )
         assert "attempt 2" in copy
+
+
+class _FlakyLibraryNotesScopeService:
+    """A notes source that fails until ``fail`` is cleared (task-31948)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.fail = True
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("private-snapshot-failure")
+        return {"items": []}
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_carries_its_own_retry():
+    """task-31948 AC#1/#2/#3: the BROWSE canvas's failed-source surface.
+
+    task-31632 gave the landing hub a ``ds-recovery-callout`` with a Retry
+    inside it, but ``#library-canvas-error`` -- the surface a browse row
+    (Notes, Conversations) paints when the same snapshot failed -- stayed a
+    bare sentence with no action, so the only recovery was to leave the
+    surface and come back. It now carries the same Retry, running the same
+    ``_refresh_local_source_snapshot`` the hub's Retry runs, and the
+    callout gives way to the real canvas once that fetch succeeds.
+    """
+    notes = _FlakyLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        # PR M carry I1: the hub's own callout, for the SAME failure --
+        # captured before the browse row replaces it, so the two surfaces
+        # can be compared shape for shape below.
+        hub_callout = await _wait_for_selector(
+            screen, pilot, "#library-hub-load-failure"
+        )
+        hub_shape = _load_failure_callout_shape(hub_callout)
+
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+
+        # PR M carry I1: three hand-rolled copies of this callout had
+        # already drifted apart. One builder, one shape, per-surface ids.
+        assert _load_failure_callout_shape(callout) == hub_shape, (
+            "the browse row and the landing hub must paint ONE callout shape"
+        )
+
+        # AC#1: the message and its Retry are one callout, side by side.
+        state = screen._library_lookup_recovery_state
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked")
+        copy = screen.query_one("#library-canvas-error-copy", Static)
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button)), (
+            "the Retry must live INSIDE the callout, next to the reason"
+        )
+        # AC#3: the PAINTED glyphs, not just ``.renderable`` (task-31221).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
+        assert "private-snapshot-failure" not in _visible_text(screen)
+
+        # A Retry against a failure that has not cleared still reads as a
+        # fresh press -- the callout repaints its attempt number in place.
+        calls_before = notes.calls
+        await pilot.click("#library-source-retry")
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: "attempt 2"
+            in " ".join(
+                _painted_text(
+                    host,
+                    screen.query_one("#library-canvas-error-copy", Static).region,
+                ).split()
+            ),
+            message="A repeated failure never repainted the callout.",
+        )
+
+        # AC#2: the same fetch, on success, retires the callout for the
+        # real canvas -- without leaving Library.
+        notes.fail = False
+        # ``press()``, not a second ``pilot.click``: the repaint above grew
+        # the wrapped copy by a row, and a click issued before that reflow
+        # settles resolves against the pre-reflow offset (measured: the
+        # click reports a hit and no ``Pressed`` arrives). The click leg
+        # above already proved the painted button is hittable; this leg is
+        # about what the handler does.
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-canvas-error"),
+            message="A successful Retry never cleared the browse error callout.",
+        )
+        assert screen._library_lookup_error is None
+        assert screen.query("#library-notes-canvas")
+        assert host.seen_routes == []
+
+
+def _load_failure_callout_shape(node):
+    """The structural fingerprint two surfaces' callouts must share."""
+    return (
+        type(node).__name__,
+        sorted(node.classes),
+        [type(child).__name__ for child in node.children],
+    )
+
+
+class _TimeoutThenFailingLibraryNotesScopeService:
+    """A notes source that misses its deadline, then fails hard (PR M M2)."""
+
+    def __init__(self, delay: float = 1.0) -> None:
+        self.delay = delay
+        self.calls = 0
+        self.hard_failure = False
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.hard_failure:
+            raise RuntimeError("private-snapshot-failure")
+        time.sleep(self.delay)
+        return {"items": []}
+
+
+class _FailingThenDeniedLibraryNotesScopeService:
+    """A notes source whose hard failure turns into a policy denial."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.denied = False
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.denied:
+            raise PolicyDeniedError(
+                action_id="library.notes.list",
+                reason_code="capability_disabled",
+                user_message="Notes are disabled by workspace policy.",
+                effective_source="local",
+                authority_owner="workspace policy",
+            )
+        raise RuntimeError("private-snapshot-failure")
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_keeps_the_right_tint_across_a_retry(
+    monkeypatch,
+):
+    """PR M carry M2/M6: the in-place repaint must move the TINT too.
+
+    A Retry can turn a deadline (warning, amber) into a hard failure (error,
+    red) -- the browse row's sync repainted only the sentence, so an amber
+    callout stood over a hard-failure reason. Its siblings (the landing hub,
+    the Media canvas) had always moved the tint; this is the divergence that
+    made the three copies one builder. M6: the same shape repaints in place,
+    so no replacement widget is built for it.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    notes = _TimeoutThenFailingLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    builds: list[int] = []
+    build_widget = library_screen_module.LibraryScreen._library_canvas_error_widget
+
+    def counted_build(self):
+        builds.append(1)
+        return build_widget(self)
+
+    monkeypatch.setattr(
+        library_screen_module.LibraryScreen,
+        "_library_canvas_error_widget",
+        counted_build,
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot timeout never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+        assert callout.has_class("ds-recovery-callout")
+        assert not callout.has_class("is-blocked"), "a deadline is a warning"
+        builds_after_mount = len(builds)
+
+        notes.hard_failure = True
+        calls_before = notes.calls
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: callout.has_class("is-blocked"),
+            message="A hard failure never repainted the callout's error tint.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "error"
+        copy = screen.query_one("#library-canvas-error-copy", Static)
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "private-snapshot-failure" not in _visible_text(screen)
+        # M6: the mounted callout still fits the failure, so the reconcile
+        # repaints it instead of building a replacement it then discards.
+        assert len(builds) == builds_after_mount
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes():
+    """PR M carry M3/M4: a failure a Retry cannot clear paints a BARE
+    sentence -- an inert Retry is worse than none (task-31948's rule).
+
+    So when a retryable failure becomes a policy denial, the mounted callout
+    must be REMOUNTED as that bare Static, never left standing with a Retry
+    that can no longer recover anything.
+    """
+    notes = _FailingThenDeniedLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+        assert list(callout.query(Button)), "a retryable failure keeps its Retry"
+
+        notes.denied = True
+        calls_before = notes.calls
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_source_load_failure() is None
+            and len(screen.query("#library-canvas-error")) == 1
+            and isinstance(screen.query_one("#library-canvas-error"), Static),
+            message="The denied snapshot never remounted the bare error surface.",
+        )
+        node = screen.query_one("#library-canvas-error", Static)
+        assert not list(node.query(Button))
+        assert not screen.query("#library-source-retry")
+        assert "Notes are disabled by workspace policy." in _visible_text(screen)
+        # The taxonomy label for this denial, painted -- not a Retry.
+        assert "Capability disabled" in _painted_text(host, node.region)
 
 
 @pytest.mark.asyncio
@@ -20011,9 +20311,9 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
     )
     screen._library_note_autosave_state = "idle"
     screen._library_note_editor_armed = True
-    screen._selected_media_id = "media-current"
-    screen._library_media_view = "list"
-    screen._library_media_detail = {"id": "media-current"}
+    screen._media_state.selected_media_id = "media-current"
+    screen._media_state.view = "list"
+    screen._media_state.detail = {"id": "media-current"}
     monkeypatch.setattr(screen, "refresh", Mock())
     monkeypatch.setattr(screen, "run_worker", Mock())
     monkeypatch.setattr(screen, "call_after_refresh", Mock())
@@ -20026,9 +20326,9 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
         screen._library_note_version,
         screen._library_note_confirming_delete,
         screen._library_note_editor_armed,
-        screen._selected_media_id,
-        screen._library_media_view,
-        screen._library_media_detail,
+        screen._media_state.selected_media_id,
+        screen._media_state.view,
+        screen._media_state.detail,
     )
 
     event = Mock()
@@ -20063,9 +20363,9 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
         screen._library_note_version,
         screen._library_note_confirming_delete,
         screen._library_note_editor_armed,
-        screen._selected_media_id,
-        screen._library_media_view,
-        screen._library_media_detail,
+        screen._media_state.selected_media_id,
+        screen._media_state.view,
+        screen._media_state.detail,
     ) == preserved_state
 
 
@@ -24353,8 +24653,8 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(120):
             if (
-                screen._selected_media_id == "media-1"
-                and screen._library_media_view == "viewer"
+                screen._media_state.selected_media_id == "media-1"
+                and screen._media_state.view == "viewer"
             ):
                 break
             await pilot.pause(0.02)
@@ -24948,13 +25248,13 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
 
         screen.query_one("#library-ingest-open-ingest-job-1").press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            if screen._library_media_detail is not None:
+            if screen._media_state.detail is not None:
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError("Media detail never loaded after Open in Library.")
 
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         viewer_title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert "tides" in viewer_title.lower()
@@ -26280,8 +26580,8 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
     )
     original = LibraryScreen(app)
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    original._library_media_view = "viewer"
-    original._selected_media_id = "local:media:21"
+    original._media_state.view = "viewer"
+    original._media_state.selected_media_id = "local:media:21"
     _apply_continue_media_scope(original, scope)
 
     state = original.save_state()
@@ -26307,8 +26607,8 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
     assert restored._library_selected_row_id == ""
     assert restored._library_continue_receipt == state["library_continue_receipt"]
     assert restored._library_media_browse_controller.requested_scope == scope
-    assert restored._library_media_view == "list"
-    assert restored._selected_media_id == ""
+    assert restored._media_state.view == "list"
+    assert restored._media_state.selected_media_id == ""
 
 
 @pytest.mark.parametrize(
@@ -26455,7 +26755,7 @@ def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
 
     media_trash = LibraryScreen(app)
     media_trash._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    media_trash._library_media_view = "trash"
+    media_trash._media_state.view = "trash"
     _apply_continue_media_scope(media_trash, MediaBrowseScope())
 
     assert file_notes.save_state()["library_continue_receipt"] is None
@@ -26900,8 +27200,8 @@ async def test_library_landing_continue_dispatches_full_media_page_scope() -> No
     service = app.media_reading_scope_service
     original = LibraryScreen(app)
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    original._library_media_view = "viewer"
-    original._selected_media_id = "local:media:21"
+    original._media_state.view = "viewer"
+    original._media_state.selected_media_id = "local:media:21"
     scope = MediaBrowseScope(
         query="needle",
         media_type="audio",
@@ -26931,7 +27231,7 @@ async def test_library_landing_continue_dispatches_full_media_page_scope() -> No
         assert call["media_types"] == ["audio"]
         assert call["sort_by"] == "title_asc"
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-        assert screen._library_media_view == "list"
+        assert screen._media_state.view == "list"
 
 
 @pytest.mark.asyncio
@@ -27018,8 +27318,8 @@ def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
     app = _build_test_app()
     original = LibraryScreen(app)
     original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    original._selected_media_id = "media-42"
-    original._library_media_view = "viewer"
+    original._media_state.selected_media_id = "media-42"
+    original._media_state.view = "viewer"
     original._rag_search_state.query = "alpha"
     original._rag_search_state.mode = "rag"
     original._rag_search_state.scope_deselected = {"notes"}
@@ -27035,8 +27335,8 @@ def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
     restored.restore_state(state)
 
     assert restored._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-    assert restored._selected_media_id == "media-42"
-    assert restored._library_media_view == "viewer"
+    assert restored._media_state.selected_media_id == "media-42"
+    assert restored._media_state.view == "viewer"
     assert restored._rag_search_state.query == "alpha"
     assert restored._rag_search_state.mode == "rag"
     assert restored._rag_search_state.scope_deselected == {"notes"}
@@ -27066,8 +27366,8 @@ def test_library_shell_restore_state_degrades_editor_view_without_matching_id():
     media_screen.restore_state(
         {"library_media_view": "viewer", "selected_media_id": ""}
     )
-    assert media_screen._library_media_view == "list"
-    assert media_screen._selected_media_id == ""
+    assert media_screen._media_state.view == "list"
+    assert media_screen._media_state.selected_media_id == ""
 
 
 def test_library_shell_restore_state_tolerates_garbage_values():
@@ -27139,7 +27439,7 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     restored = LibraryScreen(app)
     restored.restore_state(state)
 
-    assert restored._library_media_type_filter == "audio"
+    assert restored._media_state.type_filter == "audio"
     assert restored._library_notes_sort == "oldest"
     assert restored._library_notes_filter == "retro"
     assert restored._conversations_state.requested_query == "quarterly"
@@ -27175,7 +27475,7 @@ def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values
     # the legacy sentinel "All" -- garbage under the retired
     # library_media_type_filter key is ignored, and the scope parser's
     # own defaults apply.
-    assert screen._library_media_type_filter is None
+    assert screen._media_state.type_filter is None
     assert screen._library_notes_sort == "newest"
     assert screen._library_notes_filter == ""
     assert screen._conversations_state.query == ""
@@ -27220,7 +27520,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         await _pick_media_type(screen, pilot, "audio")
-        active_type = screen._library_media_type_filter
+        active_type = screen._media_state.type_filter
         assert active_type != "All"
         state = screen.save_state()
 
@@ -27242,7 +27542,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
         screen2.query_one("#library-hub-continue", Button).press()
         await _wait_for_selector(screen2, pilot, "#library-media-type-filter")
 
-        assert screen2._library_media_type_filter == active_type
+        assert screen2._media_state.type_filter == active_type
         filter_button = screen2.query_one("#library-media-type-filter", Button)
         assert str(filter_button.label) == f"type: {active_type}"
         rows = list(screen2.query(".library-media-row"))
@@ -27411,9 +27711,9 @@ async def test_library_shell_restored_media_viewer_fetches_detail_on_mount():
         screen = _active_library_screen(host)
         await _wait_for_selector(screen, pilot, "#library-media-viewer")
 
-        assert screen._library_media_detail is not None
-        assert screen._library_media_detail.get("id") == "media-1"
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.detail is not None
+        assert screen._media_state.detail.get("id") == "media-1"
+        assert screen._media_state.view == "viewer"
 
 
 @pytest.mark.asyncio
@@ -27514,9 +27814,9 @@ async def test_library_shell_restored_media_viewer_with_deleted_item_shows_recov
         screen = _active_library_screen(host)
         error = await _wait_for_selector(screen, pilot, "#library-media-viewer-error")
 
-        assert screen._library_media_view == "viewer"
-        assert screen._library_media_detail is None
-        assert screen._library_media_reader_session.error == (
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.detail is None
+        assert screen._media_state.reader_session.error == (
             "Media item is unavailable."
         )
         assert "Media item is unavailable." in str(error.render())
@@ -27644,7 +27944,7 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
         # Pick a concrete type off "All" before opening Export -- the
         # scope must carry THIS filter, not the canvas's default.
         await _pick_media_type(screen, pilot, "audio")
-        active_type = screen._library_media_type_filter
+        active_type = screen._media_state.type_filter
         assert active_type != "All"
 
         screen.query_one("#library-media-export").press()
@@ -27697,7 +27997,7 @@ async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
         # (Textual's own ``Button`` binds "enter" to "press").
         await pilot.press("enter")
         await pilot.pause()
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
 
 
 @pytest.mark.asyncio
@@ -27724,19 +28024,19 @@ async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail
         await pilot.pause()
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert not screen.query("#library-media-back")
 
         screen.query_one("#library-media-viewer-content").focus()
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert screen.query_one("#library-media-row-0", Button).has_focus
 
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert not isinstance(screen.focused, Input), screen.focused
         assert (
             screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").has_focus
@@ -27746,7 +28046,7 @@ async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail
         # cannot strand the view flag out from under the visible Reader.
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert (
             screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").has_focus
         )
@@ -34456,7 +34756,7 @@ async def test_library_media_analysis_tab_is_searchable():
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
         # task-31269: the Analysis bar is collapsed until Find opens it, in place.
         search = await _open_media_find(screen, pilot)
-        assert screen._library_media_reader_session.mode == "analysis"
+        assert screen._media_state.reader_session.mode == "analysis"
 
         search.value = "budget"
         search.focus()
@@ -34503,11 +34803,238 @@ async def test_library_media_switching_tabs_clears_the_search():
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        assert screen._library_media_content_query == "roadmap"
+        assert screen._media_state.content_query == "roadmap"
 
         # Switching to the Analysis tab drops the transcript search rather than
         # carrying its query/highlights onto the analysis text.
         screen.query_one("#library-media-reader-select-analysis", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
-        assert screen._library_media_content_query == ""
-        assert screen._library_media_content_match_index == 0
+        assert screen._media_state.content_query == ""
+        assert screen._media_state.content_match_index == 0
+
+
+# ---------------------------------------------------------------------------
+# task-31946: a BARE whole-screen recompose -- what a background job tick or
+# an ad-hoc repaint does -- must not drop focus to None.
+#
+# PR F gave ``LibraryScreen.refresh`` a Media-only capture/restore. Every
+# other route still ended a whole-screen ``refresh(recompose=True)`` with
+# ``screen.focused is None``: Textual removes every child, nothing re-picks
+# focus after the remount, and the keyboard is dead until the user clicks.
+# Both routes are pinned so the shared seam can never be narrowed back to
+# Media without a red test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_keeps_focus_on_a_mounted_widget_conversations():
+    """task-31946 AC#1/#3: the non-Media route the PR F seam never covered."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+        assert screen.focused is row
+
+        # No follow-up, no ``then=``, no sync seam: the bare call a
+        # background worker's own repaint ends in.
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a bare whole-screen recompose left the Conversations route with "
+            "no focused widget -- the keyboard is dead until the user clicks"
+        )
+        assert focused.is_attached, focused
+        assert focused.id == "library-conversation-row-0", focused.id
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_keeps_focus_on_a_mounted_widget_media():
+    """task-31946 AC#1: the Media route keeps PR F's behaviour, once."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        row = await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+        assert screen.focused is row
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a bare whole-screen recompose left Media with no focused widget"
+        )
+        assert focused.is_attached, focused
+        assert focused.id == "library-media-row-0", focused.id
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_focus_fallback_stays_inside_screen_content():
+    """task-31946 (PR L review item 1): the fallback is never the nav bar.
+
+    When the captured widget is genuinely gone the seam still has to land
+    focus somewhere. ``focus_chain[0]`` is the ``MainNavigationBar``'s
+    first tab on EVERY screen -- a blind Enter there leaves the screen,
+    and that key was inert before this seam existed -- so the fallback is
+    scoped to ``#screen-content``.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+
+        # The captured widget vanishes -- a row a write removed, or (the
+        # real case) a screen whose body mounts in a later callback --
+        # and the recompose leaves nothing focused (``set_focus(None)``
+        # models the drop; Textual's own removal handler happens to fall
+        # back to the row's scroll parent, which a recompose of the whole
+        # subtree does not).
+        await row.remove()
+        screen.set_focus(None)
+        await pilot.pause()
+        assert screen.focused is None
+
+        screen.restore_focus_after_recompose("#library-conversation-row-0")
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, "the fallback left focus at None"
+        assert focused.is_attached, focused
+        content = screen.query_one("#screen-content")
+        assert content in focused.ancestors, (
+            f"focus fell back to {focused.id!r}, outside #screen-content -- "
+            "the nav bar is where Enter navigates away"
+        )
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
+    """task-31946 (PR L review item 2): the stand-down cannot strand focus.
+
+    The seam stands down while a one-shot focus channel is armed, because
+    a foreign ``set_focus`` in that window disarms it. Conversations is
+    absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed
+    channel lands NOTHING there -- standing down for it left a background
+    recompose inside the settle window with no restore at all, and the
+    keyboard dead for good.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        rail_row = screen.query_one("#library-row-browse-conversations")
+        rail_row.press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        screen.set_focus(rail_row)
+        await pilot.pause()
+        assert screen.focused is rail_row
+        assert not screen.query(".library-conversation-row"), "list must be empty"
+
+        # Inside the armed settle window: the channel owns the window on a
+        # route it can serve, and this one it cannot.
+        screen._arm_library_list_entry_focus()
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_focus_channel_owns_this_window() is False
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a background recompose inside the armed window left the empty "
+            "Conversations list with no focused widget"
+        )
+        assert focused.is_attached, focused
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_restores_focus_on_a_filtered_empty_media_list():
+    """Qodo #2483: the Media channel stands down when it cannot land.
+
+    A filter MISS is the one empty Media page with no recovery action at
+    all -- the canvas returns right after its query-echoing status line,
+    so NONE of the four controls ``_focus_library_list_entry`` falls back
+    to is composed. The armed channel therefore lands nothing, and
+    standing the screen-level seam down for it left a background
+    recompose inside the settle window with a dead keyboard.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+
+        screen._request_library_media_filter("no-such-media-anywhere")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query(".library-media-row")
+            and not any(
+                screen.query(selector)
+                for selector in (
+                    "#library-media-type-filter",
+                    "#library-media-empty-clear-type",
+                    "#library-media-empty-import",
+                    "#library-media-retry",
+                )
+            ),
+            message="the filter miss never reached a recovery-less empty page",
+        )
+
+        filter_input = screen.query_one("#library-media-filter", Input)
+        screen.set_focus(filter_input)
+        await pilot.pause()
+        assert screen.focused is filter_input
+
+        # Inside the armed settle window, on a page the channel cannot serve.
+        screen._arm_library_list_entry_focus()
+        assert screen._library_pending_list_entry_focus is True
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a background recompose inside the armed window left the "
+            "recovery-less empty Media list with no focused widget"
+        )
+        assert focused.is_attached, focused
+        content = screen.query_one("#screen-content")
+        assert content in focused.ancestors, focused.id

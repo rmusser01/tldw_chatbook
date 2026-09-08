@@ -670,7 +670,7 @@ async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
         await pilot.press("s")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_select_mode,
+            lambda: screen._media_state.select_mode,
             message="Select mode never engaged after 's'.",
         )
         for _ in range(3):
@@ -678,7 +678,7 @@ async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
         await pilot.press("s")
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_media_select_mode,
+            lambda: not screen._media_state.select_mode,
             message="Select mode never left after the second 's'.",
         )
         for _ in range(3):
@@ -689,14 +689,14 @@ async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
         assert not focused.has_class("library-adaptive-reader-pane-grip"), focused
         assert focused.has_class("library-media-row"), focused
 
-        layout_before = screen._library_media_reader_layout
+        layout_before = screen._media_state.reader_layout
         await pilot.press("space")
         for _ in range(3):
             await pilot.pause()
 
-        assert screen._library_media_reader_layout == layout_before, (
+        assert screen._media_state.reader_layout == layout_before, (
             f"Space collapsed a pane: {layout_before} -> "
-            f"{screen._library_media_reader_layout}"
+            f"{screen._media_state.reader_layout}"
         )
         assert not screen.focused.has_class(
             "library-adaptive-reader-pane-grip"

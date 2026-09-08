@@ -128,6 +128,28 @@ resolving free names through its *new* module's globals instead of the
 screen's, so a test's `monkeypatch.setattr(LibraryScreen, "<name>", ...)`
 stops reaching the call it used to intercept.
 
+**Write the GOVERNING rule into every exclusion's justification, never a
+stronger condition you have not checked per name.** The rule above is the
+conservative one — *patched, therefore screen-routed* — and it needs no
+demonstration that any particular mover would actually bypass the patch.
+It is tempting to justify the class with the sharper-sounding "a mover
+calls it, so the patch is bypassable", and the media series' controller
+docstring shipped a draft that did exactly that for all 16 of its
+instance-attribute-monkeypatch exclusions. A caller map re-derived at the
+parent tree showed it was true for **9** and FALSE for **7** — every
+in-cluster caller of those 7 is itself excluded, so nothing a moved body
+does can reach past their patches today. **The exclusion set was correct;
+only the stated reason was wrong** — and a wrong reason is worse than a
+thin one, because the next series inherits it as precedent and re-derives
+the wrong test. The corrected docstring states the governing rule AND the
+9/7 split, which is also what makes the 7 legible as future MOVE
+candidates (see §22 for their re-evaluation, and for why "movable once the
+fixtures retarget" is not a prediction that a cleanup PR will make it so).
+The general form: **an exclusion's justification is a claim, and it is held
+to the same evidence standard as a test-passing claim; if you assert the
+narrow condition, verify it name by name, otherwise cite the broad rule
+that actually governs.**
+
 **The known list is four names, not three** (PR 0a's execution corrected
 the plan's draft "trio" framing once the tests were actually read):
 `_list_local_source_snapshot`, `_refresh_local_source_snapshot`,
@@ -207,8 +229,10 @@ found only by running the full battery (a same-name-forwarding regex and
 a byte-for-byte body diff cannot see a semantic identity bug or a
 literal-string `getattr` that never resolves).
 
-- *Identity-compared/screen-identity `self`, three confirmed instances,
-  two exclusion-worthy forms:*
+- *Identity-compared/screen-identity `self` — FIVE exclusion-worthy forms
+  as of the media series (A–C skills, wave-4 task 2; D–E media, wave-7
+  task 2). Skip to Form D's own paragraph for the generalized census that
+  subsumes all five; the per-form detail below is why each was needed:*
   - **Form A — a framework API's own identity filter.** Textual's
     `WorkerManager.cancel_group(node, group)` filters `worker.node ==
     node` by identity. A moved body calling `self.workers.cancel_group(
@@ -234,8 +258,66 @@ literal-string `getattr` that never resolves).
     comparison inline; 8 `Tests/Skills/` tests (the wave's own
     fourth-root trap) failed, confirmed genuine via the same
     paired-baseline method.
+  - **Form D — screen identity in a MEMBERSHIP test, which the `is`/`is
+    not` census structurally cannot see (media series, wave-7 task 2; 4
+    sites in one cluster).** `self in <widget>.ancestors` /
+    `self not in <widget>.ancestors`. `Widget.ancestors` is the DOM parent
+    chain up to the screen, so a moved body's `self` — the controller — is
+    never a member: the guard flips to permanently `False` (or permanently
+    `True` negated) and silently changes behaviour, exactly like A/B/C.
+    The census that should have caught it did not, and reported a
+    confident zero: Forms A–C are `ast.Compare` nodes with `Is`/`IsNot`
+    operators (plus bare `self` passed as a call ARGUMENT), and this shape
+    is an `ast.Compare` with `In`/`NotIn` — so a first pass over all 251
+    media candidates returned **zero identity hits**. The move shipped into
+    the battery and produced **19 failed / 144 passed** in the
+    return-settlement cluster against a **2 failed / 161 passed** isolated
+    baseline (17 branch-unique, all `AssertionError: assert
+    'layout-settlement-failed' == 'exact-settled'`); after excluding the
+    three carriers the same three files measure 2/161, name-for-name
+    identical to the baseline.
 
-  All three exclude the carrying method(s) entirely (keep them
+    **The standing correction, and it is both stronger and cheaper than
+    enumerating operators: census EVERY bare `self` `ast.Name` in a moved
+    body that is not the receiver of an attribute access.** That form is
+    exhaustive by construction — it cannot be defeated by a comparison
+    operator, a call shape or a container the next framework introduces.
+    Run over media's then-current mover set (the three `ancestors` methods
+    still in it) it returned **10** occurrences: 3 `getattr(self,
+    "<literal>")` reads, 4 `_sync_library_canvas(self, ...)` duck-typed
+    forwards, and the 3 membership tests it exists to catch. Re-run over
+    the final 140 movers it returns **7** — the same 3 `getattr` reads and
+    4 canvas forwards, every one of them bound. **Both figures belong in
+    the record**: 10 is what the census found, 7 is what survived, and
+    quoting only the second makes an instrument that fired look like one
+    that found nothing.
+
+    **A corollary about how common the shape looks.** Media carries FOUR
+    membership sites, not the three it had to newly exclude: the fourth,
+    `_library_media_settlement_tree`, was already excluded under the
+    instance-attribute-monkeypatch class, so its exclusion is
+    over-determined and the "newly excluded" count understates the shape's
+    real frequency by 25%. **Count the shape over ALL candidates, not over
+    the methods the finding forced you to reclassify** — otherwise the next
+    series reads "3 sites" and under-budgets the census.
+
+  - **Form E — CALLBACK identity, where the method to exclude is the
+    CALLER, not the callee (media series, wave-7 task 2, fix round 1;
+    1 site).** `_exit_library_media_viewer` schedules its continuation as
+    `self.call_next(self._apply_library_media_list_return, None)`, and
+    `Tests/UI/test_screen_navigation.py:3109` asserts `continuation ==
+    screen._apply_library_media_list_return` on a REAL screen. Moved,
+    `self` is the controller, so the captured callback is the
+    CONTROLLER's bound method and the equality fails. **Excluding the
+    CALLEE does not fix it** — the controller's late-binding property
+    returns the injected `lambda`, a third object again; the CALLER is
+    what has to stay, so `self.<name>` resolves to a screen-bound method
+    whose `__self__`/`__func__` match the assertion's own. Census: every
+    cluster name referenced as a BARE attribute on any receiver (not the
+    func of a call, not an assignment target) across `Tests/` — media's
+    run returned 10 names, 9 already excluded on other grounds.
+
+  All five exclude the carrying method(s) entirely (keep them
   screen-resident, full-bodied, untouched — no accommodation exists,
   unlike duck-typed attribute access, because identity can never be
   satisfied by a proxy object). Named late-binding dependencies (the
@@ -401,6 +483,42 @@ editable-finder trap makes a shared venv resolve the wrong tree), create
 it once per task, reuse it, and remove it at task close. `git stash -u`
 and `git checkout <base> -- <paths>` are no longer baseline methods at any
 duration.
+
+**The rule creates a new hazard nobody had written down, and the wave-7
+close tripped over it in the worst available way: `uv venv` builds whatever
+interpreter you ask for, and "whatever you ask for" is not automatically the
+branch's.** That close created its baseline with `uv venv --python 3.11`
+(the project floor, and the version CLAUDE.md's own setup snippet suggests)
+while the branch worktree's long-lived venv runs **3.14.2**. Both sweeps ran
+to completion and looked plausible — and one of the two sweeps' six
+baseline-unique failures were all parametrizations of
+`Tests/Architecture/test_python_floor_syntax.py::test_detector_matches_the_
+pinned_floor_verdicts`, an f-string-nesting detector whose cases parse
+differently before and after PEP 701. That is a *legible* tell; the same
+mismatch could just as easily have produced a plausible-looking Library
+failure with no such signature. **Both baseline halves were discarded and
+re-run against a rebuilt 3.14.2 venv.**
+
+A quieter version of the same class sits underneath it: the fresh baseline
+venv is also a package SUPERSET of a long-lived branch venv. Measured at the
+same close, after the interpreters were matched: baseline **106** packages
+vs branch **103**, the extras `html5lib`, `tinycss2` and `webencodings` —
+drift the branch venv had accumulated by being old, not anything either
+tree's code asked for. Its observable was a collection
+`ModuleNotFoundError` on the BRANCH only, in a non-Library file
+byte-identical across the wave. Resolved by re-running
+`uv pip install -e ".[dev]"` in the branch worktree, after which both sides'
+`uv pip list` outputs are IDENTICAL (that resync also moved the branch's own
+editable `tldw-chatbook` metadata from `0.1.8.0` to `0.2.0`, i.e. the venv
+had been stale for some time).
+
+**The rule: before reading a paired sweep's counts, prove the two
+environments match — `python -V` on both, and `uv pip list | awk '{print
+$1}' | sort` diffed between them.** Three commands, and they belong beside
+§7's existing "reconcile the collection-count asymmetry before reading the
+failure diff" step, for exactly the same reason: an unexplained
+baseline-unique failure is worth an hour of investigation, and an
+environment difference will happily supply one.
 
 **An eighth bypass shape, found by a coordinator review of the ingest
 controller PR (wave-5 task 2, fix round 1) rather than by the task's own
@@ -570,6 +688,57 @@ prompts series ran it and got a real hit
 its 22 exclusions, so nothing changed — a clean result from a census that
 was actually run, not a census that was skipped because the obvious
 spelling came back empty.
+
+**A FIFTH spelling, found by the media series (wave-7 task 3): the name that
+is never spelled at all — a COMPUTED attribute name in a shared dispatcher.**
+The four spellings above all assume the flat name appears somewhere in the
+source, as an attribute, a bare quoted string, a kwarg, or a table row. This
+one does not. `canvas_sync.py:219` (as landed, `5dd2e71cf`; the dotted
+media branch is at `:217`) builds `f"_library_{kind}_row_selection"`
+and resolves it with `operator.attrgetter`, so `_library_media_row_selection`
+occurs NOWHERE in that file and every spelling above scores it zero. The
+conversations series had already special-cased its own dotted path there
+(`"_conversations_state.row_selection" if kind == "conversations" else ...`)
+and left a comment predicting that future extractions would hit the same
+shape; media is the second, and notes will be the third.
+
+Missing it is a silent PRODUCTION defect, not a test-only one: the computed
+name stops resolving, and `_apply_library_row_toggle`'s own `try`/`except`
+swallows the failure into a full-screen recompose — the exact fallback the
+targeted-sync performance work exists to avoid — with no exception and no red
+test anywhere.
+
+**The census:** walk `ast.JoinedStr` nodes (and any `%`/`+`/`.format()`
+string building, though only f-strings have appeared) over `tldw_chatbook/`
+and all of `Tests/`, and keep those whose literal fragments could compose one
+of the subsystem's flat names. Media's run returned exactly two hits — the
+production one above, and one in a test
+(`test_library_media_return_settlement.py:1745` builds
+`f"_library_media_{signature_kind}_signature"`, a METHOD name whose two
+possible values were both exclusions, so it needed nothing).
+
+**A guard was added for it** (fix round): `Tests/UI/test_library_selection_
+updates.py::test_media_row_toggle_resolves_the_dotted_state_path`, the
+~15-line media analogue of the conversations `refresh`-raises double that
+already sat in that file. Mutation-verified both ways — reverting the media
+branch reds it with `AssertionError: fallback recompose must not fire`, and
+the conversations precedent stays green under the same mutation. Notes
+inherits this shape. Two hits is a
+tractable read; zero hits is a real answer only if the sweep was run.
+
+**And the fix needs a GUARD, not just a census — the conversations precedent
+already had one and nobody looked.** `Tests/UI/test_library_selection_
+updates.py::test_toggle_preserves_markup_escaped_titles` builds a ~35-line
+`_Screen` double whose `refresh` raises
+`AssertionError("fallback recompose must not fire")`, which is precisely what
+turns this shape's SILENT degradation into a red test. The media analogue
+(`test_media_row_toggle_resolves_the_dotted_state_path`, same file) is
+~15 lines and was mutation-verified both ways: reverting the media branch
+makes it fail with that exact fallback assertion, while the conversations
+precedent stays GREEN under the same mutation — i.e. the existing test could
+never have caught it. **Every future subsystem that takes the dotted form
+here should add its own three-line sibling**; without one, the census is a
+one-time check rather than a standing invariant.
 
 **A cleanup-PR census this section did NOT previously require: the deleted
 FIELD names' own prose sweep.** Every cleanup PR to date censused the
@@ -815,6 +984,57 @@ worksteal` is already available in the worktree venv). Procedure:
    xdist-specific ordering/shared-state flakiness that happened to land on
    your branch's run and not the baseline's.
 
+**The disposition rule for step 4 — "passes in isolation" is not a
+disposition unless it is n>1 AND paired against the parent.** This has cost
+this program twice, in both directions, and the rule is now stated as a
+hard requirement rather than as advice:
+
+* Wave-6 close: a name passed its isolated BASELINE run 6 times out of 6,
+  which reads exactly like "green on the baseline, red on the branch" — a
+  deliberate matched batch of 10 isolated runs per tree showed branch 5/10
+  red and baseline 4/10 red. Indistinguishable.
+* Wave-7 task 3: a branch-unique name was dispositioned "both PASS in
+  isolation on the branch (`2 passed`)" off a SINGLE two-node selection.
+  Re-run singly it was **5 failed / 5 runs** on the branch — and **2 failed
+  / 3 runs** at the isolated parent, which is what actually established the
+  not-a-regression verdict. The original claim did not merely under-report;
+  it asserted the OPPOSITE of the truth, and the correct conclusion
+  survived only because someone re-measured.
+
+  Concretely: (i) run the node ALONE, not in a selection — a multi-node
+  selection that happens to pass proves nothing about either node; (ii) run
+  it at least 3 times, and 10 if the failure is timing- or geometry-shaped;
+  (iii) run the SAME batch at the parent, in the isolated worktree, and
+  compare rates, not single outcomes; (iv) report BOTH rates. A test that
+  fails 5/5 on the branch and 2/3 at the parent is pre-existing; a test
+  reported as "passes in isolation" off one run is undispositioned.
+
+**And a THIRD level, which the wave-7 close needed and which reverses
+conclusions the second level gets wrong: a matched batch is only matched if
+the two trees' runs are INTERLEAVED, not run back-to-back.** Wave-6's close
+established the 10-run matched batch; wave-7's close ran one and got branch
+**5/10** vs baseline **2/10** on
+`test_library_skills_canvas.py::test_library_skills_manual_items_priority_
+survives_compact_layout_sync` — an asymmetry pointing the wrong way, on a
+test in a file the close had itself edited, i.e. the worst-looking result
+available. Re-run as **10 rounds ROUND-ROBIN across three trees inside a
+single load window** (branch, the wave tip without the close's edits, and
+the wave start), the numbers came out **branch 2/10, wave tip 1/10, wave
+start 5/10** — the direction fully reversed, and the *baseline* was the
+worst tree. Nothing about the code changed between the two experiments; only
+the interleaving did. Sequential batches, even 10-run ones, sit in different
+load windows, and for a geometry- or timing-shaped test the load window
+dominates the tree.
+
+  So: **for any timing/geometry-shaped disposition, alternate trees within
+  the loop** (`for r in 1..10: for tree in (branch, parent): run`) rather
+  than finishing one tree before starting the other. It costs nothing —
+  same number of runs — and it is the difference between "the branch is
+  worse" and "the machine was busier". Adding a THIRD tree (the wave tip
+  without the current task's own edits) is what separates "the wave did it"
+  from "this task did it", and it costs one more `git worktree add` + `uv
+  venv` (~5 s, §3).
+
 This is the same technique and the same command PR 0a's Task 1 used to
 surface and confirm a real, deterministic regression (7 tests, 100%
 reproducible in every combination) against a backdrop of ~330+ ordinary
@@ -870,6 +1090,41 @@ rediscover the same red from scratch.
   navigation_controller.py` and `library_character_repair_controller.py`
   with no `_BUDGETS` rows), IS fixed at that merge, because governing a new
   file at its exact measured size is what that check asks for.
+  **Re-measured at wave 7's `origin/dev` merge (`0bb00beaf`, 2026-09-07):
+  649 against the same 371 pin.** Dev's creep has more than TRIPLED the
+  overshoot in one wave (410 -> 649) while the pin sat still, which is worth
+  stating plainly: a red left for its rightful owner does not stay the size
+  it was when you left it, and the refusal to re-pin has now been made four
+  waves running. It is red on `origin/dev` itself, verified in the isolated
+  baseline worktree with proven Python and package parity. Someone on dev
+  owns it; the fourth Library wave to leave it alone recorded the number
+  rather than the silence.
+- `Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_
+  not_left_slack_after_a_move[library_conversations_controller.py]` — the
+  MIRROR-IMAGE failure of the row above, and new at wave 7's merge: dev
+  SHRANK the file 1738 -> 1686 without lowering its row, leaving 52 lines of
+  slack against the 50-line tolerance. Red on `origin/dev` itself. Same
+  disposition and same reason: it is dev's move, so dev lowers the row.
+- Two `origin/dev` reds that are not ratchets and that wave 7's merge proved
+  in the same isolated baseline, recorded because they sit inside the
+  Library battery every future wave runs:
+  `Tests/UI/test_library_screen_reuse.py::test_on_screen_suspend_stops_
+  every_timer_in_isolation` (dev added `self._unavailable_navigation.
+  clear_character_return(self)` to `on_screen_suspend` without seeding that
+  attribute in the test's `LibraryScreen.__new__` fixture — the SAME
+  `__new__`-bypass shape every state PR in this program has had to seed, now
+  bitten from the dev side) and
+  `Tests/UI/test_library_modal_dismissal.py::test_library_modal_inventory_
+  matches_declared_edges_bidirectionally` (the inventory's AST resolver
+  cannot resolve dev's `SkillImportChoiceModal(snapshot.candidates)`).
+  Both are on TASK-31249.
+- `Tests/UI/test_screen_navigation.py` — **32 failed / 110 passed on
+  `origin/dev` (`0bb00beaf`), and the SAME 32 names on wave 7's merged
+  branch.** Wave 6 recorded ~30 churning failures here and called the file
+  flaky; at wave 7 the failing NAME set is stable and identical across the
+  two trees, which is a different and worse diagnosis: not flake, a standing
+  regression. Any future wave that runs this file should compare name sets,
+  never counts, and should not read a green expectation into it.
 - Wave-2 Task 2 (export state PR) found 14 more, all reconfirmed identical
   (same 14, no more/fewer) on a `git stash -u` baseline of the pre-task
   tree via a direct node-id rerun (not the xdist sweep):
@@ -1313,6 +1568,83 @@ rediscover the same red from scratch.
   here because `Tests/Library/` had only ever been swept in narrow,
   subsystem-filtered slices before — the first unfiltered run of the whole
   root is what made them visible.
+- **Wave-7 Task 1 (media state PR) found 3 more**, each proven at the wave-7
+  start commit `83e17323e` in an ISOLATED `git worktree` with its own `uv
+  venv` (verified resolving its own tree), not by argument:
+  - `Tests/UI/test_library_media_return_settlement.py::test_viewer_return_
+    waits_for_geometry_then_scrolls_before_row_focus` and
+    `::test_authoritative_recompose_rearms_before_replacement_geometry`.
+    Both fail with the **byte-identical** `assert (0, 45) == (0, 42)` — a
+    scroll-offset geometry comparison — and the whole file measures **2
+    failed / 42 passed on the branch AND 2 failed / 42 passed on the
+    isolated pristine baseline**, same two names. **These are worth more
+    than an ordinary flake entry precisely because they sit INSIDE the
+    cluster the wave moves** (`return_settlement`,
+    `last_exact_settlement`, `successful_focus_ownership`) — the first
+    thing a reviewer suspects — so they are proven pre-existing rather
+    than argued to be. Re-confirmed by wave-7 tasks 2 and 3.
+  - `Tests/Architecture/test_persona_visual_runtime_boundary.py::test_
+    persona_visual_modules_stay_outside_other_runtime_and_ui_boundaries` —
+    1 failed / 2 passed at `83e17323e` in the isolated worktree, identical.
+    A Persona-visual module-boundary check with no Library relationship;
+    it surfaced only because task 1 ran the whole `Tests/Architecture`
+    root rather than a Library-filtered slice.
+- **Wave-7 Task 3 (media cleanup) surfaced two more names; both earn their
+  place for the METHOD they illustrate, not only for the name.**
+  - `Tests/UI/test_library_selection_updates.py::test_tier1_toggle_falls_
+    back_to_recompose_on_query_one_failure` is **already documented above**
+    (found by Task 9, wave 1) — recorded here only because wave-7 task 3
+    met it as an apparently NEW red and had to re-derive it. It fired for
+    the first time in this program's wave batteries because that file had
+    never been in one: the wave-7 fix round added a media guard to it
+    (`test_media_row_toggle_resolves_the_dotted_state_path`, §3's fifth
+    spelling) and running the file for the first time surfaced its
+    neighbour. Paired: branch **1 failed / 6 passed** vs isolated parent
+    **1 failed / 5 passed** — the delta is EXACTLY the new passing guard.
+    **The lesson is the one this entry's own original (Task 9's, above)
+    already warns about, now with a second incident: a red that fails on
+    BOTH sides of a paired sweep is invisible to the sweep's DIFF, and only
+    a per-file run finds it.**
+  - `Tests/UI/test_screen_navigation.py::test_media_route_round_trips_to_
+    the_library_media_row` — a route-landing race, `assert 'Screen' ==
+    'LibraryScreen'`. **5 failed / 5 runs alone on the branch; 2 failed / 3
+    runs alone at the isolated parent `78186d159`**, same assertion. It is
+    the same family this file already contributes to this list across waves
+    3 and 5 (`test_search_route_round_trips_to_the_library_rag_row`,
+    `test_library_screen_round_trip_returns_to_landing_with_rag_draft`,
+    `test_generic_library_entry_lands_hub_on_first_visit`, …), and in the
+    run that surfaced it a RAG-named sibling was the BASELINE-unique name
+    while this media-named one was the branch-unique — §7's own
+    bidirectional signature of run-to-run flakiness. Filed as
+    **TASK-31881**; remove this entry when that lands.
+- **Wave-7 Task 4 (wave close) found 1 more, deterministic on both trees:**
+  `Tests/UI/test_study_origin_navigation.py::test_home_origin_does_not_leak_
+  into_later_library_entry` — **10 failed / 10 isolated runs on the branch
+  AND 10 / 10 at an isolated worktree on the wave-7 start commit
+  `83e17323e`**. It surfaced as branch-UNIQUE in the paired sweep, i.e. it
+  PASSED in the baseline's xdist run, on a tree where it is 10/10 red alone;
+  the isolated verdict governs because it is the one identical on both
+  trees. A Home-origin navigation-leak test; this wave's diff touches
+  neither.
+- **Wave-7 Task 4 (wave close) — `Tests/UI/test_library_honesty_
+  accessibility.py::test_row_toggle_patcher_rebuilds_marker_label_both_
+  directions` is a PRE-EXISTING RED that blocks real coverage, not just a
+  flake.** It fails `assert '○ Export' == '○ Export selected'` — a
+  label-truncation assertion that fires BEFORE the body under test matters
+  — **byte-identically on the branch and on an isolated baseline worktree**,
+  in isolation on both. It earns its own entry rather than a line in a
+  shared flake list because of what it BLOCKS: it is the only real-row
+  Pilot test that drives the MEDIA `_apply_library_row_toggle` path (it
+  toggles a real `#library-media-row-0` and reads the real bulk-action
+  labels), i.e. the natural end-to-end coverage for §3's fifth-spelling
+  (computed-name) fix, which consequently had to be guarded by a ~15-line
+  screen double instead. This is wave-6 lesson 4's shape one level milder —
+  not a discovery-time raise, but an early assertion that voids everything
+  after it, and the file's own section comment says these pins exist
+  precisely because "mutation C ... survived every existing suite" — and
+  the triage rule is the same: **ask what a pre-existing red is BLOCKING
+  before filing it as "pre-existing, not mine".** Filed as **TASK-31880**;
+  remove this entry when that lands.
 
 ## 8. Subsystem order (spec, "Order of work")
 
@@ -1330,7 +1662,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
 | 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages — folded into §4's transform whitelist as its THIRD member, since media and notes both almost certainly own name-dispatched handlers too. See §21 for the series' actual, as-landed numbers, and §21's own "Wave-6 close" subsection for the wave-level pin trajectory, verification battery, sweep evidence and lessons |
-| 4 | media | 55 | |
+| 4 | **media** — **complete** (wave-7 Tasks 1–3) | 55 | 82 of 85 media-named attributes moved to `LibraryMediaState` (TWO prefix families, not three: `_library_media_*` for 81 + the bare `_selected_media_id`; "media" is already singular and plural, so no plural constant exists. The other 3 are 2 WIRING — live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances — and 1 BLOCKED, `_library_pending_list_entry_media_return`, a member of a four-field shell family whose writers span Media/Notes/Prompts/Skills); 140 of 251 media-named method candidates moved to ONE `LibraryMediaController` (**111 exclusions**, the largest exclusion set of this program: 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form — `self in <widget>.ancestors`, which §3's own `is`/`is not` census cannot see — 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher). At **44%** of the cluster that is by far the highest exclusion rate of the program, and the cause is TEST DEBT, not entanglement: **89 of the 111** are unbound-fake-self (73) or instance-attribute monkeypatch (16) — fixture shapes, each removable by retargeting a test — against just 4 module-globals-coupling and 5 genuine screen-identity/lifecycle couplings. **7 of the 16 monkeypatch exclusions have ZERO mover callers today** (`_analyze_one_library_media_item`, `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`, `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`, `_request_library_media_type`, `_start_library_media_analyze`), i.e. they are held by §3's conservative opening rule rather than by a demonstrated bypass, and are the named MOVE candidates for a later, separately-motivated PR — re-evaluated at the cleanup and DECLINED, see §22. 22 of 140 screen delegators pruned at cleanup (15.71%). Media owns ZERO `on_<message>` name-dispatched handlers, so §4's third whitelist member is inert here. Its cleanup is the largest of the program — 36 CHANGED `Tests/` files across four roots (UI 32, Architecture 2, Live 1, Media 1; zero in `Tests/Library`, whose only hit was prose), driven by a boundary-matched census of the 82 moved field names measuring 1,214 occurrences across 36 files at task 1 and 1,204 across 34 at the wave close's own re-derivation. The two 36s are DIFFERENT file sets whose roots do not coincide (census: UI 31 / Library 1 / Architecture 1 / Live 1, zero in `Tests/Media`); the "five roots" figure quoted earlier in this program is their union — see §22 — and added a FIFTH census spelling to §3: a COMPUTED attribute name (`ast.JoinedStr`) in a shared dispatcher, invisible to all four prior spellings and a silent production defect if missed. See §22 for the series' actual, as-landed numbers |
 | 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
 | 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
 
@@ -5232,3 +5564,624 @@ instead of by reading diffs.
    mount/node growth each of them attributed to "ordinary Media/Notes churn
    on dev" is now MEASURED, because the wave-6 base tree already reads the
    higher counts.
+
+## 22. The media series, as landed — the seventh rehearsal, and the largest cleanup of this program
+
+Wave-7 Tasks 1–3 (`.superpowers/sdd/2026-09-06-library-decomposition-wave7-media`)
+extracted the Media subsystem. At **251** media-named `FunctionDef`s and **85**
+media-named `__init__`/class-body attributes it is the biggest cluster the
+recipe has processed — prompts' 161/46 was the prior high — and its cleanup
+task changed **36 `Tests/` files across four roots** (UI 32, Architecture 2,
+Live 1, Media 1), driven by a boundary-matched census of the 82 moved field
+names over `Tests/` at the wave-start tree. Prompts, the prior record,
+changed 11 files off 465 occurrences.
+
+**Two DIFFERENT 36s, whose roots do not coincide — the wave close had to
+separate them and the separation is the useful part.** The CENSUS (what the
+cleanup had to read) and the CHANGED set (what it edited) are different file
+sets that happen to have the same cardinality: the census's roots are
+UI 31 / Library 1 / Architecture 1 / Live 1 — **zero in `Tests/Media`** —
+while the changed set's are UI 32 / Architecture 2 / Live 1 / Media 1 —
+**zero in `Tests/Library`**, whose only hit is prose that needed no change.
+The "five roots" figure this program has quoted is their UNION, not either
+set. On the occurrence count itself: task 1 measured **1,214**; a
+re-derivation at this close — same wave-start tree, the final 82-name set,
+an `(?<![A-Za-z0-9_])…(?![A-Za-z0-9_])` boundary — measures **1,204 across
+34 files**, and the ~10-occurrence gap is an instrument difference neither
+run can now reconstruct. Both figures are recorded rather than one
+overwriting the other; either is ~2.6× the prior record.
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 1 | State | 82 of 85 media-named attributes → `LibraryMediaState`; TWO prefix families, not three (`_library_media_*` for 81 + the bare `_selected_media_id`), because "media" is already both singular and plural, so no plural constant exists. The other 3: 2 WIRING (live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances) and 1 BLOCKED (`_library_pending_list_entry_media_return`, one of four members of a shell family whose writers span Media/Notes/Prompts/Skills). 4 fields keep their ORIGINAL `__init__` line (the forced-early-construction group); 3 more become CONSTRUCTOR ARGUMENTS | 37537 → 37333 lines, 1282 methods |
+| 2 | Controller | 140 of 251 candidates → `LibraryMediaController` (48 `@on` + 5 `action_*` + 3 `@staticmethod` + 84 plain; **111 exclusions** — 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form, 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher). Single controller; a connected-components analysis over all 251 found no clean seam. **ZERO `on_<message>` name-dispatched handlers**, so §4's third whitelist member is inert for media (it will still matter for notes) | 37333 → **34717** (GREEN) → 34754 (fix round 1 reverted one mover to the screen) lines, 1282 methods (unchanged). Controller born-governed at **4474** → 4461 (fix round 1) → 4496 (review fix round 2) |
+| 3 | Cleanup | Shim block (82 properties, two prefix families) deleted; **456** screen-side literal `self.<flat>` retargets to `self._media_state.<field>`, plus **9** `getattr(self, "<flat>", ...)` RECEIVER fixes and **6** dynamic-dispatch string values dotted; **1,182** test-side code retargets across 32 files (1,214 counting prose, across 36 files, per the boundary-matched census), including **37 `SimpleNamespace` fixture restructurings (136 flat kwargs → nested `_media_state=SimpleNamespace(...)`) plus one added empty `_media_state` seed**; **22 of 140** screen delegators pruned (15.71%); **10** dead imports removed (3 further candidates SAVED); the shared `_apply_library_row_toggle` dispatcher's computed name given a media DOTTED branch | 34754 → 34669 lines, 1282 → 1260 methods (exactly the 22 pruned delegators) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`), by task:
+`37537/1282 → 37333/1282 → 34754/1282 → 34669/1260` (final). The full
+per-COMMIT chain is in the wave-7 close below and is not the same shape —
+task 2's own GREEN commit pinned **34717/1282** and its fix round put 37
+lines BACK on the screen (34754), the only fix round in this program to
+move the screen pin UPWARD.
+
+**Controller-file governance pin** (§17): `library_media_controller.py`
+born-governed the moment it existed, at **4474** (task 2's GREEN,
+`9187bd281`), then `4474 → 4461` (task 2's fix round 1, which reverted a
+mover to the screen) `→ 4496` (task 2's review fix round 2, comment growth).
+*(Task 2's own report says "born 4461"; 4461 is the post-fix-round-1 value,
+and the birth value re-derived by `git show` at every commit in the wave is
+4474. Corrected here rather than in that report's hash-load-bearing
+neighbourhood — see the close's own trajectory table.)* **Untouched by the
+cleanup** — unlike the prompts series, whose cleanup added comment lines to
+its controller, media's cleanup edits no controller body at all, so no
+re-pin was involved.
+
+### The dynamic-dispatch census found a shape no prior series' census could see: a COMPUTED attribute name in a SHARED dispatcher
+
+Every prior series ran §3's four census spellings (attribute, quoted-string,
+bare-assignment/kwarg, patch-target table) and that was enough. Media needed a
+FIFTH: an `ast.JoinedStr` whose literal fragments compose a flat attribute
+name at runtime.
+
+`canvas_sync.py:219` (as landed, `5dd2e71cf`) builds
+`f"_library_{kind}_row_selection"` and resolves it
+with `operator.attrgetter`. **No spelling in §3's catalogue can see that
+string** — the name `_library_media_row_selection` appears nowhere in the
+file, as an attribute, a constant, a kwarg or a quoted literal. The
+conversations series had already added the dotted special case beside it
+(`"_conversations_state.row_selection" if kind == "conversations" else ...`)
+and left a comment saying "future subsystem extractions hit this exact same
+shape" — which is exactly what happened: media is the second kind to need the
+dotted form, and the *only* reason the cleanup found it was a deliberate
+JoinedStr sweep run because that comment existed.
+
+**The rule this adds to §3's census list:** walk `ast.JoinedStr` nodes whose
+literal fragments could compose one of the subsystem's flat names, over
+`tldw_chatbook/` and all of `Tests/`. Media's sweep returned exactly two hits
+— this one (a real production defect if missed: the selection object would
+silently stop resolving, and `_apply_library_row_toggle`'s own `try/except`
+would swallow it into a full recompose, degrading a performance fix into
+silence with no red test) and one in a test
+(`test_library_media_return_settlement.py:1745` builds
+`f"_library_media_{signature_kind}_signature"`, a METHOD name, and both
+methods it can name are among the 16 instance-monkeypatch exclusions, so it
+needed nothing).
+
+### Delegator census — 118 KEEP, 22 PRUNED (15.71%)
+
+Of the 140 moved names, **53 KEEP unconditionally** per §4's whitelist (48
+`@on` + 5 `action_*`; media owns zero `on_<message>` handlers). Of the
+remaining 87, **65 have a genuine external caller** and **22 have none**.
+
+Every verdict came from an `ast`-based census — never a call-shaped regex —
+over `tldw_chatbook/` + every `Tests/` root + `Docs/` + `scripts/` +
+`Helper_Scripts/`, excluding only the controller module, each name's own
+delegator body, and the wiring test's own literal pin tuple. **The AST census
+subsumes the "broad pass" prior series had to run as a second, separate
+sweep**: a bare callable passed as an argument
+(`self.call_after_refresh(self._name)`) is an `ast.Attribute` like any other,
+which is precisely the shape a `<name>\s*\(` regex scores as zero — the blind
+spot that would have mis-pruned three prompts names.
+
+Three verdicts turned on a spelling other than a plain attribute access, and
+each would have been a wrong PRUNE without the full spelling set:
+
+- `request_library_media_layout_refresh` — its ONLY reference anywhere is
+  `getattr(screen, "request_library_media_layout_refresh", None)` in
+  `settings_screen.py`, a quoted string in a DIFFERENT screen's module.
+- `_cancel_library_media_selection_settlement` and
+  `_select_library_media_reader_row` — each referenced only as
+  `getattr(self, "<name>", None)` inside `library_screen.py` itself, both
+  inside methods that never moved.
+
+One near-miss in the other direction: `_open_library_external_media_detail`
+has a same-named `@property` in `library_ingest_controller.py` that calls
+itself. That is a `def` in a DIFFERENT class — §4's own "a same-named `def` is
+evidence of NOTHING" rule — and the screen delegator is genuinely
+externally-referenced for an unrelated reason, so nothing turned on it; but it
+is the exact coincidence the `on_<Message>` incident was built from.
+
+Prune fraction 22/140 = **15.71%**, between ingest (10.71%) and skills
+(18.60%): export 4.55% < ingest 10.71% < **media 15.71%** < skills 18.60% <
+collections 21.88% < prompts 28.06% < search+RAG 28.57% < conversations
+29.51%.
+
+### Import verification — 13 dead, 3 saved, and a save the `_SURFACE` check alone would have missed
+
+13 imports were left dead in `library_screen.py` by this wave, derived as a
+DIFFERENCE (AST-unused at the wave-start commit `83e17323e` vs. at this
+commit): 43 names are unused at BOTH ends and belong to prior series or to
+`__future__`/`_SURFACE` bookkeeping.
+
+**2 came back `_SURFACE`-pinned** by exact-name lookup:
+`LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS` and `LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT`.
+Both spell the subsystem word UPPERCASE — the exact case-sensitivity trap the
+prompts series recorded after a lowercase `prompt` grep returned zero against
+five `PROMPT`-spelling names.
+
+**A third was saved by a check the `_SURFACE` contract does not perform.**
+`set_mode` is not in `_SURFACE`, is unused inside `library_screen.py`, and
+would have been deleted on the `_SURFACE` check alone — but
+`Tests/UI/test_library_entry_compose_once.py:1835` calls
+`library_screen_module.set_mode(...)`, consuming it as a live RE-EXPORT.
+**The rule: after the `_SURFACE` check, grep each remaining candidate for
+every alias a test imports `library_screen` AS (`library_screen`,
+`library_screen_module`, `library_module`, `screen_module`, …) followed by the
+name.** `_SURFACE` pins the names a test asserts ABOUT; this catches the ones
+a test actually CALLS. The remaining 10 were each independently confirmed live
+inside the controller.
+
+### The ADR-055 interlock guard, and why a cleanup PR must read its own guards' source-text assertions
+
+`test_every_media_mutation_claims_the_interlock_at_one_audited_seam`
+(`test_library_multiselect_media.py`) asserts, over
+`inspect.getsource(library_screen_module)`, that the string
+`_library_media_bulk_delete_in_flight = True` occurs EXACTLY ONCE — ADR-055's
+one-flag rule made structural. A receiver retarget rewrites that assignment to
+`self._media_state.bulk_delete_in_flight = True`, so the guard's own regex
+matches ZERO and the test fails LOUDLY (unlike a monkeypatch bypass, which
+would have stayed green). Both the regex and the companion exact-substring
+assertion were retargeted in the same commit, preserving the invariant — the
+count is still exactly one, still inside `_claim_library_media_mutation`,
+which is one of the 8 source-census EXCLUSIONS and never moved.
+
+**The general point:** a cleanup PR's receiver retarget changes SOURCE TEXT,
+and any guard that asserts on source text (`inspect.getsource`, an AST census
+over a named file, a `re.findall` over a module) is a first-class retarget
+target, not collateral. It is also the friendliest class of guard to have,
+because it fails at the exact commit that breaks it.
+
+### Test retarget — 38 fixture restructurings, and the one that must be added rather than rewritten
+
+136 flat kwargs across 37 `SimpleNamespace` fixtures became nested
+`_media_state=SimpleNamespace(...)` blocks. 33 were mechanical (the media
+kwargs sat contiguously) and one more was a single-line fixture expanded by
+hand; 4 in `test_library_media_trash.py` interleaved a
+WIRING attribute (`_library_media_trash_browse_controller`, which stays flat —
+it is not a state field) or a shell attribute
+(`_library_notes_focus_intent_generation`) inside the media run, and were
+hand-reordered so the media block became contiguous before nesting.
+
+**A fixture class the kwarg census cannot find at all:** a fake built with NO
+media kwargs that later receives `fake._library_media_<field> = ...` as a
+post-construction assignment. Retargeting that assignment to
+`fake._media_state.<field> = ...` requires `fake._media_state` to EXIST, and
+nothing in the construction creates it. `test_review_set_walker.py`'s
+`_entry_fake` (and the three factories built on it) is the worked example: 19
+of its 59 tests failed with `AttributeError: 'types.SimpleNamespace' object
+has no attribute '_media_state'` until one `_media_state=SimpleNamespace(),`
+line was added to the factory. **Census for it directly: every receiver with a
+Store-context flat-name attribute assignment, resolved back to its binding
+site.**
+
+**And a THIRD variant that census cannot see either, found by the wave close's
+own paired sweep — a fake in ANOTHER subsystem's test file that names no field
+of yours at all.** `Tests/UI/test_library_skills_canvas.py::test_action_
+library_skill_back_honors_dirty_guard` hands an unbound `SimpleNamespace` to
+`LibraryScreen._arm_library_list_entry_focus`, a SHARED shell seam whose first
+statement the cleanup retargeted to
+`self._media_state.successful_focus_ownership = None`. The fixture contains
+zero media kwargs (so the kwarg census misses it) AND zero flat-name
+assignments (so the Store-context census above misses it) — the flat name never
+appears in the test. **The PRODUCTION method does the write; the fake is merely
+handed to it.** Nothing static reaches that shape.
+
+Two things follow. First, the accommodation is the same one line, and it is
+worth adding even when the test is red for an unrelated reason: here the same
+fixture was ALREADY failing on `self.focused` two statements later at the wave
+start, so the test is a shared pre-existing red either way — but without the
+seed the branch and the baseline fail with DIFFERENT messages, and a future
+series diffing failure text pays for that. Second, and more useful: **when a
+subsystem's fields are read by a shared shell seam, enumerate the seam's
+unbound-fake callers across ALL of `Tests/`, not just the subsystem's own
+files.** The tractable version is a grep for `LibraryScreen.<seam>(` /
+`types.MethodType(LibraryScreen.<seam>` over every root, run once per shared
+seam that touches a moved field — or, failing that, accept that only running
+the sweep finds it, and read the tracebacks rather than only the failure names.
+
+**Zero assertion VALUES changed, proven mechanically rather than asserted.**
+The same transform (attribute rewrite + contiguous-kwarg nesting) was applied
+to each file's HEAD AST in memory and `ast.dump`-compared against the current
+file: **24 of 40 changed files match EXACTLY**, including
+`test_library_shell.py` (146 retargets) and
+`test_library_media_return_settlement.py` (204). The 16 that differ each carry
+one reviewed hand edit, and for those a second guard compared the multiset of
+non-docstring `ast.Constant` values before and after: every delta is a
+name-string retarget or new assertion-message text.
+
+### Wiring test finalization
+
+`Tests/Architecture/test_library_media_wiring.py`:
+`test_state_object_fields_match_the_shim_surface` narrowed to
+`test_state_object_declares_the_censused_field_count`;
+`test_every_shim_reads_and_writes_its_own_state_field` **re-aimed at the
+controller** (the prompts precedent — it is the only test that catches the
+generated-loop closure-binding trap, and the controller's loop carries the
+identical trap);
+`test_the_screen_no_longer_carries_a_media_state_shim` added, asserting
+ABSENCE; `_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED` filled with the 22 names.
+12 tests, all green.
+
+### The 7 deferred move candidates, re-evaluated and DECLINED
+
+Task 2 recorded that 7 of its 16 instance-attribute-monkeypatch exclusions
+(`_analyze_one_library_media_item`, `_exit_library_media_select_mode`,
+`_focus_library_media_grip_if_current`, `_library_media_unanalyzed_ids`,
+`_notify_library_media_analysis_warning`, `_request_library_media_type`,
+`_start_library_media_analyze`) have zero MOVER callers today, so they are
+held by §3's conservative opening rule rather than by a demonstrated bypass —
+i.e. they become movable the moment their fixtures retarget.
+
+**They were re-checked at this cleanup and all 7 STAY EXCLUDED.** A cleanup
+PR's retargets are FIELD retargets; none of them touches a method
+monkeypatch, so every one of the 7 still carries live
+`screen.<name> = <stub>` / `monkeypatch.setattr(screen, "<name>", ...)` /
+`fake.<name> = types.MethodType(...)` sites (re-derived at this tree:
+`test_library_ingest_analyze_skipped.py`, `test_library_media_render_fixes.py`,
+`test_library_media_side_by_side.py`, `test_library_shell.py`,
+`test_library_media_trash.py`, `test_library_multiselect_media.py`). **The
+generalizable point: "movable once the fixtures retarget" is not a prediction
+that a cleanup PR will make it so.** Retargeting method-patch fixtures is a
+different transform from retargeting field paths, it is not on §4's
+whitelist, and doing it would make the cleanup PR's own diff no longer purely
+mechanical. A later, separately-motivated PR is the right home; recording the
+verdict (rather than silently leaving the observation open) is the cleanup
+PR's actual obligation.
+
+### Wave-7 close
+
+Wave-7 (`.superpowers/sdd/2026-09-06-library-decomposition-wave7-media`,
+branch `refactor/library-decomp-wave7-media`) scoped itself to media alone —
+the largest cluster of the program at 251 media-named `FunctionDef`s and 85
+media-named attributes. The media series (Tasks 1–3, above) is complete.
+This section is Task 4's own wave-level pin-trajectory re-derivation,
+verification battery, sweep evidence, probe and lessons. Notes remains, then
+the final shell pass (§8).
+
+#### Pin trajectory — full wave-7 chain, re-derived per COMMIT
+
+Read by `git show <commit>:<path>` at **every one of the 21 commits in
+`83e17323e..HEAD` plus the base itself (22 refs)** — the `_BUDGETS` row in
+`Tests/Architecture/test_screen_size_ratchet.py` and the
+`library_media_controller.py` row in
+`Tests/Architecture/test_library_modules_size_ratchet.py` — never carried
+over from a report. Oldest-first:
+
+| Task | PR | Commit | Screen `_BUDGETS` after | Controller pin after |
+|---|---|---|---|---|
+| — | (wave-7 start) | `83e17323e` | 37537 / 1282 | — (file does not exist yet) |
+| 1 | Media state (RED — characterization + wiring pins; screen untouched) | `600192d6e` | 37537 / 1282 (unchanged) | — |
+| 1 | Media state (GREEN — 82 of 85 attributes → `LibraryMediaState`) | `76b248c05` | 37333 / 1282 | — |
+| 1 | (blame-ignore, no functional change) | `23e442ad9` | 37333 / 1282 (unchanged) | — |
+| 1 | Fold-accounting correction (doc-only) | `999bd269d` | 37333 / 1282 (unchanged) | — |
+| 1 | Characterization census correction (doc-only) | `27d3efdea` | 37333 / 1282 (unchanged) | — |
+| 1 | Close — review erratum + two one-word count fixes (series complete) | `37a0934b2` | 37333 / 1282 (unchanged) | — |
+| 2 | Media controller (RED — full-cluster wiring pins only) | `3dd7a745a` | 37333 / 1282 (unchanged) | — |
+| 2 | Media controller (GREEN, born-governed — 141 movers) | `9187bd281` | **34717 / 1282** | **4474 (born)** |
+| 2 | (blame-ignore, no functional change) | `e97ac3a32` | 34717 / 1282 (unchanged) | 4474 (unchanged) |
+| 2 | Fix round 1 — the viewer-exit mover REVERTED to the screen (140 movers) | `40fe1f5bc` | **34754 / 1282** | **4461** |
+| 2 | (blame-ignore, no functional change) | `7fee56dd4` | 34754 / 1282 (unchanged) | 4461 (unchanged) |
+| 2 | Mover-line-count correction (doc-only) | `1cf379d6c` | 34754 / 1282 (unchanged) | 4461 (unchanged) |
+| 2 | Report (doc-only) | `9cc6a7ad4` | 34754 / 1282 (unchanged) | 4461 (unchanged) |
+| 2 | Report erratum (doc-only) | `e1f893b7c` | 34754 / 1282 (unchanged) | 4461 (unchanged) |
+| 2 | Fix round 2 — review corrections, comment growth (series complete) | `2325577f2` | 34754 / 1282 (unchanged) | 4496 |
+| 2 | Close — ledger + durable evidence | `78186d159` | 34754 / 1282 (unchanged) | 4496 (unchanged) |
+| 3 | Media cleanup (GREEN — shim deleted, 22 delegators pruned) | `5dd2e71cf` | 34669 / 1260 | 4496 (unchanged) |
+| 3 | (blame-ignore, no functional change) | `946ea1b0a` | 34669 / 1260 (unchanged) | 4496 (unchanged) |
+| 3 | Report (doc-only) | `1e8f49183` | 34669 / 1260 (unchanged) | 4496 (unchanged) |
+| 3 | Fix round — the canvas-sync dotted-path guard + doc fixes (series complete) | `9275ee792` | 34669 / 1260 (unchanged) | 4496 (unchanged) |
+| 3 | Close — ledger + durable evidence | `014f695fc` | **34669 / 1260 (wave-7 final)** | **4496 (wave-7 final)** |
+
+Full chain, screen: `37537/1282 → 37333/1282 → 34717/1282 → 34754/1282 →
+34669/1260` (final). Full chain, controller: born **4474** → `4461` →
+`4496`.
+
+**Two corrections the per-commit re-derivation produced, neither of which any
+report carried** — recorded here because §6's own "a number has COPIES" rule
+says the copy with no automated reader is the one that survives review:
+
+1. **The controller was born at 4474, not 4461.** Task 2's report §8 says
+   "born **4461**"; 4461 is the value AFTER its fix round 1. The commit that
+   first created the row (`9187bd281`) reads 4474. Neither commit is
+   amendable — `9187bd281` and `40fe1f5bc` are both recorded in
+   `.git-blame-ignore-revs` by hash — so the correction of record is here
+   and in §22's own table.
+2. **The screen pin went DOWN and then back UP inside one task — the only
+   time in this program.** Task 2's GREEN pinned 34717; its fix round 1
+   excluded `_exit_library_media_viewer` (§3's new Form E, callback
+   identity) and put 37 lines BACK on the screen, re-pinning to 34754. A
+   task-level summary reporting only the endpoints (`37333 → 34754`) is not
+   wrong, but it hides the shape — and the shape is exactly what a
+   battery-found exclusion looks like in the ratchet. **A wave close should
+   re-derive per COMMIT, not per task**; neither of these two findings is
+   visible any other way.
+
+**Net wave-7 shrink: 2,868 screen lines and 22 methods** — the second-largest
+single-wave reduction this recipe has recorded, behind prompts' 3,819 and
+ahead of skills' 2,070, wave-2's 1,554 (two subsystems), ingest's 1,480 and
+search+RAG's 1,037. The 22 methods are exactly the 22 pruned delegators; a
+pure move is always net-zero on the screen's method count, and only a
+delegator prune moves it.
+
+Task 4's own fresh `_measure()` call (each ratchet file's own semantics — an
+`ast`-walked line count plus a `LibraryScreen` method count, not `wc -l`)
+gives **34669 lines / 1260 methods** for the screen and **4496 lines** for
+the controller: EXACT matches to both recorded pins, zero drift, nothing to
+lower. This close's own tracked edits are comment/docstring-only plus one
+test-fixture seed; the two inside the governed controller file were written
+LINE-NEUTRAL for that reason, and `_measure()` re-reads 4496 afterwards, so
+no same-commit re-pin was needed.
+
+#### Verification battery (Task 4, this close)
+
+All commands from `.worktrees/library-decomp-foundation`, `.venv/bin/python`
+(3.14.2), `-p no:randomly`; `timeout` is unavailable here, so long runs are
+bounded with `perl -e 'alarm N; exec @ARGV'`. Load at battery time:
+**2.70 / 2.57 / 2.49** — a genuinely quiet machine, named alongside the
+numbers per wave-4 close's lesson 3.
+
+- **Fresh `_measure()` on both ratchet files**: 34669/1260 (screen), 4496
+  (controller) — exact match to both pins, zero drift.
+- **All EIGHT wiring suites** (`collections`, `conversations`, `export`,
+  `ingest`, **`media`**, `prompts`, `search_rag`, `skills`) **+ the
+  support-layer surface suite + both size ratchets + the recompose ratchet +
+  the pre-import closure + the `_ui_ready` module census + the media
+  characterization file + the screen-reuse file + the selection-updates file
+  (home of the new canvas-sync dotted-path guard) + the modal-dismissal
+  file, ONE combined invocation**: **301 passed, 5 failed** in 127.65s.
+  Every red is on §7's documented list as updated by this close: the two
+  `chat_screen.py` ratchet rows, the `library_media_browse_controller.py`
+  controller-ratchet row, `test_tier1_toggle_falls_back_to_recompose_on_
+  query_one_failure`, and the modal-dismissal discovery blocker. **Zero
+  `library_screen.py`- or `library_media_controller.py`-scoped failures**;
+  `library_screen.py`'s own row is GREEN at 34669/1260. The `_ui_ready`
+  census passed on this run — it is a flapping guard and §7 says so.
+- **ADR-055 interlock + the canvas-sync dotted-path guard + the media
+  characterization file + `test_library_media_render_fixes.py` + the media
+  wiring suite**, one invocation: **75 passed**, 67.24s.
+- **preflight**: `./scripts/preflight.sh` — all derived-artifact checks pass
+  (CSS bundle + 10 generated stylesheets, profile-owned-path census, the
+  production diagnostic inventory at 585 owners, the backlog task-id sweep
+  across 3,367 task files INCLUDING this close's own two new filings, the
+  chachanotes allowlist at 113, index plan pins 281/281/66).
+
+#### Full sequential xdist paired-baseline sweep — whole-wave span
+
+Branch = wave-7 tip plus this close's own edits. Baseline = an ISOLATED
+`git worktree add` at the wave-7 START commit (`83e17323e`) with its own
+`uv venv`/`uv pip install -e ".[dev]"`, verified to resolve its OWN tree.
+Run SEQUENTIALLY, never concurrently. Two paired sweeps, the wave-6
+precedent: **Sweep A** = `Tests/UI -k "library"` (§7's established net),
+**Sweep B** = the full `Tests/Library` + `Tests/Architecture` roots
+unfiltered.
+
+**Environment parity was PROVEN before any count was read** — the step this
+close had to add to §3 after getting it wrong:
+
+```
+python -V                    branch 3.14.2   baseline 3.14.2
+uv pip list | names | sort   IDENTICAL PACKAGE SETS (106 each)
+```
+
+| sweep half | started | load average (1 / 5 / 15) | wall | failed | passed |
+|---|---|---|---|---|---|
+| A — branch | 12:23 | 2.10 / 2.31 / 2.39 | 23:04 | 370 | 4129 |
+| A — baseline | 12:47 | 2.91 / 3.85 / 4.36 | 24:05 | 369 | 4126 (+1 teardown error) |
+| B — branch | 13:11 | 3.61 / 3.98 / 4.82 | 3:10 | 23 | 3669 (5 skipped) |
+| B — baseline | 13:14 | 6.19 / 5.79 / 5.46 | 3:14 | 23 | 3655 (5 skipped) |
+
+Unlike wave-6's close, each sweep's two halves ran under comparable load and
+within 4% of each other in wall clock, so the count comparison is worth
+something on its own here.
+
+**Both collection-count asymmetries reconcile EXACTLY** — the first thing to
+check before reading any failure diff:
+
+* Sweep A: branch collects **4,499** vs baseline **4,495** — exactly the 4
+  tests the wave added under this filter (3 in
+  `test_library_media_characterization.py`, task 1; plus
+  `test_media_row_toggle_resolves_the_dotted_state_path` in
+  `test_library_selection_updates.py`, task 3's fix round).
+* Sweep B: branch collects **3,697** vs baseline **3,683** — exactly the 12
+  tests in `Tests/Architecture/test_library_media_wiring.py` plus the 2
+  parametrizations the controller ratchet's two
+  `@pytest.mark.parametrize("rel_path", sorted(_BUDGETS))` decorators gain
+  from the new `library_media_controller.py` row.
+
+**Sweep B: 23 failed on BOTH trees, name-set IDENTICAL — zero branch-unique,
+zero baseline-unique.** All 23 are documented above: 15 `Tests/Architecture/`
+rows wave-6 proved name-for-name, the 3 ratchet rows,
+`test_persona_visual_runtime_boundary` (added by this close) and the 4
+`Tests/Library/` names.
+
+**Sweep A: 365 shared, 5 branch-unique, 4 baseline-unique.** Every
+branch-unique name was dispositioned under the rule this close itself wrote
+into §7 — ALONE, n>1, PAIRED against the parent — never on a single run and
+never on a name-recognition argument:
+
+| branch-unique name | branch | isolated baseline `83e17323e` |
+|---|---|---|
+| `test_library_media_reader_match_nav_t22209.py::test_a_new_document_rescans_for_the_same_query` (documented, wave-5 task 2) | 1/3 failed | **2/3 failed** |
+| `test_library_media_reader_traversal_t22207.py::test_loading_banner_paints_in_place_without_body_rebuild` (documented, wave-5 task 2) | 1/3 failed | **2/3 failed** |
+| `test_library_shell.py::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[True]` (documented, wave-5 task 2) | 0/3 failed | 0/3 failed |
+| `test_study_origin_navigation.py::test_home_origin_does_not_leak_into_later_library_entry` (NEW) | **10/10 failed** | **10/10 failed** |
+| `test_library_skills_canvas.py::test_library_skills_manual_items_priority_survives_compact_layout_sync` (NEW) | see below | see below |
+
+`test_home_origin_does_not_leak_into_later_library_entry` is deterministic on
+both trees at **10/10 red in isolation** and is added to §7's list. Note the
+direction of the surprise: it was branch-UNIQUE in the sweep, meaning it
+PASSED in the baseline's xdist run — on a tree where it fails 10 times out of
+10 alone. **The xdist verdict and the isolated verdict disagree, and the
+isolated one governs**, because it is the one that is identical on both
+trees. A name's absence from the baseline's failure list is not evidence the
+baseline passes it; it is evidence about that run's worker ordering.
+
+**The fifth name produced this close's most useful finding and is written up
+as §7's third disposition level** (interleaving). Sequential matched batches
+gave branch **5/10** vs baseline **2/10** — an asymmetry pointing the wrong
+way, on a file this close had itself edited. Re-run as 10 rounds ROUND-ROBIN
+across THREE trees inside one load window:
+
+| tree | rate |
+|---|---|
+| branch (wave tip + this close's edits) | **2/10 failed** |
+| wave tip `014f695fc` (no close edits) | **1/10 failed** |
+| wave start `83e17323e` (no wave at all) | **5/10 failed** |
+
+The direction fully reversed and the *baseline* became the worst tree. The
+failure itself is a Skills adaptive-reader-shell geometry assertion
+(`AdaptiveReaderEffectiveLayout(… items_open=False …)`) in a pane this
+wave's diff does not touch. **Zero real regressions across the whole wave-7
+span.**
+
+#### Probe run
+
+Run on a quiet machine (load 1.88–2.10 throughout), as a genuine
+same-machine BEFORE/AFTER pair, and the pair run TWICE with the tree order
+swapped — §9's standing procedure since the wave-6 close.
+`Helper_Scripts/library_click_probe.py` is byte-identical across the wave
+(`git diff 83e17323e HEAD --` on it is empty).
+
+**Round 1 — branch first, then baseline:**
+
+| interaction | settle (ms) br / base | max gap (ms) br / base | recompose | full-update | mounts br / base | nodes br / base |
+|---|---|---|---|---|---|---|
+| media (switch-in) | 463 / 449 | 127 / 128 | 0 / 0 | 2 / 2 | 177 / 177 | 119 / 119 |
+| media (re-click same) | 299 / 295 | 51 / 51 | 0 / 0 | 2 / 2 | 89 / 85 | 119 / 119 |
+| media (re-click same, 2nd) | 301 / 302 | 50 / 51 | 0 / 0 | 2 / 2 | 85 / 85 | 119 / 119 |
+| notes (switch) | 338 / 339 | 120 / 133 | 0 / 0 | 1 / 1 | 114 / 114 | 114 / 114 |
+| notes (re-click same) | 244 / 244 | 41 / 40 | 0 / 0 | 1 / 1 | 38 / 38 | 114 / 114 |
+| media (switch-back) | 377 / 375 | 85 / 85 | 0 / 0 | 1 / 1 | 179 / 179 | 119 / 119 |
+| notes (switch, 2nd) | 313 / 349 | 109 / 145 | 0 / 0 | 1 / 1 | 114 / 114 | 114 / 114 |
+| media (switch-back, 2nd) | 404 / 371 | 124 / 83 | 0 / 0 | 1 / 1 | 179 / 179 | 119 / 119 |
+
+**Round 2 — the SAME two probes with the tree order REVERSED:**
+
+| interaction | settle (ms) base / br | max gap (ms) base / br |
+|---|---|---|
+| media (switch-in) | 458 / 464 | 127 / 129 |
+| media (re-click same) | 294 / 293 | 38 / 51 |
+| media (re-click same, 2nd) | 296 / 299 | 51 / 41 |
+| notes (switch) | 336 / 328 | 118 / 129 |
+| notes (re-click same) | 244 / 246 | 42 / 46 |
+| media (switch-back) | 369 / 365 | 81 / 81 |
+| notes (switch, 2nd) | 354 / 357 | 113 / 147 |
+| media (switch-back, 2nd) | 365 / 368 | 81 / 83 |
+
+**No directional shift in either round, and none between them** — unlike
+wave-6, whose round 1 showed the branch slower on all sixteen wall-clock
+measurements from a first-run warm-up artifact. The difference is
+instructive rather than contradictory: this close's probe ran immediately
+after ~90 single-node pytest invocations, so BOTH trees were already warm
+when the first probe started. **The order swap remains mandatory precisely
+because you cannot know in advance which of those two situations you are
+in.**
+
+The load-independent columns are the verdict and they are exact: `recompose`
+is **0 on every row of all four runs**; `full-update` follows the identical
+`2/2/2/1/1/1/1/1` pattern on both trees and matches every close back to
+wave-2; and `nodes` is identical row-for-row between the trees (119 media /
+114 notes), the same counts the wave-6 close established as already present
+before this wave's first commit. `mounts` wobbles by 4 run-to-run *within*
+each tree (85 vs 89 on the identical re-click rows, on both trees), which is
+why those cells are not a difference.
+
+Branch figures sit INSIDE wave-2 close's recorded band on every row (settle
+244–464 against 264–485, with the low end FASTER than anything wave-2
+recorded; max gap 41–129 against 54–195, again faster at the low end).
+
+#### Lessons
+
+1. **The wave's headline census finding is a shape that is invisible to
+   every spelling the recipe had — and the census that should have caught
+   it reported a confident ZERO.** Two of them, in fact: §3's new Form D
+   (`self in <widget>.ancestors`, an `In`/`NotIn` comparison where the
+   census looked for `Is`/`IsNot`) and §3's fifth census spelling (a name
+   composed at runtime by an f-string, so it appears NOWHERE in the source).
+   Both were found by running code, not by reading it: Form D by a battery
+   that produced 19 failures against a 2-failure baseline, the fifth
+   spelling by a deliberate `ast.JoinedStr` sweep run only because a
+   four-month-old comment in `canvas_sync.py` predicted the shape. **The
+   generalization: a census returning zero over a large candidate set is a
+   claim about the CENSUS, not about the code. Before believing it, ask
+   what shape of hit it structurally cannot represent** — and prefer the
+   exhaustive form (every bare `self` `ast.Name` that is not an attribute
+   receiver) over an enumeration of operators, because the enumeration is
+   only ever as complete as the last incident.
+2. **A wave close that re-derives per TASK sees a different history from
+   one that re-derives per COMMIT, and only the second is true.** Both of
+   this close's pin-trajectory corrections — the controller born at 4474
+   rather than 4461, and the screen pin moving DOWN then back UP inside
+   task 2 — are invisible in any task-level summary, because a task-level
+   summary reports endpoints and both events are interior. Neither is
+   consequential on its own; together they are the argument for the rule.
+   **`git show <path>` at every commit in the span costs one script and
+   ten seconds, and it is the only thing that can contradict a report.**
+3. **The "fixture needs the nested state object to EXIST" hazard is not
+   confined to the subsystem's own test files, and the census added for it
+   still cannot see the worst case.** Task 3 added a census for fakes that
+   ASSIGN a flat name post-construction (`test_review_set_walker.py`'s
+   `_entry_fake`). This close's sweep found a fake in
+   `test_library_skills_canvas.py` — a SKILLS file — that names no media
+   field at all, assigns none, and breaks anyway, because a SHARED shell
+   seam (`_arm_library_list_entry_focus`) writes one moved field and the
+   test hands it an unbound `SimpleNamespace`. **The production method does
+   the write; nothing static reaches that.** Enumerate the unbound-fake
+   callers of every shared seam that touches a moved field, across ALL
+   roots — or accept that only the sweep finds it, and READ THE TRACEBACKS
+   rather than only the failure names.
+4. **"Passes in isolation" needed a third level of rigour, and the third
+   level REVERSED a conclusion the second level got wrong.** Wave-6 added
+   the 10-run matched batch after a 6-of-6 clean baseline turned out to be
+   4-of-10 red. Wave-7 task 3 added "run it ALONE and PAIR it" after a
+   two-node selection's single pass was overturned by 5/5 red. This close
+   added the third: **the two trees' runs must be INTERLEAVED, not
+   back-to-back**, because a sequential 10-run batch still puts the trees
+   in different load windows — measured, branch 5/10 vs baseline 2/10
+   sequentially became branch 2/10 vs baseline 5/10 round-robin, with the
+   baseline the worst tree. And a THIRD tree (the wave tip without the
+   current task's own edits) is what separates "the wave did it" from "this
+   task did it"; at ~5 s per isolated worktree it is not worth omitting.
+5. **§3's isolated-baseline rule was under-specified in a way that
+   silently voids a whole sweep: it never said which INTERPRETER.** This
+   close built its first baseline with `uv venv --python 3.11` — the
+   project floor, and the version CLAUDE.md's own setup snippet suggests —
+   against a branch venv running 3.14.2, and both sweeps ran to completion
+   looking plausible. The tell was legible only by luck (the
+   baseline-unique failures were all PEP-701 f-string parametrizations of
+   `test_python_floor_syntax.py`); a Library-shaped failure from the same
+   cause would have carried no signature at all. A quieter sibling sat
+   underneath it: a freshly-provisioned baseline venv is a package
+   SUPERSET of a long-lived branch venv (106 vs 103 here), which produced a
+   collection error on the BRANCH only. **Both are caught by three commands
+   run BEFORE any count is read — `python -V` on each side and a diff of
+   `uv pip list | awk '{print $1}' | sort`** — now written into §3. The
+   general form is the one this recipe keeps relearning in new costumes:
+   *an unexplained baseline-unique failure is worth an hour, and the cheap
+   checks that prevent one are worth running first.*
+6. **A pre-existing red is not fully triaged until you ask what it is
+   BLOCKING.** Wave-6's lesson 4 made this point about a guard that raises
+   during discovery. This close met the milder version:
+   `test_library_honesty_accessibility.py::test_row_toggle_patcher_
+   rebuilds_marker_label_both_directions` fails on its FIRST assertion, a
+   label-truncation comparison, before the body under test matters — and
+   it is the only real-row Pilot test that drives the media
+   `_apply_library_row_toggle` path, i.e. the natural end-to-end coverage
+   for the fifth-spelling fix, which consequently had to be guarded by a
+   ~15-line screen double. Five waves had read that red as "pre-existing,
+   not mine" and moved on, which is correct about ownership and useless
+   about consequence. Filed as TASK-31880.
+7. **Two numbers can both be "36" and mean different things, and the
+   program quoted them interchangeably for a whole series.** The media
+   cleanup's CENSUS (files containing a moved field name at the wave-start
+   tree) and its CHANGED set (files it actually edited) both number 36 —
+   but their roots do not coincide: the census spans UI 31 / Library 1 /
+   Architecture 1 / Live 1 with **zero in `Tests/Media`**, while the
+   changed set spans UI 32 / Architecture 2 / Live 1 / Media 1 with **zero
+   in `Tests/Library`**. The "five roots" this program quoted is their
+   UNION and describes neither. **When two derived counts coincide, say
+   which one each downstream fact belongs to before the coincidence hardens
+   into a claim.**

@@ -103,6 +103,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-117](117-vllm-lab-console-readiness-and-profiles.md) | Accepted | Treat vLLM setup as a generation-fenced launch-or-connect workflow with verified Console adoption and device-local non-secret launch profiles. |
 | [ADR-118](118-chunking-lab-local-execution-and-recovery.md) | Accepted | Keep Chunking Lab local-first, with faithful full-recipe previews, immutable A/B results, conflict-safe catalog saves, and private recoverable session checkpoints. |
 | [ADR-122](122-bundled-pixel-migu-character-and-buddy.md) | Accepted | Include pixel-migu as optional fresh-profile character and Buddy content using existing ownership and runtime boundaries. |
+| [ADR-127](127-fresh-install-private-data-root-recovery.md) | Accepted | Select durable home-level private storage for fresh installs blocked by shared default ancestors. |
 
 ## Historical Decision Material
 

@@ -52,6 +52,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
@@ -741,7 +742,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             management_toolbar.styles.height = "auto"
             with management_toolbar:
                 yield Button(
-                    library_disabled_action_label("Select page", select_page_disabled),
+                    # task-31959 (batch-3 review, minor 3): padded too --
+                    # it sits auto-width LEFT of "Clear all" in this row, so
+                    # its own flip moved its padded neighbours two cells.
+                    library_disabled_action_label(
+                        "Select page", select_page_disabled, align=True
+                    ),
                     id="library-prompts-select-page",
                     classes="library-canvas-action",
                     compact=True,
@@ -759,7 +765,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
                 yield Button(
-                    library_disabled_action_label("Clear all", clear_disabled),
+                    # task-31959: the enabled spelling reserves the "○"
+                    # marker's own width, so the word holds its column when
+                    # the first selection enables this action.
+                    library_disabled_action_label(
+                        "Clear all", clear_disabled, align=True
+                    ),
                     id="library-prompts-clear-selection",
                     classes="library-canvas-action",
                     compact=True,
@@ -791,7 +802,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 selection_toolbar.styles.height = "auto"
                 with selection_toolbar:
                     yield Button(
-                        library_disabled_action_label(label, selection_disabled),
+                        # task-31959: same marker-width reservation as
+                        # "Clear all" above -- these flip with the count too.
+                        library_disabled_action_label(
+                            label, selection_disabled, align=True
+                        ),
                         id=action_id,
                         classes="library-canvas-action",
                         compact=True,
@@ -996,7 +1011,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     artifact_summary,
                     secondary,
                 )
-                button = Button(
+                # task-31945: shared row press behaviour (no 0.2s flash
+                # swallowing the next click on the same row).
+                button = library_row_button(
                     library_disabled_action_label(
                         "\n".join(part for part in label_parts if part),
                         page_actions_disabled,

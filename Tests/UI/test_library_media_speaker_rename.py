@@ -108,12 +108,12 @@ def test_presentation_reachability_reflects_meeting_folder(
     app.media_db = tmp_media_db
     screen = LibraryScreen(app)
 
-    screen._selected_media_id = f"local:media:{media_id}"
+    screen._media_state.selected_media_id = f"local:media:{media_id}"
     presentation = screen._library_media_canvas_presentation()
     assert presentation["can_rename_speakers"] is True
     assert presentation["speaker_rename_media_id"] == media_id
 
-    screen._selected_media_id = f"local:media:{other_id}"
+    screen._media_state.selected_media_id = f"local:media:{other_id}"
     assert screen._library_media_canvas_presentation()["can_rename_speakers"] is False
 
 
@@ -496,7 +496,7 @@ def test_presentation_never_fetches_content_and_memoizes_per_selection(
     app = _build_test_app()
     app.media_db = spy
     screen = LibraryScreen(app)
-    screen._selected_media_id = f"local:media:{other_id}"
+    screen._media_state.selected_media_id = f"local:media:{other_id}"
 
     assert screen._library_media_canvas_presentation()["can_rename_speakers"] is False
     assert spy.full_row_reads == 0                       # no whole-row/content fetch

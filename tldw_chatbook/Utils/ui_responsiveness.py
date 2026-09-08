@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import sys
 import threading
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -36,10 +37,8 @@ class UIResponsivenessSnapshot:
 class UIResponsivenessMonitor:
     """Collect low-cost counters that make UI stalls diagnosable."""
 
-    #: One stall record at a time in the dispatch queue: a wedged loop cannot
-    #: pile up records faster than a background thread drains them, and the
-    #: queue itself is bounded so enqueueing can never fail noisily.
-    _STALL_QUEUE_DEPTH = 4
+    #: Shared bound for queued send, stall and refresh-churn records.
+    _STALL_QUEUE_DEPTH = 64
 
     def __init__(
         self,
@@ -64,36 +63,129 @@ class UIResponsivenessMonitor:
         # contract this class exists to protect. Records are handed to a
         # bounded queue drained by a daemon thread instead; the loop-side
         # cost is an enqueue.
-        self._stall_queue: queue.SimpleQueue[dict[str, object] | None] = (
-            queue.SimpleQueue()
+        self._stall_queue: queue.Queue[tuple[str, str, dict[str, object]]] = (
+            queue.Queue(maxsize=self._STALL_QUEUE_DEPTH)
         )
+        self._diagnostic_lock = threading.Lock()
+        self._diagnostic_closed = False
+        self._diagnostic_dropped = 0
+        self._diagnostic_sink_failed = False
+        self._refresh_counts = {"console_sync": 0, "screen_recompose": 0}
+        self._refresh_breaches: set[str] = set()
+        self._last_send_diagnostic: dict[str, object] = {}
         self._stall_thread: threading.Thread | None = None
         #: Records the drain thread has fully processed (persisted or
         #: failed-and-reported); lets tests and future callers synchronize
         #: with the background dispatch without sleeping.
         self._stall_records_processed = 0
 
-    def _drain_stalls(self) -> None:
-        """Background drain loop: persist queued stall records off the loop."""
-        while True:
-            record = self._stall_queue.get()
+    def record_diagnostic(self, component: str, event: str, **fields: object) -> None:
+        """Queue metadata from UI or worker threads without caller-side file I/O.
+
+        A full queue drops the event and counts the loss. Calls after close
+        are ignored. The persistent sink applies the final field allowlist.
+
+        Args:
+            component: Code-owned subsystem token, such as ``console`` or ``ui``.
+            event: Code-owned event token, such as ``console_send_stage``.
+            **fields: Schema-approved metadata and optional logging ``level``.
+                Never include content, credentials, paths or private identifiers.
+        """
+        with self._diagnostic_lock:
+            if self._diagnostic_closed:
+                return
+            if event == "console_send_stage":
+                self._last_send_diagnostic = {
+                    name: fields[name]
+                    for name in ("attempt_id", "phase", "status")
+                    if name in fields
+                }
             try:
-                if record is None:
+                self._stall_queue.put_nowait((component, event, fields))
+            except queue.Full:
+                self._diagnostic_dropped += 1
+                return
+            if self._stall_thread is None:
+                self._stall_thread = threading.Thread(
+                    target=self._drain_stalls, name="ui-stall-persist", daemon=True
+                )
+                self._stall_thread.start()
+
+    def _drain_stalls(self) -> None:
+        """Drain bounded diagnostics off the UI loop, including stall events."""
+        while True:
+            try:
+                component, event, record = self._stall_queue.get(timeout=0.1)
+            except queue.Empty:
+                if self._diagnostic_closed:
                     return
+                continue
+            try:
                 from .persistent_diagnostics import persist_event
 
-                persist_event("ui", "event_loop_stall", **record)  # type: ignore[arg-type]
-            except Exception as exc:  # noqa: BLE001 -- never raise from diagnostics
-                lag = record.get("lag_ms") if isinstance(record, dict) else "?"
-                print(
-                    "ui_responsiveness: stall persist failed "
-                    f"(op=persist_event lag_ms={lag} "
-                    f"threshold_ms={self.stall_threshold_ms} "
-                    f"error={type(exc).__name__})",
-                    file=sys.stderr,
-                )
+                persist_event(component, event, **record)
+                with self._diagnostic_lock:
+                    dropped = self._diagnostic_dropped
+                    self._diagnostic_dropped = 0
+                if dropped:
+                    persist_event("ui", "diagnostic_events_dropped", item_count=dropped)
+            except Exception as exc:  # noqa: BLE001 -- diagnostics must not fail the app
+                if not self._diagnostic_sink_failed:
+                    self._diagnostic_sink_failed = True
+                    print(
+                        "ui_responsiveness: diagnostic persist failed "
+                        f"(error={type(exc).__name__})",
+                        file=sys.stderr,
+                    )
             finally:
                 self._stall_records_processed += 1
+                self._stall_queue.task_done()
+
+    def close(self, timeout: float = 1.0) -> None:
+        """Stop accepting events and drain with a bounded wait off the UI loop.
+
+        The daemon may finish pending writes after the wait expires. Repeated
+        calls are safe; callers must not use this blocking wait on the UI loop.
+
+        Args:
+            timeout: Maximum seconds to wait for the drain thread to exit.
+        """
+        with self._diagnostic_lock:
+            self._diagnostic_closed = True
+            thread = self._stall_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+
+    def record_refresh(self, operation: str) -> None:
+        """Count fixed activity names on the UI loop without retaining widgets.
+
+        Args:
+            operation: ``console_sync`` or ``screen_recompose``. Other values
+                are ignored, as are all calls when responsiveness is disabled.
+        """
+        if self.enabled and operation in self._refresh_counts:
+            self._refresh_counts[operation] += 1
+
+    def _check_refresh_churn(self, window_seconds: float) -> None:
+        for operation, threshold in (("console_sync", 20), ("screen_recompose", 4)):
+            count = self._refresh_counts[operation]
+            self._refresh_counts[operation] = 0
+            excessive = count >= threshold * max(1.0, window_seconds)
+            if excessive and operation not in self._refresh_breaches:
+                self._refresh_breaches.add(operation)
+                self.record_diagnostic(
+                    "ui",
+                    "ui_refresh_churn",
+                    level=logging.WARNING,
+                    operation=operation,
+                    item_count=count,
+                    duration_ms=int(window_seconds * 1000),
+                    active_workers=sorted(self._active_workers),
+                    active_timers=sorted(self._active_timers),
+                    **self._last_send_diagnostic,
+                )
+            elif not excessive:
+                self._refresh_breaches.discard(operation)
 
     def _persist_stall(self, lag_ms: int) -> None:
         """Queue one diagnostics record for an observed event-loop stall.
@@ -109,22 +201,7 @@ class UIResponsivenessMonitor:
             "mounts": self._mounts,
             "removes": self._removes,
         }
-        if self._stall_thread is None:
-            self._stall_thread = threading.Thread(
-                target=self._drain_stalls,
-                name="ui-stall-persist",
-                daemon=True,
-            )
-            self._stall_thread.start()
-        try:
-            self._stall_queue.put(record)
-        except Exception as exc:  # noqa: BLE001 -- never raise from diagnostics
-            print(
-                "ui_responsiveness: stall enqueue failed "
-                f"(lag_ms={lag_ms} threshold_ms={self.stall_threshold_ms} "
-                f"error={type(exc).__name__})",
-                file=sys.stderr,
-            )
+        self.record_diagnostic("ui", "event_loop_stall", **record)
 
     def record_timer_created(self, name: str) -> None:
         """Record a timer as active by stable diagnostic name."""
@@ -136,9 +213,16 @@ class UIResponsivenessMonitor:
         self._active_timers.discard(name)
 
     def record_worker_started(self, name: str) -> None:
-        """Record a worker as active by stable diagnostic name."""
+        """Record an active worker on the UI loop and count Console syncs.
+
+        Args:
+            name: Stable code-owned worker name; ``console-sync`` also records
+                refresh activity. Never include user content or identifiers.
+        """
         if self.enabled:
             self._active_workers.add(name)
+            if name == "console-sync":
+                self.record_refresh("console_sync")
 
     def record_worker_finished(self, name: str) -> None:
         """Record a worker as finished by stable diagnostic name."""
@@ -169,7 +253,8 @@ class UIResponsivenessMonitor:
         """
         if not self.enabled:
             return
-        lag_ms = int(round(delta_seconds * 1000))
+        self._check_refresh_churn(self.heartbeat_interval_seconds + delta_seconds)
+        lag_ms = round(delta_seconds * 1000)
         self._max_heartbeat_lag_ms = max(self._max_heartbeat_lag_ms, lag_ms)
         if lag_ms >= self.stall_threshold_ms:
             if not self._stall_persisted:

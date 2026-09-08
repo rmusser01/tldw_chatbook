@@ -728,3 +728,52 @@ def test_list_growth_never_shrinks_the_list_or_starves_the_reader(
         + grown.reader_width
         + 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
     ) == width
+
+
+def test_empty_reader_gives_freed_columns_to_the_items_list_at_235() -> None:
+    """task-31979: with no item open the Reader shows only its placeholder.
+
+    The width it would otherwise reserve for a document is wasted while the
+    Items list truncates long titles, so that width goes to the list instead,
+    down to the Reader's own floor. Opening an item (reader_has_item=True)
+    restores the split unchanged.
+    """
+    prefs = MediaReaderLayoutPreferences()
+    with_item = resolve_media_reader_layout(235, prefs, reader_has_item=True)
+    no_item = resolve_media_reader_layout(235, prefs, reader_has_item=False)
+
+    # Item open: exactly the pre-task split (do not regress it).
+    assert _pane_widths(with_item) == (True, True, 34, 56, 143)
+    # No item open: the Items pane absorbs the freed Reader columns down to
+    # the Reader's floor, so a 98-char title stops truncating at ~56 cells.
+    assert no_item.reader_width == MEDIA_READER_LAYOUT_PROFILE.work_min_width
+    assert no_item.items_width == 153
+    assert no_item.items_width > with_item.items_width
+    # Both panes and the two grips still tile the full terminal width.
+    assert (
+        no_item.library_width
+        + no_item.items_width
+        + no_item.reader_width
+        + 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
+    ) == 235
+
+
+@pytest.mark.parametrize("width", [60, 80, 100, 120, 160, 235])
+def test_reader_has_item_defaults_to_the_pre_task_behavior(width: int) -> None:
+    """task-31979: the new parameter defaults to True, so every existing
+    caller and every item-open resolution is byte-for-byte unchanged."""
+    prefs = MediaReaderLayoutPreferences()
+    assert resolve_media_reader_layout(width, prefs) == resolve_media_reader_layout(
+        width, prefs, reader_has_item=True
+    )
+
+
+def test_empty_reader_widening_is_off_under_custom_widths() -> None:
+    """task-31979: Custom widths obey the typed number (like the list_grows
+    gate); only Automatic mode adapts to the empty Reader."""
+    custom = MediaReaderLayoutPreferences(
+        custom_widths_enabled=True, library_width=31, items_width=40
+    )
+    assert resolve_media_reader_layout(
+        235, custom, reader_has_item=False
+    ) == resolve_media_reader_layout(235, custom, reader_has_item=True)

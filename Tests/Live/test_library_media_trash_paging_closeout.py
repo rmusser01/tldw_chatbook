@@ -380,16 +380,16 @@ def _assert_viewer_target(
     scroll_offset: tuple[int, int],
 ) -> None:
     """Prove the pressed row owns selection, detail, and return coordinates."""
-    session = screen._library_media_reader_session
-    receipt = screen._library_media_viewer_return
-    assert screen._selected_media_id == target_id
+    session = screen._media_state.reader_session
+    receipt = screen._media_state.viewer_return
+    assert screen._media_state.selected_media_id == target_id
     assert session.selected_id == target_id
     assert session.loaded_id == target_id
     assert session.pending_request is None
     assert receipt is not None
     assert receipt.stable_id == target_id
     assert receipt.scroll_offset == scroll_offset
-    assert int(screen._library_media_detail["id"]) == int(target_id.rsplit(":", 1)[1])
+    assert int(screen._media_state.detail["id"]) == int(target_id.rsplit(":", 1)[1])
     assert screen.query_one("#library-media-viewer").viewer.canonical_id == target_id
 
 
@@ -397,17 +397,19 @@ def test_viewer_target_contract_rejects_cleared_row_selection() -> None:
     """Mutation proof: clearing the row-produced selection breaks the evidence."""
     target = "local:media:65"
     screen = types.SimpleNamespace(
-        _selected_media_id="",
-        _library_media_reader_session=types.SimpleNamespace(
-            selected_id=target,
-            loaded_id=target,
-            pending_request=None,
+        _media_state=types.SimpleNamespace(
+            selected_media_id="",
+            reader_session=types.SimpleNamespace(
+                selected_id=target,
+                loaded_id=target,
+                pending_request=None,
+            ),
+            viewer_return=types.SimpleNamespace(
+                stable_id=target,
+                scroll_offset=(0, 5),
+            ),
+            detail={"id": 65},
         ),
-        _library_media_viewer_return=types.SimpleNamespace(
-            stable_id=target,
-            scroll_offset=(0, 5),
-        ),
-        _library_media_detail={"id": 65},
         query_one=lambda _selector: types.SimpleNamespace(
             viewer=types.SimpleNamespace(canonical_id=target)
         ),
@@ -477,7 +479,7 @@ async def _wait_for_trash_page(
 
 
 async def _ensure_items_open(screen: LibraryScreen, pilot) -> None:
-    if screen._library_media_reader_layout.items_open:
+    if screen._media_state.reader_layout.items_open:
         return
     grip = screen.query_one("#library-media-items-grip", Button)
     grip.focus()
@@ -485,7 +487,7 @@ async def _ensure_items_open(screen: LibraryScreen, pilot) -> None:
     await _wait_for_condition(
         pilot,
         lambda: (
-            screen._library_media_reader_layout.items_open
+            screen._media_state.reader_layout.items_open
             and screen.query_one("#library-canvas").region.area > 0
         ),
         message="Items pane never opened.",
@@ -500,7 +502,7 @@ async def _toggle_pane(
     await pilot.press("enter")
     await _wait_for_condition(
         pilot,
-        lambda: getattr(screen._library_media_reader_layout, f"{pane}_open")
+        lambda: getattr(screen._media_state.reader_layout, f"{pane}_open")
         is expected_open,
         message=f"{pane} pane never reached open={expected_open}.",
     )
@@ -718,7 +720,7 @@ async def _walk_size(
             )
             saved_scroll = (int(normal_scroll.scroll_x), int(normal_scroll.scroll_y))
             assert saved_scroll[1] > 0
-            assert screen._selected_media_id != selected_normal_id
+            assert screen._media_state.selected_media_id != selected_normal_id
 
             # Prove the normal viewer's retained-return policy while the
             # page is fresh. Restore later marks this retained page stale,
@@ -728,9 +730,9 @@ async def _walk_size(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_view == "viewer"
-                    and screen._library_media_reader_session.pending_request is None
-                    and screen._library_media_reader_session.loaded_id
+                    screen._media_state.view == "viewer"
+                    and screen._media_state.reader_session.pending_request is None
+                    and screen._media_state.reader_session.loaded_id
                     == selected_normal_id
                 ),
                 message="Normal Media row never loaded its exact viewer target.",
@@ -756,7 +758,7 @@ async def _walk_size(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_view == "list"
+                    screen._media_state.view == "list"
                     and getattr(screen.focused, "media_id", None)
                     == selected_normal_id
                 ),
@@ -1004,7 +1006,7 @@ async def _walk_size(
             # Pane choices survive real refreshes. Compact posture makes the
             # two panes mutually exclusive; wide posture proves independent
             # collapse and re-expansion of both.
-            initial_layout = screen._library_media_reader_layout
+            initial_layout = screen._media_state.reader_layout
             actual_wide_posture = bool(
                 initial_layout.library_open and initial_layout.items_open
             )
@@ -1013,11 +1015,11 @@ async def _walk_size(
             )
             initial_geometry = _assert_media_reader_geometry(screen)
             if not expected_wide_posture:
-                assert screen._library_media_reader_layout.items_open is True
+                assert screen._media_state.reader_layout.items_open is True
                 await _toggle_pane(
                     screen, pilot, pane="library", expected_open=True
                 )
-                assert screen._library_media_reader_layout.items_open is False
+                assert screen._media_state.reader_layout.items_open is False
                 _assert_media_reader_geometry(screen)
                 screen._request_library_media_trash_page(
                     2, focus_identity="#library-media-trash-next"
@@ -1031,10 +1033,10 @@ async def _walk_size(
                     ),
                     message="Hidden compact Items refresh never settled.",
                 )
-                assert screen._library_media_reader_layout.library_open is True
-                assert screen._library_media_reader_layout.items_open is False
+                assert screen._media_state.reader_layout.library_open is True
+                assert screen._media_state.reader_layout.items_open is False
                 await _toggle_pane(screen, pilot, pane="items", expected_open=True)
-                assert screen._library_media_reader_layout.library_open is False
+                assert screen._media_state.reader_layout.library_open is False
                 await _submit_search(screen, pilot, QUERY_SENTINEL)
                 await _wait_for_trash_page(
                     screen,
@@ -1043,14 +1045,14 @@ async def _walk_size(
                     total=5,
                     expected_ids=query_ids,
                 )
-                assert screen._library_media_reader_layout.items_open is True
-                assert screen._library_media_reader_layout.library_open is False
+                assert screen._media_state.reader_layout.items_open is True
+                assert screen._media_state.reader_layout.library_open is False
                 compact_geometry = _assert_media_reader_geometry(screen)
                 assert compact_geometry["items"] == initial_geometry["items"]
                 await _submit_search(screen, pilot, "")
             else:
-                assert screen._library_media_reader_layout.library_open is True
-                assert screen._library_media_reader_layout.items_open is True
+                assert screen._media_state.reader_layout.library_open is True
+                assert screen._media_state.reader_layout.items_open is True
                 split_geometry = _assert_media_reader_geometry(screen)
                 await _toggle_pane(
                     screen, pilot, pane="library", expected_open=False
@@ -1084,7 +1086,7 @@ async def _walk_size(
                     ),
                     message="Wide Library-collapsed refresh never settled.",
                 )
-                assert screen._library_media_reader_layout.library_open is False
+                assert screen._media_state.reader_layout.library_open is False
                 await _toggle_pane(screen, pilot, pane="library", expected_open=True)
                 await _toggle_pane(screen, pilot, pane="items", expected_open=False)
                 screen._request_library_media_trash_page(
@@ -1098,7 +1100,7 @@ async def _walk_size(
                     ),
                     message="Wide Items-collapsed refresh never settled.",
                 )
-                assert screen._library_media_reader_layout.items_open is False
+                assert screen._media_state.reader_layout.items_open is False
                 _assert_media_reader_geometry(screen)
                 await _toggle_pane(screen, pilot, pane="items", expected_open=True)
 
@@ -1276,7 +1278,7 @@ async def _walk_size(
             assert all(
                 str(item["id"]) != restore_id for item in normal.retained_items
             )
-            trash_return = screen._library_media_trash_return
+            trash_return = screen._media_state.trash_return
             assert trash_return is not None
             assert trash_return.stable_id == selected_normal_id
             assert trash_return.scroll_offset == saved_scroll
@@ -1289,7 +1291,7 @@ async def _walk_size(
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_view == "list",
+                lambda: screen._media_state.view == "list",
                 message="Back never restored normal Media.",
             )
             await _wait_for_selector(screen, pilot, "#library-media-canvas")
@@ -1300,7 +1302,7 @@ async def _walk_size(
                 message="Back never restored opener focus.",
             )
             assert normal.applied_scope == MediaBrowseScope(page=2)
-            assert screen._selected_media_id == selected_normal_id
+            assert screen._media_state.selected_media_id == selected_normal_id
             await _wait_for_condition(
                 pilot,
                 lambda: (

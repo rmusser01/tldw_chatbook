@@ -50,10 +50,14 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
-from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+)
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -586,12 +590,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # label it rebuilds holds the same column
         # (``_patch_library_disabled_marker_label``).
         #
-        # Scope, fix round 1: applied on the MEDIA canvas only. The
-        # Conversations and Notes canvases stash the same marker base on
-        # their own "Export selected" (`library_conversations_canvas.py`,
-        # `library_notes_canvas.py`) and `_apply_library_row_toggle` patches
-        # all three kinds, so those two still shift -- a follow-up, not a
-        # widened diff.
+        # task-31959 carried the same reservation to the sibling canvases
+        # (`library_conversations_canvas.py`, `library_notes_canvas.py`,
+        # `library_prompts_canvas.py`), so every select-mode action that
+        # flips with the selection count now holds its column.
         button._library_disabled_marker_align = True
         button.disabled = bulk_disabled
         # F-018: a disabled action says why.
@@ -664,6 +666,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         Applied BEFORE ``_gate_stale_action`` at each call site, so a write
         in flight or a stale page still wins the tooltip: those are the
         more immediate blocker, and PR E's precedence is untouched.
+
+        task-31960 (J final review M1) settled the one asymmetry this gate
+        had: "Review these" pins the whole filtered list as an ordered
+        review set -- the same shape of action as "Export…" -- and it alone
+        stayed outside this gate, standing live beside a dimmed Export on a
+        failed first page. It was defensible (its worker re-fetches and
+        notifies on failure), but the asymmetry was unexplained at the
+        surface and symmetry cost one line, so both whole-list actions now
+        gate here. Still deliberately NOT gated: "Trash" (a route into a
+        view with its own fetch, callout and Retry) and the callout's own
+        Retry (``_gate_mutation_action`` only) -- both are how a reader
+        gets out of a failed list.
 
         Args:
             button: The list-wide action to gate.
@@ -893,6 +907,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tooltip="Review every item in this list, one by one.",
         )
         review_btn.display = not select_mode
+        # task-31960: "Review these" pins the WHOLE filtered list, exactly
+        # like "Export…" -- so it takes the same failed-list gate, in the
+        # same order (failed first, stale second, so a write in flight or a
+        # stale page still wins the tooltip). Before this it was the one
+        # list-wide action outside that gate and stood live and
+        # colour-normal beside a dimmed Export on a failed first page.
+        self._gate_failed_action(review_btn, "Review these")
         self._gate_stale_action(review_btn, "Review these")
         # Disable only when there's nothing to select AND we're not
         # already in select mode -- in select mode the button is "Done"
@@ -1089,6 +1110,17 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 analyze_row.styles.height = "auto"
                 with analyze_row:
                     yield self._analyze_selected_button()
+                if self.analysis_action_reason:
+                    # task-31981: surface the blocker inline (below its own
+                    # row), not only on the hover tooltip -- the same grammar
+                    # the Reader's Generate gate and the Export gate use, so a
+                    # keyboard-first user sees WHY Analyze is off.
+                    yield Static(
+                        self.analysis_action_reason,
+                        id="library-media-analyze-selected-reason",
+                        classes="library-media-action-reason",
+                        markup=False,
+                    )
                 # task-2853's danger-isolation rule, upgraded: Delete gets a
                 # whole row, so it is never adjacent to any other action.
                 danger_row = Horizontal(
@@ -1345,38 +1377,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # later attempt) and a hard failure never paint alike.
         failure = self.load_failure
         if failure is not None:
-            classes = "ds-recovery-callout"
-            if failure.severity == "error":
-                classes += " is-blocked"
-            callout = Horizontal(
-                id="library-media-load-failure", classes=classes
+            # PR M carry I1: the widget is the shared
+            # ``load_failure_callout`` -- the landing hub and the Library
+            # browse row paint the same one, from the same builder. This
+            # canvas keeps its own action styling and its write-in-flight
+            # gate (even recovery controls wait for an unsettled write).
+            yield load_failure_callout(
+                failure,
+                id="library-media-load-failure",
+                copy_id="library-media-load-failure-copy",
+                retry_id="library-media-retry",
+                retry_classes="library-canvas-action",
+                gate=self._gate_mutation_action,
             )
-            # Bare harnesses never load the bundle, and Horizontal defaults
-            # to 1fr height -- the callout must wrap to its copy either way.
-            callout.styles.height = "auto"
-            with callout:
-                copy = Static(
-                    failure.message,
-                    id="library-media-load-failure-copy",
-                    markup=False,
-                )
-                # The reason WRAPS; the Retry keeps its content width. Left
-                # to the defaults the copy swallowed the whole row and the
-                # button rendered outside the callout, clipped (measured at
-                # 235x52 and 100x30 -- the same trap the title row above
-                # documents). Inline because no rule targets these ids.
-                copy.styles.width = "1fr"
-                copy.styles.min_width = 0
-                yield copy
-                retry = Button(
-                    "Retry",
-                    id="library-media-retry",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                retry.styles.width = "auto"
-                retry.styles.min_width = 0
-                yield self._gate_mutation_action(retry, "Retry")
 
         status_text = (
             self.pager.status_copy
@@ -1456,7 +1469,16 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             loading=row.loading,
                             loaded=row.loaded,
                         )
-                        button = Button(
+                        # task-31631 AC#2 / task-31945: the whole row is
+                        # the toggle target, and the shared helper drops
+                        # Textual's 0.2s press flash so a second click on
+                        # the same row (☐ then its title -- what critique
+                        # #5 did) is not swallowed by ``Button._on_click``.
+                        # Browse mode wants it too: it stops a fast
+                        # double-click on a browse row being lost, and the
+                        # feedback there is the item loading into the
+                        # Reader, not the flash.
+                        button = library_row_button(
                             f"{marker}{label_rest}",
                             id=f"library-media-row-{index}",
                             classes="library-media-row",
@@ -1472,21 +1494,6 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_loaded = row.loaded
                         button._library_media_reviewed = row.reviewed
                         button.tooltip = escape_markup(row.title)
-                        # task-31631 AC#2: the whole row is the toggle
-                        # target. It already was one full-width Button
-                        # ("☐ <title>"), but Textual's ``Button._on_click``
-                        # DROPS any click landing while the previous press's
-                        # 0.2s ``-active`` flash is still on the widget --
-                        # so clicking ☐ and then the same row's title (what
-                        # critique #5 did) lost the second click, and the row
-                        # read as a one-cell target. A list row has no use
-                        # for a press flash; the marker flip is the feedback.
-                        # This applies in browse mode too (not just select
-                        # mode): dropping the flash there also stops a fast
-                        # double-click on a browse row from being swallowed,
-                        # and browse-mode feedback is the item loading into
-                        # the Reader, not the flash.
-                        button.active_effect_duration = 0
                         button.set_class(
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",

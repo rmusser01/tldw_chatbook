@@ -681,7 +681,7 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "join:.local/share/tldw_cli",
         1,
         Disposition.COMPATIBILITY_CONSTANT,
-        "import-time compatibility constant retained for Prompts_Dump",
+        "legacy import-time compatibility constant; runtime consumers use the resolver",
     ),
     ExceptionRule(
         "tldw_chatbook/config.py",

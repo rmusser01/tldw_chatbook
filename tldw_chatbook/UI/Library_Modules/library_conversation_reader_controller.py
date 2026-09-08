@@ -65,8 +65,8 @@ example this constructor's shape mirrors):
    Notes-subsystem, not Conversations -- ``_library_selected_row_id`` --
    the recipe's own canonical ≥2-subsystems example -- and
    ``_selected_conversation_id``, a per-source "currently selected"
-   field shared with ``_selected_media_id``/``_selected_note_id`` in the
-   screen's save/restore and cross-source-navigation plumbing, never
+   field shared with ``_media_state.selected_media_id``/``_selected_note_id``
+   in the screen's save/restore and cross-source-navigation plumbing, never
    exclusively Conversations' despite its name). Every one of the latter
    group is read-only inside this cluster -- confirmed by checking each
    assignment site in ``library_screen.py`` falls outside the 21 moved
@@ -212,7 +212,7 @@ class LibraryConversationReaderController:
                 methods.
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
-                selected" field parallel to ``_selected_media_id``/
+                selected" field parallel to ``_media_state.selected_media_id``/
                 ``_selected_note_id`` in the screen's save/restore and
                 cross-source-navigation plumbing; despite its name, never
                 exclusively Conversations-reader-owned. Read-only here.

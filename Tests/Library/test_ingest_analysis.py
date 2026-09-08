@@ -307,7 +307,7 @@ def test_every_not_ready_shape_yields_a_capitalised_sentence() -> None:
 
     assert (
         analysis_unavailable_reason(none_configured)
-        == "No analysis provider is configured."
+        == "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
     )
     assert "local_onnx" in analysis_unavailable_reason(unsupported)
     assert analysis_unavailable_reason(unready).startswith("OpenAI is not ready")
@@ -332,5 +332,5 @@ def test_a_blank_short_reason_falls_back_instead_of_raising() -> None:
         )
         assert (
             analysis_unavailable_reason(resolution)
-            == "No analysis provider is configured."
+            == "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
         ), blank

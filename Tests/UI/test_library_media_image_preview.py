@@ -258,20 +258,20 @@ def test_preview_cache_evicts_oldest_image_and_related_session_state() -> None:
     app, _service = _preview_app()
     screen = LibraryScreen(app, preview_widget_factory=_fake_preview_factory([]))
     first_id = "local:media:1"
-    screen._library_media_preview_status[first_id] = "cached"
-    screen._library_media_preview_hidden.add(first_id)
-    screen._library_media_preview_loading[first_id] = 1
+    screen._media_state.preview_status[first_id] = "cached"
+    screen._media_state.preview_hidden.add(first_id)
+    screen._media_state.preview_loading[first_id] = 1
 
     for index in range(1, 22):
         screen._cache_library_media_preview(
             f"local:media:{index}", Image.new("RGB", (1, 1))
         )
 
-    assert len(screen._library_media_preview_images) == 20
-    assert first_id not in screen._library_media_preview_images
-    assert first_id not in screen._library_media_preview_status
-    assert first_id not in screen._library_media_preview_hidden
-    assert first_id not in screen._library_media_preview_loading
+    assert len(screen._media_state.preview_images) == 20
+    assert first_id not in screen._media_state.preview_images
+    assert first_id not in screen._media_state.preview_status
+    assert first_id not in screen._media_state.preview_hidden
+    assert first_id not in screen._media_state.preview_loading
 
 
 def _fake_preview_factory(calls):
@@ -330,7 +330,7 @@ async def test_capability_off_keeps_complete_stored_text_without_file_calls() ->
         row.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == row.media_id,
+            lambda: screen._media_state.reader_session.loaded_id == row.media_id,
             message="Image detail did not load with preview capability off.",
         )
         body = await _wait_for_selector(
@@ -369,7 +369,7 @@ async def test_remote_and_unsupported_images_never_reach_download(
         row.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == row.media_id,
+            lambda: screen._media_state.reader_session.loaded_id == row.media_id,
             message="Ineligible image detail did not settle.",
         )
         await pilot.pause()
@@ -456,7 +456,7 @@ async def test_preview_failure_keeps_item_loaded_and_retry_is_item_local() -> No
         assert status.renderable == (
             "Image preview failed — showing complete stored text"
         )
-        assert screen._library_media_reader_session.loaded_id == row.media_id
+        assert screen._media_state.reader_session.loaded_id == row.media_id
         detail_calls = len(service.detail_calls)
         service.download_outcomes[backing_id] = _image_bytes(width=11)
         screen.query_one("#library-media-image-preview-retry", Button).press()
@@ -489,7 +489,7 @@ async def test_late_preview_for_a_cannot_mount_over_loaded_b() -> None:
         row_b.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == row_b.media_id,
+            lambda: screen._media_state.reader_session.loaded_id == row_b.media_id,
             message="Item B detail did not settle.",
         )
         await _wait_for_selector(screen, pilot, "#library-media-image-preview")
@@ -501,11 +501,11 @@ async def test_late_preview_for_a_cannot_mount_over_loaded_b() -> None:
         service.download_release[backing_a].set()
         await _wait_for_condition(
             pilot,
-            lambda: row_a.media_id not in screen._library_media_preview_loading,
+            lambda: row_a.media_id not in screen._media_state.preview_loading,
             message="Stale item A preview worker did not settle.",
         )
-        assert screen._library_media_reader_session.loaded_id == row_b.media_id
-        assert row_a.media_id not in screen._library_media_preview_images
+        assert screen._media_state.reader_session.loaded_id == row_b.media_id
+        assert row_a.media_id not in screen._media_state.preview_images
         assert (
             screen.query_one("#library-media-image-preview Static", Static).renderable
             == f"PREVIEW:{backing_b + 3}"

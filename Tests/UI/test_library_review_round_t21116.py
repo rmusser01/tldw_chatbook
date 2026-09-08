@@ -49,7 +49,7 @@ def test_media_active_child_builder_honors_the_trash_view() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "trash"
+    screen._media_state.view = "trash"
     screen._library_media_trash_records = ()
     screen._library_media_trash_total = 0
 
@@ -89,14 +89,14 @@ async def test_late_media_detail_arrival_cannot_clobber_the_trash_view() -> None
         trash_before = screen.query_one(
             "#library-media-trash-canvas", LibraryMediaTrashCanvas
         )
-        assert screen._library_media_view == "trash"
+        assert screen._media_state.view == "trash"
 
         # The late worker continuation, fired exactly as the worker fires it.
         screen._recompose_library_media_detail_if_unrendered()
         for _ in range(10):
             await pilot.pause(0.02)
 
-        assert screen._library_media_view == "trash"
+        assert screen._media_state.view == "trash"
         assert not screen.query("#library-media-canvas"), (
             "the media LIST canvas was mounted over the Trash view"
         )
@@ -144,8 +144,8 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
         for _ in range(10):
             await pilot.pause(0.02)
 
-        assert screen._library_media_editing is False
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.editing is False
+        assert screen._media_state.view == "viewer"
         assert screen._footer_shortcut_registration == plain_viewer_shortcuts
 
 

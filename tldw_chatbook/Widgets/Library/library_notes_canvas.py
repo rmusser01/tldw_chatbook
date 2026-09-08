@@ -32,7 +32,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     library_disabled_action_label,
 )
-from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.Library.library_canvas_sync import (
+    PostRecomposeCallback,
+    library_row_button,
+)
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
 )
@@ -713,12 +716,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch (compact and full spellings differ,
                     # so the patcher must not hard-code either).
-                    library_disabled_action_label(export_base, export_disabled),
+                    # task-31959: the enabled spelling reserves the
+                    # marker's own width, so the word holds its column
+                    # when the first selection enables this in place.
+                    library_disabled_action_label(
+                        export_base, export_disabled, align=True
+                    ),
                     id="library-notes-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 export_selected._library_disabled_marker_base = export_base
+                export_selected._library_disabled_marker_align = True
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
@@ -917,7 +926,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 else:
                     label_rest = f"{title}\n{row.age_label}" if row.age_label else title
                     label = label_rest
-                button = Button(
+                # task-31945: shared row press behaviour (no 0.2s flash
+                # swallowing the next click on the same row).
+                button = library_row_button(
                     label,
                     id=f"library-notes-row-{index}",
                     classes="library-notes-row",
@@ -976,7 +987,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes += " library-notes-tree-connected"
                     elif row.semantic_status == "needs_attention":
                         classes += " library-notes-tree-needs-attention"
-                    button = Button(
+                    button = library_row_button(
                         label,
                         id=f"library-notes-tree-folder-{index}",
                         classes=classes,
@@ -1007,7 +1018,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes += " library-notes-tree-connected"
                 elif row.semantic_status == "needs_attention":
                     classes += " library-notes-tree-needs-attention"
-                button = Button(
+                button = library_row_button(
                     label,
                     id=f"library-notes-tree-note-{index}",
                     classes=classes,
@@ -1506,7 +1517,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 export_base = "Export" if compact else "Export selected"
                 button._library_disabled_marker_base = export_base
                 button.label = library_disabled_action_label(
-                    export_base, button.disabled
+                    export_base, button.disabled, align=True
                 )
             return
         header_rows = self.query("#library-note-header-second-row")

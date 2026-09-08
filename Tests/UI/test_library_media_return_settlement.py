@@ -252,14 +252,21 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
                 for item in screen._library_media_browse_controller.retained_items
             ),
         )
+        # task-31979: the signature is derived from the canonical item-open
+        # reader width, not the live tracker's, so the empty-reader list
+        # widening does not read as a layout change across list<->viewer.
+        canonical_reader_width = library_screen_module.resolve_media_reader_layout(
+            int(screen.size.width),
+            screen._media_state.reader_preferences,
+        ).reader_width
         assert layout_signature == (
             int(screen.size.width),
             int(screen.size.height),
             screen._library_notes_compact,
-            screen._library_media_reader_preferences,
+            screen._media_state.reader_preferences,
             library_screen_module.resolve_media_reader_layout(
-                screen._library_media_reader_layout.reader_width,
-                screen._library_media_reader_preferences,
+                canonical_reader_width,
+                screen._media_state.reader_preferences,
             ),
         )
 
@@ -268,11 +275,11 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
         real_layout_signature = screen._library_media_layout_signature
 
         def capture_content_signature() -> tuple[object, ...]:
-            capture_views.append(("content", screen._library_media_view))
+            capture_views.append(("content", screen._media_state.view))
             return real_content_signature()
 
         def capture_layout_signature() -> tuple[object, ...]:
-            capture_views.append(("layout", screen._library_media_view))
+            capture_views.append(("layout", screen._media_state.view))
             return real_layout_signature()
 
         monkeypatch.setattr(
@@ -288,7 +295,7 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
         row = screen.query_one("#library-media-row-15", Button)
         screen._open_library_media_viewer(str(row.media_id))
 
-        receipt = screen._library_media_viewer_return
+        receipt = screen._media_state.viewer_return
         assert type(receipt) is receipt_type
         assert receipt.stable_id == row.media_id
         assert receipt.content_signature == content_signature
@@ -321,11 +328,11 @@ async def test_trash_return_capture_is_frozen_control_receipt_from_normal_media(
         real_layout_signature = screen._library_media_layout_signature
 
         def capture_content_signature() -> tuple[object, ...]:
-            capture_views.append(screen._library_media_view)
+            capture_views.append(screen._media_state.view)
             return real_content_signature()
 
         def capture_layout_signature() -> tuple[object, ...]:
-            capture_views.append(screen._library_media_view)
+            capture_views.append(screen._media_state.view)
             return real_layout_signature()
 
         monkeypatch.setattr(
@@ -341,7 +348,7 @@ async def test_trash_return_capture_is_frozen_control_receipt_from_normal_media(
         trash_button.press()
         await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
 
-        receipt = screen._library_media_trash_return
+        receipt = screen._media_state.trash_return
         assert type(receipt) is receipt_type
         assert receipt.content_signature == content_signature
         assert receipt.layout_signature == layout_signature
@@ -447,15 +454,15 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
         await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None,
+            lambda: screen._media_state.return_settlement is not None,
             message="Viewer return never armed an immutable settlement request.",
         )
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert type(request) is settlement_type
         assert request.owner_identity == id(owner)
         assert getattr(screen.focused, "media_id", None) != media_id
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
 
         focus_observations: list[tuple[int, int]] = []
         real_set_focus = screen.set_focus
@@ -474,7 +481,7 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_exact_settlement is not None,
+            lambda: screen._media_state.last_exact_settlement is not None,
             message="Current-owner geometry did not settle the viewer return.",
         )
 
@@ -482,17 +489,17 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
         assert getattr(screen.focused, "media_id", None) == media_id
         assert focus_observations == [scroll_offset]
         settled_request, settled_revision = (
-            screen._library_media_last_exact_settlement
+            screen._media_state.last_exact_settlement
         )
         assert settled_request.request_id == request.request_id
         assert settled_request.owner_identity == id(owner)
         assert settled_revision == owner.latest_geometry.revision
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
 
         duplicate = geometry_message_type(owner, owner.latest_geometry)
         assert screen.post_message(duplicate)
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement == (
+        assert screen._media_state.last_exact_settlement == (
             settled_request,
             settled_revision,
         )
@@ -500,7 +507,7 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
         assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_offset
 
         screen._disarm_library_list_entry_focus()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
 
 
 @pytest.mark.asyncio
@@ -520,14 +527,14 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_exact_settlement is not None,
+            lambda: screen._media_state.last_exact_settlement is not None,
             message="Initial viewer return did not settle from owner geometry.",
         )
         initial_owner = screen.query_one(
             "#library-media-row-scroll",
             row_scroll_type,
         )
-        initial_request = screen._library_media_last_exact_settlement[0]
+        initial_request = screen._media_state.last_exact_settlement[0]
 
         real_on_resize = row_scroll_type.on_resize
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
@@ -541,11 +548,11 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None,
+            lambda: screen._media_state.return_settlement is not None,
             message="Replacement owner never received fresh settlement authority.",
         )
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert type(request) is settlement_type
         assert request.request_id > initial_request.request_id
         assert request.owner_identity == id(owner)
@@ -558,8 +565,8 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_exact_settlement is not None
-            and screen._library_media_last_exact_settlement[0].request_id
+            lambda: screen._media_state.last_exact_settlement is not None
+            and screen._media_state.last_exact_settlement[0].request_id
             == request.request_id,
             message="Replacement-owner geometry did not settle the return.",
         )
@@ -590,11 +597,11 @@ async def test_post_exact_responsive_revision_renews_after_focus_guard_drains(
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None
-            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            lambda: screen._media_state.last_settlement_outcome is not None
+            and screen._media_state.last_settlement_outcome[1] == "exact-settled",
             message="Initial exact Media return never settled.",
         )
-        initial_request = screen._library_media_last_exact_settlement
+        initial_request = screen._media_state.last_exact_settlement
         assert initial_request is not None
         initial_request_id = initial_request[0].request_id
         settled_target = screen.focused
@@ -612,25 +619,25 @@ async def test_post_exact_responsive_revision_renews_after_focus_guard_drains(
         await pilot.resize_terminal(170, 48)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None
-            and screen._library_media_return_settlement.request_id
+            lambda: screen._media_state.return_settlement is not None
+            and screen._media_state.return_settlement.request_id
             > initial_request_id,
             message=lambda: (
                 "Responsive revision did not renew exact settlement authority: "
                 f"focus={screen.focused!r}, "
                 f"guard={screen._library_notes_programmatic_focus_target!r}, "
-                f"request={screen._library_media_return_settlement!r}, "
-                f"outcome={screen._library_media_last_settlement_outcome!r}"
+                f"request={screen._media_state.return_settlement!r}, "
+                f"outcome={screen._media_state.last_settlement_outcome!r}"
             ),
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert type(request) is settlement_type
         assert request.request_id > initial_request_id
         assert request.content_signature == screen._library_media_content_signature()
         assert request.layout_signature == screen._library_media_layout_signature()
-        assert screen._library_media_last_exact_settlement is None
-        assert screen._library_media_last_settlement_attempt is None
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.last_exact_settlement is None
+        assert screen._media_state.last_settlement_attempt is None
+        assert screen._media_state.last_settlement_outcome is None
         assert screen.focused is settled_target
 
         current_owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
@@ -646,17 +653,17 @@ async def test_post_exact_responsive_revision_renews_after_focus_guard_drains(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None,
+            lambda: screen._media_state.last_settlement_outcome is not None,
             message="Current responsive geometry did not settle fresh authority.",
         )
 
-        assert screen._library_media_last_settlement_outcome == (
+        assert screen._media_state.last_settlement_outcome == (
             request.request_id,
             "clamped-after-revision",
             current_owner.latest_geometry.revision,
         )
-        assert screen._library_media_last_exact_settlement is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.last_exact_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_pending_list_entry_focus is False
         assert getattr(screen.focused, "media_id", None) == media_id
 
@@ -678,7 +685,7 @@ async def _open_pending_viewer_return(
     await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_return_settlement is not None,
+        lambda: screen._media_state.return_settlement is not None,
         message="Viewer return never armed without geometry.",
     )
     owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
@@ -795,7 +802,7 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         monkeypatch.setattr(screen, "set_focus", perturb_first_target_focus)
 
         receipt = screen._library_pending_list_entry_media_return
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert receipt is not None
         assert request is not None
         screen._handle_library_media_row_geometry_changed(geometry)
@@ -804,7 +811,7 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
 
         assert desired_scroll_commits == 1
         assert target_focus_attempts == 1
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
         assert screen.focused is pre_focus
         assert screen._library_notes_programmatic_focus_target is None
@@ -814,8 +821,8 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
 
         assert screen._library_pending_list_entry_focus is True
         assert screen._library_pending_list_entry_media_return is receipt
-        assert screen._library_media_return_settlement is request
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.return_settlement is request
+        assert screen._media_state.last_exact_settlement is None
         assert screen.focused is pre_focus
         assert (int(owner.scroll_x), int(owner.scroll_y)) == pre_scroll
 
@@ -848,7 +855,7 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
 
         assert desired_scroll_commits == 2
         assert target_focus_attempts == 2
-        assert screen._library_media_last_exact_settlement == (
+        assert screen._media_state.last_exact_settlement == (
             request,
             newer.geometry.revision,
         )
@@ -879,7 +886,7 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
             geometry_message_type,
             real_on_resize,
         )
-        before_epoch = screen._library_media_presentation_epoch
+        before_epoch = screen._media_state.presentation_epoch
         assert screen._library_notes_compact is True
         identity = screen._capture_library_notes_focus_identity(stage_from_focus=True)
 
@@ -887,10 +894,10 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
 
         stage = screen.query_one("#library-shell-grid", Horizontal)
         assert not stage.has_class("library-adaptive-compact")
-        assert screen._library_media_presentation_epoch == before_epoch + 1
-        assert screen._library_media_geometry_floor_owner_identity == id(owner)
-        assert screen._library_media_geometry_floor == queued.geometry.revision
-        equality_epoch = screen._library_media_presentation_epoch
+        assert screen._media_state.presentation_epoch == before_epoch + 1
+        assert screen._media_state.geometry_floor_owner_identity == id(owner)
+        assert screen._media_state.geometry_floor == queued.geometry.revision
+        equality_epoch = screen._media_state.presentation_epoch
         real_settlement_tree = screen._library_media_settlement_tree
         monkeypatch.setattr(
             screen,
@@ -898,9 +905,9 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
             lambda: pytest.fail("Equality projection queried settlement authority."),
         )
         screen._apply_library_notes_stage_visibility()
-        assert screen._library_media_presentation_epoch == equality_epoch
+        assert screen._media_state.presentation_epoch == equality_epoch
         assert screen._reconcile_library_media_stage_presentation() is False
-        assert screen._library_media_presentation_epoch == equality_epoch
+        assert screen._media_state.presentation_epoch == equality_epoch
         monkeypatch.setattr(
             screen,
             "_library_media_settlement_tree",
@@ -909,7 +916,7 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
 
         assert screen.post_message(queued)
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
 
 
 @pytest.mark.asyncio
@@ -935,7 +942,7 @@ async def test_stale_programmatic_focus_releases_guard_before_user_refocus() -> 
 
         assert screen.focused is live_focus
         assert screen._library_notes_programmatic_focus_target is None
-        assert screen._library_media_view == "list"
+        assert screen._media_state.view == "list"
 
         before_user_focus = screen._library_notes_focus_intent_generation
         screen.set_focus(target, scroll_visible=False)
@@ -990,11 +997,11 @@ async def test_live_user_row_focus_fences_earlier_queued_geometry(
 
         await pilot.pause()
         assert geometry_arm_focuses == [other]
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert screen.focused is other
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
 
 
 @pytest.mark.asyncio
@@ -1019,14 +1026,14 @@ async def test_foreign_control_focus_cancels_pending_return(
 
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
 
         monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
         owner.on_resize(
             events.Resize(owner.size, owner.virtual_size, owner.container_size)
         )
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert screen.focused is control
 
 
@@ -1065,7 +1072,7 @@ async def test_route_change_rejects_later_geometry_settlement(
 
         assert screen.post_message(queued)
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) is None
 
 
@@ -1084,8 +1091,8 @@ async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() 
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None
-            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            lambda: screen._media_state.last_settlement_outcome is not None
+            and screen._media_state.last_settlement_outcome[1] == "exact-settled",
             message="Initial exact Media return never settled.",
         )
         await _wait_for_condition(
@@ -1093,15 +1100,15 @@ async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() 
             lambda: screen._library_notes_programmatic_focus_target is None,
             message="Queued exact-return focus guard did not drain.",
         )
-        assert screen._library_media_successful_focus_ownership is not None
-        assert screen._library_media_last_exact_settlement is not None
-        assert screen._library_media_last_successful_settlement is not None
-        assert screen._library_media_last_settlement_attempt is not None
+        assert screen._media_state.successful_focus_ownership is not None
+        assert screen._media_state.last_exact_settlement is not None
+        assert screen._media_state.last_successful_settlement is not None
+        assert screen._media_state.last_settlement_attempt is not None
         timer = screen._library_list_entry_focus_timer
         assert timer is not None
         stale_deadline_callback = timer._callback
         assert callable(stale_deadline_callback)
-        request_counter = screen._library_media_return_request_id
+        request_counter = screen._media_state.return_request_id
 
         await screen._select_library_rail_row(
             library_screen_module.LIBRARY_ROW_INGEST_MEDIA
@@ -1115,24 +1122,24 @@ async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() 
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
         assert screen._library_pending_list_entry_focus_anchor is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_list_entry_focus_deadline is None
         assert screen._library_list_entry_focus_timer is None
-        assert screen._library_media_successful_focus_ownership is None
-        assert screen._library_media_last_exact_settlement is None
-        assert screen._library_media_last_successful_settlement is None
-        assert screen._library_media_last_settlement_attempt is None
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.successful_focus_ownership is None
+        assert screen._media_state.last_exact_settlement is None
+        assert screen._media_state.last_successful_settlement is None
+        assert screen._media_state.last_settlement_attempt is None
+        assert screen._media_state.last_settlement_outcome is None
         assert screen._library_notes_programmatic_focus_target is None
 
         stale_deadline_callback()
         await pilot.pause()
 
-        assert screen._library_media_return_request_id == request_counter
+        assert screen._media_state.return_request_id == request_counter
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
-        assert screen._library_media_return_settlement is None
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.return_settlement is None
+        assert screen._media_state.last_settlement_outcome is None
 
         await screen.recompose()
         await pilot.pause()
@@ -1141,11 +1148,11 @@ async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() 
             screen._library_selected_row_id
             == library_screen_module.LIBRARY_ROW_INGEST_MEDIA
         )
-        assert screen._library_media_return_request_id == request_counter
+        assert screen._media_state.return_request_id == request_counter
         assert screen._library_pending_list_entry_focus is False
-        assert screen._library_media_return_settlement is None
-        assert screen._library_media_successful_focus_ownership is None
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.return_settlement is None
+        assert screen._media_state.successful_focus_ownership is None
+        assert screen._media_state.last_settlement_outcome is None
 
 
 @pytest.mark.asyncio
@@ -1183,8 +1190,8 @@ async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> 
         screen._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None
-            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            lambda: screen._media_state.last_settlement_outcome is not None
+            and screen._media_state.last_settlement_outcome[1] == "exact-settled",
             message="Initial exact Media return never settled.",
         )
         await _wait_for_condition(
@@ -1213,12 +1220,12 @@ async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> 
             screen._library_list_entry_focus_timer,
             screen._library_list_entry_focus_deadline,
             screen._library_list_entry_focus_generation,
-            screen._library_media_return_settlement,
-            screen._library_media_last_exact_settlement,
-            screen._library_media_last_successful_settlement,
-            screen._library_media_last_settlement_attempt,
-            screen._library_media_last_settlement_outcome,
-            screen._library_media_successful_focus_ownership,
+            screen._media_state.return_settlement,
+            screen._media_state.last_exact_settlement,
+            screen._media_state.last_successful_settlement,
+            screen._media_state.last_settlement_attempt,
+            screen._media_state.last_settlement_outcome,
+            screen._media_state.successful_focus_ownership,
             screen._library_notes_programmatic_focus_target,
         )
 
@@ -1232,12 +1239,12 @@ async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> 
             screen._library_list_entry_focus_timer,
             screen._library_list_entry_focus_deadline,
             screen._library_list_entry_focus_generation,
-            screen._library_media_return_settlement,
-            screen._library_media_last_exact_settlement,
-            screen._library_media_last_successful_settlement,
-            screen._library_media_last_settlement_attempt,
-            screen._library_media_last_settlement_outcome,
-            screen._library_media_successful_focus_ownership,
+            screen._media_state.return_settlement,
+            screen._media_state.last_exact_settlement,
+            screen._media_state.last_successful_settlement,
+            screen._media_state.last_settlement_attempt,
+            screen._media_state.last_settlement_outcome,
+            screen._media_state.successful_focus_ownership,
             screen._library_notes_programmatic_focus_target,
         ) == destination_state
         await _wait_for_selector(screen, pilot, ".library-prompt-row")
@@ -1267,8 +1274,8 @@ async def test_post_exact_trash_entry_preserves_only_trash_return_receipt() -> N
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None
-            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            lambda: screen._media_state.last_settlement_outcome is not None
+            and screen._media_state.last_settlement_outcome[1] == "exact-settled",
             message="Initial exact Media return never settled.",
         )
         await _wait_for_condition(
@@ -1276,27 +1283,27 @@ async def test_post_exact_trash_entry_preserves_only_trash_return_receipt() -> N
             lambda: screen._library_notes_programmatic_focus_target is None,
             message="Queued exact-return focus guard did not drain.",
         )
-        assert screen._library_media_successful_focus_ownership is not None
+        assert screen._media_state.successful_focus_ownership is not None
 
         screen.query_one("#library-media-trash-open", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
 
-        trash_return = screen._library_media_trash_return
+        trash_return = screen._media_state.trash_return
         assert trash_return is not None
         assert trash_return.stable_id == media_id
         assert trash_return.scroll_offset == scroll_offset
         assert trash_return.final_focus_policy == "control"
         assert trash_return.final_focus_identity == "library-media-trash-open"
-        assert screen._library_media_view == "trash"
+        assert screen._media_state.view == "trash"
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_list_entry_focus_timer is None
-        assert screen._library_media_successful_focus_ownership is None
-        assert screen._library_media_last_exact_settlement is None
-        assert screen._library_media_last_successful_settlement is None
-        assert screen._library_media_last_settlement_attempt is None
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.successful_focus_ownership is None
+        assert screen._media_state.last_exact_settlement is None
+        assert screen._media_state.last_successful_settlement is None
+        assert screen._media_state.last_settlement_attempt is None
+        assert screen._media_state.last_settlement_outcome is None
         assert screen._library_notes_programmatic_focus_target is None
 
 
@@ -1326,7 +1333,7 @@ async def test_detached_current_owner_rejects_later_geometry_settlement(
 
         assert screen.post_message(queued)
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
 
 
 @pytest.mark.asyncio
@@ -1354,7 +1361,7 @@ async def test_screen_unmount_revokes_complete_pending_return_authority(
         )
         assert screen._library_pending_list_entry_focus is True
         assert screen._library_pending_list_entry_media_return is not None
-        assert screen._library_media_return_settlement is not None
+        assert screen._media_state.return_settlement is not None
         assert screen._library_list_entry_focus_timer is not None
 
         await host.pop_screen()
@@ -1363,10 +1370,10 @@ async def test_screen_unmount_revokes_complete_pending_return_authority(
         assert screen.is_attached is False
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_list_entry_focus_timer is None
         screen._handle_library_media_row_geometry_changed(queued)
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
 
 
 @pytest.mark.asyncio
@@ -1381,7 +1388,7 @@ async def test_screen_unmount_clears_retained_exact_settlement_proof() -> None:
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_exact_settlement is not None,
+            lambda: screen._media_state.last_exact_settlement is not None,
             message="Viewer return did not retain exact proof before unmount.",
         )
         assert screen._library_pending_list_entry_focus is True
@@ -1389,7 +1396,7 @@ async def test_screen_unmount_clears_retained_exact_settlement_proof() -> None:
 
         await host.pop_screen()
 
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
         assert screen._library_list_entry_focus_timer is None
@@ -1433,7 +1440,7 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
         await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None,
+            lambda: screen._media_state.return_settlement is not None,
             message="Viewer return never armed its replacement-owner request.",
         )
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
@@ -1442,7 +1449,7 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
 
         assert screen.post_message(geometry_message_type(old_owner, old_geometry))
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
 
         held: list[object] = []
@@ -1464,16 +1471,16 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
         stage = screen.query_one("#library-shell-grid", Horizontal)
         stage.set_class(True, "library-notes-compact")
         assert screen._project_library_media_stage_classes(stage)
-        current_request = screen._library_media_return_settlement
+        current_request = screen._media_state.return_settlement
         assert type(current_request) is settlement_type
         assert current_request.presentation_epoch == (
-            screen._library_media_presentation_epoch
+            screen._media_state.presentation_epoch
         )
         assert current_request.exclusive_geometry_floor == geometry.revision
 
         assert screen.post_message(held[0])
         await pilot.pause()
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
 
 
@@ -1493,7 +1500,7 @@ async def test_trash_back_exact_scroll_precedes_captured_control_focus(
         await _wait_for_selector(screen, pilot, "#library-media-row-15")
         selected = screen.query_one("#library-media-row-15", Button)
         selected_id = str(selected.media_id)
-        screen._selected_media_id = selected_id
+        screen._media_state.selected_media_id = selected_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
         scroll_offset = _park_row_scroll(owner)
         opener = screen.query_one("#library-media-trash-open", Button)
@@ -1519,7 +1526,7 @@ async def test_trash_back_exact_scroll_precedes_captured_control_focus(
         screen.query_one("#library-media-trash-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None,
+            lambda: screen._media_state.last_settlement_outcome is not None,
             message="Trash Back never published its terminal settlement outcome.",
         )
 
@@ -1528,14 +1535,14 @@ async def test_trash_back_exact_scroll_precedes_captured_control_focus(
             row_scroll_type,
         )
         request_id, outcome, geometry_revision = (
-            screen._library_media_last_settlement_outcome
+            screen._media_state.last_settlement_outcome
         )
         assert request_id > 0
         assert outcome == "exact-settled"
         assert geometry_revision == replacement_owner.latest_geometry.revision
         assert captured_control_scrolls == [scroll_offset]
         assert screen.focused.id == "library-media-trash-open"
-        assert screen._selected_media_id == selected_id
+        assert screen._media_state.selected_media_id == selected_id
         assert (int(replacement_owner.scroll_x), int(replacement_owner.scroll_y)) == (
             scroll_offset
         )
@@ -1558,7 +1565,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         await _wait_for_selector(screen, pilot, "#library-media-row-15")
         selected = screen.query_one("#library-media-row-15", Button)
         selected_id = str(selected.media_id)
-        screen._selected_media_id = selected_id
+        screen._media_state.selected_media_id = selected_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
         scroll_offset = _park_row_scroll(owner)
         opener = screen.query_one("#library-media-trash-open", Button)
@@ -1571,20 +1578,20 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         screen.query_one("#library-media-trash-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None,
+            lambda: screen._media_state.return_settlement is not None,
             message="Trash Back did not arm control-policy settlement authority.",
         )
-        old_request = screen._library_media_return_settlement
+        old_request = screen._media_state.return_settlement
         assert old_request is not None
         await pilot.resize_terminal(80, 24)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None
-            and screen._library_media_return_settlement.request_id
+            lambda: screen._media_state.return_settlement is not None
+            and screen._media_state.return_settlement.request_id
             > old_request.request_id,
             message="Responsive layout did not arm fresh control-policy authority.",
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         replacement_owner = screen.query_one(
             "#library-media-row-scroll",
@@ -1592,7 +1599,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         )
         target_control = screen.query_one("#library-media-trash-open", Button)
         target_control.disabled = True
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.last_settlement_outcome is None
         monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
         real_on_resize(
             replacement_owner,
@@ -1604,19 +1611,19 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None,
+            lambda: screen._media_state.last_settlement_outcome is not None,
             message="Disabled captured control never reached its row fallback.",
         )
 
-        assert screen._library_media_last_settlement_outcome[1] == (
+        assert screen._media_state.last_settlement_outcome[1] == (
             "exact-scroll-focus-fallback"
         )
-        assert screen._library_media_last_settlement_outcome[0] == request.request_id
+        assert screen._media_state.last_settlement_outcome[0] == request.request_id
         assert getattr(screen.focused, "media_id", None) == selected_id
         assert (int(replacement_owner.scroll_x), int(replacement_owner.scroll_y)) == (
             scroll_offset
         )
-        assert screen._selected_media_id == selected_id
+        assert screen._media_state.selected_media_id == selected_id
 
 
 @pytest.mark.asyncio
@@ -1639,7 +1646,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
                 row_scroll_type,
             )
         )
-        old_request = screen._library_media_return_settlement
+        old_request = screen._media_state.return_settlement
         assert old_request is not None
         old_geometry = _hold_next_owner_geometry(
             monkeypatch,
@@ -1676,12 +1683,12 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None
-            and screen._library_media_return_settlement.request_id
+            lambda: screen._media_state.return_settlement is not None
+            and screen._media_state.return_settlement.request_id
             > old_request.request_id,
             message="Revised current tree never received fresh immutable authority.",
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
         assert request.content_signature == screen._library_media_content_signature()
@@ -1691,7 +1698,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
             old_owner,
             old_geometry.geometry,
         )
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.last_settlement_outcome is None
 
         clamped_commits = 0
         real_scroll_to = owner.scroll_to
@@ -1709,10 +1716,10 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None,
+            lambda: screen._media_state.last_settlement_outcome is not None,
             message="Fresh revised request did not reach its clamped commit.",
         )
-        outcome = screen._library_media_last_settlement_outcome
+        outcome = screen._media_state.last_settlement_outcome
         assert outcome == (
             request.request_id,
             "clamped-after-revision",
@@ -1721,9 +1728,9 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         assert clamped_commits == 1
         assert getattr(screen.focused, "media_id", None) == media_id
         assert screen._library_pending_list_entry_focus is False
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
 
-        request_counter = screen._library_media_return_request_id
+        request_counter = screen._media_state.return_request_id
         owner_before_recompose = owner
         screen.refresh(recompose=True)
         await _wait_for_condition(
@@ -1735,9 +1742,9 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         )
         await pilot.pause()
 
-        assert screen._library_media_return_request_id == request_counter
-        assert screen._library_media_return_settlement is None
-        assert screen._library_media_last_settlement_outcome == outcome
+        assert screen._media_state.return_request_id == request_counter
+        assert screen._media_state.return_settlement is None
+        assert screen._media_state.last_settlement_outcome == outcome
         assert clamped_commits == 1
 
 
@@ -1762,7 +1769,7 @@ async def test_existing_request_rejects_live_signature_drift(
                 row_scroll_type,
             )
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         geometry = _hold_next_owner_geometry(
             monkeypatch,
@@ -1791,9 +1798,9 @@ async def test_existing_request_rejects_live_signature_drift(
         screen._handle_library_media_row_geometry_changed(geometry)
         await pilot.pause()
 
-        assert screen._library_media_return_settlement is None
-        assert screen._library_media_last_settlement_outcome is None
-        assert screen._library_media_last_successful_settlement is None
+        assert screen._media_state.return_settlement is None
+        assert screen._media_state.last_settlement_outcome is None
+        assert screen._media_state.last_successful_settlement is None
         assert scroll_commits == 0
 
 
@@ -1824,7 +1831,7 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
             geometry_message_type,
             real_on_resize,
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         rearms: list[int] = []
         real_arm = screen._arm_library_media_return_settlement
@@ -1858,14 +1865,14 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
             outer_generation,
         )
 
-        assert screen._library_media_last_settlement_outcome == (
+        assert screen._media_state.last_settlement_outcome == (
             request.request_id,
             "clamped-after-settlement-failure",
             geometry.geometry.revision,
         )
         assert focus_attempts == 1
         assert rearms == []
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
         assert screen._library_list_entry_focus_timer is None
@@ -1891,7 +1898,7 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
                 row_scroll_type,
             )
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         notices: list[tuple[str, str | None]] = []
 
@@ -1909,7 +1916,7 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
             outer_generation,
         )
 
-        assert screen._library_media_last_settlement_outcome == (
+        assert screen._media_state.last_settlement_outcome == (
             request.request_id,
             "layout-settlement-failed",
             None,
@@ -1917,7 +1924,7 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
         assert len(notices) == 1
         assert notices[0][1] == "warning"
         assert media_id not in notices[0][0]
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_pending_list_entry_focus is False
 
 
@@ -1946,7 +1953,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                 row_scroll_type,
             )
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         geometry = _hold_next_owner_geometry(
             monkeypatch,
@@ -1957,7 +1964,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
         )
 
         if stale_fence == "request":
-            screen._library_media_return_settlement = dataclasses.replace(
+            screen._media_state.return_settlement = dataclasses.replace(
                 request,
                 request_id=request.request_id + 1,
             )
@@ -1970,21 +1977,21 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
             if stale_fence == "compose":
                 screen._library_compose_generation += 1
             elif stale_fence == "lifecycle":
-                screen._library_media_lifecycle_generation += 1
+                screen._media_state.lifecycle_generation += 1
             elif stale_fence == "focus":
                 screen._library_notes_focus_intent_generation += 1
             elif stale_fence == "trash":
-                screen._library_media_view = "trash"
+                screen._media_state.view = "trash"
             elif stale_fence == "items":
-                screen._library_media_reader_layout = dataclasses.replace(
-                    screen._library_media_reader_layout,
+                screen._media_state.reader_layout = dataclasses.replace(
+                    screen._media_state.reader_layout,
                     items_open=False,
                 )
             screen._handle_library_media_row_geometry_changed(geometry)
         await pilot.pause()
 
-        assert screen._library_media_last_settlement_outcome is None
-        assert screen._library_media_last_exact_settlement is None
+        assert screen._media_state.last_settlement_outcome is None
+        assert screen._media_state.last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
 
 
@@ -2007,7 +2014,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
                 row_scroll_type,
             )
         )
-        old_request = screen._library_media_return_settlement
+        old_request = screen._media_state.return_settlement
         assert old_request is not None
         old_shell = screen.query_one(
             "#library-media-reader-shell", LibraryMediaReaderShell
@@ -2029,7 +2036,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             retained_rail,
             old_items,
             screen._build_library_media_reader(),
-            screen._library_media_reader_layout,
+            screen._media_state.reader_layout,
             id="library-media-reader-shell",
         )
         held_shell_resizes: list[MediaShellResized] = []
@@ -2050,7 +2057,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             retained_rows,
             row_scroll_type,
         )
-        replacement_shell.sync_layout(screen._library_media_reader_layout)
+        replacement_shell.sync_layout(screen._media_state.reader_layout)
         await pilot.pause()
         assert real_shell_post_message(
             events.Resize(
@@ -2089,28 +2096,28 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         assert screen.post_message(current_geometry)
         await pilot.pause()
 
-        assert screen._library_media_return_settlement is None
-        assert screen._library_media_last_settlement_outcome is None
-        assert screen._library_media_last_successful_settlement is None
+        assert screen._media_state.return_settlement is None
+        assert screen._media_state.last_settlement_outcome is None
+        assert screen._media_state.last_successful_settlement is None
 
         assert real_shell_post_message(held_shell_resizes.pop(0))
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_successful_settlement is not None
-            and screen._library_media_last_successful_settlement[0].request_id
+            lambda: screen._media_state.last_successful_settlement is not None
+            and screen._media_state.last_successful_settlement[0].request_id
             > old_request.request_id,
             message=lambda: (
                 "Replacement shell lifecycle did not mint fresh authority: "
                 f"pending={screen._library_pending_list_entry_focus!r}, "
                 f"receipt={screen._library_pending_list_entry_media_return!r}, "
-                f"request={screen._library_media_return_settlement!r}, "
+                f"request={screen._media_state.return_settlement!r}, "
                 f"latest={old_owner.latest_geometry!r}, "
                 f"actual={(old_owner.size, old_owner.virtual_size, old_owner.container_size)!r}, "
-                f"success={screen._library_media_last_successful_settlement!r}, "
-                f"outcome={screen._library_media_last_settlement_outcome!r}"
+                f"success={screen._media_state.last_successful_settlement!r}, "
+                f"outcome={screen._media_state.last_settlement_outcome!r}"
             ),
         )
-        successful_request = screen._library_media_last_successful_settlement[0]
+        successful_request = screen._media_state.last_successful_settlement[0]
         assert successful_request.shell_identity == id(replacement_shell)
         assert successful_request.items_host_identity == old_request.items_host_identity
         assert successful_request.owner_identity == old_request.owner_identity
@@ -2135,7 +2142,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
                 row_scroll_type,
             )
         )
-        old_request = screen._library_media_return_settlement
+        old_request = screen._media_state.return_settlement
         assert old_request is not None
         shell = screen.query_one(
             "#library-media-reader-shell", LibraryMediaReaderShell
@@ -2173,7 +2180,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
             retained_rows,
             row_scroll_type,
         )
-        shell.sync_layout(screen._library_media_reader_layout)
+        shell.sync_layout(screen._media_state.reader_layout)
         await pilot.pause()
         assert real_shell_post_message(
             events.Resize(shell.size, shell.virtual_size, shell.container_size)
@@ -2209,19 +2216,19 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
         assert screen.post_message(current_geometry)
         await pilot.pause()
 
-        assert screen._library_media_return_settlement is None
-        assert screen._library_media_last_settlement_outcome is None
-        assert screen._library_media_last_successful_settlement is None
+        assert screen._media_state.return_settlement is None
+        assert screen._media_state.last_settlement_outcome is None
+        assert screen._media_state.last_successful_settlement is None
 
         assert real_shell_post_message(held_shell_resizes.pop(0))
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_successful_settlement is not None
-            and screen._library_media_last_successful_settlement[0].request_id
+            lambda: screen._media_state.last_successful_settlement is not None
+            and screen._media_state.last_successful_settlement[0].request_id
             > old_request.request_id,
             message="Replacement Items lifecycle did not mint fresh authority.",
         )
-        successful_request = screen._library_media_last_successful_settlement[0]
+        successful_request = screen._media_state.last_successful_settlement[0]
         assert successful_request.request_id > old_request.request_id
         assert successful_request.shell_identity == old_request.shell_identity
         assert successful_request.items_host_identity == id(replacement_items)
@@ -2247,7 +2254,7 @@ async def test_deadline_with_failed_nongeometry_fence_clears_silently(
                 row_scroll_type,
             )
         )
-        request = screen._library_media_return_settlement
+        request = screen._media_state.return_settlement
         assert request is not None
         timer = screen._library_list_entry_focus_timer
         assert timer is not None
@@ -2267,27 +2274,27 @@ async def test_deadline_with_failed_nongeometry_fence_clears_silently(
             and not screen._library_pending_list_entry_focus,
             message="Foreign focus did not revoke the pending return authority.",
         )
-        request_counter = screen._library_media_return_request_id
+        request_counter = screen._media_state.return_request_id
         scroll_after_takeover = (int(owner.scroll_x), int(owner.scroll_y))
 
         stale_deadline_callback()
         await pilot.pause()
 
         assert notices == []
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.last_settlement_outcome is None
         assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_after_takeover
         assert screen.focused is control
         assert screen._library_pending_list_entry_focus is False
         assert screen._library_pending_list_entry_media_return is None
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_settlement is None
         assert screen._library_list_entry_focus_timer is None
-        assert screen._library_media_return_request_id == request_counter
+        assert screen._media_state.return_request_id == request_counter
 
         await screen.recompose()
         await pilot.pause()
 
-        assert screen._library_media_return_request_id == request_counter
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_request_id == request_counter
+        assert screen._media_state.return_settlement is None
         assert screen._library_pending_list_entry_focus is False
         assert notices == []
 
@@ -2311,7 +2318,7 @@ async def test_another_viewer_back_request_invalidates_prior_authority(
                 row_scroll_type,
             )
         )
-        old_request = screen._library_media_return_settlement
+        old_request = screen._media_state.return_settlement
         assert old_request is not None
         old_geometry = _hold_next_owner_geometry(
             monkeypatch,
@@ -2331,12 +2338,12 @@ async def test_another_viewer_back_request_invalidates_prior_authority(
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None
-            and screen._library_media_return_settlement.request_id
+            lambda: screen._media_state.return_settlement is not None
+            and screen._media_state.return_settlement.request_id
             > old_request.request_id,
             message="Second Back did not supersede the earlier settlement request.",
         )
-        new_request = screen._library_media_return_settlement
+        new_request = screen._media_state.return_settlement
         assert new_request is not None
 
         assert not screen._settle_library_media_return_from_geometry(
@@ -2344,8 +2351,8 @@ async def test_another_viewer_back_request_invalidates_prior_authority(
             old_owner,
             old_geometry.geometry,
         )
-        assert screen._library_media_return_settlement is new_request
-        assert screen._library_media_last_settlement_outcome is None
+        assert screen._media_state.return_settlement is new_request
+        assert screen._media_state.last_settlement_outcome is None
 
 
 @pytest.mark.asyncio
@@ -2364,12 +2371,12 @@ async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
         screen.query_one("#library-media-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_settlement_outcome is not None,
+            lambda: screen._media_state.last_settlement_outcome is not None,
             message="Initial exact return never settled.",
         )
-        assert screen._library_media_last_settlement_outcome[1] == "exact-settled"
+        assert screen._media_state.last_settlement_outcome[1] == "exact-settled"
         await pilot.pause()
-        ownership = screen._library_media_successful_focus_ownership
+        ownership = screen._media_state.successful_focus_ownership
         assert ownership is not None
         assert ownership.target is screen.focused
         control = screen.query_one("#library-media-type-filter", Button)
@@ -2377,8 +2384,8 @@ async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
         await pilot.pause()
         assert screen.focused is control
         assert screen._library_pending_list_entry_focus is False
-        assert screen._library_media_successful_focus_ownership is None
-        request_counter = screen._library_media_return_request_id
+        assert screen._media_state.successful_focus_ownership is None
+        request_counter = screen._media_state.return_request_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
 
         screen.refresh(recompose=True)
@@ -2390,8 +2397,8 @@ async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
         )
         await pilot.pause()
 
-        assert screen._library_media_return_request_id == request_counter
-        assert screen._library_media_return_settlement is None
+        assert screen._media_state.return_request_id == request_counter
+        assert screen._media_state.return_settlement is None
         assert screen._library_pending_list_entry_focus is False
 
 
@@ -2413,7 +2420,7 @@ async def test_trash_capture_uses_opener_identity_without_prefocus() -> None:
         screen.query_one("#library-media-trash-open", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
 
-        receipt = screen._library_media_trash_return
+        receipt = screen._media_state.trash_return
         assert type(receipt) is receipt_type
         assert receipt.final_focus_policy == "control"
         assert receipt.final_focus_identity == "library-media-trash-open"
@@ -2437,7 +2444,7 @@ async def test_control_exact_return_requires_matching_semantic_row(
         await _wait_for_selector(screen, pilot, "#library-media-row-15")
         semantic_row = screen.query_one("#library-media-row-15", Button)
         selected_id = str(semantic_row.media_id)
-        screen._selected_media_id = selected_id
+        screen._media_state.selected_media_id = selected_id
         original_owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
         _park_row_scroll(original_owner)
         opener = screen.query_one("#library-media-trash-open", Button)
@@ -2450,7 +2457,7 @@ async def test_control_exact_return_requires_matching_semantic_row(
         screen.query_one("#library-media-trash-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_return_settlement is not None,
+            lambda: screen._media_state.return_settlement is not None,
             message="Trash return did not arm control-policy authority.",
         )
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
@@ -2483,8 +2490,8 @@ async def test_control_exact_return_requires_matching_semantic_row(
         )
         await pilot.pause()
 
-        assert screen._library_media_last_settlement_outcome is None
-        assert screen._library_media_last_successful_settlement is None
+        assert screen._media_state.last_settlement_outcome is None
+        assert screen._media_state.last_successful_settlement is None
         assert getattr(screen.focused, "id", None) != "library-media-trash-open"
         assert scroll_commits == 0
         # The parked offset is never handed back: with no matching semantic row
