@@ -69,14 +69,23 @@ jobs:
         if: steps.dependencies.outcome == 'success'
         continue-on-error: true
         id: bakeoff
+        # Dispatch inputs reach the shell as environment variables, never
+        # interpolated into the `run:` text: `${{ }}` is substituted before bash
+        # parses the line, so a single quote in an input would close the quote
+        # and run the rest as shell on the runner.
+        env:
+          EMBEDDERS: ${{ inputs.embedders }}
+          LIVE_THRESHOLDS: ${{ inputs.live_thresholds }}
+          CLUSTER_THRESHOLDS: ${{ inputs.cluster_thresholds }}
+          FILES: ${{ inputs.files }}
         run: |
           python Tests/Audio/bakeoff/run_bakeoff.py \
             --engines onnx,speechbrain \
-            --embedders '${{ inputs.embedders }}' \
+            --embedders "$EMBEDDERS" \
             --segmentation float,int8 \
-            --live-thresholds '${{ inputs.live_thresholds }}' \
-            --cluster-thresholds '${{ inputs.cluster_thresholds }}' \
-            --files '${{ inputs.files }}' \
+            --live-thresholds "$LIVE_THRESHOLDS" \
+            --cluster-thresholds "$CLUSTER_THRESHOLDS" \
+            --files "$FILES" \
             --out "$RUNNER_TEMP/report.md"
 
       - name: Record bake-off failure
