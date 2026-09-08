@@ -253,7 +253,7 @@
     SkillImportChoiceModal #skill-import-choice-actions {
         height: 3;
     }
-    SkillImportChoiceModal #skill-import-choice-actions Button {
+    SkillImportChoiceModal #skill-import-choice-actions Button.skill-import-choice-action {
         width: auto;
         min-width: 10;
         height: 3;
@@ -2071,7 +2071,7 @@
         margin-top: 1;
     }
 
-    AutomationDefinitionForm .button-container Button {
+    AutomationDefinitionForm .button-container Button.automation-form-action {
         margin: 0 1;
     }
 

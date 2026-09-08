@@ -1630,7 +1630,7 @@
         align: center middle;
     }
 
-    AutomationDefinitionForm > VerticalScroll {
+    AutomationDefinitionForm > VerticalScroll.automation-form-scroll {
         width: 84;
         max-width: 100%;
         height: auto;
@@ -1693,7 +1693,7 @@
         align-horizontal: right;
     }
 
-    NewTaskChoiceModal .new-task-choice-actions Button {
+    NewTaskChoiceModal .new-task-choice-actions Button.new-task-choice-action {
         width: auto;
         margin-left: 1;
     }
@@ -4273,7 +4273,7 @@ ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;bac
         color: $text-muted;
     }
 
-    ToolProfilesPanel Button {
+    ToolProfilesPanel Button.tool-profile-button {
         width: auto;
         min-width: 8;
         height: 1;
@@ -4283,7 +4283,7 @@ ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;bac
         margin-right: 1;
     }
 
-    ToolProfilesPanel .tool-profile-actions Button {
+    ToolProfilesPanel .tool-profile-actions Button.tool-profile-button {
         margin-right: 0;
     }
 

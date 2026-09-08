@@ -43,7 +43,7 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
     #skill-import-choice-actions {
         height: 3;
     }
-    #skill-import-choice-actions Button {
+    #skill-import-choice-actions Button.skill-import-choice-action {
         width: auto;
         min-width: 10;
         height: 3;
@@ -75,9 +75,14 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
                 yield Button(
                     "Import skill",
                     id="skill-import-choice-import",
+                    classes="skill-import-choice-action",
                     variant="primary",
                 )
-                yield Button("Cancel", id="skill-import-choice-cancel")
+                yield Button(
+                    "Cancel",
+                    id="skill-import-choice-cancel",
+                    classes="skill-import-choice-action",
+                )
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
