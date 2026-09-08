@@ -1584,7 +1584,7 @@ def test_file_notes_owner_is_injected_into_fresh_library_workspaces(
     )
     app = _build_test_app()
     first_screen = app._create_navigation_screen("library", LibraryScreen)
-    first = first_screen._library_file_notes_workspace_factory()
+    first = first_screen._notes_state.file_notes_workspace_factory()
 
     binding = app.file_notes_session_owner.select_root(tmp_path / "notes")
     assert app.file_notes_session_owner.record_change(
@@ -1634,7 +1634,7 @@ def test_file_notes_owner_is_injected_into_fresh_library_workspaces(
     assert app.file_notes_session_owner.publish_ownership(binding, {1: ownership})
 
     second_screen = app._create_navigation_screen("library", LibraryScreen)
-    second = second_screen._library_file_notes_workspace_factory()
+    second = second_screen._notes_state.file_notes_workspace_factory()
 
     assert constructed == [first, second]
     assert first.session_owner is app.file_notes_session_owner
@@ -1884,8 +1884,8 @@ async def test_file_notes_source_transition_blocks_mutation_through_recompose(
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    screen._library_file_notes_workspace = workspace
-    screen._library_notes_source = "files"
+    screen._notes_state.file_notes_workspace = workspace
+    screen._notes_state.source = "files"
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     recompose_calls = []
 
@@ -1899,7 +1899,7 @@ async def test_file_notes_source_transition_blocks_mutation_through_recompose(
 
     await screen._show_library_database_notes(EventProbe())
 
-    assert screen._library_notes_source == "database"
+    assert screen._notes_state.source == "database"
     assert recompose_calls == [True]
     after_recompose = owner.try_acquire_mutation(binding)
     assert after_recompose is not None
@@ -1933,8 +1933,8 @@ async def test_file_notes_create_route_returns_to_database_notes(monkeypatch):
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    screen._library_file_notes_workspace = workspace
-    screen._library_notes_source = LIBRARY_NOTES_SOURCE_FILES
+    screen._notes_state.file_notes_workspace = workspace
+    screen._notes_state.source = LIBRARY_NOTES_SOURCE_FILES
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     recompose = AsyncMock()
     monkeypatch.setattr(screen, "recompose", recompose)
@@ -1943,7 +1943,7 @@ async def test_file_notes_create_route_returns_to_database_notes(monkeypatch):
 
     assert transition_events == ["flushed", "admitted:source", "released"]
     assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
-    assert screen._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+    assert screen._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
     assert screen.check_action("library_notes_escape", ()) is True
     recompose.assert_awaited_once()
 
@@ -1984,8 +1984,8 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    screen._library_file_notes_workspace = workspace
-    screen._library_notes_source = "files"
+    screen._notes_state.file_notes_workspace = workspace
+    screen._notes_state.source = "files"
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     screen._library_collections_loaded = False
 
@@ -2075,8 +2075,8 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    screen._library_file_notes_workspace = workspace
-    screen._library_notes_source = "files"
+    screen._notes_state.file_notes_workspace = workspace
+    screen._notes_state.source = "files"
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     recompose = AsyncMock()
     monkeypatch.setattr(screen, "recompose", recompose)
@@ -2092,7 +2092,7 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
     finish_flush.set()
     await _await_background_task(source_switch, what="the vetoed source switch")
 
-    assert screen._library_notes_source == "files"
+    assert screen._notes_state.source == "files"
     recompose.assert_not_awaited()
     mutation.release()
 
@@ -2115,8 +2115,8 @@ def test_check_action_gates_notes_files_back_to_active_files_mode():
 
     # Files mode selected but the row isn't Notes (stale source flag from a
     # prior visit) -- still inactive, mirroring ``_file_notes_active()``.
-    screen._library_notes_source = "files"
-    screen._library_file_notes_workspace = workspace
+    screen._notes_state.source = "files"
+    screen._notes_state.file_notes_workspace = workspace
     assert screen.check_action("library_notes_files_back", ()) is False
 
     # Files mode genuinely owns the Notes canvas -- active.
@@ -2125,7 +2125,7 @@ def test_check_action_gates_notes_files_back_to_active_files_mode():
     assert screen.check_action("library_notes_escape", ()) is False
 
     # Back to Database Notes -- inactive again.
-    screen._library_notes_source = "database"
+    screen._notes_state.source = "database"
     assert screen.check_action("library_notes_files_back", ()) is False
 
     # Unrelated actions are untouched by the new gate. "library_rag_use_
@@ -2170,8 +2170,8 @@ async def test_action_library_notes_files_back_returns_to_database(
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    screen._library_file_notes_workspace = workspace
-    screen._library_notes_source = "files"
+    screen._notes_state.file_notes_workspace = workspace
+    screen._notes_state.source = "files"
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     recompose_calls = []
 
@@ -2183,12 +2183,12 @@ async def test_action_library_notes_files_back_returns_to_database(
     monkeypatch.setattr(
         screen,
         "_register_footer_shortcuts",
-        lambda: footer_calls.append(screen._library_notes_source),
+        lambda: footer_calls.append(screen._notes_state.source),
     )
 
     await screen.action_library_notes_files_back()
 
-    assert screen._library_notes_source == "database"
+    assert screen._notes_state.source == "database"
     assert recompose_calls == [True]
     # The footer's "esc" hint must drop the moment the source flips back,
     # not on some later, separate recompose (task-2850).
@@ -2246,8 +2246,8 @@ async def test_action_library_notes_files_back_cancels_open_reload_confirmation_
 
     workspace = WorkspaceProbe()
     screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
-    screen._library_file_notes_workspace = workspace
-    screen._library_notes_source = "files"
+    screen._notes_state.file_notes_workspace = workspace
+    screen._notes_state.source = "files"
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     recompose_calls = []
 
@@ -2259,13 +2259,13 @@ async def test_action_library_notes_files_back_cancels_open_reload_confirmation_
     monkeypatch.setattr(
         screen,
         "_register_footer_shortcuts",
-        lambda: footer_calls.append(screen._library_notes_source),
+        lambda: footer_calls.append(screen._notes_state.source),
     )
 
     # First back: cancels the open confirmation and STAYS on Files.
     await screen.action_library_notes_files_back()
     assert cancel_returns == [True]
-    assert screen._library_notes_source == "files"
+    assert screen._notes_state.source == "files"
     assert recompose_calls == []
     # The footer must drop its "esc cancel reload" hint immediately
     # (task-15503 registered that hint while the decision is pending).
@@ -2275,7 +2275,7 @@ async def test_action_library_notes_files_back_cancels_open_reload_confirmation_
     # runs and lands on Database Notes.
     await screen.action_library_notes_files_back()
     assert cancel_returns == [True, False]
-    assert screen._library_notes_source == "database"
+    assert screen._notes_state.source == "database"
     assert recompose_calls == [True]
     assert footer_calls == ["files", "database"]
     after_recompose = owner.try_acquire_mutation(binding)
@@ -2315,8 +2315,15 @@ def test_files_back_navigation_workspace_contract_matches_real_workspace():
                 if isinstance(value, ast.Name) and value.id == "workspace":
                     found.add(node.attr)
                 elif (
+                    # (wave-8 task 3) The workspace handle is a
+                    # `LibraryNotesState` field now, reached as
+                    # `self._notes_state.file_notes_workspace.<name>`, so the
+                    # receiver this matches is the state attribute, not the
+                    # old flat screen name. Without this retarget the visitor
+                    # matches nothing and the contract set goes EMPTY -- a
+                    # loud red, not a vacuous pass.
                     isinstance(value, ast.Attribute)
-                    and value.attr == "_library_file_notes_workspace"
+                    and value.attr == "file_notes_workspace"
                 ):
                     found.add(node.attr)
                 self.generic_visit(node)
@@ -2541,15 +2548,15 @@ def test_check_action_gates_note_editor_back_to_active_editor():
     assert screen.check_action("library_note_editor_back", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-    screen._library_notes_view = "list"
+    screen._notes_state.view = "list"
     assert screen.check_action("library_note_editor_back", ()) is False
 
-    screen._library_notes_view = "editor"
+    screen._notes_state.view = "editor"
     assert screen.check_action("library_note_editor_back", ()) is True
 
     # Files mode never activates this gate, even mid-editor-looking state --
     # it owns a dedicated Escape binding instead (``library_notes_files_back``).
-    screen._library_notes_source = "files"
+    screen._notes_state.source = "files"
     assert screen.check_action("library_note_editor_back", ()) is False
 
 
@@ -2608,13 +2615,13 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-    screen._library_notes_view = "list"
-    screen._library_notes_source = "database"
+    screen._notes_state.view = "list"
+    screen._notes_state.source = "database"
     assert screen.check_action("library_list_focus_rail", ()) is True
-    screen._library_notes_view = "editor"
+    screen._notes_state.view = "editor"
     assert screen.check_action("library_list_focus_rail", ()) is False
-    screen._library_notes_view = "list"
-    screen._library_notes_source = "files"
+    screen._notes_state.view = "list"
+    screen._notes_state.source = "files"
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
@@ -3191,8 +3198,8 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-    screen._library_notes_source = "database"
-    screen._library_notes_view = "editor"
+    screen._notes_state.source = "database"
+    screen._notes_state.view = "editor"
 
     # task-3316: "still dirty after the flush" is expressed by the flush
     # OUTCOME now -- ``_library_note_dirty`` became a read-only property over
@@ -3207,7 +3214,7 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
 
     await screen.action_library_note_editor_back()
 
-    assert screen._library_notes_view == "editor", "dirty veto must not exit"
+    assert screen._notes_state.view == "editor", "dirty veto must not exit"
     assert refresh_calls == []
 
     async def flush_clean():
@@ -3220,7 +3227,7 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
 
     await screen.action_library_note_editor_back()
 
-    assert screen._library_notes_view == "list"
+    assert screen._notes_state.view == "list"
     assert refresh_calls == [True]
     assert focus_calls == [screen._restore_library_notes_focus_identity]
 
@@ -3585,8 +3592,8 @@ def test_focus_library_list_entry_checked_row_preference_is_media_only():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-    screen._library_notes_source = "database"
-    screen._library_notes_view = "list"
+    screen._notes_state.source = "database"
+    screen._notes_state.view = "list"
     # Deliberately True/non-empty -- MUST be ignored for a non-Media list.
     screen._media_state.select_mode = True
 

@@ -655,7 +655,7 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
         )
         screen.query_one("#notes-sync-back", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-        assert screen._library_notes_view == "list"
+        assert screen._notes_state.view == "list"
 
 
 @pytest.mark.asyncio
@@ -784,7 +784,7 @@ async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_mo
         await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
         release.set()
         await pilot.pause()
-        assert screen._library_notes_view == "lasting_roots"
+        assert screen._notes_state.view == "lasting_roots"
         assert screen._library_notes_sync_controller.snapshot.comparison is None
         assert not screen.query("#notes-sync-comparison-diff-0")
 
@@ -922,7 +922,7 @@ async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
             undo.press()
 
         await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
-        assert screen._library_notes_view == "lasting_roots"
+        assert screen._notes_state.view == "lasting_roots"
         assert not screen.query("#notes-sync-apply")
         assert screen._library_notes_sync_controller.snapshot.phase == "roots"
 
@@ -1031,7 +1031,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         screen.query_one("#notes-sync-back", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_notes_view == "list",
+            lambda: screen._notes_state.view == "list",
             message="lasting Back did not return to Notes",
         )
         assert ("abandon_setup", "setup-root") in runtime.calls
@@ -1192,8 +1192,8 @@ async def test_check_again_routes_to_its_rendered_review_source(
                     message="migration review did not reach its awaited check",
                 )
                 opened_before_await = (
-                    screen._library_notes_view == "lasting_add"
-                    and screen._library_notes_lasting_origin == "roots"
+                    screen._notes_state.view == "lasting_add"
+                    and screen._notes_state.lasting_origin == "roots"
                 )
                 release_migration.set()
                 assert opened_before_await

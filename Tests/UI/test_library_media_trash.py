@@ -1659,7 +1659,7 @@ async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypat
         search.focus()
         await pilot.pause()
         screen._library_notes_programmatic_focus_target = search
-        older_generation = screen._library_notes_focus_intent_generation
+        older_generation = screen._notes_state.focus_intent_generation
 
         with monkeypatch.context() as patch:
             patch.setattr(
@@ -1678,7 +1678,7 @@ async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypat
             ),
             message="Real Tab did not leave Search after a suppressed sync.",
         )
-        assert screen._library_notes_focus_intent_generation > older_generation
+        assert screen._notes_state.focus_intent_generation > older_generation
         screen._focus_library_media_trash_after_paint(
             "#library-media-trash-search", older_generation
         )
@@ -3280,7 +3280,9 @@ def _trash_view_fake(
         # state -- neither is a `LibraryMediaState` field, so both stay flat
         # and move below the block wave-7 task 3 nests under `_media_state`.
         _library_media_trash_browse_controller=trash_controller,
-        _library_notes_focus_intent_generation=0,
+        _notes_state=SimpleNamespace(
+            focus_intent_generation=0,
+        ),
         _trash_controller_calls=trash_controller_calls,
         app_instance=SimpleNamespace(notify=lambda msg, **k: notified.append((msg, k))),
         _notified=notified,
@@ -3348,6 +3350,11 @@ def _failed_trash_restore_screen_fake():
             trash_input_error="",
             trash_focus_identity="#library-media-trash-restore",
         ),
+        # (wave-8 task 3) `_sync_library_media_trash_state` reads the NOTES
+        # focus-intent counter, a `LibraryNotesState` field now
+        # (`getattr(self._notes_state, "focus_intent_generation", 0)`). This
+        # duck-typed fake is not a `LibraryScreen`, so it carries the object.
+        _notes_state=SimpleNamespace(focus_intent_generation=0),
         # WIRING, not state -- stays flat (see the note in `_trash_view_fake`).
         _library_media_trash_browse_controller=SimpleNamespace(state=state),
         _focus_library_media_trash_intent=lambda: None,
@@ -3879,6 +3886,12 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
             mutation_authority=2,
             lifecycle_generation=2,
         ),
+        # (wave-8 task 3) The trash failure legs stamp
+        # `_media_state.trash_focus_authority_generation` from the NOTES
+        # focus-intent counter, a `LibraryNotesState` field now
+        # (`getattr(self._notes_state, "focus_intent_generation", 0)`). This
+        # duck-typed fake is not a `LibraryScreen`, so it carries the object.
+        _notes_state=SimpleNamespace(focus_intent_generation=0),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(),
@@ -3976,7 +3989,9 @@ async def _trash_screen_over_a_real_controller(
         ),
         # WIRING and shell state -- neither is a `LibraryMediaState` field.
         _library_media_trash_browse_controller=controller,
-        _library_notes_focus_intent_generation=0,
+        _notes_state=SimpleNamespace(
+            focus_intent_generation=0,
+        ),
         is_mounted=False,
         refresh=lambda **_kwargs: None,
         call_after_refresh=lambda fn, *_args: None,
@@ -4124,6 +4139,14 @@ def _restore_fake(*, db, trash_records, media_records, media_count):
         _media_state=SimpleNamespace(
             bulk_delete_in_flight=True,
         ),
+        # (wave-8 task 3) The trash failure legs stamp
+        # `_media_state.trash_focus_authority_generation` from the NOTES
+        # focus-intent counter, which is a `LibraryNotesState` field now --
+        # `getattr(self._notes_state, "focus_intent_generation", 0)`, where it
+        # used to be `getattr(self, "_library_notes_focus_intent_generation",
+        # 0)` on the screen itself. This duck-typed fake is not a
+        # `LibraryScreen`, so it carries the state object.
+        _notes_state=SimpleNamespace(focus_intent_generation=0),
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
         call_after_refresh=lambda fn, *a: after_refresh.append(fn),

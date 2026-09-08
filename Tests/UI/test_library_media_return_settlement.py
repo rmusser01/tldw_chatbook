@@ -74,7 +74,7 @@ async def _open_compact_media(host, pilot) -> LibraryScreen:
     """Enter Media after selecting the compact presentation contract."""
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
-    screen._library_notes_compact = True
+    screen._notes_state.compact = True
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-reader-shell")
     return screen
@@ -262,7 +262,7 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
         assert layout_signature == (
             int(screen.size.width),
             int(screen.size.height),
-            screen._library_notes_compact,
+            screen._notes_state.compact,
             screen._media_state.reader_preferences,
             library_screen_module.resolve_media_reader_layout(
                 canonical_reader_width,
@@ -887,7 +887,7 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
             real_on_resize,
         )
         before_epoch = screen._media_state.presentation_epoch
-        assert screen._library_notes_compact is True
+        assert screen._notes_state.compact is True
         identity = screen._capture_library_notes_focus_identity(stage_from_focus=True)
 
         screen._transition_library_notes_presentation(False, identity)
@@ -944,13 +944,13 @@ async def test_stale_programmatic_focus_releases_guard_before_user_refocus() -> 
         assert screen._library_notes_programmatic_focus_target is None
         assert screen._media_state.view == "list"
 
-        before_user_focus = screen._library_notes_focus_intent_generation
+        before_user_focus = screen._notes_state.focus_intent_generation
         screen.set_focus(target, scroll_visible=False)
         await pilot.pause()
 
         assert screen.focused is target
         assert target.has_focus
-        assert screen._library_notes_focus_intent_generation == before_user_focus + 1
+        assert screen._notes_state.focus_intent_generation == before_user_focus + 1
 
 
 @pytest.mark.asyncio
@@ -1979,7 +1979,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
             elif stale_fence == "lifecycle":
                 screen._media_state.lifecycle_generation += 1
             elif stale_fence == "focus":
-                screen._library_notes_focus_intent_generation += 1
+                screen._notes_state.focus_intent_generation += 1
             elif stale_fence == "trash":
                 screen._media_state.view = "trash"
             elif stale_fence == "items":

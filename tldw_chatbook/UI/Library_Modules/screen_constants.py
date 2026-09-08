@@ -164,7 +164,7 @@ LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # The literal title a just-created "Blank note" row is seeded with (LIB-14,
 # task-4021). The editor presents it placeholder-only (empty Input,
-# "Untitled" placeholder -- see ``_library_note_pending_blank_gc_id``), and
+# "Untitled" placeholder -- see ``_notes_state.pending_blank_gc_id``), and
 # the untouched-blank GC gate (``_flush_library_note_save``) treats a
 # snapshot title equal to this literal as blank too -- both call sites and
 # the create seed in ``handle_library_notes_create_blank`` must agree on
