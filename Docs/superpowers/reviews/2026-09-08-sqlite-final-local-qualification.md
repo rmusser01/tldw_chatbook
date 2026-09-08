@@ -248,3 +248,16 @@ Root committed unit selection10passed1warning3.10s; scoped review approved.
 See the [correction evidence](2026-09-08-canvas-card-readiness-fix.md) for exact
 commands and limits. This does not erase the earlier failures, explain the
 separate startup miss or close the other qualification gaps recorded above.
+
+## Subsequent approved startup test-contract correction
+
+Task13 (`235641b380`) retains both first-output and Composer readiness conditions
+within one shared45s deadline, replacing the implicit5s first-output sub-limit
+with explicit user approval. No retry/reset, later assertion/timeout or production
+change. Root original actual-browser case passes once:1passed1warning46.86s,
+exit0; root committed focused tests5passed1warning2.37s, exit0. Scoped spec and
+quality review approved, no Critical/Important findings. Ruff/new-file format/
+whitespace pass; existing whole-file formatting debt and Requests warning remain.
+See [deadline correction evidence](2026-09-08-canvas-startup-deadline-fix.md).
+Historical timing causality is not claimed, prior failures are preserved, and
+the remaining host/platform/optional/static gates and V2-disabled status stand.

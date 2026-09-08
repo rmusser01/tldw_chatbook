@@ -34,6 +34,7 @@ Reason: This implements the accepted cross-process privacy/proof boundary, termi
 - Use repository pytest pre-import isolation for all app imports. Only owned temporary databases, subprocesses and browsers. Do not run ad hoc application imports against user configuration.
 - Targeted tests only. No full repository sweep, PR, push, rebase or merge. Canvas V2 remains disabled until its existing independent admission gates pass; completion of this correction is not admission.
 - Use `apply_patch` for manual edits. Commit only named task files, never blanket-stage the untracked diagnostic. Do not weaken test or performance budgets to obtain green results.
+- Owner-approved Task13 exception (2026-09-08): replace only the actual Canvas test's implicit5s first-output plus explicit45s Composer waits with one shared45s initial post-login readiness deadline. Both conditions remain; no reset/retry. Runtime, helper, import/UI and other test budgets remain unchanged.
 
 ## Evidence and file map
 
@@ -1394,6 +1395,82 @@ budgets. Changed-file Ruff/format/whitespace pass; inherited warning remains.
 Exact evidence and reporting limits:
 `Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-fix.md`.
 This completes only the bounded harness correction, not Task7 or Canvas admission.
+
+### Task 13: Share one deadline across initial Console startup checks
+
+User approved this bounded test-only contract correction on 2026-09-08.
+BASE: `63ccffdbb7`. Task12 is complete and must not be reimplemented.
+
+ADR required: no
+ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md (unchanged)
+Reason: An explicitly approved test readiness deadline handoff, not a production,
+runtime, security, storage or application-interface change.
+
+**Files:**
+
+- Modify `Tests/Canvas/browser/test_canvas_served_flow.py` only at its initial
+  startup-check seam and a small adjacent helper.
+- Create `Tests/Canvas/browser/test_canvas_startup_readiness.py` for focused
+  deadline behavior tests.
+- Root owns plan, Backlog, lessons and qualification/evidence documentation.
+
+**Approved interface and constraints:**
+
+- Add a test-only `_wait_for_initial_console_ready(page, *, timeout_ms=45_000)`
+  helper and invoke it immediately after `_login_live_page` in
+  `test_actual_chatbook_console_finalizes_canvas_create_and_update`.
+- Start one monotonic absolute deadline on helper entry. Preserve the real
+  first-output body-class assertion and the terminal `Composer` assertion, in
+  that order. Pass only the positive remaining milliseconds to each. The helper
+  must refuse expiry before dispatching another assertion: Playwright timeout0
+  means unlimited, not expired. Never reset or retry either readiness assertion.
+- The two assertions share45_000ms total, not45_000ms each. This explicitly
+  removes the old implicit5000ms first-output sub-limit; it is an approved
+  test-contract correction, not proof of faster production startup. Keep every
+  later workflow assertion, F12 adapter and timeout unchanged.
+- Retain assertion failures; add only fixed stage labels for failure context,
+  no source, token, URL, session ID or captured terminal content. Cancellation
+  must propagate; no background task may outlive the helper.
+- No generic deadline framework, production edits, dependency/host changes,
+  persistent instrumentation or V2 admission. Root remains sole index owner;
+  implementer leaves code unstaged. No full suite, prior completed task runs,
+  benchmarks, host semaphore controls or external PR/push/rebase/merge actions.
+
+**Implementation and verification:**
+
+- [x] Write focused RED tests before the helper. Exercise the real helper's
+  deadline arithmetic with controlled boundary timing as needed: initial budget,
+  first-stage time consumed, expired remainder, failure without retry and
+  cancellation. Use literal expectations, not mirror calculations/source checks.
+  Keep test doubles small and specific to timing/assertion boundaries; include
+  real Playwright DOM evidence that both required conditions are enforced.
+- [x] Implement the minimal helper and replace only the initial two inline
+  readiness assertions with its call. Preserve login and all subsequent
+  production Canvas/selection/provider/persistence/cleanup assertions.
+- [x] Run only `Tests/Canvas/browser/test_canvas_startup_readiness.py` while
+  iterating; record exact RED/GREEN output. If a real DOM probe launches a browser,
+  coordinate with root so no tests overlap. No actual Chatbook-child run by the
+  implementer; root owns it. Run changed-file Ruff/format and whitespace checks;
+  report any existing whole-file formatting debt instead of bulk-formatting.
+- [x] Root runs the original exact actual-browser node once on the final helper:
+  `Tests/Canvas/browser/test_canvas_served_flow.py::test_actual_chatbook_console_finalizes_canvas_create_and_update[read-publication-False]`.
+  Preserve the existing lifecycle capture first. A failure is evidence to inspect,
+  not permission for another timeout increase or a blind rerun.
+- [x] Root commits only the two test files, obtains independent task-scoped
+  spec/quality review, and verifies the committed focused tests. Record the
+  owner-approved budget change and results without claiming the old runtime
+  latency cause explained. Keep TASK-31942 In Progress and V2 disabled while
+  host/platform/optional/static gates remain open. Do not reopen the completed
+  whole-correction review or clean its evidence workspace.
+
+Task13 completed in `235641b380`: root original actual-browser case 1passed,
+1warning, 46.86s, exit0; root committed focused file 5passed, 1warning, 2.37s,
+exit0. Independent spec/quality approved, no Critical/Important findings.
+Ruff/new-file format/whitespace pass; served-flow formatting edits match the
+pre-task baseline and the inherited Requests warning remains deferred.
+Evidence: Docs/superpowers/reviews/2026-09-08-canvas-startup-deadline-fix.md.
+This closes the approved test-contract correction, not the original latency
+attribution or other qualification gates. Task7 remains incomplete, V2 disabled.
 
 ## Spec coverage and handoff
 
