@@ -1149,7 +1149,7 @@ def _serialize_provenance(
     *,
     system_message: str | None,
 ) -> ProviderRequestProvenance | None:
-    """Mirror serialization using descriptors without inspecting semantic content."""
+    """Mirror serialization while retaining owners of exact provider rewrites."""
 
     provenance = semantic.provenance
     if provenance is None:
@@ -1162,6 +1162,7 @@ def _serialize_provenance(
     thinking: list[TraceProvenance] = []
     continuations: list[TraceProvenance] = []
     tool_loop: list[int] = []
+    capture_policy = frozen_policy_from_provenance(provenance)
 
     def extend_unit(
         unit: ConsoleConversationUnit,
@@ -1186,6 +1187,9 @@ def _serialize_provenance(
                 unit_provenance.thinking,
                 strict=True,
             )
+        }
+        thinking_groups_by_owner = {
+            group.owner_message_id: group for group in unit.thinking_groups
         }
         continuation_by_owner = {
             group.owner_message_id: descriptor
@@ -1245,12 +1249,23 @@ def _serialize_provenance(
                 for item in (thinking_descriptor, continuation_descriptor)
                 if item is not None
             )
+            thinking_group = thinking_groups_by_owner.get(thinking_owner)
+            content_changed = (
+                thinking_group is not None
+                and serialize_start_anchored_thinking(
+                    message.get("content"), thinking_group
+                )
+                != message.get("content")
+            )
             flattened.append(
                 DerivedTraceProvenance(
                     TraceTransformKind.MESSAGE_REWRITE,
                     (descriptor, *attachments),
+                    artifact=ProviderArtifactTraceProvenance(
+                        TraceProvenanceSource.THINKING, capture_policy
+                    ),
                 )
-                if attachments
+                if content_changed
                 else descriptor
             )
         thinking.extend(unit_provenance.thinking)

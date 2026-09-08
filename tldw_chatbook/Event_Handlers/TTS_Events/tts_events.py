@@ -61,6 +61,7 @@ from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSDefaultProfileSelection,
+    TTSEffectiveResolutionError,
     TTSEffectiveSettingsResolver,
     TTSSelectionOverrides,
 )
@@ -732,16 +733,27 @@ class TTSEventHandler:
                 event.report_outcome(False)
                 raise
             except Exception as error:  # noqa: BLE001 - terminal trust boundary
-                logger.warning(
-                    "Trusted Console speech request failed "
-                    "(exception_category={})",
-                    type(error).__name__,
-                )
+                if isinstance(error, TTSEffectiveResolutionError):
+                    logger.warning(
+                        "Trusted Console speech request failed "
+                        "(resolution_code={}, resolution_axis={}, "
+                        "resolution_source={})",
+                        error.code,
+                        error.axis,
+                        error.source.value if error.source is not None else "provider",
+                    )
+                    message = self._tts_error_copy(error)
+                else:
+                    logger.warning(
+                        "Trusted Console speech request failed (exception_category={})",
+                        type(error).__name__,
+                    )
+                    message = "Speech could not be generated."
                 try:
                     await self._post_tts_message(
                         TTSCompleteEvent(
                             message_id=event.message_id,
-                            error="Speech could not be generated.",
+                            error=message,
                         )
                     )
                 except Exception as post_error:  # noqa: BLE001
@@ -2212,10 +2224,20 @@ class TTSEventHandler:
                 else self._tts_outcome_code(error)
             )
             await self._discard_tts_artifact(normalized_message_id, artifact_path)
-            logger.error(
-                "TTS generation failed (outcome_code={})",
-                outcome_code,
-            )
+            if isinstance(error, TTSEffectiveResolutionError):
+                logger.error(
+                    "TTS generation failed (outcome_code={}, resolution_code={}, "
+                    "resolution_axis={}, resolution_source={})",
+                    outcome_code,
+                    error.code,
+                    error.axis,
+                    error.source.value if error.source is not None else "provider",
+                )
+            else:
+                logger.error(
+                    "TTS generation failed (outcome_code={})",
+                    outcome_code,
+                )
             if not quiet:
                 await self._post_tts_message(
                     TTSCompleteEvent(
@@ -3168,6 +3190,8 @@ class TTSEventHandler:
     @staticmethod
     def _tts_error_copy(error: Exception) -> str:
         """Map failures to fixed actionable UI copy without upstream details."""
+        if isinstance(error, TTSEffectiveResolutionError):
+            return error.recovery_message()
         if isinstance(error, TTSProviderReconfiguringError):
             return "TTS settings are being applied; retry shortly"
         if isinstance(error, TTSProviderUnavailableError):

@@ -322,3 +322,75 @@ async def test_consecutive_project_sends_preserve_each_request(
                 assert expected in wire_rows[-1]["content"]
                 assert sum(expected in str(row.get("content")) for row in rows) == 1
             assert reader.read_calls(first_user.persisted_message_id) == original
+
+
+@pytest.mark.parametrize("prior_response", ["ordinary", "tools", "fallback"])
+@pytest.mark.parametrize("cold_factory", [False, True])
+async def test_transformed_project_sends_preserve_source_and_context(
+    tmp_path, monkeypatch, prior_response, cold_factory
+):
+    """The combined source/context replacement keeps both durable owners."""
+    fallback = prior_response == "fallback"
+    async with _project_console(
+        tmp_path,
+        monkeypatch,
+        tools=prior_response == "tools",
+        response_mode="fallback" if fallback else "complete",
+    ) as app:
+        assert app.store.persist_session_if_needed(app.session.id)
+        app.controller._chat_dictionary_applier = lambda _conversation, text: (
+            text.replace("alias", "expanded")
+        )
+        reader = ConsoleTraceNativeReader(app.db)
+        originals = []
+        for index, text in enumerate(
+            ("alias first", "ordinary next", "alias third", "ordinary last")
+        ):
+            if index == 2:
+                app.project_file.write_text("UPDATED_PROJECT_GUIDANCE_31976")
+            elif index == 3:
+                app.store.set_session_project_instruction_state(
+                    app.session.id,
+                    replace(
+                        app.session.project_instruction_state,
+                        project_instructions_enabled=False,
+                    ),
+                )
+            if cold_factory:
+                app.restart_factory()
+            before_http = len(app.http_payloads)
+            result = await app.controller.submit_draft(text, session_id=app.session.id)
+            assert result.accepted and result.provider_started, app.reservation_errors
+            assert app.controller.run_state.status.value == "completed", (
+                app.reservation_errors
+            )
+            assert len(app.http_payloads) > before_http
+            wire = app.http_payloads[-1]["messages"]
+            expected = text.replace("alias", "expanded")
+            assert any(row.get("content") == expected for row in wire)
+            if index < 3:
+                current_index = next(
+                    i for i, row in enumerate(wire) if row.get("content") == expected
+                )
+                assert (
+                    GUIDANCE if index < 2 else "UPDATED_PROJECT_GUIDANCE_31976"
+                ) in wire[current_index + 1]["content"]
+            else:
+                assert wire[-1]["content"] == expected
+            saved = app.store.get_message(result.user_message_id)
+            assert saved.content == text
+            trace = reader.read_calls(saved.persisted_message_id)
+            assert trace
+            assert all(call.capture.request is not None for call in trace)
+            originals.append((saved.persisted_message_id, trace))
+            for owner_id, original in originals:
+                assert reader.read_calls(owner_id) == original
+        with app.db.transaction() as cursor:
+            pins = cursor.execute(
+                "SELECT c.turn_id, r.source_message_id FROM console_trace_calls c "
+                "JOIN console_trace_events e ON e.call_id = c.call_id "
+                "AND e.event_type = 'call_boundary' "
+                "JOIN console_trace_semantic_revisions r "
+                "ON r.revision_id = e.semantic_revision_id"
+            ).fetchall()
+        assert pins and all(row[0] == row[1] for row in pins)

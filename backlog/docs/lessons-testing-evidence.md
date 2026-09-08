@@ -12112,6 +12112,21 @@ rather than a flat window sized to the happy path. The probe already
 records STARTS rather than running state, so waiting cannot miss a worker
 that finishes quickly.
 
+## Frozen JSON and transport JSON need the same representation at an identity comparison
+
+**TASK-32030, 2026-09-07.** An unchanged image prompt became an unowned
+provider artifact in the agent trace builder: its admitted content was frozen
+into tuples, while the transport used lists. Converting only the outer mappings
+to dictionaries left the nested mismatch intact. A production SQLite/gateway
+regression failed at trace reservation, while the equivalent plain-text request
+worked. Freezing the incoming row before the existing exact comparison restored
+its saved revision and allowed one completed provider call. Changed text, image
+data, and content order still failed before reservation.
+
+When immutable request snapshots are matched against transport data, include
+nested JSON arrays in the test and verify the real consuming boundary. A test
+using only strings cannot exercise the representation mismatch.
+
 ## A settled paint does not prove a failed send released its busy state
 
 **TASK-32010, 2026-09-07.** Extending the existing mounted Console diagnostic
@@ -12225,6 +12240,78 @@ records STARTS rather than running state, so waiting cannot miss a worker
 that finishes quickly.
 
 
+## A mounted TTS control test must cross effective selection
+
+**Incident (TASK-32027/32038, 2026-09-08).** Kokoro Playground left its language
+Select in a loading/unavailable enum state, then copied that placeholder into the
+request. Catalog and widget tests passed while actual generation failed with
+TTSEffectiveResolutionError before the adapter was called. A mounted Playground
+test with the real registry, resolver and service reproduced both engines and
+provider-switch paths; replacing only audio execution exposed the boundary. A
+second mounted Settings test found that switching from audio.cpp retained a voice
+policy and identifiers rejected by the same resolver.
+
+**Practice.** For speech selection changes, follow the emitted request through
+real admission and drain the response; substitute only the expensive audio
+backend. Include fresh mounts, provider round trips, invalid saved-state repair
+and repeated generation. A visible selection or emitted event alone is not
+evidence that a reply can be spoken.
+
+## Prove a transform ran before testing its trace ownership
+
+**Incident (TASK-32032, 2026-09-08).** A four-send controller regression correctly
+reproduced dictionary trace admission failure, but isolated first-send negative
+probes initially skipped the dictionary: its applier needs a persisted
+conversation. This made ordinary saved-revision behavior look like transformed
+source behavior. Persisting the synthetic session and asserting the literal
+transformed adapter input exposed the actual error/Stop successor and source
+mutation cases. Check the durable terminal state too; an error-shaped answer can
+still belong to a completed call. Likewise, setting the Stop flag just before a
+synthetic stream ends can race with normal completion. Parking the adapter after
+a visible partial chunk and invoking the real Stop action established the actual
+STOPPED outcome, verified partial-response link and successful successor.
+
+**Practice.** Establish the feature's real prerequisite and provider input before
+using the downstream result as evidence. For a source-identity test, hold the
+owner, source artifact and predecessor fixed; canonical edits may legitimately
+advance the active surface through their own coordinator.
+
+## Compile SQLite trigger references when checking a migration predecessor
+
+**Incident (TASK-32032, 2026-09-08).** A v68 fixture renamed a trace source column.
+SQLite accepted the v69 CREATE TRIGGER statements and foreign_key_check, then
+advanced the schema version despite invalid trigger references. The test was RED
+until a fixed SELECT with LIMIT 0 compiled the required source/shape columns before
+DDL. The malformed predecessor then remained unchanged at v68, and rollback
+tests preserved its original triggers and version.
+
+**Practice.** Trigger creation and a foreign-key audit do not establish that a
+trigger's referenced columns exist. Compile the fixed predecessor contract before
+changing it. This migration uses an existing FK for source identity only; it does
+not add retained source bodies.
+
+## Exercise new provider output when repairing private-history replay
+
+**Incident (TASK-32040, 2026-09-08).** A capture-on replay fixture preserved old
+saved thinking while its adapter returned a plain answer, so it missed the next
+failure: newly generated thinking crossed the real parser and persistence seam,
+but settlement compared only the saved visible answer and recorded an artifact.
+The next transformed-turn successor correctly refused to invent a saved response
+link. Exact typed-envelope projection and a process-local raw-equality proof
+restored that link without inferring meaning from literal thinking tags. A real
+Moonshot response reproduced the same issue with content-free proprietary evidence.
+
+The same tests exposed two privacy traps. A failed saved-source or PII-detector
+check fell back to a credential-only response artifact, retaining synthetic email
+text despite PII being enabled. A direct ordinary-message projection under the
+original response policy also failed because response-only mask paths were shared
+with message paths; fresh controller sends used new policy IDs and hid that
+collision. Policy-aware response storage and explicit mask domains fixed both.
+
+**Practice.** Include newly generated private output, actual parsing and saving,
+then warm/cold replay and original-policy reads. Test detector failures and source
+mismatches as well as the verified-source path; equal filtered values cannot
+establish equal raw source values.
 ## Preserve real project defaults and verify the provider input
 
 **TASK-31976.1, 2026-09-07.** The trace recovery helper disabled project
@@ -12350,3 +12437,22 @@ restored real reads without changing the user environment.
 **What to do.** For subprocess-backed tests, verify package provenance inside
 the child interpreter with its actual isolation flags. A passing parent import
 from the working directory does not prove the helper will execute that code.
+
+## Decode the entire utterance when validating playback
+
+**Incident (TASK-32027/32027.1, 2026-09-08).** Real Kokoro playback first exposed
+a fresh Speech Lab engine mismatch hidden by tests that explicitly set the ONNX
+switch. After fixing that default, MP3 generation produced audible output and
+afplay exited successfully, but independent decoding and local transcription
+read only the first 0.34 seconds. The backend had concatenated separately encoded
+files. Collecting samples and encoding once preserved the full utterance. The
+optional PyTorch text-chunk path had the same defect, including invalid repeated
+WAV headers; real-codec tests reproduced it without downloading a neural model.
+
+**Practice.** Preserve fresh controls in the live harness, cross the actual app
+admission and playback paths, and wait for device drain or file-player completion.
+Also decode the generated file and check its complete duration and content.
+Process exit status, nonzero RMS and a first spoken word do not establish that
+the entire response survived encoding. Keep inference, codec, device and content
+evidence distinct; these checks used real ONNX inference and codecs, while
+PyTorch coverage replaced only inference and voice loading.

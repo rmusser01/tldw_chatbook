@@ -59,6 +59,8 @@ def _call(
     sequence: int = 0,
     state: TraceCallState = TraceCallState.DISPATCH_STARTED,
     conversation_id: str | None = None,
+    response_projection: dict[str, object] | None = None,
+    policy: FrozenTracePolicy | None = None,
 ) -> tuple[str, str, str]:
     conversation_id = conversation_id or db.add_conversation({"title": "settlement"})
     assert conversation_id is not None
@@ -70,7 +72,7 @@ def _call(
         }
     )
     assert message_id is not None
-    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    policy = policy or FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
     with db.transaction(immediate=True) as cursor:
         segment = repository.create_segment(cursor)
         owner = repository.attach_owner(
@@ -101,7 +103,11 @@ def _call(
             route_identity="fresh",
             endpoint_identity="public-api",
             generation_parameters={},
-            adapter_defaults={},
+            adapter_defaults=(
+                {}
+                if response_projection is None
+                else {"response_projection": response_projection}
+            ),
             response_format={},
             reasoning_controls={},
             components=(),

@@ -165,6 +165,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
     build_console_request,
+    freeze_json,
 )
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
@@ -2615,12 +2616,14 @@ class ConsoleAgentTraceRequestFactory:
         search_from = 0
         descriptors: list[TraceProvenance] = []
         for message in messages:
+            # Prepared rows are recursively frozen, while agent transport rows
+            # carry mutable JSON arrays. Compare the same representation so an
+            # unchanged multimodal message keeps its admitted saved owner.
+            frozen_message = freeze_json(message)
             descriptor: TraceProvenance | None = None
             for index in range(search_from, len(base_rows)):
                 candidate = base_descriptors[index]
-                if dict(base_rows[index]) == dict(
-                    message
-                ) and _agent_can_reuse_descriptor(
+                if base_rows[index] == frozen_message and _agent_can_reuse_descriptor(
                     candidate,
                     message,
                 ):

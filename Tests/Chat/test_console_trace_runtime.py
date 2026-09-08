@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     build_console_request,
     prepare_provider_request,
     resolve_request_capacity,
+    thaw_json,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
@@ -32,9 +33,11 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
     ConsoleUnitProvenance,
+    DerivedTraceProvenance,
     ProviderArtifactTraceProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenanceSource,
+    TraceTransformKind,
     request_route_provenance,
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
@@ -322,6 +325,7 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
     make_gateway,
     monkeypatch,
     scenario,
+    current_transform=False,
 ):
     """Only the completed run's exact saved answer may collapse its tool suffix."""
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
@@ -397,6 +401,13 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         if canonical_id is not None:
 
             def settle(handoff):
+                if scenario == "stopped_terminal":
+                    handoff = replace(
+                        handoff,
+                        _prepared=replace(
+                            handoff._prepared, outcome=TraceCallState.STOPPED
+                        ),
+                    )
                 if scenario != "incomplete_terminal":
                     assert handoff.settle(canonical_id)
                 return True
@@ -415,9 +426,22 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
             )
         ]
 
-    first_messages = [{"role": "user", "content": "calculate"}]
+    first_messages = [
+        {"role": "user", "content": "compute" if current_transform else "calculate"}
+    ]
+    first_user = (
+        DerivedTraceProvenance(
+            TraceTransformKind.CURRENT_TURN_TEXT,
+            inputs=(user,),
+            artifact=ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST, policy
+            ),
+        )
+        if current_transform
+        else user
+    )
     assert await dispatch(
-        prepare(first_messages, [user], ConsoleRequestRoute.AGENT_FIRST),
+        prepare(first_messages, [first_user], ConsoleRequestRoute.AGENT_FIRST),
         ConsoleRequestRoute.AGENT_FIRST,
     ) == ["42"]
     source = (
@@ -425,12 +449,67 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         if scenario == "non_tool_artifact"
         else TraceProvenanceSource.TOOL_RESULT
     )
+    if scenario in {"changed_loop_source", "reverted_loop_source"}:
+        original_revision = user.revision_id
+        row = database.get_message_by_id(user_id)
+        assert database.update_message(
+            user_id,
+            {"content": "different saved source"},
+            row["version"],
+            preserve_descendants=True,
+        )
+        if scenario == "reverted_loop_source":
+            row = database.get_message_by_id(user_id)
+            assert database.update_message(
+                user_id,
+                {"content": "calculate"},
+                row["version"],
+                preserve_descendants=True,
+            )
+        revision_id = (
+            database.get_connection()
+            .execute(
+                "SELECT revision_id FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ? ORDER BY revision_sequence DESC LIMIT 1",
+                (user_id,),
+            )
+            .fetchone()[0]
+        )
+        assert revision_id != original_revision
+        first_user = DerivedTraceProvenance(
+            TraceTransformKind.CURRENT_TURN_TEXT,
+            inputs=(SavedRevisionTraceProvenance(revision_id),),
+            artifact=ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST, policy
+            ),
+        )
     tool_count = 2
     tool_messages = [
         {"role": "tool", "content": f"result-{index}", "tool_call_id": f"call-{index}"}
         for index in range(tool_count)
     ]
     tool_descriptors = [ProviderArtifactTraceProvenance(source, policy)] * tool_count
+    if scenario in {"changed_loop_source", "reverted_loop_source"}:
+        from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+        with pytest.raises(TraceCallPersistenceError):
+            await dispatch(
+                prepare(
+                    first_messages + tool_messages,
+                    [first_user] + tool_descriptors,
+                    ConsoleRequestRoute.TOOL_LOOP,
+                ),
+                ConsoleRequestRoute.TOOL_LOOP,
+                answer_id,
+            )
+        assert len(adapter_entries) == 1
+        assert (
+            database.get_connection()
+            .execute("SELECT COUNT(*) FROM console_trace_calls")
+            .fetchone()[0]
+            == 1
+        )
+        return
     if scenario == "non_tool_artifact":
         tool_messages = [
             {"role": "assistant", "content": f"ordinary-{index}"}
@@ -439,7 +518,7 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
     assert await dispatch(
         prepare(
             first_messages + tool_messages,
-            [user] + tool_descriptors,
+            [first_user] + tool_descriptors,
             ConsoleRequestRoute.TOOL_LOOP,
         ),
         ConsoleRequestRoute.TOOL_LOOP,
@@ -452,6 +531,8 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         assert terminal.state is (
             TraceCallState.RESPONSE_STARTED
             if scenario == "incomplete_terminal"
+            else TraceCallState.STOPPED
+            if scenario == "stopped_terminal"
             else TraceCallState.COMPLETE
         )
         link = repository.get_response_link(cursor, terminal.call_id)
@@ -463,7 +544,7 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
     reader = ConsoleTraceNativeReader(database)
     original = reader.read_calls(user_id)
     assert len(original) == (1 if scenario == "incomplete_terminal" else 2)
-    incoming = first_messages + [
+    incoming = [{"role": "user", "content": "calculate"}] + [
         {"role": "assistant", "content": "42"},
         {"role": "user", "content": next_text},
     ]
@@ -706,7 +787,9 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
             assert committed.request_header_id == expected.header.header_id
             assert repository.get_request_header(cursor, committed.request_header_id) == expected.header
             assert committed.dispatch_started_at is not None
-            assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_nodes").fetchone()[0] == 5
+            assert cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_surface_nodes"
+            ).fetchone()[0] == (6 if current_transform else 5)
             assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_replacements").fetchone()[0] == 1
             before_reentry = tuple(cursor.execute(
                 "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
@@ -822,7 +905,13 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
             assert reserved.surface_node_id is None
             assert reserved.request_header_id is None
         assert reader.read_calls(user_id) == original
-    elif scenario in {"valid", "cold", "equal_policy_fresh_id", "credential_value"}:
+    elif scenario in {
+        "valid",
+        "cold",
+        "equal_policy_fresh_id",
+        "credential_value",
+        "stopped_terminal",
+    }:
         assert await dispatch(prepared, route) == ["42"]
         assert [dict(row) for row in adapter_entries[-1]] == [
             {"role": "user", "content": "calculate"},
@@ -836,12 +925,9 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
                 ).fetchone()[0]
                 == 1
             )
-            assert (
-                cursor.execute(
-                    "SELECT COUNT(*) FROM console_trace_surface_nodes"
-                ).fetchone()[0]
-                == 5
-            )
+            assert cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_surface_nodes"
+            ).fetchone()[0] == (6 if current_transform else 5)
         assert reader.read_calls(user_id) == original
     else:
         with pytest.raises(ValueError):
@@ -1693,6 +1779,137 @@ def test_production_factory_uses_latest_message_revision_for_turn_identity(
     )
 
     assert boundary.identity.turn_id == current_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", [None, "text", "image", "order"])
+async def test_agent_multimodal_trace_matches_json_values_and_keeps_saved_turn(
+    tmp_path,
+    make_database,
+    make_gateway,
+    change,
+) -> None:
+    """Container freezing must not erase ownership or admit changed image rows."""
+    from copy import deepcopy
+
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentTraceRequestFactory
+
+    database = make_database(tmp_path / "agent-image.sqlite", "agent-image")
+    conversation_id = database.add_conversation({"title": "image trace"})
+    assert conversation_id is not None
+    _prior_id, prior_revision = _saved_message(database, conversation_id, "prior")
+    current_id = database.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "describe this",
+            "image_data": b"image-bytes",
+            "image_mime_type": "image/png",
+        }
+    )
+    assert current_id is not None
+    with database.transaction() as cursor:
+        revision_row = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE source_message_id = ? ORDER BY revision_sequence DESC LIMIT 1""",
+            (current_id,),
+        ).fetchone()
+    assert revision_row is not None
+    current_revision = SavedRevisionTraceProvenance(str(revision_row[0]))
+    messages = [
+        {"role": "user", "content": "prior"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "describe this"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                    },
+                },
+            ],
+        },
+    ]
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    admitted = _semantic_request(messages, [prior_revision, current_revision], policy)
+    transport_messages = deepcopy(messages)
+    if change == "text":
+        transport_messages[-1]["content"][0]["text"] = "changed request"
+    elif change == "image":
+        transport_messages[-1]["content"][1]["image_url"]["url"] = (
+            "data:image/png;base64,b3RoZXI="
+        )
+    elif change == "order":
+        transport_messages[-1]["content"].reverse()
+    actor_id, chain_id = new_opaque_id(), new_opaque_id()
+    request = ConsoleAgentTraceRequestFactory(admitted).build(
+        transport_messages,
+        tools=(),
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=actor_id,
+        chain_id=chain_id,
+    )
+    factory = ConsoleTraceBoundaryFactory(database)
+    entries = []
+
+    def adapter(**kwargs):
+        entries.append(thaw_json(kwargs["messages_payload"]))
+        return {"choices": [{"message": {"content": "image received"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        model="gpt-test",
+        base_url="https://api.openai.com/v1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        request,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        route_actor_id=actor_id,
+        route_chain_id=chain_id,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    if change is not None:
+        assert isinstance(
+            request.provenance.active_request[-1], ProviderArtifactTraceProvenance
+        )
+        with pytest.raises(ValueError, match="trace_turn_unavailable"):
+            factory(prepared, resolution, ConsoleRequestRoute.AGENT_FIRST)
+        with database.transaction() as cursor:
+            assert (
+                cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+                == 0
+            )
+        assert entries == []
+        return
+
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            route_actor_id=actor_id,
+            route_chain_id=chain_id,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+    assert output == ["image received"]
+    assert entries == [messages]
+    assert request.provenance.active_request[-1] == current_revision
+    with database.transaction() as cursor:
+        calls = cursor.execute(
+            "SELECT turn_id, state FROM console_trace_calls"
+        ).fetchall()
+    assert [tuple(row) for row in calls] == [(current_id, "complete")]
 
 
 def test_production_factory_rejects_unsaved_active_message_instead_of_stale_turn(
