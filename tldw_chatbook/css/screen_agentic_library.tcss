@@ -894,6 +894,21 @@ $ds-library-source-browser-width: 31;
     text-style: bold underline;
 }
 
+/* task-31983 (critique #6 P1, AC#4): the conversations canvas had NO
+   dedicated `:focus` rule, so a focused row fell back to the generic
+   `*:focus{outline:solid}` and (like the media list) read the same as the
+   `-selected` background. Same focus-only left-edge cue as
+   `.library-media-row:focus` -- border replaces the 1-col left padding so
+   the label holds; `outline: none` suppresses the generic fallback. */
+.library-conversation-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s
@@ -927,14 +942,24 @@ $ds-library-source-browser-width: 31;
 /* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
    the first row and Up/Down move it between rows -- previously this class
    had no dedicated ``:focus`` rule at all and fell back to the generic
-   ``*:focus{outline:solid}`` (core/_reset.tcss). Same readable contract
-   ``.library-media-row-selected`` above already uses; `outline: none`
-   suppresses the generic fallback so this is the only cue (never
-   `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
+   ``*:focus{outline:solid}`` (core/_reset.tcss). `outline: none` suppresses
+   the generic fallback (never `outline: heavy`, which eats a compact row's
+   label -- round-3 lesson).
+   task-31983 (critique #6 P1): `-selected` above uses this SAME background,
+   so focus and selection were indistinguishable -- the row the keyboard was
+   ON looked exactly like the open row and arrow-nav read as a dead key. The
+   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   cue `-selected` does NOT carry, so the two stay distinct even when a row
+   is both focused AND selected (arrow onto the open row). The left edge
+   replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
+   label neither shifts nor is clipped and the row never jumps focus<->blur --
+   the house focus convention ($ds-control-edge comment, _variables.tcss). */
 .library-media-row:focus, .library-media-trash-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -956,11 +981,14 @@ $ds-library-source-browser-width: 31;
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Notes list now parks DOM focus on the first row and
-   Up/Down move it between rows. */
+   Up/Down move it between rows. task-31983: same focus-only border-left cue
+   (padding compensates so the label holds), distinct from any selection. */
 .library-notes-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -990,10 +1018,14 @@ $ds-library-source-browser-width: 31;
     color: $ds-text-primary;
 }
 
+/* task-31983: same focus-only border-left cue; this row is height 1, so the
+   padding swap (0 1 -> 0 1 0 0) keeps the single label cell intact. */
 .library-notes-folder-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -1075,11 +1107,14 @@ $ds-library-source-browser-width: 31;
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Prompts list now parks DOM focus on the first row
-   and Up/Down move it between rows. */
+   and Up/Down move it between rows. task-31983: same focus-only border-left
+   cue (padding compensates so the label holds), distinct from selection. */
 .library-prompt-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 

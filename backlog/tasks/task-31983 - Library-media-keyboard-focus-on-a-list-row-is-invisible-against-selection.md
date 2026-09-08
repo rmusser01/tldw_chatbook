@@ -1,9 +1,10 @@
 ---
 id: TASK-31983
 title: 'Library media: keyboard focus on a list row is invisible against selection'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-07 22:48'
+updated_date: '2026-09-07 23:48'
 labels:
   - library
   - media
@@ -21,12 +22,20 @@ Critique #6 P1 (lead), both assessors. `.library-media-row:focus` and `.library-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A focused list row is visually distinct from a selected/open row at 235x52 and 100x30, with a cue that is not colour-only (a glyph or a clearly separated background, never colour-alone)
-- [ ] #2 Arrow-key movement between rows is visible without a selection change (a painted pin over the real screen asserts the focused row's cue moves on Down/Up)
-- [ ] #3 The compact 2-cell row keeps its label intact (no outline: heavy regression)
-- [ ] #4 The same distinction holds for the conversations, notes and prompts row canvases
+- [x] #1 A focused list row is visually distinct from a selected/open row at 235x52 and 100x30, with a cue that is not colour-only (a glyph or a clearly separated background, never colour-alone)
+- [x] #2 Arrow-key movement between rows is visible without a selection change (a painted pin over the real screen asserts the focused row's cue moves on Down/Up)
+- [x] #3 The compact 2-cell row keeps its label intact (no outline: heavy regression)
+- [x] #4 The same distinction holds for the conversations, notes and prompts row canvases
 <!-- AC:END -->
 
-## Renumbering provenance
+## Implementation Plan
 
-Filed as TASK-31976 during critique #6's fix wave; renumbered to TASK-31983 because a concurrent session landed its own TASK-31976 on dev first (2026-08-21 owner rule, TASK-19601: older arrival keeps the id). No other task references this one.
+<!-- SECTION:PLAN:BEGIN -->
+1. Confirm the root cause: `.library-media-row:focus` and `.library-media-row-selected` share the identical treatment. 2. Give every list `:focus` a focus-only border-left cursor bar that `-selected` does not carry; swap padding 0 1 -> 0 1 0 0 so the content column is fixed. 3. Apply to media/trash/notes/notes-folder/prompt + a new conversation :focus. 4. Painted pin at 235x52 and 100x30, red first.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+A focus-only `border-left: thick $ds-action-focus` cursor bar (a filled block) now distinguishes the keyboard-focused row from the selected/open row, which keeps its background-only treatment. Padding `0 1` -> `0 1 0 0` puts the bar in the column the left pad vacated, so the content column is identical blurred vs focused (no jump, no clip) and no `outline: heavy`. Applied to `.library-media-row`/`.library-media-trash-row`, `.library-notes-row`, `.library-notes-folder-row`, `.library-prompt-row`, and a newly-added `.library-conversation-row:focus`. Reuses `$ds-action-focus`; the bar is a shape cue, so it survives a monochrome terminal. Bundle regenerated. Pin `test_library_row_focus_cue_t31983.py` (8) asserts the focused row carries the bar and the selected row does not, at both sizes, and that the cue moves without a selection change. Renumbered from task-31976 after a remote id collision. Files: tldw_chatbook/css/components/_agentic_terminal.tcss, tldw_chatbook/css/screen_agentic_library.tcss (bundle), Tests/UI/test_library_row_focus_cue_t31983.py (new), Docs/User_Guide/library.md.
+<!-- SECTION:NOTES:END -->
