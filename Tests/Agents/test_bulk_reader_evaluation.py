@@ -6,13 +6,14 @@ import asyncio
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "evaluate_bulk_reader.py"
-TEST_PYTHON = Path("/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python")
+TEST_PYTHON = Path(sys.executable)
 
 
 def _load_evaluator():
