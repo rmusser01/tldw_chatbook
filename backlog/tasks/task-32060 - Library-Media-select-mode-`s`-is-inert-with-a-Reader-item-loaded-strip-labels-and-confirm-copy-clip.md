@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:24'
-updated_date: '2026-09-08 18:57'
+updated_date: '2026-09-08 20:59'
 labels:
   - library
   - media
@@ -33,9 +33,9 @@ With focus on an Items row and an item loaded in the Reader, `s` did nothing and
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. RED: s from a focused Items row with an item loaded (100x30) is inert; confirm copy clips at the 32-cell Items floor.
+1. RED: s from a focused Items row with an item loaded (100x30) is inert; the confirm copy is cut mid-word at the Items pane's narrowest.
 2. Fix _library_media_list_surface_active: focus inside the Items pane owns the list behaviours regardless of the Reader's exit availability.
-3. Lower LibraryMediaCanvas.min_width from 36 to ITEMS_MIN_WIDTH (32) so the confirm sentence wraps inside the pane instead of overflowing it.
+3. Remove LibraryMediaCanvas's min_width entirely: any floor above the slot the pane hands the canvas (pane width minus its 4 cells of padding) overflows it and clips every child instead of ellipsising. The 1fr width is bounded by the pane already.
 4. GREEN + covering files; docs stamp; live-verify at 100x30.
 <!-- SECTION:PLAN:END -->
 
@@ -46,9 +46,9 @@ Two one-place fixes, both root-cause.
 
 1. AC#1 -- `_library_media_list_surface_active` (library_media_controller.py) asked the Reader's exit availability BEFORE it asked where focus was, so in every layout that keeps a real Reader exit (Library collapsed, Items beside the Reader -- 100x30) a focused Items row was not 'the list surface': `s` was inert and the footer's `s select` chip vanished with it. Focus inside the Items pane now wins outright; the exit check only decides the no-focus case. One predicate, so the key gate, the footer chip and the select-mode footer set all move together.
 
-2. AC#2 -- the confirm copy already wrapped (task-30043), but `LibraryMediaCanvas` pinned `min_width = 36` while the Items pane floor is `ITEMS_MIN_WIDTH = 32`: at a 32-34 cell pane the canvas overflowed its slot and the sentence was clipped mid-word ('Delete 2 selected items? You c'). The floor is now imported from the resolver rather than restated.
+2. AC#2 -- the confirm copy already wrapped (task-30043), but `LibraryMediaCanvas` pinned `min_width = 36` while the Items pane hands the canvas PANE WIDTH MINUS 4 (the pane's own padding): a 36-cell pane gives 32, and the resolver's real floor (a 32-cell pane, ITEMS_MIN_WIDTH) gives 28. A floor above the slot overflows it and clips every child by the pane edge with no ellipsis ('Delete 2 selected items? You c'), which is the same defect task-30043 fixed one step up (40 -> 36). The min_width is REMOVED, not lowered -- `ITEMS_MIN_WIDTH` (32) would still overflow the 28-cell slot at the floor, and the `1fr` width that replaced the old `13fr` is bounded by the pane already, so the floor that once guarded that resolution has nothing left to guard. Measured at panes of 32/36/40 the canvas is now 28/32/36 and rows ellipsise. (Fix round 1: this note previously described lowering the floor to an imported ITEMS_MIN_WIDTH -- an earlier version of the change that did not ship.)
 
-AC#3 (overlap): the strip's '○ Export / ○ Review / ○ Delete' zero-selection reason belongs to task-32045 and the wide-layout toolbar overflow to task-15140 -- neither is touched here. This task only moves the ENTRY gate and the canvas floor, so 32045 can rewrite the disabled labels and 15140 can reflow the toolbar without conflicting.
+AC#3 (overlap): the strip's '○ Export / ○ Review / ○ Delete' zero-selection reason belongs to task-32045 and the wide-layout toolbar overflow to task-15140 -- neither is touched here, so both can land without conflicting with this task's entry gate and canvas floor.
 
-Files: tldw_chatbook/UI/Library_Modules/library_media_controller.py, tldw_chatbook/Widgets/Library/library_media_canvas.py, Tests/UI/test_library_crit8_polish_media.py (new), Docs/User_Guide/library/media-and-conversations.md.
+Files: tldw_chatbook/UI/Library_Modules/library_media_controller.py, tldw_chatbook/Widgets/Library/library_media_canvas.py, Tests/UI/test_library_crit8_polish_media.py (new), Tests/UI/test_library_media_render_fixes.py (36-cell floor pin extended to the ellipsis), Docs/User_Guide/library/media-and-conversations.md.
 <!-- SECTION:NOTES:END -->
