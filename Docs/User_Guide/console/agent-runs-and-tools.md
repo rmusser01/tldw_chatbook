@@ -430,6 +430,14 @@ already streaming.
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
+For a read-only example, Settings includes an unsaved **Bulk reader** preset.
+Its four local file tools still pass through the normal workspace and approval
+rules, and its requested file list remains advisory within that workspace. The
+[bulk-reader comparison pilot](../../Examples/agents/bulk-reader/README.md)
+explains compatible same-provider model selection and the opt-in synthetic
+evaluation. It does not enable automatic routing or establish savings by
+itself.
+
 ### Change review — reviewing a turn's file changes
 
 Change Review is **off for every new workspace until you explicitly enable
