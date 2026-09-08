@@ -162,6 +162,28 @@ def models_ready(embedder: str, override: Path | None = None) -> bool:
     )
 
 
+def assets_to_fetch(embedder: str, models_dir_override: Path | None = None) -> list[ModelAsset]:
+    """The subset of `embedder`'s two required assets not already present
+    under `models_dir(models_dir_override)` (presence + byte size only --
+    the same contract `models_ready` uses; a full hash check only ever runs
+    on an actual download or on `load()`, never here).
+
+    Shared by `ensure_models` (task 4, 31827 re-review, Minor 2/4: whenever
+    this returns without `ensure_models` itself raising -- its only extra
+    case, a corrupted PRE-PLACED air-gapped file, raises before either
+    total is used -- this is exactly its own `to_fetch` set) and
+    `LocalDiarizer.__init__`'s initial "downloading 0 / N MB" estimate, so
+    a partial re-fetch (one asset already on disk) can never show a bigger
+    total than what `ensure_models` actually streams.
+
+    Raises:
+        ValueError: `embedder` is not a manifest key (from `model_paths`).
+    """
+    seg_path, emb_path = model_paths(embedder, models_dir_override)
+    plan = ((SEGMENTATION, seg_path), (EMBEDDERS[embedder], emb_path))
+    return [asset for asset, path in plan if not (path.is_file() and path.stat().st_size == asset.size)]
+
+
 def _sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -420,7 +442,14 @@ def ensure_models(
         raise ModelsUnavailable("budget exceeded")
     deadline = time.monotonic() + budget_s
 
-    total_mb = sum(asset.size for asset, _ in to_fetch) // _MB
+    # Fix round 2 (re-review Minor 2/4): routed through `assets_to_fetch` --
+    # the same helper `LocalDiarizer.__init__` calls for its initial status
+    # -- rather than re-deriving the total from `to_fetch` inline. Provably
+    # the same set here: `to_fetch`, above, only ever differs from
+    # `assets_to_fetch`'s presence+size verdict for a pre-placed air-gapped
+    # file with a hash mismatch, and that case already raised two lines
+    # above this one, before `total_mb` is ever computed.
+    total_mb = sum(asset.size for asset in assets_to_fetch(embedder, models_dir_override)) // _MB
     state = {"done": 0, "reported_mb": 0}
 
     def _on_bytes(n: int) -> None:

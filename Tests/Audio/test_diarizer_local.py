@@ -1477,3 +1477,92 @@ def test_speechbrain_diarizer_rejects_a_duplicate_engine_kwarg():
     a silent `.pop()` that would hide the caller bug."""
     with pytest.raises(TypeError):
         SpeechBrainDiarizer(engine="onnx", spawn=lambda *a, **k: FakeProc([]))
+
+
+# --- Fix round 2 (re-review 1, 31827 task 4): New Important 1 / Minor 1 ----
+
+def test_wait_ready_follows_the_replacement_gate_across_a_restart():
+    """New Important 1 (pre-existing, not introduced by this task): a caller
+    already BLOCKED in `wait_ready` when a crash-restart swaps `self._ready`
+    for a fresh Event must not be released early on the DEAD gate with
+    `_ready_ok` still False -- it has to keep waiting, within the same
+    budget, for the REPLACEMENT's own READY."""
+    made: list[FakeProc] = []
+    gate0 = threading.Event()
+    gate1 = threading.Event()
+
+    class _RaisingOnce(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data and not made[0].stdin.chunks:
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        if not made:
+            p.stdin = _RaisingOnce()
+            p.stderr = _GatedStderr(gate0)
+        else:
+            p.stderr = _GatedStderr(gate1)
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+
+    results: list[bool] = []
+    caller = threading.Thread(target=lambda: results.append(d.wait_ready(5.0)))
+    caller.start()
+    # Worker 1 is still gated closed -- nothing else can touch `self._ready`
+    # yet, so this gives the caller thread an overwhelming head start to
+    # reach its blocking wait and snapshot the ORIGINAL Event before
+    # anything changes it (not a race: only the caller thread runs at all
+    # during this window).
+    time.sleep(0.1)
+
+    gate0.set()  # worker 1 reports READY -> enroll fails -> restart spawns worker 2
+    deadline = time.monotonic() + 2.0
+    while len(made) < 2:
+        assert time.monotonic() < deadline, "restart never spawned a replacement"
+        time.sleep(0.005)
+    time.sleep(0.05)  # let worker 1's watcher finish its OWN `ready.set()` on the dead gate
+
+    gate1.set()  # only now does the REPLACEMENT get to report its own READY
+    caller.join(2.0)
+
+    assert results == [True]
+    assert d._ready_ok is True
+
+
+def test_a_dying_watcher_does_not_write_ready_for_the_replacement():
+    """I3 regression, source 1 (re-review 1, Minor 1 -- supplied test): the
+    process-identity guard in `_watch_stderr` is unpinned by the existing
+    suite. `_send_enroll` -> `_fail()` -> `_start()` runs inside worker 1's
+    own watcher; that watcher's `self._proc` is then stale and must not
+    report "ready" for a replacement still warming up."""
+    made: list[FakeProc] = []
+    gate1 = threading.Event()
+
+    class _RaisingOnce(_Pipe):
+        def write(self, data: bytes) -> int:
+            if b'"cmd": "enroll"' in data and not made[0].stdin.chunks:
+                raise OSError("broken pipe")
+            return super().write(data)
+
+    def _spawn(*a, **k):
+        p = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+        if not made:
+            p.stdin = _RaisingOnce()
+        else:
+            p.stderr = _GatedStderr(gate1)  # the replacement stays in warm-up
+        made.append(p)
+        return p
+
+    d = SpeechBrainDiarizer(spawn=_spawn, voiceprint=[1.0, 0.0])
+    deadline = time.monotonic() + 2.0
+    while len(made) < 2:
+        assert time.monotonic() < deadline, "restart never spawned a replacement"
+        time.sleep(0.005)
+    time.sleep(0.1)  # let the dying watcher run out
+    assert d._ready_ok is False
+    assert d.warmup_status == "warming up", f"stale status: {d.warmup_status!r}"
+    gate1.set()

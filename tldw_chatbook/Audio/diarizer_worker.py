@@ -1,7 +1,12 @@
 """Subprocess worker: PCM -> speaker id. torch/SpeechBrain live ONLY here.
 
-Never import this module in the app process -- it pulls in torch. `main()` is
-run as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
+Fix round 2 (re-review 1, Minor 3): this module's own scope is import-cheap
+(stdlib only -- json/math/os/sys/typing); the app process already reads
+`MODEL_ID`/`ENGINES` from it directly (`diarizer_local.py`, task 4: 31827).
+torch (or sherpa-onnx, for the ONNX engine) is never imported at this
+module's own scope -- `main()` and the engine modules it imports by name
+(`ENGINES[engine]`) are the only places either ever loads. `main()` is run
+as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
 `diarizer_local.SpeechBrainDiarizer`, which owns the wire protocol:
 
     argv  :  ``--start-id N`` (optional) -- start cluster numbering past ``N``.

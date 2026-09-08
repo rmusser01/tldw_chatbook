@@ -226,16 +226,17 @@ class LocalDiarizer:
             if self._engine not in ENGINES:
                 raise ValueError(f"unknown engine: {self._engine}")
             if self._engine == "onnx":
-                from tldw_chatbook.Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, EMBEDDERS, SEGMENTATION
+                from tldw_chatbook.Audio.diarizer_engine_onnx import DEFAULT_EMBEDDER, assets_to_fetch
 
                 self._embedder = self._embedder or DEFAULT_EMBEDDER
-                # m1: the same expression `ensure_models` sums (whole-MB
-                # floor division too) when both assets still need fetching --
-                # `SEGMENTATION.size`, not `.download_size` (the tarball's
-                # byte count, ~1 MB larger than the extracted member this
-                # totals against), so the rail's first line and its first
-                # `progress()` update never disagree on the denominator.
-                total_mb = (SEGMENTATION.size + EMBEDDERS[self._embedder].size) // (1 << 20)
+                # m1/Minor 2 (re-review 1): the SAME helper `ensure_models`
+                # itself now sums its own total from -- so the rail's first
+                # line never overstates a PARTIAL re-fetch (one asset
+                # already on disk, e.g. after switching `onnx_embedder`) and
+                # never disagrees with the first real `progress()` update.
+                total_mb = sum(a.size for a in assets_to_fetch(self._embedder, self._models_dir_override)) // (
+                    1 << 20
+                )
         except Exception as exc:  # noqa: BLE001 - the constructor must never raise (M2/M3, I4)
             logger.warning("diarizer: models unavailable ({})", type(exc).__name__)
             self._mark_coarse(COARSE_MODELS_UNAVAILABLE)
@@ -444,13 +445,35 @@ class LocalDiarizer:
         `_ready` without waiting so a cold model never stalls the transcript
         thread.
 
+        Fix round 2 (re-review 1, New Important 1; pre-existing, not
+        introduced by this task): a caller already blocked here when a
+        crash-restart swaps `self._ready` for a fresh Event (`_fail()` runs
+        on a different thread) used to be released on the DEAD gate with
+        `_ready_ok` still False -- the one restart spec §7 grants would then
+        be lost for exactly the caller that was waiting for it (reachable
+        through `diarize`'s own `wait_ready` call). Re-reads `self._ready`
+        after every wait and, if it changed under us, waits again on the
+        CURRENT Event for whatever budget remains -- looping until the
+        Event stops changing (at most once in practice: only one restart is
+        ever granted) or the deadline passes.
+
         Args:
             timeout: Seconds to wait at most.
 
         Returns:
-            True when the worker reported READY within `timeout`.
+            True when the (possibly replaced) worker reported READY within
+            `timeout`.
         """
-        return self._ready.wait(timeout) and self._ready_ok
+        deadline = time.monotonic() + timeout
+        ev = self._ready
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            got = ev.wait(remaining)
+            if self._ready is ev:
+                return got and self._ready_ok
+            if time.monotonic() >= deadline:
+                return self._ready_ok
+            ev = self._ready  # the gate changed under us -- honour the replacement's own
 
     def _warmup(self) -> None:
         """`engine == "onnx"` only: fetch the models, then spawn (spec §3).
