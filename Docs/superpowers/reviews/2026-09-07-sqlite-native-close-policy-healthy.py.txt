@@ -1,0 +1,68 @@
+"""THROWAWAY: exercise healthy real-repository reuse under the scoped policy."""
+
+import json
+import runpy
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_RETAINED_REPOSITORY_CHILD = runpy.run_path(
+    str(Path(__file__).with_name("test_repository_close_policy.py"))
+)["_RETAINED_REPOSITORY_CHILD"]
+
+
+CHILD = (
+    _RETAINED_REPOSITORY_CHILD.split("# The app retains its repository")[0]
+    + r"""
+from tldw_chatbook.TTS.profile_types import TTSProfileDraft
+async def main():
+    path = Path(sys.argv[1])
+    repository = TTSProfileRepository(path)
+    await repository.open()
+    result = await repository.create_profile(TTSProfileDraft(
+        "Seed", "openai", "tts-1", "alloy", "mp3", 1.0,
+    ))
+    profile_id = result.value.profile_id
+    if sys.argv[4] == "checkpoint":
+        checked = await repository._submit_operation(
+            lambda connection: connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        )
+        assert tuple(checked.value) == (0, 0, 0)
+    await repository.close()
+    for iteration in range(2):
+        repository = TTSProfileRepository(path)
+        await repository.open()
+        try:
+            recovered = await repository.get_profile(profile_id)
+            assert recovered.value.display_name == "Seed"
+            assert recovered.value.speed == 1.0
+        finally:
+            await repository.close()
+    print(json.dumps({"reopens": 2, "data_preserved": True}))
+asyncio.run(main())
+"""
+)
+
+
+@pytest.mark.parametrize("policy", ["default", "native"])
+@pytest.mark.parametrize("checkpoint", ["none", "checkpoint"])
+def test_actual_repository_healthy_close_reopen(tmp_path, policy, checkpoint):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            CHILD,
+            str(tmp_path / "profiles.sqlite3"),
+            "unused",
+            policy,
+            checkpoint,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"reopens": 2, "data_preserved": True}
