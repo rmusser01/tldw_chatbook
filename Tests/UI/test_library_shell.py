@@ -5002,7 +5002,13 @@ async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
         bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
         bar.focus()
         await pilot.pause()
-        monkeypatch.setattr(screen, "focus_next", lambda: None)
+        # task-32052: the emergency Tab path goes through
+        # ``_move_library_screen_focus``, which passes a region selector to
+        # ``focus_next`` so Tab cannot walk into the nav bar. The fake stubs
+        # the Textual primitive at the boundary (rather than
+        # ``_move_library_screen_focus`` itself) so this pin still exercises
+        # that scoping; it just has to accept the selector.
+        monkeypatch.setattr(screen, "focus_next", lambda *args, **kwargs: None)
 
         await pilot.press("tab")
         await pilot.pause()
