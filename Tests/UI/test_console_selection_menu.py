@@ -653,6 +653,116 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment(ansi_color):
         assert menu.region.contains_region(copy.region)
 
 
+class _ResizableTranscriptFeedbackApp(_TinyTranscriptFeedbackApp):
+    CSS = """
+    ConsoleTranscript { height: 1fr; }
+    #composer-standin { height: 25; }
+    """
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ansi_color", [False, True])
+@pytest.mark.parametrize("resize_target", ["terminal", "transcript"])
+async def test_open_menu_recovers_after_owner_shrink_and_growth(
+    ansi_color, resize_target
+):
+    app = _ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0")
+        assert transcript.region.height == 7
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        selection = transcript.selection_manager.finish_drag()
+        assert selection is not None
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(selection, 4, 6)
+        )
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: (
+                candidate.has_class("shrunk-for-short-owner")
+                and transcript.region.contains_region(candidate.region)
+            ),
+        )
+        await pilot.press("up")  # preserve the focused last action while growing
+        comment = menu.query_one("#console-selection-comment", Button)
+        assert app.focused is comment
+
+        for owner_height in (20, 7, 20):
+            if resize_target == "terminal":
+                await pilot.resize_terminal(80, owner_height + 25)
+            else:
+                app.query_one("#composer-standin").styles.height = 32 - owner_height
+            await pilot.pause()
+            assert transcript.region.height == owner_height
+            assert app.query_one(ConsoleSelectionMenu) is menu
+            assert app.focused is comment
+            if owner_height == 20:
+                assert menu.query_one("#console-selection-feedback-hint").display
+                assert not menu.has_class("shrunk-for-short-owner")
+                assert all(
+                    menu.region.contains_region(button.region)
+                    for button in menu.query(Button)
+                )
+            else:
+                assert menu.has_class("shrunk-for-short-owner")
+                await pilot.press("down", "up")
+                assert app.focused is comment
+                assert menu.region.contains_region(comment.region)
+            assert transcript.region.contains_region(menu.region)
+            assert row.get_selection_text() == "answe"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ansi_color", [False, True])
+@pytest.mark.parametrize("resize_target", ["terminal", "transcript"])
+async def test_open_menu_repositions_when_resizing_without_compacting(
+    ansi_color, resize_target
+):
+    app = _ResizableTranscriptFeedbackApp(ansi_color=ansi_color)
+    async with app.run_test(size=(80, 45)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0")
+        assert transcript.region.height == 20
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        selection = transcript.selection_manager.finish_drag()
+        assert selection is not None
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(selection, 4, 8)
+        )
+        menu = await _wait_for_menu(
+            app,
+            pilot,
+            lambda candidate: transcript.region.contains_region(candidate.region),
+        )
+        assert menu.region.bottom == transcript.region.bottom
+        height = menu.region.height
+        for owner_height in (19, 18):
+            if resize_target == "terminal":
+                await pilot.resize_terminal(80, owner_height + 25)
+            else:
+                app.query_one("#composer-standin").styles.height = 45 - owner_height
+            await pilot.pause()
+            await _wait_for_menu(
+                app,
+                pilot,
+                lambda candidate: candidate.region.bottom == transcript.region.bottom,
+            )
+            assert transcript.region.height == owner_height
+            assert menu.region.height == height
+            assert not menu.has_class("shrunk-for-short-owner")
+            assert transcript.region.contains_region(menu.region)
+            assert menu.region.bottom == transcript.region.bottom
+        await pilot.click(menu.query_one("#console-selection-copy", Button))
+        await pilot.pause()
+        assert app.clipboard == "answe"
+
+
 @pytest.mark.asyncio
 async def test_null_transcript_region_falls_back_to_screen_bounds():
     """Clamp-fix review: a NULL/unmeasured transcript region (textual 8.2.8

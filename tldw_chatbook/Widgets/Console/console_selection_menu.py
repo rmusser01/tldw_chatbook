@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, ClassVar
 from weakref import WeakSet
 
 from textual import on
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.dom import NoScreen
@@ -42,6 +43,7 @@ from textual.widgets import Button, Static
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from textual.screen import Screen
+    from textual.signal import Signal
 
 #: Every constructed, not-yet-collected selection menu (TASK-21119).
 #:
@@ -315,6 +317,8 @@ class ConsoleSelectionMenu(Vertical):
         self._feedback_available = feedback_available
         self._run_active = run_active
         self._selection_top = selection_top
+        self._clamp_bounds: Region | None = None
+        self._layout_refresh_signal: Signal[Screen] | None = None
         #: Widget holding focus before the menu grabbed it (captured in
         #: ``on_mount`` BEFORE focusing the first button); ``None`` =
         #: nothing was focused (or the capture raced teardown), so unmount
@@ -326,7 +330,12 @@ class ConsoleSelectionMenu(Vertical):
         # already in the DOM but invisible to the screen's dismissal gate.
         _LIVE_SELECTION_MENUS.add(self)
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
+        """Build selection actions in keyboard navigation order.
+
+        Yields:
+            Action buttons and the no-run hint when feedback is available.
+        """
         yield Button("Copy selection", id="console-selection-copy", variant="primary")
         if self._has_add_to_chat:
             yield Button("Add to chat", id="console-selection-add-to-chat")
@@ -361,6 +370,10 @@ class ConsoleSelectionMenu(Vertical):
             self._previous_focus = self.screen.focused
         except Exception:  # noqa: BLE001 - capture is best-effort during odd teardown
             self._previous_focus = None
+        # A capped menu may keep its size when the transcript grows, so
+        # its own Resize event cannot report every change to owner bounds.
+        self._layout_refresh_signal = self.screen.screen_layout_refresh_signal
+        self._layout_refresh_signal.subscribe(self, self._on_screen_layout_refresh)
         self.absolute_offset = Offset(*self._anchor)
         # Only this widget knows its real extent (border + padding +
         # buttons); pull the anchor back inside the OWNING TRANSCRIPT's
@@ -387,6 +400,9 @@ class ConsoleSelectionMenu(Vertical):
             _event: Textual resize notification; only the settled extent matters.
         """
         self.call_after_refresh(self._clamp_within_owner)
+
+    def _on_screen_layout_refresh(self, _screen: Screen) -> None:
+        self._clamp_within_owner()
 
     def _clamp_within_owner(self) -> None:
         """Shift the anchor so the measured menu fits its clamp box.
@@ -428,6 +444,15 @@ class ConsoleSelectionMenu(Vertical):
         if bounds is None:
             screen_size = self.screen.size
             bounds = Region(0, 0, screen_size.width, screen_size.height)
+        if bounds != self._clamp_bounds:
+            self._clamp_bounds = bounds
+            if self.has_class(_SHRUNK_CLASS):
+                # Remeasure the full menu in the new space. Cache the bounds
+                # first so the resulting layout does not undo a needed cap.
+                self.remove_class(_SHRUNK_CLASS)
+                self.styles.max_height = None
+                self.call_after_refresh(self._clamp_within_owner)
+                return
         # Shrink guard (clamp-fix review): a box shorter than even the
         # compact menu cannot contain it at ANY offset -- trade the
         # container border + hint line for three more usable rows, then
@@ -445,7 +470,10 @@ class ConsoleSelectionMenu(Vertical):
         shift_y = max(0, region.bottom - bounds.bottom)
         if not shift_x and not shift_y:
             return
-        x, y = self._anchor
+        # Use the measured position so repeated callbacks before the next
+        # layout cannot apply the same correction to the anchor twice.
+        x = max(bounds.x, region.x - shift_x)
+        y = max(bounds.y, region.y - shift_y)
         # Bottom overflow: hop entirely above the selected row when the
         # whole menu fits between the box top and the row top; the row (and
         # its highlight strip, which lives inside the row widget) stays
@@ -467,17 +495,13 @@ class ConsoleSelectionMenu(Vertical):
                 # to keep visible (reachable on boxes <= ~2x menu height).
                 above_y = selection_top - region.height
             if above_y >= bounds.y:
-                self._anchor = (
-                    max(bounds.x, x - shift_x),
-                    above_y,
-                )
-                self.absolute_offset = Offset(*self._anchor)
-                return
-        self._anchor = (
-            max(bounds.x, x - shift_x),
-            max(bounds.y, y - shift_y),
-        )
-        self.absolute_offset = Offset(*self._anchor)
+                y = above_y
+        self._anchor = (x, y)
+        offset = Offset(*self._anchor)
+        if self.absolute_offset != offset:
+            self.absolute_offset = offset
+            # absolute_offset is not reactive; update painting and hit tests.
+            self.refresh(layout=True)
 
     def on_key(self, event: Key) -> None:
         """Keyboard navigation: arrows cycle actions; Escape closes.
@@ -565,6 +589,9 @@ class ConsoleSelectionMenu(Vertical):
         self.remove()
 
     def _on_unmount(self) -> None:
+        if self._layout_refresh_signal is not None:
+            self._layout_refresh_signal.unsubscribe(self)
+            self._layout_refresh_signal = None
         # Best-effort registry prune (TASK-21119): dropping the entry keeps
         # the candidate set small, but correctness never depends on it --
         # ``selection_menus_on_screen`` re-checks attachment, and the weak

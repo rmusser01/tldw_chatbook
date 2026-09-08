@@ -44,7 +44,8 @@ point. Which buttons appear depends on what you selected:
 If the menu would run off the bottom of the screen it flips to sit entirely
 *above* the selected row, so your highlight stays visible.
 When the transcript is too short to show every action at once, the menu
-scrolls within it; **↑/↓** bring the focused action into view.
+scrolls within it; **↑/↓** bring the focused action into view. The full menu
+returns when you make more space available.
 
 The first button takes focus on open: **↑/↓** cycle, **Enter** activates,
 **Esc** closes and returns focus wherever it was before.

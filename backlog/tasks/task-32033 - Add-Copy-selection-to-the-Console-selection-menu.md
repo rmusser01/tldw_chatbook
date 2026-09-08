@@ -27,6 +27,7 @@ Users selecting part of a Console message need an explicit way to copy that text
 - [x] #5 Targeted selection tests and static checks demonstrate no new failures relative to dev, and the user guide explains the action and terminal clipboard limitation.
 - [x] #6 In short transcripts the menu stays within its owner and every action remains reachable by scrolling or keyboard navigation, including ANSI color mode.
 - [x] #7 The previously failing keyboard-anchor and two feedback-persistence tests pass while retaining real menu-containment and SQLite-write coverage.
+- [x] #8 An open menu adapts to terminal and transcript resizing, restores its full action list and feedback hint when space returns, and preserves focus.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,6 +39,7 @@ Users selecting part of a Console message need an explicit way to copy that text
 4. Keep the additional menu row inside short transcript bounds with scrolling when compact actions cannot all fit; verify keyboard reachability and ANSI rendering.
 5. Regenerate the bundled widget stylesheets and use the production stylesheet harness on current dev. Run the targeted selection suites, scoped lint/format checks, and a production Console rendering/interaction check; self-review the diff and record evidence. Compare any existing test failures against pristine dev.
 6. Per the requested follow-up, trace and repair the three inherited failures before rebasing or merging. Use the existing production-style keyboard harness, sample geometry after selection entry, and wire the real workspace registry into the two real-database stores. Preserve or strengthen the behavioral assertions and rerun the complete selection slice. This is test-harness repair within existing runtime and persistence contracts; no new ADR is required.
+7. Address Qodo's two findings: annotate/document the public compose override, and remeasure the menu when its owner's bounds change. Exercise shrink/grow cycles from terminal and transcript changes in normal and ANSI modes; restore normal sizing without losing focus. Reuse Textual's layout notification and the existing clamp; no new ADR is required.
 
 ADR required: no
 
@@ -59,10 +61,13 @@ The consolidated widget stylesheets are regenerated from the menu source. The ne
 
 The three inherited failures were repaired at their test setup boundaries. The keyboard harness lacked the consolidated CSS and sampled the row before selection entry added its highlight and reflowed the layout. It now samples the selected row and additionally verifies that the menu stays inside its owner without shrinking it. The two real-database feedback tests now supply the same real workspace registry as ConsoleRuntime; their SQLite event and annotation assertions remain intact. Independent review found no masked production defect or weakened coverage.
 
+Addressed Qodo's two findings: compose now declares ComposeResult and documents its yielded widgets; the menu observes screen layout changes, clears temporary compact styling and height limits when owner bounds change, and remeasures. Offset corrections use the measured position and request layout only when the offset changes. The layout subscription is removed on unmount. Eight resize cases cover terminal and transcript growth/shrinkage in both color modes, restoration of the feedback hint and actions, preserved focus and selection, and clicking Copy after repositioning. Independent review found no remaining actionable issues.
+
 Files: `Widgets/Console/console_selection_menu.py`, `Widgets/Console/console_transcript.py`, both generated `css/widget_defaults_*.tcss` files, the new `Tests/UI/test_console_selection_copy.py`, existing selection-menu, keyboard-selection, and end-to-end tests, `Docs/User_Guide/console/text-selection-and-feedback.md`, and `backlog/docs/lessons-textual.md`.
 
 Verification:
 - All **175 cases pass** across the six targeted selection suites after repairing the three inherited failures (138.34 seconds). Each of those three was reproduced failing before its repair and verified passing afterward. The existing requests dependency-version warning remains.
+- All **55 selection-menu cases pass** after the Qodo follow-up (22.75 seconds). The four compact-to-full resize cases each failed before the owner-bound fix and passed afterward; four additional cases verify settled movement and click handling while the full menu continues to fit.
 - All eight new Copy cases pass, including mouse and keyboard journeys with production styles, uncapped plain/Markdown/diff text, and stale selections. Earlier production render probes also verified user and assistant menu containment and first-action focus; SVG/PNG captures are in `/private/tmp/chatbook-copy-selection-32033/`.
 - All six `scripts/preflight.sh` derived-artifact checks pass, including stylesheet reproduction and task ID hygiene.
 - The new Copy test file passes Ruff and formatting. Before/after checks find no new Ruff diagnostics in the five existing Python files; all edited Python regions and scoped whitespace checks pass. Existing lint findings and unrelated formatting drift remain.
