@@ -2421,3 +2421,75 @@ source/UI digest rows may be refreshed after identical diagnostic-call AST proof
 inherited owner/config sink drift and the two TTS/recovery.py profile literals
 remain recorded debt, not green evidence. Full command/results and private native
 observer logs are in the phase13 dual report.
+
+### Task10 phase14: TTS repository lifecycle foundation only
+
+`TTSProfileRepository` now reserves ordinary open/CRUD/restore entry, seals new
+requests separately from terminal state, and exposes private owner-loop
+`_maintenance_close_admission`, `_maintenance_drain(deadline)` and
+`_maintenance_resume`. Its existing executor owns all cleanup. Explicit result
+completion markers survive the native Future's done callback; cancelled callers
+cannot hide running work. Positive connection/ProfileStoreLease retirement precedes
+CLOSED/generation advance. Timeout and uncertain cleanup retain the executor and
+actual source references. The exact repository is a strong local raw-operation
+blocker during drain/resume uncertainty; that record grants no IO or native lease.
+
+Resume uses fresh admission and original source/path/inode checks on the worker.
+Public close stays definitive, including its existing non-quarantine failure
+contract; maintenance never clears a failure because a later close succeeded.
+This phase supplies **no installed TTS source binding or across-pause file scope**.
+The actual app constructor at `app.py::TldwCli.__init__`, shared
+`_ensure_tts_profile_repository` open task and retained definitive
+`_close_tts_profile_repository` task are unchanged. Their full app/headless safe
+point and exact current config/profile association remain required Task10 work.
+No syntax-owner classification or participant_pending entry is promoted.
+
+Immediate TTS continuation (phase14b within Task10):
+
+- Repository `_worker_open_if_proven_current`, `_worker_initialize_store`,
+  `_worker_publish_migrated_store`, reusable tombstones and exact-schema readers,
+  plus `profile_migration_{candidate,journal,namespace,publication,recovery}` need
+  their finite source-selected native cohort before effects. Preserve existing
+  schema4/lineage/lock/publication recovery policy; inspection never opens/migrates
+  the ordinary repository. Literal fixed candidate/rollback slots do not grant a
+  parent-directory scope, and active-specific journal names must be selected from
+  the actual producer rather than guessed from the default journal constant.
+- `_worker_backup_to` selects its randomized `mkstemp` output inside the worker;
+  destination/source/sidecars/parent and temporary must be admitted as one actual
+  operation. Its cleanup currently records a destination close error without
+  retaining that local connection beyond return. Establish a behavioral RED before
+  changing this source. `_worker_create_recovery_backup`, restore candidate/source
+  readers, publication/rebind, residual cleanup and fsync descriptors also require
+  exact native-resource and durable-result qualification.
+- `profile_reference_storage.write_reference_blob/read_reference_blob` hold BLOBs
+  locally and report close failures; lifetime after failed close needs real native
+  evidence. `profile_reference_audio`, `profile_reference_materialization` creation,
+  validation/sweep/cleanup, and `voice_bundle_service` inspect/stage/commit/export
+  own additional file/lock/stream/worker resources. Repository row/reference tests
+  do not qualify those resource owners or their service-level compound lifetimes.
+- `profile_service._run_owned_repository_call`, consumer/artifact mutation fences,
+  availability/dependency/runtime methods; `STTSProfileLibrary` editor drafts,
+  sanitized export worker and bundle UI; app/shared open/close/result handling;
+  actual synthesis/player/audiobook/model/backend jobs all retain their own pending
+  and native obligations. Also audit independently cancelled private lifecycle
+  completion Tasks and the underlying open/restore/close/shutdown futures rather
+  than treating wrapper cancellation as native retirement.
+- The two unchanged `TTS/recovery.py::_Voices.discover` literals at lines111/115
+  still fail the profile-owned path census. ADR040 intentionally keeps reusable
+  Chatterbox/Higgs voices shared; actual backends retain those legacy shared roots.
+  Resolve their canonical runtime/config/default selection and exact census rows
+  in the immediate actual voice-manager/backend cohort. No path relocation or
+  blanket exception is authorized, and the profile guard is not Green.
+
+Evidence: final focused new lifecycle/shared run57passed, including20 new lifecycle
+cases; independent source/native and known-startup observer cases use private
+subprocesses and pipes. Ordinary selected open/close/cancellation/namespace cases
+116passed;3 spawned concurrent-open cases failed before repository code because
+host SemLock allocation raises OSError28. A standalone stdlib Event probe reproduces
+that host limitation. Reference/backup integration96passed. Final affected source
+census1passed; earlier combined architecture23passed/3failed included one temporary
+new-call row from an intermediate resume implementation (now removed and rechecked)
+and the two inherited voice literals. Counts overlap and are not additive. No full
+suite or live model/voice/network work ran; full commands and limits are in the
+identical external and scratch task-10-phase14-report.md. Task31993 remains In
+Progress with all ACs unchecked; whole Task10 review belongs to the controller.

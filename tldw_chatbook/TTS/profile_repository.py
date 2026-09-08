@@ -15,7 +15,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast
 from unicodedata import category as _unicode_category
 from unicodedata import normalize as _unicode_normalize
 from uuid import UUID, uuid4
@@ -122,6 +122,11 @@ from tldw_chatbook.TTS.profile_types import (
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils import private_paths
 
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Backup_Recovery.storage_admission import _Acquisition
+
+_MaintenanceSource = tuple[Path, Path, tuple[int, int], tuple[int, int]]
 
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
@@ -1224,6 +1229,15 @@ class TTSProfileRepository:
         self._store_established = False
         self._pending_futures: set[Future[object]] = set()
         self._open_completion: asyncio.Task[ProfileStoreResult[None]] | None = None
+        self._maintenance_admission_closed = False
+        self._maintenance_completion: asyncio.Task[bool] | None = None
+        self._maintenance_prior_open = False
+        self._maintenance_generation: int | None = None
+        self._maintenance_source: _MaintenanceSource | None = None
+        self._maintenance_resume_source: _MaintenanceSource | None = None
+        self._maintenance_failure: BaseException | None = None
+        self._maintenance_cleanup_future: Future[None] | None = None
+        self._publication_completions: dict[Future[object], asyncio.Future[None]] = {}
 
     @property
     def state(self) -> ProfileRepositoryState:
@@ -1325,6 +1339,18 @@ class TTSProfileRepository:
             BaseException: A worker control-flow signal, after partial
                 ownership has been cleaned.
         """
+        self._bind_or_check_loop()
+        reservation = self._reserve_maintenance_entry()
+        try:
+            return await self._open_admitted(reservation)
+        except BaseException as error:
+            _raise_operation_error(error)
+            raise AssertionError("unreachable")
+        finally:
+            reservation.close()
+
+    async def _open_admitted(self, reservation: _Acquisition) -> ProfileStoreResult[None]:
+        """Run the existing open lifecycle after ordinary entry reservation."""
 
         lifecycle_lock = self._bind_or_check_loop()
         with self._state_lock:
@@ -1333,6 +1359,7 @@ class TTSProfileRepository:
             return await self._await_open_completion(shared_completion)
 
         async with lifecycle_lock:
+            reservation.check()
             with self._state_lock:
                 if self._terminal:
                     raise _repository_error("terminal")
@@ -1448,6 +1475,7 @@ class TTSProfileRepository:
         active_path: Path | None = None
         body_error: BaseException | None = None
         try:
+            self._worker_check_maintenance_resume_source()
             active_path = _canonical_database_path(
                 self._database_path,
                 "operation_failed",
@@ -1476,6 +1504,7 @@ class TTSProfileRepository:
                 "operation_failed",
             )
             revalidate_exact_current_profile_store(connection, active_path)
+            self._worker_check_maintenance_resume_source()
         except BaseException as error:
             body_error = error
 
@@ -3468,6 +3497,23 @@ class TTSProfileRepository:
             BaseException: A caller control-flow signal after lifecycle
                 settlement and cleanup.
         """
+        self._bind_or_check_loop()
+        reservation = self._reserve_maintenance_entry()
+        try:
+            return await self._restore_admitted(
+                candidate, timeout_seconds, reservation=reservation
+            )
+        finally:
+            reservation.close()
+
+    async def _restore_admitted(
+        self,
+        candidate: Path,
+        timeout_seconds: int | float = 5.0,
+        *,
+        reservation: _Acquisition,
+    ) -> ProfileStoreResult[ProfileRestoreReceipt]:
+        """Run the existing restore lifecycle after ordinary entry reservation."""
 
         timeout = _validate_restore_timeout(timeout_seconds)
         if type(candidate) is not _PATH_TYPE:
@@ -3488,6 +3534,10 @@ class TTSProfileRepository:
             raise _repository_error("restore_failed") from None
 
         try:
+            try:
+                reservation.check()
+            except BaseException as error:
+                _raise_operation_error(error)
             with self._state_lock:
                 state_error = self._normal_state_error_locked()
                 if state_error is not None:
@@ -4950,6 +5000,25 @@ class TTSProfileRepository:
         *,
         expected_generation: int | None = None,
     ) -> _OperationAdmission[_T]:
+        self._bind_or_check_loop()
+        reservation = self._reserve_maintenance_entry()
+        try:
+            from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+            with storage._changed:
+                reservation.check()
+                return self._admit_operation_reserved(
+                    operation, expected_generation=expected_generation
+                )
+        finally:
+            reservation.close()
+
+    def _admit_operation_reserved(
+        self,
+        operation: Callable[[sqlite3.Connection], _T],
+        *,
+        expected_generation: int | None = None,
+    ) -> _OperationAdmission[_T]:
         """Synchronously capture state/generation and register a worker future."""
 
         self._bind_or_check_loop()
@@ -4978,6 +5047,9 @@ class TTSProfileRepository:
                 submission_error = error
             if future is not None:
                 self._pending_futures.add(cast(Future[object], future))
+                self._publication_completions[cast(Future[object], future)] = (
+                    asyncio.get_running_loop().create_future()
+                )
 
         if submission_error is not None:
             _raise_operation_error(submission_error)
@@ -5064,6 +5136,19 @@ class TTSProfileRepository:
         self,
         admission: _OperationAdmission[_T],
     ) -> ProfileStoreResult[_T]:
+        self._bind_or_check_loop()
+        try:
+            return await self._publish_operation_result(admission)
+        finally:
+            with self._state_lock:
+                completion = self._publication_completions.pop(admission.future, None)
+            if completion is not None and not completion.done():
+                completion.set_result(None)
+
+    async def _publish_operation_result(
+        self,
+        admission: _OperationAdmission[_T],
+    ) -> ProfileStoreResult[_T]:
         """Await a shielded worker future and publish only if it remains current."""
 
         self._bind_or_check_loop()
@@ -5098,6 +5183,219 @@ class TTSProfileRepository:
             generation=admission.generation,
             value=value,
         )
+
+    def _reserve_maintenance_entry(self) -> _Acquisition:
+        """Reserve an ordinary call; this conveys no descendant IO authority."""
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        with storage._changed:
+            with self._state_lock:
+                if self._terminal:
+                    raise _repository_error("terminal")
+                if storage._pause is not None or self._maintenance_admission_closed:
+                    raise _repository_error("unavailable")
+            return storage._Acquisition()
+
+    def _maintenance_close_admission(self) -> None:
+        """Seal new calls on the owner loop without invalidating admitted work."""
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self._bind_or_check_loop()
+        with storage._changed:
+            with self._state_lock:
+                if self._maintenance_admission_closed:
+                    return
+                self._maintenance_admission_closed = True
+                self._maintenance_prior_open = (
+                    self._state is ProfileRepositoryState.OPEN and not self._terminal
+                )
+                self._maintenance_generation = self._generation
+            # A pending/failure blocker, never authority to perform filesystem IO.
+            storage._raw_operations.add(self)
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        """Retire this repository's worker-owned storage within a caller budget.
+
+        A timeout/cancelled waiter leaves the retained transition running. This
+        source-only boundary is not whole-repository or runtime qualification.
+        """
+        self._bind_or_check_loop()
+        if not math.isfinite(deadline):
+            raise _repository_error("operation_failed")
+        with self._state_lock:
+            if not self._maintenance_admission_closed:
+                raise _repository_error("invalid_state")
+            if (
+                self._maintenance_failure is not None
+                or self._maintenance_resume_source is not None
+            ):
+                return False
+            completion = self._maintenance_completion
+        if completion is None:
+            completion = asyncio.create_task(self._finish_maintenance())
+            completion.add_done_callback(_retrieve_future_exception)
+            with self._state_lock:
+                self._maintenance_completion = completion
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            return await asyncio.wait_for(asyncio.shield(completion), remaining)
+        except TimeoutError:
+            return False
+
+    async def _finish_maintenance(self) -> bool:
+        lifecycle_lock = self._bind_or_check_loop()
+        async with lifecycle_lock:
+            with self._state_lock:
+                pending = tuple(self._pending_futures)
+                publications = tuple(self._publication_completions.values())
+                executor = self._executor
+                terminal = self._terminal
+            if pending:
+                await asyncio.gather(
+                    *(asyncio.shield(asyncio.wrap_future(f)) for f in pending),
+                    return_exceptions=True,
+                )
+            if publications:
+                await asyncio.gather(*(asyncio.shield(f) for f in publications))
+            # Definitive close already ran under this same lifecycle lock. Its
+            # native uncertainty is not erased merely by terminal state.
+            if terminal:
+                retired = self._maintenance_native_retired()
+                if retired:
+                    self._maintenance_retire_blocker()
+                return retired
+            try:
+                if executor is not None:
+                    cleanup_future = executor.submit(self._worker_maintenance_cleanup)
+                    self._maintenance_cleanup_future = cleanup_future
+                    await asyncio.shield(asyncio.wrap_future(cleanup_future))
+                if not self._maintenance_native_retired():
+                    raise _repository_error("operation_failed")
+            except BaseException as error:
+                with self._state_lock:
+                    self._maintenance_failure = error
+                return False
+            with self._state_lock:
+                if self._state is ProfileRepositoryState.OPEN:
+                    self._generation += 1
+                    self._damaged_reference_profile_ids.clear()
+                    self._state = ProfileRepositoryState.CLOSED
+                self._maintenance_generation = self._generation
+            self._maintenance_retire_blocker()
+            return True
+
+    def _maintenance_retire_blocker(self) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        with storage._changed:
+            storage._raw_operations.discard(self)
+            storage._changed.notify_all()
+
+    def _maintenance_native_retired(self) -> bool:
+        return (
+            self._connection is None
+            and self._lease is None
+            and not self._residual_cleanup_paths
+            and not self._exact_authority_quarantined
+        )
+
+    def _worker_maintenance_cleanup(self) -> None:
+        # Snapshot exact native source identity on its own serialized worker;
+        # never resolve a new configured source as authority during resumption.
+        active = self._active_database_path
+        if active is not None and self._maintenance_prior_open:
+            self._require_configured_path_matches(active, "operation_failed")
+            parent = active.parent.stat()
+            info = active.stat()
+            self._maintenance_source = (
+                self._database_path,
+                active,
+                (parent.st_dev, parent.st_ino),
+                (info.st_dev, info.st_ino),
+            )
+        self._worker_cleanup()
+
+    async def _maintenance_resume(self) -> None:
+        """Reopen only an unchanged, previously open source after gate release."""
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self._bind_or_check_loop()
+        with storage._changed:
+            if storage._pause is not None:
+                raise _repository_error("unavailable")
+        with self._state_lock:
+            completion = self._maintenance_completion
+            if (
+                not self._maintenance_admission_closed
+                or completion is None
+                or not completion.done()
+                or self._maintenance_failure is not None
+                or self._generation != self._maintenance_generation
+            ):
+                raise _repository_error("unavailable")
+            if self._terminal:
+                raise _repository_error("terminal")
+            reopen = self._maintenance_prior_open
+            source = self._maintenance_source
+        if not completion.result():
+            raise _repository_error("unavailable")
+        resume_error: BaseException | None = None
+        if reopen:
+            if source is None:
+                raise _repository_error("unavailable")
+            with storage._changed:
+                try:
+                    reservation = storage._Acquisition()
+                except BaseException as error:
+                    _raise_operation_error(error)
+                    raise AssertionError("unreachable")
+                # The old native lease was positively retired at drain. A new
+                # allocation/cleanup can fail before the new SQLite lease stays
+                # live, so retain this source independently before dispatch.
+                storage._raw_operations.add(self)
+            self._maintenance_resume_source = source
+            try:
+                await self._open_admitted(reservation)
+            except BaseException as error:
+                resume_error = error
+            finally:
+                reservation.close()
+            with self._state_lock:
+                opened = (
+                    self._state is ProfileRepositoryState.OPEN and not self._terminal
+                )
+                if resume_error is not None and not (
+                    isinstance(resume_error, asyncio.CancelledError) and opened
+                ):
+                    self._maintenance_failure = resume_error
+            if self._maintenance_failure is not None:
+                _raise_operation_error(self._maintenance_failure)
+            self._maintenance_retire_blocker()
+        with self._state_lock:
+            self._maintenance_admission_closed = False
+            self._maintenance_completion = None
+            self._maintenance_source = None
+            self._maintenance_resume_source = None
+            self._maintenance_prior_open = False
+        if resume_error is not None:
+            _raise_operation_error(resume_error)
+
+    def _worker_check_maintenance_resume_source(self) -> None:
+        source = self._maintenance_resume_source
+        if source is None:
+            return
+        configured, active, parent_identity, file_identity = source
+        if self._database_path != configured:
+            raise _repository_error("unavailable")
+        self._require_configured_path_matches(active, "operation_failed")
+        parent = active.parent.stat()
+        info = active.stat()
+        if (parent.st_dev, parent.st_ino) != parent_identity or (
+            info.st_dev, info.st_ino
+        ) != file_identity:
+            raise _repository_error("unavailable")
 
     async def close(self) -> ProfileStoreResult[None]:
         """Close safely, retaining quarantined authority until it matches again.

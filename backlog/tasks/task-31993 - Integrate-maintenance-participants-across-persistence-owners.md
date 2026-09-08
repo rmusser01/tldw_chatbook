@@ -76,6 +76,18 @@ ADR required: yes (reuse existing).
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
 Reason: direct implementation of approved maintenance lifetimes under ruling74; ADR067/074 separation and ADR032 package immutability remain.
 
+
+### Phase14 implementation plan — TTS repository lifecycle foundation
+
+1. Preserve actual first-open and paused-CRUD behavioral REDs, then implement controller ruling79 using the existing owner loop, state/lifecycle locks and serialized executor.
+2. Reserve before first-open selectors/native creation; close new admission separately from terminal/generation, retain actual worker futures and explicit result-publication completion, and clean only on the source worker.
+3. Prove bounded reversible drain, timeout/repeated cancellation, exact native retirement, stale source refusal, competing repository exclusion and definitive close compatibility with synthetic real SQLite/private native observers.
+4. Keep finite migration/backup/reference native scopes and actual app/runtime/dirty editor aggregation as exact immediate Task10 continuation; this foundation grants no across-pause callback capability or repository/Complete qualification.
+5. Run focused affected domain/shared/census/static checks, self-review, update ADR126/source inventory/evidence and scoped commit plus identical dual report. Keep In Progress and every AC unchecked.
+ADR required: yes (reuse existing).
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: direct approved maintenance lifecycle implementation under ruling79, preserving ADR028/040/051/023 and existing schema/native authority policy.
+
 <!-- SECTION:PLAN:END -->
 
 ## Design references
@@ -648,3 +660,42 @@ Actual REDs covered file-rename/core pause, runtime read/UI selector admission, 
 Changed-source census is exact. The combined census guard has24passed and3inherited failures: two unchanged TTS/recovery.py profile literals and existing13diagnostic-owner/config-sink drift. Only the changed visual source diagnostic digest was refreshed after identical diagnostic-call AST proof; unrelated debt remains visible. Fatal Ruff, new-file formatting and scoped diff checks pass. Self-review retained ordinary callback behavior and sole cleanup/native references.
 
 INCOMPLETE — phase complete, Task10 continuation required. Task31993 stays In Progress with all three ACs unchecked. Mandatory remaining routes include external image-generation runtime, the analogous earlier PersonaVisual public callback seam, TTS/runtime/credential cohorts, actual app/headless aggregation/startup/responder retirement and whole Task10 independent review. No full suite, live generation, network, user data, startup release or Complete promotion.
+
+### Task10 phase14 implementation notes — TTS lifecycle foundation only
+
+Implemented ruling79 through the existing TTSProfileRepository owner loop,
+state/lifecycle locks and serialized executor. Pure construction is preserved;
+ordinary first-open/CRUD/restore entry is reserved, admitted generation/results
+settle before source-worker native cleanup, and successful maintenance can reopen
+only the same previously open source. Public close stays definitive. Strong local
+source blockers preserve before/after-close and resume uncertainty; timeout and
+cancelled waiters cannot clear ownership. Resume checks original native identity on
+the worker, and cancelled successful resume settles admission before redelivery.
+No new callback/IO authority, installed TTS config binding, schema or migration
+policy was introduced. Existing ADR126 (phase14 ruling79 note), ADR028/040/051/023
+apply; no new ADR. Changed production is only TTS/profile_repository.py, with a
+focused20-case test module, ADR126 and source/remaining-owner inventory updates.
+
+Actual REDs cover paused first-open executor allocation, paused real CRUD success,
+post-native-close false local drain, queued first-open typed refusal, late worker
+source substitution, ongoing/cancelled resume and failed-resume native uncertainty.
+Fixture corrections compare preexisting temporary entries and TTSProfilePage.profiles;
+intentional sticky failures run only in private children. Final focused lifecycle/
+shared run57passed, ordinary affected domain116passed with3 host SemLock allocation
+failures before repository code, and reference/backup integration96passed. A small
+stdlib-only spawn Event probe independently reproduces OSError28; no host cleanup.
+Final source census1passed. Earlier architecture23passed/3failed: intermediate
+resume open-call census drift now removed/rechecked, plus the two unchanged TTS
+voice-path literals carried to the immediate voice/backend Task10 cohort. Do not
+report the profile guard Green. Static/self-review evidence and exact overlapping
+commands/results are in the dual task-10-phase14-report.md.
+
+INCOMPLETE — phase14 foundation complete, Task10 continuation required. Exact
+finite migration/backup/reference/BLOB/materialization/bundle native scopes, ordinary
+backup failed-close retention, app-owned source/config registration, dirty editors,
+service/runtime jobs and full startup/responder aggregation remain immediate
+Task10 work (phase14b), not passive exclusions or Task26 deferral. Independent
+native lock observations distinguish known diagnostic-child startup from actual
+production startup. No Complete/source qualification, full suite, live generation,
+network, user data, shared environment mutation, merge or publication. Status stays
+In Progress and all three ACs remain unchecked for controller whole-task review.

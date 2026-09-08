@@ -462,3 +462,35 @@ finishes without admitting an independent new source operation after pause.
 If source failure and borrower retirement both fail, the UI retains the original
 exception, exact cleanup token and truthful result on the retirement error; it
 does not turn an unrelated error into publication success or clear uncertainty.
+
+### Task10 phase14 — TTS repository lifecycle foundation (ruling79)
+
+The existing TTSProfileRepository owner loop, lifecycle/state locks and serialized
+executor now supply a private reversible maintenance boundary. Ordinary first-open,
+CRUD and restore requests reserve before their lifecycle/native entry. Construction
+remains pure. Sealing admission preserves the generation of admitted work; actual
+concurrent worker futures and explicit owner-loop result-publication futures settle
+before the source worker closes its exact connection and ProfileStoreLease. A
+quiescent executor may remain for later reuse. Only positive native cleanup permits
+CLOSED and a generation advance. Definitive public close remains terminal with its
+existing quarantine and ordinary cleanup-failure behavior.
+
+Sealing and resumption each register the exact repository in the existing local
+raw-operation set before cleanup or new allocation can drop native SQLite leases.
+That strong registration is pending/failure evidence, never filesystem authority or
+a cross-process lease. Timeout and caller cancellation retain the owned transition;
+uncertain close, including an error after native close, retains source state and
+blocks local drain. Resume rechecks the original configured path, canonical path,
+parent and main-file identities on the worker before and after open. It never
+automatically opens an originally closed, unavailable or terminal repository.
+Cancelled successful resume settles native open and admission before redelivery;
+failed resume retains its source blocker and cannot be cleared by unrelated retry.
+
+This foundation introduces no installed across-pause IO capability, generic callback
+authority or source/config binding. Exact migration/backup/reference native scopes,
+residual resources, app-owned source registration, dirty editors and runtime jobs
+remain immediate Task10 work. Ordinary domain backup/restore behavior is preserved;
+finite additional-file selection and native uncertainty are not qualified by this
+lifecycle alone. Independent native tests distinguish the TTS profile lock from the
+shared admission lock and keep diagnostic-child startup evidence separate from
+production startup. No repository, startup, responder or Complete promotion follows.
