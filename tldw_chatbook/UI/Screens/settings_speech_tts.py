@@ -432,6 +432,12 @@ class GlobalSpeechTTSDefaults:
             self.voice_mode,
             frozenset({"exact", "server_default"}),
         )
+        if provider_id != "audio_cpp" and voice_mode == "server_default":
+            _validation_error(
+                "defaults",
+                "voice_mode",
+                "This provider requires a voice. Choose Exact and enter a voice value.",
+            )
         model_id = (
             _identifier(
                 "defaults",
