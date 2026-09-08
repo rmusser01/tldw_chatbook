@@ -226,3 +226,7 @@ test-logs/
 /verification_*.png
 /serve_log*.txt
 /suite_result.txt
+
+# Diarizer bake-off corpus (TASK-31827): ~370 MB of VoxConverse/AMI audio the
+# harness materialises on demand; CC-BY-4.0 but not ours to redistribute.
+Tests/Audio/bakeoff/data/

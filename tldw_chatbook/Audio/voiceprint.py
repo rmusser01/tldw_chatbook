@@ -128,11 +128,17 @@ class LoadResult:
             unblock itself). The Meetings rail maps each to static copy.
         mode: The envelope's declared key mode ("keyring" | "keyfile"), or
             None when no envelope could be read.
+        stored_model_id: The model id found IN the record, set only when
+            `reason` is "needs_reenrollment" -- so the Meetings rail can name
+            the two engines ("recorded with SpeechBrain; the active engine is
+            ONNX", spec §6) without the caller decrypting the record again.
+            Defaulted, so existing three-argument constructors keep working.
     """
 
     voiceprint: Voiceprint | None
     reason: str | None
     mode: str | None
+    stored_model_id: str | None = None
 
 
 class KeyProvider(Protocol):
@@ -491,7 +497,10 @@ class VoiceprintStore:
             return LoadResult(voiceprint=None, reason="cannot_decrypt", mode=mode)
 
         if expected_model_id is not None and record.model_id != expected_model_id:
-            return LoadResult(voiceprint=None, reason="needs_reenrollment", mode=mode)
+            return LoadResult(
+                voiceprint=None, reason="needs_reenrollment", mode=mode,
+                stored_model_id=record.model_id,
+            )
 
         return LoadResult(voiceprint=record, reason=None, mode=mode)
 

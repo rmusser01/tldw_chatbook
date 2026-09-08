@@ -42,6 +42,28 @@ from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 MEETINGS_DIRNAME = "meetings"
 DIARIZATION_MODULES = ("torch", "torchaudio", "speechbrain", "sklearn")
+#: What each live diarizer engine needs installed (spec §4). Availability is
+#: decided by `find_spec` alone -- importing either stack here would put it in
+#: the UI process, which is the whole point of `diarizer_worker`'s subprocess.
+ENGINE_MODULES: dict[str, tuple[str, ...]] = {
+    "onnx": ("sherpa_onnx", "numpy"),
+    "speechbrain": DIARIZATION_MODULES,
+}
+#: The order `diarizer_backend = "auto"` tries engines in. ONNX-first is a
+#: product decision (2026-09-08, spec §10): the bake-off's only failed gate was
+#: self-match separation (titanet_small 0.640 against ECAPA's 0.734, allowance
+#: 0.05), judged not to be the right cross-embedding-space test, while ONNX won
+#: DER (3x), live purity, RTF and latency and ships in the base install. An
+#: install whose voiceprint was enrolled with SpeechBrain reads "needs
+#: re-enrollment" once (spec §6); pin `diarizer_backend = "speechbrain"` to keep
+#: the old engine instead.
+AUTO_ORDER: tuple[str, ...] = ("onnx", "speechbrain")
+#: Accepted `[meetings] diarizer_backend` values. "local" is the pre-31827
+#: spelling and maps to "auto"; "server" is reserved (spec §4).
+DIARIZER_BACKENDS = ("auto", "onnx", "speechbrain", "server")
+#: Model-id prefix -> the engine's display name (spec §6's switch copy). A raw
+#: model id is a file name plus a hash and never reaches the UI.
+ENGINE_NAMES = (("speechbrain/", "SpeechBrain"), ("sherpa-onnx/", "ONNX"))
 BYTES_PER_S = 32000.0
 #: Ingest job states that will never change again. `done` is the only one
 #: that means the raw tracks are safe to delete; the rest simply end the
@@ -57,6 +79,9 @@ MIC_SAMPLE_RATE = 16000
 #: Enrollment records in slices this long so a Cancel lands promptly (spec
 #: §3.4's "visible countdown and cancel") instead of after the full sample.
 ENROLL_SLICE_S = 0.25
+#: How often enrollment re-reads the backend's warm-up status while the ONNX
+#: engine is still fetching its models (final review I1/M4).
+ENROLL_FETCH_POLL_S = 0.5
 #: Ceiling on how much of `you.wav` the plain-call-mode learning offer embeds.
 # ponytail: the FIRST minute, not the best minute -- a meeting that opens with
 # silence learns less. Pick the loudest window if that shows up as a real miss.
@@ -149,7 +174,18 @@ class MeetingSettings(BaseModel):
     #: the mic ("you") and overlap ("both") segments instead of leaving them
     #: pre-named as the user. Off by default -- see `meetings.md`.
     diarize_mic_channel: bool = False
-    diarizer_backend: str = "local"
+    #: Which live engine to run (spec §4): "auto" takes the first whose
+    #: packages are installed, "onnx"/"speechbrain" pin one, "server" is
+    #: reserved. Validated below -- the pre-31827 "local" maps to "auto".
+    diarizer_backend: str = "auto"
+    #: Which sherpa-onnx speaker embedder the "onnx" engine uses; one of the
+    #: manifest's keys. It is part of the voiceprint model id (spec §6), so
+    #: changing it means re-enrolling.
+    onnx_embedder: str = "titanet_small"
+    #: Where the ONNX model files live; None = the user data dir's standard
+    #: placement. Set to a directory of pre-placed files for an air-gapped
+    #: install (spec §3).
+    onnx_models_dir: Path | None = None
     #: Qodo Q7: 0 or a negative value silently disabled the Stop pass (the
     #: clusterer can hold no clusters), so it is refused at the boundary
     #: like every other unusable config value here.
@@ -191,6 +227,75 @@ class MeetingSettings(BaseModel):
             raise ValueError("recordings_dir must be a path")
         return Path(value).resolve()
 
+    @field_validator("diarizer_backend", mode="before")
+    @classmethod
+    def _validate_diarizer_backend(cls, value: Any) -> str:
+        """Accept only a known engine name, mapping the legacy spelling.
+
+        Args:
+            value: The configured `[meetings] diarizer_backend`.
+
+        Returns:
+            One of `DIARIZER_BACKENDS`; the pre-31827 "local" (which meant
+            "the only local backend there was") reads as "auto" (spec §4).
+
+        Raises:
+            ValueError: Anything else -- the message lists what is accepted.
+        """
+        value = (str(value).strip() if value else "") or "auto"
+        if value == "local":
+            return "auto"
+        if value not in DIARIZER_BACKENDS:
+            raise ValueError(f"diarizer_backend must be one of: {', '.join(DIARIZER_BACKENDS)}")
+        return value
+
+    @field_validator("onnx_embedder", mode="before")
+    @classmethod
+    def _validate_onnx_embedder(cls, value: Any) -> str:
+        """Accept only a manifest embedder key (spec §3).
+
+        The manifest module is imported HERE, not at module scope: it is the
+        one place a model is named, and boot must not reach it.
+
+        Raises:
+            ValueError: Not a manifest key -- the message lists them, since a
+                typo here would otherwise surface as a degraded backend at
+                Start rather than as a config error.
+        """
+        from .diarizer_engine_onnx import DEFAULT_EMBEDDER, EMBEDDERS
+
+        value = (str(value).strip() if value else "") or DEFAULT_EMBEDDER
+        if value not in EMBEDDERS:
+            raise ValueError(f"onnx_embedder must be one of: {', '.join(sorted(EMBEDDERS))}")
+        return value
+
+    @field_validator("onnx_models_dir", mode="before")
+    @classmethod
+    def _validate_onnx_models_dir(cls, value: Any) -> Path | None:
+        """The air-gapped models directory, or None for the standard placement.
+
+        Absolute and expanded, like `recordings_dir`: this path is handed to
+        the worker SUBPROCESS, whose cwd is not the app's, so a relative or
+        `~`-prefixed value would otherwise resolve differently on each side.
+
+        Raises:
+            ValueError: Rejected by `validate_path_simple` (traversal, null
+                bytes, ...) -- the same boundary `recordings_dir` uses.
+        """
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if isinstance(value, str):
+            from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+            # `~` is expanded BEFORE validation, not after: `validate_path_
+            # simple` refuses a literal "~/" (it cannot tell an unexpanded
+            # home from an injection attempt), and validating the string that
+            # is actually used beats validating the one that is not.
+            value = validate_path_simple(str(Path(value.strip()).expanduser()))
+        elif not isinstance(value, Path):
+            raise ValueError("onnx_models_dir must be a path")
+        return Path(value).expanduser().resolve()
+
     @classmethod
     def from_config(cls, get_setting: Callable[[str, str, Any], Any], data_dir: Path) -> "MeetingSettings":
         """Build the settings from the `[meetings]` config section.
@@ -218,7 +323,9 @@ class MeetingSettings(BaseModel):
             post_diarize=get_setting("meetings", "post_diarize", True),
             live_diarization=get_setting("meetings", "live_diarization", False),
             diarize_mic_channel=get_setting("meetings", "diarize_mic_channel", False),
-            diarizer_backend=get_setting("meetings", "diarizer_backend", "local") or "local",
+            diarizer_backend=get_setting("meetings", "diarizer_backend", "auto"),
+            onnx_embedder=get_setting("meetings", "onnx_embedder", ""),
+            onnx_models_dir=get_setting("meetings", "onnx_models_dir", ""),
             max_speakers=get_setting("meetings", "max_speakers", 8),
             voice_match=get_setting("meetings", "voice_match", True),
             voice_match_threshold=get_setting("meetings", "voice_match_threshold", 0.2),
@@ -249,10 +356,16 @@ class VoiceMatchState:
     Before Start the state is provisional: ``"on"`` there means "a record
     exists and will be verified at Start", since `prepare()` deliberately
     only stats the store. Re-read `owner.voice_match` after `start()`.
+
+    `detail` is one extra STATIC sentence for a reason the user cannot act on
+    from the reason alone -- today only ``"needs_reenrollment"`` caused by an
+    engine switch, where it names the two engines (spec §6). Never a model id,
+    a path or a name.
     """
 
     state: str
     reason: str | None = None
+    detail: str | None = None
 
 
 @dataclass
@@ -302,17 +415,30 @@ class PrepareResult:
     diarization_missing: tuple[str, ...]
     recoverable: tuple[Path, ...]
     input_devices: tuple[str, ...] = ()
-    #: Whether `start()` will actually inject a live LOCAL diarizer (spec
-    #: §3.4): `diarization_available` alone only says the offline post-meeting
-    #: pass is possible -- this also requires `settings.live_diarization` on
-    #: AND `settings.diarizer_backend == "local"`, since `build_diarizer`
-    #: always returns `None` for the unimplemented "server" backend. Computed
-    #: without constructing a diarizer (no subprocess spawn during prepare).
-    #: False here still leaves the offline pass available at Stop.
+    #: Whether `start()` will actually inject a live diarizer (spec §3.4/§4):
+    #: `diarization_available` alone only says the offline post-meeting pass
+    #: is possible -- this also requires `settings.live_diarization` on AND an
+    #: engine that RESOLVED (`resolve_engine`), which "server" and an install
+    #: missing both engines' packages never do. Computed without constructing
+    #: a diarizer (no subprocess spawn during prepare). False here still
+    #: leaves the offline pass available at Stop.
     #: Defaulted (unlike the fields above) so existing positional/keyword
     #: callers built before Task 6 -- notably `Tests/UI/test_meetings_screen
     #: .py`'s `FakeOwner` -- keep constructing a `PrepareResult` unchanged.
     live_diarization_active: bool = False
+    #: Which engine resolved ("onnx" / "speechbrain"), or None (spec §4). The
+    #: rail names it; `start()` stamps it on the meeting.
+    diarizer_engine: str | None = None
+    #: The packages the user would have to install to get an engine: those of
+    #: an EXPLICIT choice, or of `AUTO_ORDER`'s last candidate. Empty once one
+    #: resolves (and for the reserved "server" backend, which is not a
+    #: missing-package problem).
+    diarizer_missing: tuple[str, ...] = ()
+    #: Whether the resolved engine's model files are already on disk. False
+    #: does NOT gate live labels: the ONNX engine fetches them as the first
+    #: step of its own warm-up at Start (spec §3), so this only decides
+    #: whether the rail warns about a download first.
+    diarizer_models_ready: bool = False
     #: Set when the mic recorder cannot be built at all (numpy missing, no
     #: audio backend). The rail shows it and keeps Start disabled instead of
     #: offering a Start that can only fail (final whole-branch review, C1).
@@ -324,19 +450,15 @@ class PrepareResult:
     voice_match: VoiceMatchState = field(default_factory=lambda: VoiceMatchState("off", None))
 
 
-def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, ...]:
-    """Missing diarization modules, checked WITHOUT importing them (spec §3.5).
+def _missing_modules(names: tuple[str, ...], find_spec) -> tuple[str, ...]:
+    """Which of `names` are not installed, WITHOUT importing any of them.
 
-    Args:
-        find_spec: Module-spec lookup, injectable for tests. Importing these
-            modules for real would pull torch into the UI process.
-
-    Returns:
-        The names of the `DIARIZATION_MODULES` that are not installed; empty
-        when speaker labels can be produced after the meeting.
+    A raising `find_spec` (a namespace-package shadow, a half-removed
+    distribution) counts as absent: the owner's job is to decide whether a
+    backend can run, never to propagate an install's breakage.
     """
     missing = []
-    for name in DIARIZATION_MODULES:
+    for name in names:
         try:
             present = find_spec(name) is not None
         except (ImportError, ValueError):
@@ -346,12 +468,75 @@ def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, .
     return tuple(missing)
 
 
+def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, ...]:
+    """Missing diarization modules, checked WITHOUT importing them (spec §3.5).
+
+    The LIBRARY's offline ingest pass, which is torch-only (spec §1's "out of
+    scope"): the live engines are resolved by `resolve_engine` instead.
+
+    Args:
+        find_spec: Module-spec lookup, injectable for tests. Importing these
+            modules for real would pull torch into the UI process.
+
+    Returns:
+        The names of the `DIARIZATION_MODULES` that are not installed; empty
+        when speaker labels can be produced after the meeting.
+    """
+    return _missing_modules(DIARIZATION_MODULES, find_spec)
+
+
+def resolve_engine(settings: MeetingSettings, find_spec=importlib.util.find_spec) -> tuple[str | None, tuple[str, ...]]:
+    """Which live diarizer engine would run, and what is missing if none can.
+
+    By `find_spec` ONLY (spec §4): the owner never imports an engine, and
+    model FILES are not part of availability -- they are fetched at Start.
+
+    Args:
+        settings: The validated meeting settings; `diarizer_backend` and
+            nothing else decides the walk.
+        find_spec: Module-spec lookup, injectable for tests.
+
+    Returns:
+        `(engine, ())` when one resolves. `(None, missing)` otherwise, where
+        `missing` is the packages of the EXPLICIT choice, or of `AUTO_ORDER`'s
+        last candidate -- what the rail tells the user to install. The
+        reserved "server" backend returns `(None, ())`: it is not a
+        missing-package problem.
+    """
+    backend = settings.diarizer_backend
+    missing: tuple[str, ...] = ()
+    if backend in ENGINE_MODULES:
+        # An explicit choice never walks on to the other engine, however
+        # complete that one's packages are (spec §8).
+        missing = _missing_modules(ENGINE_MODULES[backend], find_spec)
+        return (None, missing) if missing else (backend, ())
+    if backend != "auto":
+        return None, ()
+    for engine in AUTO_ORDER:
+        missing = _missing_modules(ENGINE_MODULES[engine], find_spec)
+        if not missing:
+            return engine, ()
+    return None, missing
+
+
+def _engine_name(model_id: str | None) -> str | None:
+    """The display name of the engine a model id belongs to, or None.
+
+    None means "not one of ours" -- the caller then says nothing rather than
+    putting a raw model id (a file name and a hash) in front of the user.
+    """
+    for prefix, name in ENGINE_NAMES:
+        if model_id and model_id.startswith(prefix):
+            return name
+    return None
+
+
 def build_diarizer(settings: MeetingSettings, voiceprint: list[float] | None = None) -> Diarizer | None:
     """Build the live diarizer backend named by `settings`, best-effort.
 
-    Import-graph rule (module docstring): `SpeechBrainDiarizer` is imported
-    LAZILY here, never at module scope -- this is the only place allowed to
-    know it exists, so `app.py` stays torch-free at boot.
+    Import-graph rule (module docstring): `LocalDiarizer` is imported LAZILY
+    here, never at module scope -- this is the only place allowed to know it
+    exists, so `app.py` stays torch- and sherpa-onnx-free at boot.
 
     Args:
         settings: The validated meeting settings.
@@ -362,23 +547,28 @@ def build_diarizer(settings: MeetingSettings, voiceprint: list[float] | None = N
 
     Returns:
         The diarizer to inject into the session, or `None` when live
-        diarization is off, its modules are missing, the backend is not
-        implemented, or construction otherwise failed -- a meeting must
-        stay startable with coarse (non-diarized) labels either way.
+        diarization is off, no engine resolved (packages missing, or the
+        reserved "server" backend), or construction itself raised -- a
+        meeting must stay startable with coarse (non-diarized) labels either
+        way. A backend whose MODELS turn out to be unfetchable is still
+        returned: it degrades to coarse on its own and reports the reason to
+        the rail (`warmup_status`), which a `None` could not.
     """
-    if not settings.live_diarization or diarization_requirements():
+    engine, _missing = resolve_engine(settings)
+    if not settings.live_diarization or engine is None:
         return None
     try:
-        if settings.diarizer_backend == "local":
-            from .diarizer_local import SpeechBrainDiarizer
+        from .diarizer_local import LocalDiarizer
 
-            return SpeechBrainDiarizer(
-                max_speakers=settings.max_speakers,
-                voiceprint=voiceprint,
-                match_threshold=settings.voice_match_threshold,
-                match_min_seconds=settings.voice_match_min_seconds,
-            )
-        raise NotImplementedError(f"diarizer backend {settings.diarizer_backend!r}")
+        return LocalDiarizer(
+            engine=engine,
+            max_speakers=settings.max_speakers,
+            embedder=settings.onnx_embedder,
+            models_dir_override=settings.onnx_models_dir,
+            voiceprint=voiceprint,
+            match_threshold=settings.voice_match_threshold,
+            match_min_seconds=settings.voice_match_min_seconds,
+        )
     except Exception as exc:  # noqa: BLE001 - best-effort, never block a meeting start
         logger.warning("meeting: diarizer backend unavailable ({})", type(exc).__name__)
         return None
@@ -612,6 +802,91 @@ class MeetingSessionOwner:
         self._pending_offer: LearningOffer | None = None
         self._offer_handed = False
         self._enrolling = False
+        #: Which engine this owner runs (spec §4), set by `prepare()` and
+        #: refreshed at `start()`. Every model id and the enrollment worker
+        #: read it through `_active_engine`, so a vector is never stored in
+        #: one engine's space under another's id.
+        self._resolved_engine: str | None = None
+
+    # ---- engine ------------------------------------------------------------
+    def _active_engine(self) -> str | None:
+        """The engine this owner's model ids and enrollment belong to, or None.
+
+        None means "nothing can run": the caller must not enroll, merge or
+        stamp anything (Qodo 5). `AUTO_ORDER`'s first candidate is a fallback
+        ONLY under `auto`, and only before a `prepare()` has answered --
+        enrollment can be reached without one (Settings' "Enroll my voice"),
+        and an id naming the engine the enrollment worker would actually spawn
+        is the honest answer there; that worker then degrades to "unavailable"
+        on its own if its packages really are absent.
+
+        An EXPLICIT `diarizer_backend` never falls back. `resolve_engine`
+        refuses to walk an explicit choice on to the other engine (spec §8),
+        and undoing that here meant enrollment spawned the other engine's
+        worker and saved its vector under this one's model id -- a voiceprint
+        in the wrong space, which never matches and never says why.
+        """
+        if self._resolved_engine is not None:
+            return self._resolved_engine
+        engine = resolve_engine(self.settings)[0]
+        if engine is not None:
+            return engine
+        if self.settings.diarizer_backend == "auto" and self.prepared is None:
+            return AUTO_ORDER[0]
+        return None
+
+    def _active_model_id(self) -> str:
+        """The voiceprint model id of the active engine (spec §6).
+
+        Only valid when `_active_engine()` resolved: every caller either runs
+        behind a guard that already gave up (`_embedding_diarizer`,
+        `_load_voiceprint`) or stamps a diarizer that was actually built.
+
+        Raises:
+            ValueError: `_active_engine()` is None -- a caller that skipped
+                its guard, never a state a meeting can reach.
+        """
+        from .diarizer_local import model_id_for
+
+        return model_id_for(self._active_engine(), self.settings.onnx_embedder)
+
+    def diarizer_status(self) -> str | None:
+        """What the rail's per-second tick shows for the live backend (spec §3).
+
+        Returns:
+            ``"downloading <a> / <b> MB"``, ``"warming up"``, ``"ready"`` or
+            ``"unavailable"`` from the RUNNING meeting's backend, else from
+            the worker retained for a learning offer, else None when no
+            backend exists (live labels off, no engine resolved, or the last
+            meeting's worker has been released).
+        """
+        return getattr(self._live_backend(), "warmup_status", None)
+
+    def diarizer_coarse_reason(self) -> str | None:
+        """Why the live backend gave up, when it has (spec §7).
+
+        Returns:
+            One of `diarizer_local`'s static `COARSE_*` strings from the same
+            backend `diarizer_status()` reads, or None. The rail needs it
+            because `"unavailable"` covers both a failed ONNX model fetch and
+            a worker that never reported READY, and those point the user at
+            different repairs (final review I3).
+        """
+        return getattr(self._live_backend(), "coarse_reason", None)
+
+    def _live_backend(self) -> Any | None:
+        """The backend the rail reads: the RUNNING meeting's, else the worker
+        retained for a learning offer, else None.
+
+        `is_active`, not just "a session object exists": a FINISHED meeting
+        keeps its `_diarizer` reference, and reading that made the rail go on
+        reporting "ready" after the worker had been closed and released.
+        """
+        session = self.session if self.is_active else None
+        diarizer = getattr(session, "_diarizer", None) if session is not None else None
+        if diarizer is None:
+            diarizer = self._session_diarizer or self._retained_diarizer
+        return diarizer
 
     # ---- self voiceprint --------------------------------------------------
     def _voiceprint_store(self) -> Any:
@@ -660,6 +935,12 @@ class MeetingSessionOwner:
         cached = self._cached_voice_load()
         if cached is not None:
             return cached
+        if self._active_engine() is None:
+            # No engine, so no model id to check a stored record against and no
+            # live diarizer to match with either (Qodo 5). Deliberately NOT
+            # cached: installing the missing packages changes this answer, and
+            # only a real read is worth remembering.
+            return None, VoiceMatchState("off", "live_labels_off")
         outcome: list[Any] = [None]
         # An Event, not `thread.is_alive()` (review M1): a read that finished
         # in the window between the join returning and the liveness check was
@@ -668,10 +949,8 @@ class MeetingSessionOwner:
 
         def _read() -> None:
             try:
-                from .diarizer_worker import MODEL_ID
-
                 outcome[0] = self._voiceprint_store().load(
-                    expected_model_id=MODEL_ID, timeout_s=VOICEPRINT_LOAD_TIMEOUT_S
+                    expected_model_id=self._active_model_id(), timeout_s=VOICEPRINT_LOAD_TIMEOUT_S
                 )
             except Exception as exc:  # noqa: BLE001 - never raises into a meeting
                 logger.warning("meeting: voiceprint load failed ({})", type(exc).__name__)
@@ -690,11 +969,43 @@ class MeetingSessionOwner:
             # read but could not decrypt (review M2).
             loaded = (None, VoiceMatchState("off", "store_unavailable"))
         elif result.voiceprint is None:
-            loaded = (None, VoiceMatchState("off", result.reason or "no_voiceprint"))
+            loaded = (
+                None,
+                VoiceMatchState("off", result.reason or "no_voiceprint", self._switch_detail(result)),
+            )
         else:
             loaded = (list(result.voiceprint.centroid), VoiceMatchState("on", None))
         self._cache_voice_load(loaded)
         return loaded
+
+    def _switch_detail(self, result: Any) -> str | None:
+        """One static sentence naming both engines, when that is the reason.
+
+        Spec §6: `auto` is not sticky, so installing or removing the torch
+        extra can change the resolved engine and invalidate the stored
+        voiceprint. "Needs re-enrollment" alone reads as a bug when the user
+        changed nothing about their voice; this says what actually happened.
+
+        Args:
+            result: The store's `LoadResult`.
+
+        Returns:
+            The sentence, or None when the reason is something else, when
+            either id is not one of ours, or when both are the same engine
+            (a re-enrollment within one engine -- a changed embedder, say --
+            which this copy would only confuse).
+        """
+        if getattr(result, "reason", None) != "needs_reenrollment":
+            return None
+        try:
+            stored = _engine_name(getattr(result, "stored_model_id", None))
+            active = _engine_name(self._active_model_id())
+        except Exception as exc:  # noqa: BLE001 - copy is best-effort; the reason stands alone
+            logger.warning("meeting: engine copy unavailable ({})", type(exc).__name__)
+            return None
+        if stored is None or active is None or stored == active:
+            return None
+        return f"Voiceprint was recorded with {stored}; the active engine is {active}."
 
     def _voice_match_off_for(self, mode: str) -> VoiceMatchState | None:
         """The mode/settings half of the gate, or None when the store decides.
@@ -717,9 +1028,7 @@ class MeetingSessionOwner:
             return VoiceMatchState("off", "plain_call_mode")
         prepared = self.prepared
         live_ok = prepared.live_diarization_active if prepared is not None else (
-            self.settings.live_diarization
-            and self.settings.diarizer_backend == "local"
-            and not diarization_requirements()
+            self.settings.live_diarization and resolve_engine(self.settings)[0] is not None
         )
         if not live_ok:
             return VoiceMatchState("off", "live_labels_off")
@@ -777,6 +1086,24 @@ class MeetingSessionOwner:
         return self._load_voiceprint()
 
     # ---- prepare ----------------------------------------------------------
+    def _models_ready(self, engine: str | None) -> bool:
+        """Whether `engine`'s model files are already on disk (spec §4).
+
+        Presence and byte size only -- hashes are checked on download and on
+        load, never on this path, which runs at every screen mount.
+        """
+        if engine != "onnx":
+            # SpeechBrain fetches into its own cwd-relative `pretrained_models/`
+            # and has no pre-Start placement to report; no engine has nothing.
+            return engine == "speechbrain"
+        try:
+            from .diarizer_engine_onnx import models_ready
+
+            return bool(models_ready(self.settings.onnx_embedder, self.settings.onnx_models_dir))
+        except Exception as exc:  # noqa: BLE001 - prepare() must never raise at the user
+            logger.warning("meeting: model presence check failed ({})", type(exc).__name__)
+            return False
+
     def prepare(self) -> PrepareResult:
         """Probe everything a meeting needs, without touching the recorder.
 
@@ -794,6 +1121,11 @@ class MeetingSessionOwner:
             self._facade = self._facade_factory()
         tap_mode = self._tap_probe(system_source=self.settings.system_source)
         missing = diarization_requirements()
+        # The LIVE engine is resolved separately from the Library's offline
+        # ingest requirements above (spec §4): ONNX needs neither torch nor
+        # sklearn, so a base install has live labels while `missing` is full.
+        engine, engine_missing = resolve_engine(self.settings)
+        self._resolved_engine = engine
         recoverable = tuple(scan_recoverable(self.settings.recordings_dir))
         devices: tuple[str, ...] = ()
         capture_error: str | None = None
@@ -816,10 +1148,9 @@ class MeetingSessionOwner:
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
             diarization_available=not missing, diarization_missing=missing,
-            live_diarization_active=(
-                self.settings.live_diarization and not missing
-                and self.settings.diarizer_backend == "local"
-            ),
+            live_diarization_active=(self.settings.live_diarization and engine is not None),
+            diarizer_engine=engine, diarizer_missing=engine_missing,
+            diarizer_models_ready=self._models_ready(engine),
             recoverable=recoverable, input_devices=devices, capture_error=capture_error,
         )
         self.voice_match = self._voice_match_preview("room" if tap_mode.kind == "unavailable" else "call")
@@ -853,6 +1184,25 @@ class MeetingSessionOwner:
 
         if self.prepared is None:
             self.prepare()
+        # Refreshed here, not just at prepare() (spec §4): a screen can sit on
+        # a prepare from before the user installed (or removed) an engine's
+        # packages, and the model id this meeting checks the voiceprint
+        # against has to be the engine it is about to run.
+        previous_engine, self._resolved_engine = self._resolved_engine, resolve_engine(self.settings)[0]
+        if previous_engine is not None and previous_engine != self._resolved_engine:
+            # The cached load was verified against the PREVIOUS engine's model
+            # id, so its "on" vector belongs to a vector space this meeting no
+            # longer runs in -- handing it to the new backend would match the
+            # user against noise. Re-read under the new id instead (the very
+            # switch `_switch_detail` exists to explain).
+            self._cache_voice_load(None)
+        if self.prepared is not None and self.prepared.diarizer_engine != self._resolved_engine:
+            # Republished, not just re-resolved (Qodo 6): the rail names the
+            # engine from `PrepareResult`, so a Start that switched engines
+            # under a screen prepared minutes ago used to run one engine while
+            # the "ready" line went on naming the other.
+            self.prepared.diarizer_engine = self._resolved_engine
+            self.prepared.diarizer_models_ready = self._models_ready(self._resolved_engine)
         # Held for the whole body, OUTSIDE `self._lock`: a Start landing
         # during an in-flight stop() blocks here until that stop has fully
         # finalised the old session, instead of racing it to open a second
@@ -900,6 +1250,12 @@ class MeetingSessionOwner:
                     provider=self.prepared.provider, model=self.prepared.model,
                     user_display_name=meeting_user_display_name(),
                     diarize_mic_channel=self.settings.diarize_mic_channel,
+                    # Which engine produced this meeting's labels, and the
+                    # vector space its centroids live in (spec §4/§6): stamped
+                    # below, once `build_diarizer()` has said whether a live
+                    # backend was actually created. They stay None otherwise,
+                    # so a coarse-labelled meeting says so rather than
+                    # claiming an engine that never ran (Qodo 8).
                 )
                 # Two independent mechanisms, deliberately NOT conflated
                 # (Qodo Q12): the live backend's authoritative Stop pass is
@@ -918,6 +1274,15 @@ class MeetingSessionOwner:
                 if self.prepared is not None:
                     self.prepared.voice_match = self.voice_match
                 diarizer = build_diarizer(self.settings, voiceprint=voiceprint)
+                # Only a diarizer that EXISTS gets its identity stamped (Qodo
+                # 8): `resolve_engine()` answers "which engine could run",
+                # independently of `live_diarization` and of whether the
+                # backend could be constructed at all, and `meta
+                # .diarizer_model_id` is what a later re-enrollment check
+                # compares the stored voiceprint against.
+                if diarizer is not None and self._resolved_engine is not None:
+                    meta.diarizer_engine = self._resolved_engine
+                    meta.diarizer_model_id = self._active_model_id()
                 # The learning offer needs this worker alive AFTER Stop to
                 # export the matched cluster's centroid, so the owner takes
                 # over the close whenever an offer could plausibly follow.
@@ -1160,7 +1525,11 @@ class MeetingSessionOwner:
         mic = bool(
             meta.mode == "call" and not meta.diarize_mic_channel and (folder / "you.wav").exists()
         )
-        if not (matched or mic) or self._load_voiceprint()[0] is None:
+        # The cached load's STATE, not just "is there a vector" (spec §6): a
+        # print enrolled with another engine loads as `needs_reenrollment`,
+        # and merging this meeting's centroid into a vector from a different
+        # space would quietly corrupt it. Enroll replaces; learning does not.
+        if not (matched or mic) or self._load_voiceprint()[1].state != "on":
             return None
         if matched:
             return LearningOffer(kind="matched_cluster", folder=folder, cluster_id=meta.matched_self)
@@ -1223,9 +1592,9 @@ class MeetingSessionOwner:
             if sample is None:
                 return False
             centroid, seconds = sample
-            from .diarizer_worker import MODEL_ID
-
-            self._voiceprint_store().merge_sample(centroid, weight=seconds, model_id=MODEL_ID)
+            self._voiceprint_store().merge_sample(
+                centroid, weight=seconds, model_id=self._active_model_id()
+            )
             self._cache_voice_load(None)  # the vector moved; the next meeting re-reads it
             return True
         except Exception as exc:  # noqa: BLE001 - the offer reports failure (spec §6)
@@ -1272,7 +1641,11 @@ class MeetingSessionOwner:
 
     # ---- explicit enrollment ----------------------------------------------
     def _embedding_diarizer(
-        self, progress: Callable[[str], None] | None = None, *, borrow: bool = True
+        self,
+        progress: Callable[[str], None] | None = None,
+        *,
+        borrow: bool = True,
+        cancel: threading.Event | None = None,
     ) -> tuple[Any | None, bool]:
         """A diarizer able to embed audio, spawning (and warming) one if needed.
 
@@ -1297,17 +1670,62 @@ class MeetingSessionOwner:
         diarizer = self._retained_diarizer if borrow else None
         if diarizer is not None and hasattr(diarizer, "enroll_from_pcm"):
             return diarizer, False
+        engine = self._active_engine()
+        if engine is None:
+            # The configured engine cannot run (Qodo 5). Spawning the other
+            # one would embed the sample in a different vector space and
+            # store it under `_active_model_id()` -- silently unusable. The
+            # callers report "diarizer_unavailable" and write nothing.
+            return None, False
         try:
-            from .diarizer_local import READY_TIMEOUT_S, SpeechBrainDiarizer
+            from .diarizer_local import MODELS_DOWNLOAD_BUDGET_S, READY_TIMEOUT_S, LocalDiarizer
 
-            spawned = SpeechBrainDiarizer(max_speakers=self.settings.max_speakers)
+            # The RESOLVED engine, never SpeechBrain unconditionally (spec
+            # §6): the centroid this worker produces is stored under
+            # `_active_model_id()`, so a mismatch here would label an ECAPA
+            # vector as an ONNX one and silently poison the voiceprint.
+            spawned = LocalDiarizer(
+                engine=engine,
+                max_speakers=self.settings.max_speakers,
+                embedder=self.settings.onnx_embedder,
+                models_dir_override=self.settings.onnx_models_dir,
+            )
         except Exception as exc:  # noqa: BLE001 - best-effort, never raises at the user
             logger.warning("meeting: diarizer unavailable for embedding ({})", type(exc).__name__)
             return None, False
         self._report(progress, "warming up")
-        if not spawned.wait_ready(READY_TIMEOUT_S):
-            # First run downloads the ECAPA model; giving up here is the only
-            # honest answer -- the embed op would silently return None anyway.
+        # The ONNX engine fetches its models BEFORE it spawns anything (spec
+        # §3), on a budget of its own that is five times `READY_TIMEOUT_S`.
+        # Waiting only 120 s here gave up mid-download on a first run over a
+        # slow link -- and left the worker the fetch then spawned behind
+        # (final review I1/M4). Wait out the FETCH first, up to its own
+        # budget, and only then start the READY clock. Costs nothing on the
+        # SpeechBrain path, which never reports "downloading".
+        fetch_deadline = time.monotonic() + MODELS_DOWNLOAD_BUDGET_S
+        while str(getattr(spawned, "warmup_status", "")).startswith("downloading"):
+            if cancel is not None and cancel.is_set():
+                # Final re-review: without this, Cancel during a first-run
+                # download did nothing for the whole fetch budget.
+                self._close_diarizer(spawned)
+                return None, False
+            if time.monotonic() >= fetch_deadline or spawned.wait_ready(ENROLL_FETCH_POLL_S):
+                break
+            self._report(progress, spawned.warmup_status)
+        # The models are on disk by now (or the fetch failed and the backend
+        # has already given up), so this bounds only the worker's own load.
+        # Giving up here is the only honest answer -- the embed op would
+        # silently return None anyway. With a cancel event the wait is
+        # sliced so Cancel also works while the worker loads its models.
+        if cancel is None:
+            ready = spawned.wait_ready(READY_TIMEOUT_S)
+        else:
+            ready_deadline = time.monotonic() + READY_TIMEOUT_S
+            ready = False
+            while not ready:
+                ready = spawned.wait_ready(ENROLL_FETCH_POLL_S)
+                if not ready and (cancel.is_set() or time.monotonic() >= ready_deadline):
+                    break
+        if not ready:
             self._close_diarizer(spawned)
             return None, False
         return spawned, True
@@ -1394,12 +1812,15 @@ class MeetingSessionOwner:
         try:
             # The worker FIRST (review M8): warm-up can fail, and giving up
             # then must not have opened the microphone at all.
-            diarizer, spawned = self._embedding_diarizer(progress=progress, borrow=False)
+            diarizer, spawned = self._embedding_diarizer(progress=progress, borrow=False, cancel=cancel)
+            if cancel is not None and cancel.is_set():
+                # Checked BEFORE the "unavailable" verdict: a cancelled
+                # warm-up returns (None, False) too, and the user asked for
+                # "cancelled", not a diagnosis (final re-review).
+                return EnrollResult(ok=False, reason="cancelled")
             if diarizer is None:
                 return EnrollResult(ok=False, reason="diarizer_unavailable")
             spawned_diarizer = diarizer if spawned else None
-            if cancel is not None and cancel.is_set():
-                return EnrollResult(ok=False, reason="cancelled")
             try:
                 recorder = self._mic_factory(use_vad=False, retain_audio=True, chunk_size=320)
                 if self.settings.mic_device:
@@ -1430,12 +1851,11 @@ class MeetingSessionOwner:
                 return EnrollResult(ok=False, reason="embed_failed")
             centroid, embedded_s = sample
             try:
-                from .diarizer_worker import MODEL_ID
                 from .voiceprint import Voiceprint, unit_normalise
 
                 now = datetime.now().isoformat(timespec="seconds")
                 self._voiceprint_store().save(Voiceprint(
-                    model_id=MODEL_ID, centroid=unit_normalise(centroid),
+                    model_id=self._active_model_id(), centroid=unit_normalise(centroid),
                     sample_count=float(embedded_s), meetings_contributed=0,
                     created_at=now, updated_at=now,
                     threshold_used=float(self.settings.voice_match_threshold),
