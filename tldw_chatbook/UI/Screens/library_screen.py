@@ -9454,7 +9454,7 @@ class LibraryScreen(BaseAppScreen):
         # keychain). A provider configured mid-session (while Library was
         # suspended) leaves that memo stale, so drop it here -- the next
         # canvas sync re-resolves it exactly once.
-        self._library_media_analyze_reason_cache = None
+        self._media_state.analyze_reason_cache = None
         self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
         if getattr(self, "_prepared_library_inspection_entry", None) is not None:

@@ -2057,7 +2057,7 @@ async def test_select_mode_analyze_reason_refreshes_on_resume():
         await pilot.pause()
         await pilot.press("space")  # check a row so count is not the gate
         await pilot.pause()
-        assert screen._library_media_row_selection.count == 1
+        assert screen._media_state.row_selection.count == 1
         await _wait_for_selector(screen, pilot, "#library-media-analyze-selected")
         analyze = screen.query_one("#library-media-analyze-selected", Button)
         assert analyze.disabled is True
