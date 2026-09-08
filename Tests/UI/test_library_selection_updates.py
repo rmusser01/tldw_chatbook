@@ -400,6 +400,19 @@ def test_media_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
     def _query_one(_selector, _cls=None):
         return _Recorder()
 
+    def _query(_selector):
+        # dev's task-32045 added `screen.query("#library-media-select-bulk-
+        # reason")` to this leg during the wave's review window, and it is
+        # guarded by `if bulk_reason:` -- so an EMPTY result is a state the
+        # production code already handles (the reason line simply absent).
+        # An empty tuple is therefore the minimal stub that keeps this test
+        # about the thing it guards: whether the DOTTED `_media_state` path
+        # resolves on this receiver. Without it the `AttributeError` for the
+        # missing `query` is swallowed by the dispatcher's own
+        # `except Exception`, `refresh` fires, and BOTH legs go red for a
+        # reason that has nothing to do with the state path.
+        return ()
+
     def _analyze_reason():
         return ""
 
@@ -415,6 +428,7 @@ def test_media_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
         class _Screen:
             _media_state = _MediaState()
             query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
             refresh = staticmethod(_refresh)
             _library_media_analyze_reason = staticmethod(_analyze_reason)
 
@@ -424,13 +438,14 @@ def test_media_row_toggle_resolves_the_dotted_state_path(receiver_kind: str):
         class _Controller(LibraryMediaController):
             # `_media_state` is deliberately NOT overridden -- the accessor
             # property on the REAL `LibraryMediaController` is the thing under
-            # test. `query_one`/`refresh` are framework-service properties on
-            # that class, so they can only be stubbed by overriding them here,
-            # never by instance assignment.
+            # test. `query_one`/`query`/`refresh` are framework-service
+            # properties on that class, so they can only be stubbed by
+            # overriding them here, never by instance assignment.
             def __init__(self, state):
                 self._media_state_accessor = lambda: state
 
             query_one = staticmethod(_query_one)
+            query = staticmethod(_query)
             refresh = staticmethod(_refresh)
             _library_media_analyze_reason = staticmethod(_analyze_reason)
 

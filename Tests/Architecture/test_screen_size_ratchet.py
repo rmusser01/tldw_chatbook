@@ -826,7 +826,23 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # dispatch-dict string values are line-neutral by construction (632
     # insertions / 632 deletions before any deletion landed). The METHOD delta
     # is exactly the 26 pruned delegators; no body was edited.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32230, 1258),
+    #
+    # RECONCILIATION MERGE with `dev`, +33 lines: 32230 -> 32263, methods
+    # UNCHANGED at 1258. Both hunks are dev's and both land in
+    # SCREEN-RESIDENT methods, so neither needed porting into a controller:
+    #   +23  `on_key` -- task-32046's per-canvas "/" filter focus.
+    #   +10  `on_screen_resume` -- task-32039's fault-episode clear and
+    #        analyze-reason cache drop.
+    # Verified rather than assumed: the enclosing methods (`on_key`,
+    # `on_screen_resume`) are not among the 26 names this wave removed from
+    # `LibraryScreen`, and both methods are byte-identical to `origin/dev`'s
+    # version after the merge. dev's own pin for this file was still the
+    # wave-8 START number (35777/1290), so the 33 lines were free there and
+    # only become visible against the lowered pin -- the ordinary give-back
+    # this ratchet exists to make visible, not a regression. Re-pinned to the
+    # measured post-merge value per `test_budget_is_not_left_slack_after_a_
+    # wave`'s own instruction ("set it to {lines} so the gain is locked in").
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32263, 1258),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
