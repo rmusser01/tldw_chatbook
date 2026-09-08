@@ -699,6 +699,80 @@ def test_existing_output_refuses_before_provider_calls(tmp_path):
     assert gateway.calls == []
 
 
+@pytest.mark.parametrize("config_shape", ["normalized", "raw"])
+def test_live_entry_point_preserves_configured_model_prices(
+    tmp_path, monkeypatch, config_shape
+):
+    import toml
+
+    from tldw_chatbook import config as app_config
+
+    evaluator = _load_evaluator()
+    data_dir = tmp_path / "pricing-data"
+    data_dir.mkdir(mode=0o700)
+    config_path = tmp_path / "pricing-config.toml"
+    raw_config = {
+        "paths": {"data_dir": str(data_dir)},
+        "providers": {"ZAI": ["main-test", "worker-test"]},
+        "api_settings": {"zai": {"api_key_env_var": "BULK_READER_TEST_ZAI_KEY"}},
+        "pricing": {
+            "models": {
+                "zai:main-test": {
+                    "input_per_mtok": 1.4,
+                    "output_per_mtok": 4.4,
+                    "cache_read_per_mtok": 0.26,
+                },
+                "zai:worker-test": {
+                    "input_per_mtok": 0.075,
+                    "output_per_mtok": 0.25,
+                    "cache_read_per_mtok": 0.015,
+                },
+            }
+        },
+    }
+    config_path.write_text(toml.dumps(raw_config), encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("BULK_READER_TEST_ZAI_KEY", "synthetic-evaluation-key")
+    if config_shape == "raw":
+        monkeypatch.setattr(app_config, "load_settings", lambda **_: raw_config)
+
+    checked = []
+
+    async def inspect_comparison(**kwargs):
+        # Stop at the billable boundary, while configuration, resolution and
+        # pricing use their real implementations.
+        pricing = kwargs["pricing_catalog"]
+        main = pricing.get_pricing("ZAI", "main-test")
+        worker = pricing.get_pricing("ZAI", "worker-test")
+        assert main is not None, "configured main-model pricing was lost"
+        assert worker is not None, "configured worker-model pricing was lost"
+        assert (main.input_per_mtok, main.output_per_mtok) == (1.4, 4.4)
+        assert (worker.input_per_mtok, worker.output_per_mtok) == (0.075, 0.25)
+        assert (main.cache_read_per_mtok, worker.cache_read_per_mtok) == (
+            0.26,
+            0.015,
+        )
+        assert pricing.get_pricing("ZAI", "unpriced-model") is None
+        checked.append(True)
+
+    monkeypatch.setattr(evaluator, "evaluate_comparison", inspect_comparison)
+    args = evaluator.build_parser().parse_args(
+        [
+            "--provider",
+            "ZAI",
+            "--main-model",
+            "main-test",
+            "--worker-model",
+            "worker-test",
+            "--output",
+            str(tmp_path / "report.json"),
+            "--confirm-billable",
+        ]
+    )
+    assert asyncio.run(evaluator.run_live(args)) == 0
+    assert checked == [True]
+
+
 def test_cli_help_and_billable_refusal_do_not_import_application(tmp_path):
     probe = (
         "import runpy,sys; "

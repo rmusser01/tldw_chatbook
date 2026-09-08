@@ -848,6 +848,11 @@ async def run_live(args: argparse.Namespace) -> int:
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
 
     config = load_settings(force_reload=True)
+    # load_settings keeps unprojected sections, including pricing, in the
+    # raw TOML snapshot. Direct configuration dictionaries remain supported.
+    pricing_config = config.get("pricing") or config.get(
+        "COMPREHENSIVE_CONFIG_RAW", {}
+    ).get("pricing", {})
     provider_metadata = _ProviderMetadataRecorder()
     gateway = ConsoleProviderGateway(
         config_provider=lambda: config,
@@ -880,7 +885,7 @@ async def run_live(args: argparse.Namespace) -> int:
             worker_model=args.worker_model,
             gateway=gateway,
             resolution=resolution,
-            pricing_catalog=PricingCatalog(config=config.get("pricing", {})),
+            pricing_catalog=PricingCatalog(config=pricing_config),
             provider_metadata=provider_metadata,
         )
     finally:
