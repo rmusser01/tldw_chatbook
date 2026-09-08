@@ -573,17 +573,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
-        """Render the Rendered|Raw toggle, or the note that replaces it.
+        """Render the Rendered|Raw toggle, for an item that can render.
 
-        The toggle itself is offered only when ``self.viewer.is_markdown``
-        is true -- a non-markdown item always shows the plain Raw view (no
-        behavior change from before LIB-13). Since task-31635 a non-markdown
-        item gets a one-line note in the same slot instead of nothing at
-        all, and since task-31958 that covers any media type -- whatever
-        the item is, if there is content and it cannot render, the slot
-        says why. An item with NO stored content is the one exception: the
-        body already says "No stored content.", and there is no rendered
-        view to explain the absence of. Mirrors the
+        The toggle is offered only when ``self.viewer.is_markdown`` is true
+        -- a non-markdown item always shows the plain Raw view (no behavior
+        change from before LIB-13) and gets nothing here. The one-line note
+        that explains WHY it has no toggle (task-31635, widened to every
+        media type by task-31958) lives in the Info tab since task-32068:
+        it is a fact about the item, and as a banner over the reading
+        surface it greeted nearly every open. An item with no stored
+        content explains nothing anywhere -- the body already says "No
+        stored content.", and there is no rendered view to explain the
+        absence of. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
@@ -592,9 +593,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         so the current mode reads correctly even without extra CSS.
 
         Returns:
-            ComposeResult for the toggle strip, or -- for a non-markdown
-            item that has content -- the one-line note that names why
-            there is no toggle (task-31635, task-31958).
+            ComposeResult for the toggle strip, or nothing at all for a
+            non-markdown item (see the Info branch of
+            ``_compose_active_body``).
         """
         if not self.viewer.is_markdown:
             # task-32068: the note is a FACT ABOUT THE ITEM, so it belongs to
