@@ -44,6 +44,7 @@ CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
 #: decomposition (task 3); the screen keeps only a thin delegation, so the
 #: real `_consume_pending_console_prompt_insert` body lives here now.
 CONSOLE_PROMPTS_PATH = PRODUCTION_ROOT / "UI" / "Console_Modules" / "prompts.py"
+CONSOLE_SESSION_PATH = PRODUCTION_ROOT / "UI" / "Console_Modules" / "session.py"
 CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
 MEDIA_WINDOW_PATH = PRODUCTION_ROOT / "UI" / "MediaWindow_v2.py"
 MEDIA_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "media_screen.py"
@@ -2192,6 +2193,7 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
     artifacts_class = _class_definition(ARTIFACTS_SCREEN_PATH, "ArtifactsScreen")
     acp_class = _class_definition(ACP_SCREEN_PATH, "ACPScreen")
     prompts_class = _class_definition(CONSOLE_PROMPTS_PATH, "ConsolePromptsController")
+    session_class = _class_definition(CONSOLE_SESSION_PATH, "ConsoleSessionController")
     methods = (
         (APP_PATH, _method_definition(app_class, "_stage_handoff")),
         (
@@ -2203,12 +2205,12 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
             _method_definition(prompts_class, "_consume_pending_console_prompt_insert"),
         ),
         (
-            CHAT_SCREEN_PATH,
-            _method_definition(chat_class, "_consume_pending_chat_handoff"),
+            CONSOLE_SESSION_PATH,
+            _method_definition(session_class, "_consume_pending_chat_handoff"),
         ),
         (
-            CHAT_SCREEN_PATH,
-            _method_definition(chat_class, "_stage_handoff_as_console_live_work"),
+            CONSOLE_SESSION_PATH,
+            _method_definition(session_class, "_stage_handoff_as_console_live_work"),
         ),
         (
             CHAT_SCREEN_PATH,

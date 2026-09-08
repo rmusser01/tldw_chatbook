@@ -12,7 +12,7 @@ from textual.css.query import NoMatches
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
@@ -132,6 +132,10 @@ def _load_console_live_work_source_readiness_state():
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
+    # Match Console's production boot tier; the base brackets this with the
+    # lifted screen/modal sheets and registers the real widget defaults.
+    CSS_PATH = [str(BUNDLED_STYLESHEET), *ChatScreen.CSS_PATH]
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -142,6 +146,13 @@ class ConsoleHarness(ConsolidatedCSSApp):
 
 def _active_console_screen(host: ConsoleHarness):
     return host.screen_stack[-1]
+
+
+def test_console_harness_loads_the_production_boot_css_stack():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    assert host.css_path == app.css_path
 
 
 async def _wait_for_production_chat_screen(
@@ -2932,7 +2943,7 @@ async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
 
         payload = build_payload()
-        screen._stage_handoff_as_console_live_work(payload)
+        screen._session._stage_handoff_as_console_live_work(payload)
         await pilot.pause()
 
         launch = screen._pending_console_launch_context
@@ -2990,7 +3001,7 @@ async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
     async with host.run_test(size=(180, 48)) as pilot:
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_handoff_as_console_live_work(payload)
+        screen._session._stage_handoff_as_console_live_work(payload)
         await pilot.pause()
         launch = screen._pending_console_launch_context
         assert launch is not None
@@ -3073,7 +3084,7 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
     async with host.run_test(size=(180, 48)) as pilot:
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_handoff_as_console_live_work(_media_handoff_payload())
+        screen._session._stage_handoff_as_console_live_work(_media_handoff_payload())
         await pilot.pause()
         launch = screen._pending_console_launch_context
         assert launch is not None
@@ -3097,7 +3108,7 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
     async with host.run_test(size=(180, 48)) as pilot:
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_handoff_as_console_live_work(_notes_handoff_payload())
+        screen._session._stage_handoff_as_console_live_work(_notes_handoff_payload())
         await pilot.pause()
         launch = screen._pending_console_launch_context
         assert launch is not None
@@ -3127,7 +3138,7 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
     async with host.run_test(size=(180, 48)) as pilot:
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        screen._stage_handoff_as_console_live_work(_conversation_handoff_payload())
+        screen._session._stage_handoff_as_console_live_work(_conversation_handoff_payload())
         await pilot.pause()
         launch = screen._pending_console_launch_context
         assert launch is not None
@@ -3174,7 +3185,7 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
 
-        screen._stage_handoff_as_console_live_work(_media_handoff_payload())
+        screen._session._stage_handoff_as_console_live_work(_media_handoff_payload())
         await pilot.pause()
 
         launch = screen._pending_console_launch_context

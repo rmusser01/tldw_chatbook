@@ -54,10 +54,38 @@ Files: `chat_screen.py`, `UI/Console_Modules/settings_navigation.py`, `wiring.py
 
 Files: `chat_screen.py`, `UI/Console_Modules/session.py`, `wiring.py`, `Tests/UI/test_console_chat_handoff_resume.py`, `test_console_live_work_handoffs.py`, and other exact caller tests.
 
-- [ ] Move `_consume_pending_chat_handoff` and `_stage_handoff_as_console_live_work` into `ConsoleSessionController`; keep claim/release/acknowledgement ordering, cancellation, sanitization, evidence construction and repair behavior unchanged.
-- [ ] Retain composer DOM access as one narrowly named screen hook with identical operations and ordering; wire it explicitly. Do not migrate widgets/IDs/nesting into the controller.
-- [ ] Keep late-bound session/service ports and controller-owned consumption state. Character handoff stays on the existing session owner; no sibling back-door through screen attributes.
+- [x] Move `_consume_pending_chat_handoff` and `_stage_handoff_as_console_live_work` into `ConsoleSessionController`; keep claim/release/acknowledgement ordering, cancellation, sanitization, evidence construction and repair behavior unchanged.
+- [x] Retain composer DOM access as one narrowly named screen hook with identical operations and ordering; wire it explicitly. Do not migrate widgets/IDs/nesting into the controller.
+- [x] Keep late-bound session/service ports and controller-owned consumption state. Character handoff stays on the existing session owner; no sibling back-door through screen attributes.
 - [ ] Run complete handoff files and actual mounted staging/send controls. Preserve hit-test and geometry checks at160x45/235x52 where applicable. Review then commit.
+
+Task 4 implementation checkpoint (2026-09-08, baseline `b8190be4fbf`): both
+method bodies match their originals after the explicit owner/port substitutions;
+the single-use Personas preview predicate and the retained composer DOM block
+are AST-identical. Screen timers/lifecycle hooks remain on Screen; their private
+consumer receiver now names the session owner. Five named live ports retain
+handoff-store lookup, retrieval staging, the pre-staging Inspector flag, composer
+projection and the exact current Screen worker callback; the existing workspace
+title port is reused. Consumption state is session-owned through the established
+Screen descriptor alias. Existing assertions in every retargeted test are
+AST-unchanged. Screen is 16,742 lines / 505 methods (unchanged caps 16,811 / 505).
+Focused missing-owner and replaced-store controls were observed RED before their
+respective changes. The pre-move three-file baseline was 104 passed / 15 failed, including an
+unrelated fork DuplicateIds failure, a Watchlists routing assertion, and existing
+native live-work painting/readiness failures. No baseline assertion was relaxed.
+
+Final frozen ten-file run: 296 passed / 15 failed in 386.62s
+(`/private/tmp/pr2427-task4-complete-final.log`). Fourteen failures are the same
+Watchlists/live-work failures present before the move; the remaining moved-seam
+guard failure names two pre-existing Message test aliases, not handoff receivers.
+Both bare roleplay fixtures now execute the real session-owned consumer with
+their original assertions and a logger patch at its current owner. The final
+owner/warm-handoff/production-composition group passed all 63 cases; all 46 native
+handoff cases and all 78 bare-shell/private-delegate/resume-registration cases
+passed. Both Console size checks pass. Targeted Ruff checks pass except the
+same three Screen import diagnostics reproduced at the baseline; diff-check
+passes. Independent review, inherited-failure reconciliation and commit remain
+open, so the final Task 4 checklist item is intentionally not marked complete.
 
 ## Task 5: Existing message presentation owner
 
