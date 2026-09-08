@@ -139,7 +139,11 @@ wide CJK characters, or five flag emoji) to keep the line short — the cut
 counts a flag by the two columns it paints and never leaves half of one, so
 the row frame does not drift. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
-both analysed and a keyword hit can clip at the default width too.
+both analysed and a keyword hit can clip at the default width too. The
+Reader's **Info** tab "Keywords:" line applies the same guard: it shows the
+full stored keyword but drops a dangling half-flag so that surface's frame
+does not drift either (the edit form still prefills the stored keyword
+verbatim).
 
 *Verified against fix/media-riders-n — 2026-09-07 (task-31951: Conversations,
 Skills and Collections opened live at 235x52. Each painted one-cell `‹` grips
