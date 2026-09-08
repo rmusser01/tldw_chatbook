@@ -16,6 +16,7 @@ from tldw_chatbook.DB.private_sqlite_protocol import (
     PrepareResult,
     ProtocolError,
     encode_frame,
+    is_tts_authority_refusal,
     read_frame,
 )
 from tldw_chatbook.Utils import private_paths
@@ -289,7 +290,12 @@ def run(parent_pid: int) -> int:
             except Exception:  # noqa: BLE001 - child boundary must not emit exception text
                 response.update(status="helper_unavailable")
             pipe.write(encode_frame(response))
-            if response["status"] != "ok":
+            recoverable = (
+                proof is not None
+                and proof.initialized
+                and is_tts_authority_refusal(response)
+            )
+            if response["status"] != "ok" and not recoverable:
                 return 0
     except (_ParentGone, BrokenPipeError, TimeoutError):
         return 0

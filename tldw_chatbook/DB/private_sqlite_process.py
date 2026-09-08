@@ -28,6 +28,7 @@ from tldw_chatbook.DB.private_sqlite_protocol import (
     ProtocolError,
     decode_frame,
     encode_frame,
+    is_tts_authority_refusal,
 )
 
 _LEASE_KINDS = {
@@ -492,7 +493,13 @@ class HelperLease:
                     raise HelperUnavailableError()
                 if response["status"] == "timeout":
                     raise HelperTimeoutError()
-                if response["status"] != "ok":
+                recoverable = (
+                    self._operation == "tts_exact_current"
+                    and self._response is not None
+                    and self._response["status"] == "ok"
+                    and is_tts_authority_refusal(response)
+                )
+                if response["status"] != "ok" and not recoverable:
                     self._failed = True
                 return response
         except (OSError, ProtocolError):
