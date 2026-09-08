@@ -71,6 +71,10 @@ class _RecordingGateway:
         omit_usage_field: str | None = None,
         loop_direct: bool = False,
         oversized_final: bool = False,
+        direct_skips_read: bool = False,
+        worker_skips_read: bool = False,
+        parent_rereads_after_worker: bool = False,
+        length_on_final: bool = False,
     ):
         self.ignore_delegation = ignore_delegation
         self.fail_direct = fail_direct
@@ -78,6 +82,10 @@ class _RecordingGateway:
         self.omit_usage_field = omit_usage_field
         self.loop_direct = loop_direct
         self.oversized_final = oversized_final
+        self.direct_skips_read = direct_skips_read
+        self.worker_skips_read = worker_skips_read
+        self.parent_rereads_after_worker = parent_rereads_after_worker
+        self.length_on_final = length_on_final
         self.calls: list[dict] = []
 
     async def stream_chat(self, resolution, messages, *, signals=None, **_kwargs):
@@ -109,7 +117,9 @@ class _RecordingGateway:
 
         if self.fail_direct and not offered_spawn and not is_worker:
             raise RuntimeError("synthetic provider failure")
-        if is_worker and not has_read_result:
+        if is_worker and self.worker_skips_read:
+            reply = "Worker answered without opening a source."
+        elif is_worker and not has_read_result:
             reply = _fence("fs_read", {"path": "notes/policy.txt"})
         elif is_worker:
             reply = "Worker: 30 days; lunar exception is 45 days (policy.txt:1-2)."
@@ -129,8 +139,12 @@ class _RecordingGateway:
                     "spawn_subagent",
                     spawn_args,
                 )
+        elif offered_spawn and self.parent_rereads_after_worker and not has_read_result:
+            reply = _fence("fs_read", {"path": "notes/policy.txt"})
         elif offered_spawn:
             reply = "Delegated answer: 30 days, except lunar accounts use 45."
+        elif self.direct_skips_read:
+            reply = "Direct answer without opening a source."
         elif not has_read_result or self.loop_direct:
             reply = _fence(
                 "fs_read",
@@ -161,26 +175,57 @@ class _RecordingGateway:
             signals.record_usage_payload(usage)
         yield ProviderToolCalls(
             (),
-            metadata=ProviderTurnMetadata(finish_reason="stop", usage=usage),
+            metadata=ProviderTurnMetadata(
+                finish_reason=(
+                    "length"
+                    if self.length_on_final and not reply.startswith("```tool_call")
+                    else "stop"
+                ),
+                usage=usage,
+            ),
         )
         if signals is not None:
             signals.close_usage_call()
 
 
-def _pricing_catalog(*, worker_cache_rate=0.5):
+class _MetadataCapturingGateway:
+    """Test-only bridge from deterministic sentinels to the evaluator recorder."""
+
+    def __init__(self, gateway, recorder):
+        self.gateway = gateway
+        self.recorder = recorder
+
+    async def stream_chat(self, *args, **kwargs):
+        recorded = False
+        try:
+            async for item in self.gateway.stream_chat(*args, **kwargs):
+                metadata = getattr(item, "metadata", None)
+                if metadata is not None:
+                    self.recorder.record(metadata)
+                    recorded = True
+                yield item
+        finally:
+            if not recorded:
+                self.recorder.record(None)
+
+    def __getattr__(self, name):
+        return getattr(self.gateway, name)
+
+
+def _pricing_catalog(*, worker_cache_rate=0.5, provider="openai"):
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
 
     return PricingCatalog(
         config={
             "models": {
-                "openai:main-test": {
+                f"{provider}:main-test": {
                     "input_per_mtok": 2.0,
                     "output_per_mtok": 8.0,
                     "cache_read_per_mtok": 0.25,
                     "cache_write_per_mtok": 2.5,
                     "as_of": "2026-09-07",
                 },
-                "openai:worker-test": {
+                f"{provider}:worker-test": {
                     "input_per_mtok": 1.0,
                     "output_per_mtok": 4.0,
                     "cache_read_per_mtok": worker_cache_rate,
@@ -212,6 +257,8 @@ def _resolution():
 
 def _run_evaluation(tmp_path: Path, gateway, *, pricing_catalog=None):
     evaluator = _load_evaluator()
+    metadata = evaluator._ProviderMetadataRecorder()
+    recording_gateway = _MetadataCapturingGateway(gateway, metadata)
     tmp_path.mkdir(parents=True, exist_ok=True)
     corpus = _corpus(tmp_path / "corpus.json")
     output = tmp_path / "report.json"
@@ -222,9 +269,10 @@ def _run_evaluation(tmp_path: Path, gateway, *, pricing_catalog=None):
             provider="OpenAI",
             main_model="main-test",
             worker_model="worker-test",
-            gateway=gateway,
+            gateway=recording_gateway,
             resolution=_resolution(),
             pricing_catalog=pricing_catalog or _pricing_catalog(),
+            provider_metadata=metadata,
         )
     )
     assert json.loads(output.read_text(encoding="utf-8")) == report
@@ -367,6 +415,185 @@ def test_ad_hoc_child_does_not_count_as_named_bulk_reader_delegation(tmp_path):
     assert {call["model"] for call in delegated["calls"]} == {"main-test"}
 
 
+def test_direct_answer_without_content_read_is_incomplete(tmp_path):
+    _evaluator, report = _run_evaluation(
+        tmp_path,
+        _RecordingGateway(direct_skips_read=True),
+    )
+
+    direct = report["cases"][0]["direct"]
+    assert direct["runtime_status"] == "done"
+    assert direct["status"] == "incomplete"
+    assert direct["status_reasons"] == ["direct_content_read_missing"]
+    assert direct["tool_reads"] == []
+
+
+def test_parent_reread_does_not_hide_named_worker_without_content_read(tmp_path):
+    _evaluator, report = _run_evaluation(
+        tmp_path,
+        _RecordingGateway(
+            worker_skips_read=True,
+            parent_rereads_after_worker=True,
+        ),
+    )
+
+    delegated = report["cases"][0]["delegated"]
+    assert delegated["runtime_status"] == "done"
+    assert delegated["delegation_occurred"] is True
+    assert delegated["status"] == "incomplete"
+    assert delegated["status_reasons"] == ["bulk_reader_content_read_missing"]
+    assert delegated["tool_reads"] == [
+        {"run_kind": "primary", "tool": "fs_read", "path": "notes/policy.txt"}
+    ]
+
+
+def test_short_provider_length_finish_marks_arms_incomplete_with_known_cost(tmp_path):
+    _evaluator, report = _run_evaluation(
+        tmp_path,
+        _RecordingGateway(length_on_final=True),
+    )
+
+    for arm_name in ("direct", "delegated"):
+        arm = report["cases"][0][arm_name]
+        assert arm["status"] == "incomplete"
+        assert "provider_output_token_limit" in arm["status_reasons"]
+        limited = [call for call in arm["calls"] if call["provider_output_limited"]]
+        assert limited
+        assert all(call["finish_reason"] == "length" for call in limited)
+        assert all(call["status"] == "incomplete" for call in limited)
+        assert all(call["cost_status"] == "known" for call in limited)
+        assert all(call["cost"] is not None for call in limited)
+        assert all(call["output_truncated"] is False for call in limited)
+
+
+def test_real_console_gateway_fence_path_exposes_length_to_call_recorder():
+    evaluator = _load_evaluator()
+    from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+        ConsoleProviderStreamSignals,
+    )
+    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+
+    usage = {"prompt_tokens": 12, "completion_tokens": 3}
+
+    def deterministic_provider(**_kwargs):
+        text = "A short provider-limited answer."
+        turn = HostedChatTurn(
+            text=text,
+            tool_calls=(),
+            assistant_message={"role": "assistant", "content": text},
+            finish_reason="length",
+            usage=usage,
+        )
+
+        class DeterministicStream:
+            def __init__(self):
+                self.items = iter(
+                    [
+                        {
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": text},
+                                    "finish_reason": "length",
+                                }
+                            ],
+                            "usage": usage,
+                        }
+                    ]
+                )
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return next(self.items)
+
+            @property
+            def terminal_turn(self):
+                return turn
+
+            @property
+            def provider_continuation(self):
+                return None
+
+            def close(self) -> None:
+                return None
+
+        return DeterministicStream()
+
+    async def exercise():
+        metadata = evaluator._ProviderMetadataRecorder()
+        gateway = ConsoleProviderGateway(
+            chat_api_call_fn=metadata.wrap_chat_api_call(deterministic_provider),
+            environ={},
+        )
+        resolution = ConsoleProviderResolution(
+            provider="moonshot",
+            base_url="https://example.invalid/v1",
+            model="main-test",
+            ready=True,
+            readiness_key="moonshot",
+            execution_key="moonshot",
+            api_key="secret",
+            streaming=True,
+            max_tokens=2_048,
+            request_timeout=60.0,
+            request_retries=0,
+            request_retry_delay=0.0,
+        )
+
+        class Store:
+            def append_stream_chunk(self, _message_id, _chunk) -> None:
+                return None
+
+            def reset_stream_content(self, _message_id) -> None:
+                return None
+
+        signals = ConsoleProviderStreamSignals()
+        adapter = _StreamingModelAdapter(
+            store=Store(),
+            provider_gateway=gateway,
+            resolution=resolution,
+            assistant_message_id="assistant",
+            should_cancel=lambda: False,
+            loop=asyncio.get_running_loop(),
+            native_tools=False,
+            provider_stream_signals=signals,
+        )
+        recorded = evaluator._RecordingChatCall(
+            adapter,
+            resolution,
+            signals,
+            _pricing_catalog(provider="moonshot"),
+            metadata,
+        )
+        try:
+            response = await asyncio.to_thread(
+                recorded,
+                messages_payload=[
+                    {"role": "system", "content": "Read before answering."},
+                    {"role": "user", "content": "Question"},
+                ],
+                model="main-test",
+                api_endpoint="moonshot",
+            )
+        finally:
+            await gateway.aclose()
+        return response, recorded.calls
+
+    response, calls = asyncio.run(exercise())
+    assert response["choices"][0]["message"]["content"] == (
+        "A short provider-limited answer."
+    )
+    assert calls[0]["finish_reason"] == "length"
+    assert calls[0]["provider_output_limited"] is True
+    assert calls[0]["status"] == "incomplete"
+    assert calls[0]["cost_status"] == "known"
+
+
 def test_model_turn_and_recorded_output_caps_make_arms_incomplete(tmp_path):
     evaluator, looped = _run_evaluation(
         tmp_path / "looped",
@@ -427,6 +654,7 @@ def test_corpus_refuses_paths_outside_materialized_workspace(tmp_path, unsafe_pa
                 gateway=gateway,
                 resolution=_resolution(),
                 pricing_catalog=_pricing_catalog(),
+                provider_metadata=evaluator._ProviderMetadataRecorder(),
             )
         )
     assert gateway.calls == []
@@ -463,6 +691,7 @@ def test_existing_output_refuses_before_provider_calls(tmp_path):
                 gateway=gateway,
                 resolution=_resolution(),
                 pricing_catalog=_pricing_catalog(),
+                provider_metadata=evaluator._ProviderMetadataRecorder(),
             )
         )
     assert output.read_text(encoding="utf-8") == "keep"

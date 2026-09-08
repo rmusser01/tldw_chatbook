@@ -70,12 +70,16 @@ case and arm:
    recorded SHA-256 hash.
 5. Record an adoption decision only after reviewing both arms.
 
-An arm is labeled `failed`, `incomplete`, or `non_delegating` when appropriate.
-The delegated arm counts only when the real run database contains a child made
-from the `bulk-reader` definition and the chosen worker model reaches the
-provider boundary. A failed child prevents a successful label. The report
-retains answers, child output, tool-read traces, per-call models, latency,
-usage buckets, costs, and failures for inspection.
+An arm is labeled `failed`, `incomplete`, or `non_delegating` when appropriate,
+with machine-readable `status_reasons`. A successful direct arm must complete
+an `fs_read` or `fs_grep`; a successful delegated arm requires that content
+access in the named worker itself, so a parent reread is not a substitute. The
+delegated arm also requires a real run-database child made from the
+`bulk-reader` definition and the chosen worker model at the provider boundary.
+A failed child or provider `finish_reason` of `length` prevents a successful
+label. The report retains answers, child output, tool-read traces, per-call
+models, finish reasons, latency, usage buckets, costs, and failures for
+inspection.
 
 Costs are calculated one provider call at a time with the existing pricing
 catalog, so worker calls remain in their own model bucket. Missing or partial

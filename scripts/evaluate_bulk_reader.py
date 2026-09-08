@@ -15,8 +15,9 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -267,12 +268,94 @@ def _price_call(usage: Any, pricing_catalog: Any) -> tuple[str, dict | None]:
     )
 
 
+def _provider_metadata(response: Any) -> Any:
+    from tldw_chatbook.Chat.console_provider_gateway import _provider_turn_metadata
+
+    try:
+        return _provider_turn_metadata(response)
+    except Exception:  # noqa: BLE001 -- metadata loss must not fail a provider call
+        return None
+
+
+class _TerminalMetadataIterator(Iterator[Any]):
+    def __init__(self, response: Iterator[Any], recorder: Any):
+        self._response = response
+        self.recorder = recorder
+        self.finished = False
+
+    def __next__(self) -> Any:
+        try:
+            return next(self._response)
+        except StopIteration:
+            self._finish(_provider_metadata(self._response))
+            raise
+        except BaseException:
+            self._finish(None)
+            raise
+
+    def _finish(self, metadata: Any) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        self.recorder.record(metadata)
+
+    def close(self) -> None:
+        close = getattr(self._response, "close", None)
+        if callable(close):
+            close()
+        self._finish(None)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+
+class _ProviderMetadataRecorder:
+    """Capture typed terminal metadata without changing provider responses."""
+
+    def __init__(self) -> None:
+        self._records: list[Any] = []
+        self._lock = threading.Lock()
+
+    def record(self, metadata: Any) -> None:
+        with self._lock:
+            self._records.append(metadata)
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._records)
+
+    def latest_since(self, index: int) -> Any:
+        with self._lock:
+            return self._records[-1] if len(self._records) > index else None
+
+    def wrap_chat_api_call(self, call: Callable[..., Any]) -> Callable[..., Any]:
+        def recording_call(**kwargs: Any) -> Any:
+            response = call(**kwargs)
+            if isinstance(response, Mapping):
+                self.record(_provider_metadata(response))
+                return response
+            if isinstance(response, Iterator):
+                return _TerminalMetadataIterator(response, self)
+            self.record(None)
+            return response
+
+        return recording_call
+
+
 class _RecordingChatCall:
-    def __init__(self, adapter: Any, resolution: Any, signals: Any, pricing: Any):
+    def __init__(
+        self,
+        adapter: Any,
+        resolution: Any,
+        signals: Any,
+        pricing: Any,
+        provider_metadata: _ProviderMetadataRecorder,
+    ):
         self.adapter = adapter
         self.resolution = resolution
         self.signals = signals
         self.pricing = pricing
+        self.provider_metadata = provider_metadata
         self.calls: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> dict:
@@ -293,11 +376,14 @@ class _RecordingChatCall:
                 "cost": None,
                 "failure": "provider_call_limit_exceeded",
                 "output_truncated": False,
+                "finish_reason": None,
+                "provider_output_limited": False,
             }
             self.calls.append(record)
             raise RuntimeError("provider call limit exceeded")
 
         usage_before = len(self.signals.usage_payloads())
+        metadata_before = self.provider_metadata.count()
         started = time.perf_counter()
         response: dict | None = None
         failure: BaseException | None = None
@@ -314,6 +400,13 @@ class _RecordingChatCall:
             model=model,
             failed=failure is not None,
         )
+        terminal_metadata = self.provider_metadata.latest_since(metadata_before)
+        finish_reason = (
+            str(terminal_metadata.finish_reason)
+            if terminal_metadata is not None
+            else None
+        )
+        provider_output_limited = finish_reason == "length"
 
         output_truncated = False
         if response is not None:
@@ -332,7 +425,13 @@ class _RecordingChatCall:
                 "agent_role": agent_role,
                 "provider": self.resolution.provider,
                 "model": model,
-                "status": "failed" if failure is not None else "completed",
+                "status": (
+                    "failed"
+                    if failure is not None
+                    else "incomplete"
+                    if provider_output_limited
+                    else "completed"
+                ),
                 "latency_ms": elapsed_ms,
                 "usage": _usage_dict(usage),
                 "cost_status": cost_status,
@@ -343,6 +442,8 @@ class _RecordingChatCall:
                     else None
                 ),
                 "output_truncated": output_truncated,
+                "finish_reason": finish_reason,
+                "provider_output_limited": provider_output_limited,
             }
         )
         if failure is not None:
@@ -402,6 +503,7 @@ def _run_arm(
     worker_model: str,
     loop: asyncio.AbstractEventLoop,
     pricing_catalog: Any,
+    provider_metadata: _ProviderMetadataRecorder,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
     from tldw_chatbook.Agents.agent_presets import BULK_READER_PRESET
@@ -410,6 +512,7 @@ def _run_arm(
         LocalToolProvider,
         _default_specs,
     )
+    from tldw_chatbook.Agents.run_context import current_run_id
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
@@ -437,6 +540,19 @@ def _run_arm(
                 ),
                 allow_write=False,
             )
+            successful_content_read_runs: set[str] = set()
+            content_read_lock = threading.Lock()
+            invoke_local_tool = provider.invoke
+
+            def record_local_tool_result(tool_id: str, args: dict):
+                result = invoke_local_tool(tool_id, args)
+                tool_name = tool_id.split(":", 1)[-1]
+                if result.ok and tool_name in {"fs_read", "fs_grep"}:
+                    with content_read_lock:
+                        successful_content_read_runs.add(current_run_id())
+                return result
+
+            provider.invoke = record_local_tool_result
             registry = ToolCatalogRegistry()
             registry.register_provider(provider)
             signals = ConsoleProviderStreamSignals()
@@ -458,7 +574,13 @@ def _run_arm(
                 native_tools=False,
                 provider_stream_signals=signals,
             )
-            recorded = _RecordingChatCall(adapter, resolution, signals, pricing_catalog)
+            recorded = _RecordingChatCall(
+                adapter,
+                resolution,
+                signals,
+                pricing_catalog,
+                provider_metadata,
+            )
             allowed = tuple(preset.tool_allowlist)
             delegated = arm == "delegated"
             if delegated:
@@ -503,7 +625,10 @@ def _run_arm(
 
     primary = next(row for row in rows if row["id"] == run_id)
     children = [row for row in rows if row.get("parent_run_id") == run_id]
-    named_child = any(row.get("agent_definition") == preset.name for row in children)
+    named_children = [
+        row for row in children if row.get("agent_definition") == preset.name
+    ]
+    named_child = bool(named_children)
     worker_model_reached_provider = any(
         call.get("agent_role") == "worker" and call.get("model") == worker_model
         for call in recorded.calls
@@ -511,18 +636,51 @@ def _run_arm(
     delegation_occurred = named_child and worker_model_reached_provider
     child_failed = any(row.get("status") != "done" for row in children)
     truncated = any(call["output_truncated"] for call in recorded.calls)
+    provider_output_limited = any(
+        call["provider_output_limited"] for call in recorded.calls
+    )
+    content_read = (
+        any(row["id"] in successful_content_read_runs for row in named_children)
+        if delegated
+        else run_id in successful_content_read_runs
+    )
+    status_reasons: list[str] = []
+    if outcome.status == "error":
+        status_reasons.append("runtime_error")
+    if child_failed:
+        status_reasons.append("child_run_failed")
+    if outcome.status not in {"done", "error"}:
+        status_reasons.append(f"runtime_{outcome.status}")
+    if truncated:
+        status_reasons.append("retained_output_limit")
+    if provider_output_limited:
+        status_reasons.append("provider_output_token_limit")
+    if delegated and not delegation_occurred:
+        status_reasons.append("named_bulk_reader_delegation_missing")
+    if not content_read:
+        status_reasons.append(
+            "bulk_reader_content_read_missing"
+            if delegated
+            else "direct_content_read_missing"
+        )
     if outcome.status == "error" or child_failed:
         status = "failed"
-    elif outcome.status != "done" or truncated:
-        status = "incomplete"
     elif delegated and not delegation_occurred:
         status = "non_delegating"
+    elif (
+        outcome.status != "done"
+        or truncated
+        or provider_output_limited
+        or not content_read
+    ):
+        status = "incomplete"
     else:
         status = "completed"
     cost_status, total_cost = _arm_cost(recorded.calls)
     return (
         {
             "status": status,
+            "status_reasons": status_reasons,
             "runtime_status": outcome.status,
             "run_id": run_id,
             "answer": outcome.final_text,
@@ -567,6 +725,7 @@ def _run_comparison_sync(
     resolution: Any,
     pricing_catalog: Any,
     loop: asyncio.AbstractEventLoop,
+    provider_metadata: _ProviderMetadataRecorder,
 ) -> dict[str, Any]:
     cases: list[dict[str, Any]] = []
     with _scoped_agent_environment():
@@ -580,6 +739,7 @@ def _run_comparison_sync(
                 worker_model=worker_model,
                 loop=loop,
                 pricing_catalog=pricing_catalog,
+                provider_metadata=provider_metadata,
             )
             delegated, delegated_sources = _run_arm(
                 case=case,
@@ -590,6 +750,7 @@ def _run_comparison_sync(
                 worker_model=worker_model,
                 loop=loop,
                 pricing_catalog=pricing_catalog,
+                provider_metadata=provider_metadata,
             )
             if direct_sources != delegated_sources:
                 raise RuntimeError("Materialized corpus differed between arms.")
@@ -648,6 +809,7 @@ async def evaluate_comparison(
     gateway: Any,
     resolution: Any,
     pricing_catalog: Any,
+    provider_metadata: _ProviderMetadataRecorder,
 ) -> dict[str, Any]:
     """Run both arms through one loop and exclusively create a JSON report."""
 
@@ -667,6 +829,7 @@ async def evaluate_comparison(
         resolution=resolution,
         pricing_catalog=pricing_catalog,
         loop=loop,
+        provider_metadata=provider_metadata,
     )
     with output_path.open("x", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, sort_keys=True)
@@ -678,13 +841,18 @@ async def run_live(args: argparse.Namespace) -> int:
     """Resolve the configured provider, run the comparison, and close it."""
 
     output = validate_live_request(args)
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
     from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
     from tldw_chatbook.config import load_settings
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
 
     config = load_settings(force_reload=True)
-    gateway = ConsoleProviderGateway(config_provider=lambda: config)
+    provider_metadata = _ProviderMetadataRecorder()
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        chat_api_call_fn=provider_metadata.wrap_chat_api_call(chat_api_call),
+    )
     try:
         resolution = await gateway.resolve_for_send(
             ConsoleProviderSelection(
@@ -713,6 +881,7 @@ async def run_live(args: argparse.Namespace) -> int:
             gateway=gateway,
             resolution=resolution,
             pricing_catalog=PricingCatalog(config=config.get("pricing", {})),
+            provider_metadata=provider_metadata,
         )
     finally:
         with contextlib.suppress(Exception):
