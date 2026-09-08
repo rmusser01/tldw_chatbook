@@ -187,9 +187,12 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
   You can see that on Media, Conversations and Prompts. Notes reserves the
   same width, but its select-mode row overflows the notes pane at every
   width today, so "Clear" and "Export selected" are off-screen there until
-  that row is reworked. On Conversations the pane is narrow enough that the
-  label is clipped either way — "○" alone while disabled, "Exp" once
-  enabled — but it is clipped in the same column, which is the point.
+  that row is reworked. Conversations now splits its select toolbar into
+  content-width rows the same way Media does — a summary row ("N selected",
+  "Select all N shown") above a bulk-action row ("Clear", "Export selected")
+  — so every label paints in full at every supported width (no more the old
+  "Selec"/"Exp" clipping), and the word still holds its column across the
+  disabled flip.
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:
@@ -497,6 +500,14 @@ content painted the no-Markdown note above its text; an empty `article` painted 
 it. In Conversations select mode, checking the first row moved the count
 0 → 1 and left the Export selected label's first painted glyph on column
 83 — "○" before, "Exp" (clipped) after.)*
+
+*Verified against fix/media-crit7-convselect — 2026-09-08 (task-32042,
+critique #7 P1: the Conversations select toolbar, once a single 1fr row that
+clipped every action to "Selec"/"Exp", now mirrors Media's multi-row
+content-width treatment. Painted-cell tests at both 235x52 and 100x30 assert
+"Select all N shown", "Clear", and "Export selected" render in full and the
+count reads on one line; the column-hold pin now measures the "Export" word,
+which stays put across the disabled flip.)*
 
 *Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
 14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.
