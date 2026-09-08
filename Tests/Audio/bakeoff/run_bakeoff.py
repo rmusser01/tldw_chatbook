@@ -627,6 +627,41 @@ def _cells_for(args, files: list[dict], models_root: Path, work: Path) -> list[d
     return cells
 
 
+def _merge(paths: list[str], out_path: Path) -> int:
+    """Render several runs' `results.json` as one report.
+
+    Each embedder turns out to have its own cosine scale (measured: the live
+    optimum is 0.45 for titanet_small and 0.10 for wespeaker_resnet34), so the
+    final numbers come from one narrow run per embedder rather than one grid
+    swept over all of them. This stitches those runs back together; the corpus
+    and machine come from the first, and a mismatch in either is recorded in
+    "Not run" rather than silently averaged away.
+    """
+    merged: dict | None = None
+    for raw in paths:
+        loaded = json.loads(Path(raw.strip()).read_text())
+        if merged is None:
+            merged = loaded
+            continue
+        if loaded["corpus"]["ids"] != merged["corpus"]["ids"]:
+            merged["skipped"].append(
+                f"merge: {Path(raw).name} ran a different corpus ({len(loaded['corpus']['ids'])} files) "
+                "-- its cells are included but are NOT comparable"
+            )
+        merged["cells"].extend(loaded["cells"])
+        merged["skipped"].extend(loaded["skipped"])
+        for asset in loaded["models"]:
+            if asset not in merged["models"]:
+                merged["models"].append(asset)
+    if merged is None:
+        return 1
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.with_name("results.json").write_text(json.dumps(merged, indent=2))
+    out_path.write_text(_report(merged))
+    print(f"wrote {out_path} from {len(paths)} runs")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cell", help="internal: run the cell in this JSON file and print the result")
@@ -643,8 +678,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="interpreter with torch/speechbrain (never install torch into the app venv)")
     parser.add_argument("--inprocess-float-control", action="store_true",
                         help="also measure float segmentation in-process, so the int8 delta is apples-to-apples")
+    parser.add_argument("--merge", default=None,
+                        help="comma-separated results.json paths to render as ONE report and results.json "
+                             "(each embedder has its own threshold scale, so the final numbers come from "
+                             "one run per embedder rather than one grid over all of them)")
     parser.add_argument("--out", default="Docs/STT_Evaluation/task-31827/report.md")
     args = parser.parse_args(argv)
+
+    if args.merge:
+        return _merge(args.merge.split(","), Path(args.out))
 
     if args.cell:
         result = run_cell(json.loads(Path(args.cell).read_text()))
