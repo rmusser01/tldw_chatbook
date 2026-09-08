@@ -161,6 +161,10 @@ The updated implementation plan resumes at Task5a (runtime admission), then
 Task5b (live ownership and close-policy integration). The probe is not production
 qualification or merge authorization; the original safety gates remain required.
 
+Implementation checkpoint: Task5a runtime floor and capability admission passed
+independent spec and quality review at c007b696d. This does not qualify the live
+handle policy, terminal retention or shutdown; Task5b owns those remaining gates.
+
 ## Links
 
 - [Detailed design](../../Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md)
