@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from dataclasses import asdict, fields, is_dataclass
 import errno
-from hashlib import sha256
 import importlib
 import inspect
 import io
@@ -13,6 +11,8 @@ import os
 import pickle
 import sqlite3
 import stat
+from dataclasses import asdict, fields, is_dataclass
+from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
 from zlib import crc32
@@ -20,7 +20,10 @@ from zlib import crc32
 import pytest
 
 from tldw_chatbook.TTS import profile_schema
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileMigrationCleanupError,
+    ProfileRepositoryError,
+)
 
 
 def _publication_module() -> ModuleType:
@@ -56,6 +59,146 @@ def _prepared(module: ModuleType, path: Path, slot: object, marker: str) -> obje
         path,
         slot=slot,
     )
+
+
+class CloseOnceFailure:
+    def __init__(self, connection):
+        self.connection = connection
+        self.close_calls = 0
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+    @property
+    def row_factory(self):
+        return self.connection.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value):
+        self.connection.row_factory = value
+
+    def close(self):
+        self.close_calls += 1
+        if self.close_calls == 1:
+            raise OSError("owned test close failure")
+        self.connection.close()
+
+
+@pytest.mark.parametrize("validation_failure", [False, True])
+def test_immutable_validation_retains_pins_when_sqlite_close_fails(
+    tmp_path, monkeypatch, validation_failure
+):
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot.ACTIVE
+    path = tmp_path / module.PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]
+    _store(path, version=4, marker="close-failure")
+    identity = _prepared(module, path, slot, "")
+    parent_fd, file_fd, leaf = module._open_exact(identity)
+    proxy = CloseOnceFailure(
+        module.connect_private_sqlite_descriptor(
+            "tts.profile_migration_publication_descriptor",
+            file_fd,
+            isolation_level=None,
+        )
+    )
+    monkeypatch.setattr(module, "_open_exact", lambda value: (parent_fd, file_fd, leaf))
+    monkeypatch.setattr(
+        module, "connect_private_sqlite_descriptor", lambda *a, **k: proxy
+    )
+    attempts = []
+    real_close = os.close
+
+    def track_close(fd):
+        attempts.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(os, "close", track_close)
+    monkeypatch.setattr(
+        module, "_content_evidence", lambda fd: pytest.fail("hash after failed close")
+    )
+    if validation_failure:
+
+        def fail_validation(*args):
+            raise ValueError(f"private validation payload {path}")
+
+        monkeypatch.setattr(
+            module.profile_schema, "validate_profile_store_version", fail_validation
+        )
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            module._immutable_validate(identity)
+        assert failure.value.__context__ is None
+        assert failure.value.__cause__ is None
+        assert "private validation payload" not in str(failure.value)
+        assert str(path) not in repr(failure.value)
+        assert attempts == []
+        assert os.fstat(file_fd).st_ino == path.stat().st_ino
+        assert os.fstat(parent_fd).st_ino == path.parent.stat().st_ino
+        owner = failure.value.owner
+        assert str(path) not in repr(owner)
+        owner.close()
+        owner.close()
+        assert proxy.close_calls == 2
+        assert attempts == [file_fd, parent_fd]
+        with pytest.raises(sqlite3.ProgrammingError):
+            proxy.execute("SELECT 1")
+    finally:
+        proxy.connection.close()
+        for descriptor in (file_fd, parent_fd):
+            try:
+                real_close(descriptor)
+            except OSError:
+                pass
+
+
+def test_validation_control_flow_keeps_original_signal_and_cleanup_owner(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.TTS.profile_errors import _migration_cleanup_owner
+
+    class HostileSignal(BaseException):
+        def __getattribute__(self, name):
+            if name == "_profile_migration_cleanup_error":
+                raise AssertionError("callback getter must not run")
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            if name == "_profile_migration_cleanup_error":
+                raise AssertionError("callback setter must not run")
+            super().__setattr__(name, value)
+
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot.ACTIVE
+    path = tmp_path / module.PROFILE_MIGRATION_CANDIDATE_LEAVES[slot]
+    _store(path, version=4, marker="control-flow")
+    artifact = _prepared(module, path, slot, "")
+    real_connect = module.connect_private_sqlite_descriptor
+    proxies = []
+    signal = HostileSignal()
+
+    def connect(*args, **kwargs):
+        proxy = CloseOnceFailure(real_connect(*args, **kwargs))
+        proxies.append(proxy)
+        return proxy
+
+    def interrupt(*args):
+        raise signal
+
+    monkeypatch.setattr(module, "connect_private_sqlite_descriptor", connect)
+    monkeypatch.setattr(
+        module.profile_schema, "validate_profile_store_version", interrupt
+    )
+    try:
+        with pytest.raises(HostileSignal) as caught:
+            module._immutable_validate(artifact)
+        assert caught.value is signal
+        owner = _migration_cleanup_owner(signal)
+        assert owner.connection is proxies[0]
+        owner.close()
+        assert proxies[0].close_calls == 2
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
 
 
 def _retained(

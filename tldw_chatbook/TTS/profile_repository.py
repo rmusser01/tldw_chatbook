@@ -37,7 +37,13 @@ from tldw_chatbook.DB.private_sqlite_process import (
     OperationDeadline,
     TTSAdmissionLatchedError,
 )
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    _migration_cleanup_owner,
+    _MigrationCleanupOwner,
+    _ProfileMigrationValidationOwner,
+    _raise_migration_cleanup_failure,
+)
 from tldw_chatbook.TTS.profile_migration_candidate import (
     ProfileMigrationBoundary,
     ProfileMigrationBoundaryRequest,
@@ -1229,6 +1235,7 @@ class TTSProfileRepository:
         self._executor: ThreadPoolExecutor | None = None
         self._executor_shutdown = False
         self._connection: sqlite3.Connection | None = None
+        self._migration_cleanup_owners: list[_MigrationCleanupOwner] = []
         self._lease: ProfileStoreLease | None = None
         self._exact_authority_quarantined = False
         self._helper_restart_required = False
@@ -1682,6 +1689,11 @@ class TTSProfileRepository:
             )
         except BaseException as error:
             body_error = error
+            owner = _migration_cleanup_owner(error)
+            if owner is not None and all(
+                owner is not retained for retained in self._migration_cleanup_owners
+            ):
+                self._migration_cleanup_owners.append(owner)
 
         if connection is not None:
             try:
@@ -1696,7 +1708,7 @@ class TTSProfileRepository:
                 authority = capture_post_init_profile_store_authority(active_path)
             except BaseException as error:
                 body_error = error
-        if self._connection is not None:
+        if self._connection is not None or self._migration_cleanup_owners:
             self._lease = lease
             self._active_database_path = active_path
         elif connection_error is None:
@@ -1883,6 +1895,17 @@ class TTSProfileRepository:
         except BaseException as error:
             body_error = error
 
+        retained = _migration_cleanup_owner(body_error)
+        if retained is not None:
+            self._migration_cleanup_owners.append(retained)
+            self._migration_cleanup_owners.extend(
+                owner for owner, _key in reversed(owners) if owner is not retained
+            )
+            self._active_database_path = active_path
+            if source is not None:
+                self._worker_retain_failed_connection(source, active_path)
+            raise body_error
+
         if body_error is not None and publication_started:
             try:
                 self._worker_refresh_reusable_tombstones(active_path)
@@ -1918,6 +1941,10 @@ class TTSProfileRepository:
                 close_profile_migration_destination(owner)
             except BaseException as error:
                 cleanup_errors.append(error)
+                if all(
+                    owner is not retained for retained in self._migration_cleanup_owners
+                ):
+                    self._migration_cleanup_owners.append(owner)
         for pending_error in (body_error, *cleanup_errors):
             if pending_error is not None and not isinstance(pending_error, Exception):
                 raise pending_error
@@ -2762,7 +2789,7 @@ class TTSProfileRepository:
                 destination_connection.close()
             except BaseException as error:
                 cleanup_errors.append(error)
-        if temporary_path is not None:
+        if temporary_path is not None and _migration_cleanup_owner(body_error) is None:
             if not published:
                 try:
                     _unlink_path_if_present(temporary_path)
@@ -2882,10 +2909,14 @@ class TTSProfileRepository:
         check_deadline = (
             None if deadline is None else lambda: _require_restore_time(deadline)
         )
-        validate_profile_candidate(
-            path,
-            check_deadline=check_deadline,
-        )
+        try:
+            validate_profile_candidate(path, check_deadline=check_deadline)
+        except BaseException as error:
+            owner = _migration_cleanup_owner(error)
+            if owner is not None:
+                self._migration_cleanup_owners.append(owner)
+                self._residual_cleanup_paths += (path,)
+            raise
         connection: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         close_error: BaseException | None = None
@@ -2918,6 +2949,12 @@ class TTSProfileRepository:
                 connection.close()
             except BaseException as error:
                 close_error = error
+        if close_error is not None:
+            owner = _ProfileMigrationValidationOwner(-1)
+            owner.connection = connection
+            self._migration_cleanup_owners.append(owner)
+            self._residual_cleanup_paths += (path,)
+            _raise_migration_cleanup_failure(owner, body_error, close_error)
         _raise_with_cleanup_precedence(body_error, close_error)
 
     def _worker_restore(
@@ -3036,10 +3073,17 @@ class TTSProfileRepository:
             if isinstance(error, ExactProfileStoreAuthorityError):
                 self._worker_seal_exact_authority(error)
             primary_error = error
+            owner = _migration_cleanup_owner(error)
+            if owner is not None and all(
+                owner is not retained for retained in self._migration_cleanup_owners
+            ):
+                self._migration_cleanup_owners.append(owner)
 
         retained_failed_connection = False
         if exclusive_lease is not None:
-            if self._connection is not None and self._lease is None:
+            if (
+                self._connection is not None or self._migration_cleanup_owners
+            ) and self._lease is None:
                 self._lease = exclusive_lease
                 self._active_database_path = active_path
                 exclusive_lease = None
@@ -3313,7 +3357,10 @@ class TTSProfileRepository:
             except BaseException as error:
                 cleanup_errors.append(error)
         if body_error is not None or cleanup_errors:
-            if recovery_path is not None:
+            if (
+                recovery_path is not None
+                and _migration_cleanup_owner(body_error) is None
+            ):
                 cleanup_errors.extend(
                     self._worker_remove_temporary_store(recovery_path)
                 )
@@ -5175,6 +5222,7 @@ class TTSProfileRepository:
             self._exact_authority_quarantined
             or self._connection is not None
             or self._lease is not None
+            or bool(self._migration_cleanup_owners)
             or bool(self._residual_cleanup_paths)
         )
 
@@ -5294,6 +5342,9 @@ class TTSProfileRepository:
 
         if self._helper_restart_required:
             raise _repository_error("restart_required")
+        while self._migration_cleanup_owners:
+            self._migration_cleanup_owners[0].close()
+            self._migration_cleanup_owners.pop(0)
         self._clear_reference_damage_markers()
         connection = self._connection
         lease = self._lease

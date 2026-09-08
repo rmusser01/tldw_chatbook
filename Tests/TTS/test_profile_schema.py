@@ -18,7 +18,10 @@ import tldw_chatbook.DB.private_sqlite as private_sqlite
 import tldw_chatbook.TTS.profile_schema as profile_schema
 from tldw_chatbook.TTS import profile_validation
 from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
-from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileMigrationCleanupError,
+    ProfileRepositoryError,
+)
 from tldw_chatbook.TTS.profile_migration_candidate import (
     ProfileMigrationBoundary,
     ProfileMigrationBoundaryRequest,
@@ -54,6 +57,52 @@ from tldw_chatbook.TTS.profile_types import (
 
 NOW = datetime(2026, 7, 26, 12, 34, 56, 123456, tzinfo=UTC)
 PROFILE_ID = UUID("01234567-89ab-cdef-8123-456789abcdef")
+
+
+@pytest.mark.parametrize(
+    "failing_owner", ["tts.profile_candidate_upgrade", "tts.profile_candidate"]
+)
+def test_candidate_close_failure_retains_snapshot_handles_and_artifacts(
+    tmp_path, monkeypatch, failing_owner
+):
+    from Tests.TTS.test_profile_migration_publication import CloseOnceFailure
+
+    path = tmp_path / "candidate.sqlite3"
+    open_profile_store(path).close()
+    real_connect = profile_schema.connect_private_sqlite
+    real_close_fd = profile_schema._close_candidate_fd
+    proxies = []
+    paths = []
+    attempts = []
+
+    def connect(owner, database, **kwargs):
+        connection = real_connect(owner, database, **kwargs)
+        if owner == failing_owner:
+            paths.append(Path(database))
+            proxy = CloseOnceFailure(connection)
+            proxies.append(proxy)
+            return proxy
+        return connection
+
+    def close_fd(fd):
+        attempts.append(fd)
+        real_close_fd(fd)
+
+    monkeypatch.setattr(profile_schema, "connect_private_sqlite", connect)
+    monkeypatch.setattr(profile_schema, "_close_candidate_fd", close_fd)
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            validate_profile_candidate(path)
+        assert attempts == []
+        assert paths[0].exists()
+        failure.value.owner.close()
+        assert proxies[0].close_calls == 2
+        assert len(attempts) == 2
+        assert not paths[0].exists()
+        assert path.exists()
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
 
 
 def _profile(**overrides: object) -> TTSGenerationProfile:
@@ -3000,11 +3049,16 @@ def test_candidate_connection_cleanup_control_flow_signal_wins_ordinary_body_err
 
     assert caught.value is signal
     assert len(snapshot_paths) == 1
-    # Two SQLite connections open against the disposable snapshot: the
-    # brief read-write reopen (already current here, so it never migrates)
-    # closes first, then the immutable read-only handle whose
-    # `_validate_schema` call is the ordinary failure `fail_schema` raises.
-    assert len(close_attempts) == 2
+    # A raised native close retains all pins and remaining SQL owners. Even
+    # this injected signal after native close is not treated as close success.
+    assert len(close_attempts) == 1
+    assert snapshot_paths[0].exists()
+    from tldw_chatbook.TTS.profile_errors import _migration_cleanup_owner
+
+    owner = _migration_cleanup_owner(signal)
+    assert owner is not None
+    monkeypatch.setattr(InterruptingClose, "close", sqlite3.Connection.close)
+    owner.close()
     for closed_connection in close_attempts:
         with pytest.raises(sqlite3.ProgrammingError):
             closed_connection.execute("SELECT 1")
