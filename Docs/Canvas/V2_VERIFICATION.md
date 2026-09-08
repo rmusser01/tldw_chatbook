@@ -618,3 +618,21 @@ for exact commands and the browser reporting-wrapper limitation.
 This closes the reproduced premature-card-action harness failure for the tested
 workflow, not the separate historical startup failure or other host/platform/
 static qualification gaps. TASK-31942 remains In Progress and Canvas V2 disabled.
+
+## Approved shared startup deadline — 2026-09-08
+
+Task13 (`235641b380`) replaces the initial implicit5s first-output and explicit45s
+Composer waits with one user-approved shared45s deadline. Both conditions remain
+required; only positive remaining time is passed, with no reset/retry. Later
+workflow assertions, F12 behavior and all production budgets are unchanged.
+
+Root actual-browser case: **1 passed, 1 inherited warning, 46.86s, exit0**.
+Root committed focused file: **5 passed, 1 warning, 2.37s, exit0**, including
+real DOM evidence. Independent scoped spec/quality approved without Critical/
+Important findings. Ruff/new-file format/whitespace pass; existing served-flow
+formatting debt is unchanged by a baseline/current edit-content comparison.
+See [deadline correction evidence](../superpowers/reviews/2026-09-08-canvas-startup-deadline-fix.md).
+
+This is an explicitly revised test contract, not a production speedup or proof
+of the historical startup delay's cause. Prior evidence and remaining host,
+platform/optional and aggregate static gates remain; task In Progress, V2 off.

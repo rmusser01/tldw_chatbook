@@ -10343,6 +10343,28 @@ readiness from a production selection or database fault; do not treat a missing
 receipt alone as a crash diagnosis. Exact evidence and restored throwaway patch:
 `Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md`.
 
+## Page timeouts do not set Playwright assertion budgets (TASK-31942, 2026-09-08)
+
+**Incident.** The actual Canvas-child test configured a 45-second page timeout,
+then waited for the first-output body class with an unconfigured `expect()`.
+A saved failure stopped after 5000ms while the body still had only `-loaded`;
+the subsequent explicit 45-second Composer assertion was never reached. Reading
+the installed Playwright assertion constructor confirmed its independent default.
+The earlier diagnostic run observed the first-output assertion completing at
+4.883 seconds after login and Composer at 12.773 seconds. These observations
+show a narrow margin in one successful run, not the original delay's exact cause.
+
+**What to do.** Give a multi-stage readiness operation one explicit monotonic
+deadline and pass only positive remaining time to each assertion. Test consumed
+time, expiry and failure/cancellation rather than assuming the page default
+controls assertions. Changing an existing sub-limit requires explicit approval:
+here the owner approved replacing the implicit 5-second first-output plus
+45-second Composer waits with a shared 45-second deadline, retaining both real
+conditions without retries. Do not describe this test-contract correction as a
+production startup optimization or relax unrelated runtime/performance budgets.
+The approved correction, focused deadline/DOM tests and one actual-Chatbook pass
+are recorded in `Docs/superpowers/reviews/2026-09-08-canvas-startup-deadline-fix.md`.
+
 ## A verifier must not invalidate the evidence it is verifying (TASK-23019, 2026-08-28)
 
 The retained closeout verifier passed once but imported its adjacent task-local sources into a
