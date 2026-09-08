@@ -297,3 +297,58 @@ a shared-dependency path. During initial browser setup, an agent also installed
 the already-declared `html5lib==1.1` into the original checkout's `.venv`; no other
 package changed. Original source files were not modified, but that environment
 was changed and must not be described as untouched.
+
+## Latest-dev checkpoint published and transport regression qualified
+
+The second 180-commit rebase completed at
+`6a65c5b3b26a91d025a6236d5159762180900dab`, containing fetched dev
+`37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`. That checkpoint was published to
+PR 2427 using an exact lease on the former `d926e3a980` head. The two open Qodo
+diagnostic comments now have replies describing the published fixing SHA,
+privacy boundary, and bounded evidence. Final-head review and normal merge
+remain required; this is not a merge qualification.
+
+Latest dev also removed the previously reviewed Save-as-Note owner fix and its
+test. Restoring a stronger control reproduced a save under a deliberately
+different `current_user`, instead of configured `notes_user_id`. The one-line
+restoration matches the existing Library owner and received independent review.
+The complete message/settings-diagnostic files pass 33 cases. The other removed
+upstream note-settings feature and historical task files were not restored as a
+side effect of this routine ownership repair.
+
+The intermittent Canvas bridge failure was a real transport bug, not a browser
+deadline: a request advertised 16,487 bytes, but the single `StreamReader.read`
+returned its first 16,384 bytes before EOF. JSON parsing failed; a canceled
+confirmation remained pending and blocked the next request. The reader now
+uses `readexactly(existing_limit + 1)` with `IncompleteReadError.partial`, then
+applies the unchanged size/UTF-8/JSON refusal checks. No limit, authentication,
+confirmation, or cancellation policy changed (existing ADR-121).
+
+Ten deterministic real-stream controls initially had six expected failures;
+the complete gateway/control files now pass **83 tests**. Both complete Canvas
+browser files pass **65 tests**, no failures or skips, including exact draft
+confirmation, passive download, child roundtrip, and browser-profile isolation.
+Evidence: `/private/tmp/pr2427-json-final.log` and
+`/private/tmp/console-browser-gateway-repaired.log`. Independent spec and
+correctness/security reviews found no issues.
+
+New upstream appearance/workspace verification initially reported five failures
+in the controller unit harness. Fixture-local canonical provider snapshots and
+actual session settings retain real token preparation and its fences; missing
+constructor argument documentation was added. The complete controller file
+passes 115 cases, and all six appearance/workspace files pass **254 tests**:
+`/private/tmp/pr2427-workspace-fixture-reconcile.A6pcbO/group-final.log`.
+
+The latest four-file native/message/settings/token run finishes **383 passed /
+4 failed**. All four failures are native rail text expectations after upstream
+appearance controls changed label widths/wrapping; they are under investigation,
+not counted as passing from focused reruns. Evidence:
+`/private/tmp/pr2427-latest-native.log`. The structural size and broad-CSS gates
+also remain open, with additional owner moves and selector changes awaiting
+approval.
+
+All six latest-dev derived preflight checks pass. Rebase reconciliation changed
+only the manifest summary's owner count from 599 to the measured 600; its owner
+rows and sink topology already matched the current source. The Backlog identity
+census now passes 3,591 records. Evidence:
+`/private/tmp/pr2427-latest-preflight-final.log`.
