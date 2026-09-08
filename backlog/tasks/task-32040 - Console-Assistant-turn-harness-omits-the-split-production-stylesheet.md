@@ -1,5 +1,5 @@
 ---
-id: TASK-32013
+id: TASK-32040
 title: Console Assistant-turn harness omits the split production stylesheet
 status: Done
 assignee:
@@ -55,3 +55,8 @@ Reason: the production Console styling contract is already established by TASK-2
 Review-owned TASK-31759 became TASK-32013 on 2026-09-07 to preserve
 the upstream More-menu task identity while rebasing onto dev 3090013cfe.
 Creation dates, historical evidence, and upstream references are unchanged.
+
+On 2026-09-08, review-owned TASK-32013 became TASK-32040 after a fresh
+census of 985 refs and 324 registered worktrees found maximum TASK-32039.
+Upstream TASK-32013 (Library Media controller exclusion debt) keeps its ID.
+The earlier renumbering above remains historical provenance.
