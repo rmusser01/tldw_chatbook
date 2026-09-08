@@ -454,8 +454,8 @@ _REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
 #: -- explains the difference in the row itself rather than leaving two
 #: same-named rows silently inconsistent.
 _REMINDER_NOTIFICATIONS_TOOLTIP = (
-    "Fixed: a reminder always notifies via inbox + toast. Unlike an "
-    "automation's Notifications row, there is no per-reminder setting to "
+    "Fixed: this scheduled task always notifies via inbox + toast. Unlike an "
+    "automation's Notifications row, there is no per-task setting to "
     "turn on/off."
 )
 

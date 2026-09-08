@@ -530,3 +530,24 @@ pass. Evidence: `/private/tmp/pr2427-presentation-complete-final.log`,
 `/private/tmp/pr2427-more-menu-baseline.log`. The final screen measures
 17,489 lines / 517 methods; the unchanged 16,811 / 505 limits still require
 the remaining approved durability and handoff owner moves.
+
+## Scheduling fixture and terminology reconciliation
+
+The three complete affected Scheduling files now pass **214 tests** in
+130.25 seconds. TASK-31712 intentionally removed five blank rows from each
+expanded DetailGroup, so the old 235x52 History-overflow precondition no
+longer held. Only that test now uses a genuinely overflowing 235x40 docked
+viewport; its no-History-before-scroll and painted-History-after-scroll
+assertions are unchanged, and the separate 235x52 lifecycle check remains.
+The diagnostic probe measured History outside the viewport at y38 before
+scrolling and painted at y18 afterward, with a 20-row scroll range.
+
+The notification tooltip now uses TASK-23106's scheduled-task vocabulary,
+preserving the explanation that inbox/toast delivery is fixed while an
+automation's notification setting is editable. Its dedicated test checks
+both the canonical noun and the absence of a per-task setting. Independent
+spec and correctness reviews, scoped Ruff, changed-range formatting, and
+diff checks pass. Evidence:
+`/private/tmp/pr2427-scheduling-reconcile-final.log`. The intermediate
+213/1 result was its old literal `per-reminder` assertion, subsequently
+reconciled; no production notification policy changed.

@@ -540,7 +540,8 @@ async def test_task_detail_notifications_row_explains_its_permanent_read_only_st
 
         value = detail.query_one("#scheduling-detail-notifications", Static)
         assert value.tooltip is not None
-        assert "no per-reminder" in str(value.tooltip).lower()
+        assert "scheduled task" in str(value.tooltip).lower()
+        assert "no per-task" in str(value.tooltip).lower()
 
 
 @pytest.mark.asyncio

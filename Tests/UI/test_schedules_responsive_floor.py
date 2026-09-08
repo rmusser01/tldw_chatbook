@@ -710,7 +710,10 @@ async def test_the_docked_task_detail_pane_scrolls_to_reveal_history_past_the_fo
     db, _service = _real_service(tmp_path, app)
     try:
         _reminder(db, "Nightly check")
-        async with app.run_test(size=TALL) as pilot:
+        # TASK-31712 removed ten blank rows from the expanded groups, so
+        # History now fits at TALL. Keep a genuinely overflowing docked
+        # viewport; the separate lifecycle test still covers 235x52.
+        async with app.run_test(size=(235, 40)) as pilot:
             await _open_workbench(pilot)
             await _select_row(pilot)
 
