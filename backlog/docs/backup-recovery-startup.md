@@ -10,7 +10,9 @@ remain required.
 Supported application, module, web, MCP, RAG backfill, and TTS worker/model launchers
 check `~/.config/tldw_cli/recovery-bootstrap/` before configuration fallback or runtime
 imports. `TLDW_CONFIG_PATH` selects a configuration file but cannot relocate this
-fixed check. The check does not parse TOML and does not depend on a recovery catalog
+fixed check. The Chatterbox pathname worker resolves the package adjacent to its
+script before this guard, including source launches without `PYTHONPATH`. The check
+does not parse TOML and does not depend on a recovery catalog
 or on the reachability of a custom operation control root.
 
 `Recovery required: recovery_pending` means a local operation still fences the
@@ -28,7 +30,9 @@ this task does not reconcile or clear those records.
 
 Ordinary no-conflict startup remains possible on a native-unqualified host/storage.
 That does not qualify backup or replacement. Known or uncertain recovery evidence
-is checked before native capability decisions.
+is checked before native capability decisions. An intact positively disjoint profile
+remains usable even when an unrelated pending record exists; each owner path must
+still remain within that verified profile scope.
 
 ## Local producer APIs and records
 
@@ -73,9 +77,17 @@ and retains it until process exit. `acquire_storage(path)` returns an idempotent
 `StorageLease` retirement token. A dedicated thread holds one complete predeclared
 namespace set while actual DB connections or private file writers remain alive.
 Multiple same-process connections share that lease, and a worker-thread close can
-retire its token. Failed close retains the fence; GC retires a never-explicitly-closed
-connection without retrying an already attempted custom close. Memory and explicitly
+retire its token. After an accepted connection subclass returns successfully from
+`close()`, the seam invokes the native SQLite base close before releasing its lease;
+a deferred or pooled close cannot leave a writable native handle outside admission.
+Failed close retains the fence; GC retires a never-explicitly-closed connection
+without retrying an already attempted custom close. Memory and explicitly
 classified foreign read-only sources retain their exemptions (see the owner census).
+
+Owner authorization is directional: a declared directory admits itself and its
+physically contained descendants, never undeclared ancestors or symlink escapes.
+A declared regular file admits the same physical file, including hardlink aliases.
+The symmetric overlap check remains only a conflict-detection primitive.
 
 Live owners may continue inside their original verified mapping after an ordinary
 config save. New processes with a changed config fingerprint participate as unbound;

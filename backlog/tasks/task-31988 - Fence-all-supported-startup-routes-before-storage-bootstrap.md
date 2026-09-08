@@ -100,3 +100,21 @@ seams, binding refresh, bootstrap/owner draining, journal-authorized reconciliat
 activation gates, and full raw-owner qualification. Complete backup/replacement is
 not exposed. Status remains In Progress and ACs remain unchecked for independent
 controller review, as explicitly directed.
+
+Independent review fix round 1 closes three important gaps: owner authorization now
+uses directional physical containment, successful custom SQLite closes are followed
+by native close before lease retirement, and a verified disjoint profile retains
+ordinary native-unqualified access while affected/uncertain scopes still refuse.
+Behavioral regressions reproduced all three failures before their fixes. An actual
+Chatterbox pathname probe without PYTHONPATH also exposed a source-launch import
+failure; the worker now selects its adjacent package before the startup guard.
+Private source and editable-registration probes verify both pending refusal and
+allowed runtime arrival without default-state writes or model effects.
+
+Fix verification: startup/entrypoint files 65 passed; targeted private SQLite file
+255 passed, one existing Windows posture skip. Scoped lint, focused format, and diff
+checks pass. Comparing the exact producer census against the review base found no
+changes in the three modified production files. Existing route/AST checks passed.
+No native or wheel-install qualification is claimed. Review minors M1/M2 remain
+deferred by the controller; existing downstream boundaries and unchecked/In Progress
+status remain unchanged. ADR-126 still directly governs these fixes.

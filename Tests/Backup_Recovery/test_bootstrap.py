@@ -467,3 +467,139 @@ raise SystemExit(os.waitstatus_to_exitcode(status))
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "forked_owner_restart_required"
     assert not (data / "never-written").exists()
+
+
+def test_enrolled_scope_refuses_ancestor_chmod_but_allows_roots_children_and_file_aliases(
+    local_scope,
+):
+    import stat
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+    from tldw_chatbook.Utils.private_paths import (
+        secure_private_directory,
+        create_private_text,
+    )
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    ancestor = data.parent
+    ancestor.chmod(0o755)
+    with pytest.raises(RecoveryRequired, match="storage_scope_not_enrolled"):
+        secure_private_directory(ancestor, create=False, application_owned=True)
+    assert stat.S_IMODE(ancestor.stat().st_mode) == 0o755
+    secure_private_directory(data, create=False, application_owned=True)
+    child = data / "child"
+    secure_private_directory(child, create=True, application_owned=True)
+    create_private_text(child / "owned.txt", "owned")
+    assert (child / "owned.txt").read_text() == "owned"
+    file_alias = ancestor / "config-alias"
+    os.link(config, file_alias)
+    with acquire_storage(file_alias):
+        pass
+    outside = ancestor / "outside"
+    outside.mkdir(mode=0o755)
+    escaped = data / "escape"
+    escaped.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RecoveryRequired, match="storage_scope_not_enrolled"):
+        create_private_text(escaped / "undeclared.txt", "no mutation")
+    assert not (outside / "undeclared.txt").exists()
+
+
+def test_deferred_factory_close_retires_native_handle_before_maintenance(local_scope):
+    import sqlite3
+    from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    root, config, data, authority = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    calls = []
+
+    class DeferredClose(sqlite3.Connection):
+        def close(self):
+            calls.append("deferred")
+
+    connection = connect_private_sqlite(
+        "db.base", data / "deferred.db", factory=DeferredClose
+    )
+    connection.execute("CREATE TABLE entries(value)")
+    connection.close()
+    try:
+        with authority.maintenance(("profile",), 0.2):
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                sqlite3.Connection.execute(
+                    connection, "INSERT INTO entries VALUES ('unsafe')"
+                )
+        assert calls == ["deferred"]
+    finally:
+        sqlite3.Connection.close(connection)
+
+
+def test_native_unavailable_preserves_disjoint_pending_profile_scope(
+    local_scope, monkeypatch
+):
+    import tldw_chatbook.Backup_Recovery.storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+    from tldw_chatbook.Utils.private_paths import create_private_text
+
+    root, config, data, authority = local_scope
+    other_config = data.parent / "other-config"
+    other_config.write_text("other profile")
+    other_data = data.parent / "other-data"
+    other_data.mkdir(mode=0o700)
+    authority.register("other", (other_config, other_data))
+    bind_profile(root, config, ("profile",), root / "admission")
+    register_pending(
+        root, "other-operation", ("other",), data.parent / "control", (other_config,)
+    )
+    assert startup_permission(config, root) == (True, "startup_allowed")
+    monkeypatch.setattr(
+        storage, "qualified_for", lambda *args: (False, "operation_not_qualified")
+    )
+    create_private_text(data / "still-usable.txt", "ordinary data")
+    assert (data / "still-usable.txt").read_text() == "ordinary data"
+    with pytest.raises(RecoveryRequired, match="storage_scope_not_enrolled"):
+        create_private_text(other_data / "must-not-exist.txt", "outside scope")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(other_config))
+    with pytest.raises(RecoveryRequired, match="recovery_pending"):
+        storage.acquire_storage(other_data / "must-not-exist.txt")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config))
+    config.write_text("changed scope")
+    with pytest.raises(RecoveryRequired, match="recovery_scope_uncertain"):
+        storage.acquire_storage(data / "must-not-exist.txt")
+
+
+def test_failed_explicit_factory_close_retains_admission_without_gc_retry(local_scope):
+    import gc
+    import sqlite3
+    from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+    from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    root, config, data, authority = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    calls = []
+
+    class FailedClose(sqlite3.Connection):
+        def close(self):
+            calls.append("failed")
+            raise sqlite3.OperationalError("injected_close_failure")
+
+    connection = connect_private_sqlite(
+        "db.base", data / "retained.db", factory=FailedClose
+    )
+    connection.execute("CREATE TABLE entries(value)")
+    with pytest.raises(sqlite3.OperationalError, match="injected_close_failure"):
+        connection.close()
+    connection.execute("INSERT INTO entries VALUES ('still live')")
+    connection.commit()
+    with pytest.raises(AdmissionTimeout):
+        with authority.maintenance(("profile",), 0.1):
+            pass
+    del connection
+    gc.collect()
+    assert calls == ["failed"]
+    with pytest.raises(AdmissionTimeout):
+        with authority.maintenance(("profile",), 0.1):
+            pass

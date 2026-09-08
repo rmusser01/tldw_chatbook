@@ -1088,6 +1088,9 @@ def _with_storage_admission(function):
                 def close(self):
                     self._admission_close_attempted = True
                     super().close()
+                    # A pooling/deferred subclass may return with its native handle
+                    # alive. Bypass that override before retiring the owner lease.
+                    sqlite3.Connection.close(self)
                     lease.close()
 
                 def __del__(self):

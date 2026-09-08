@@ -245,3 +245,81 @@ def test_every_package_main_route_has_reviewed_classification():
         ):
             current.add(path.relative_to(package).as_posix())
     assert current == set(ROUTE_CLASSIFICATIONS)
+
+
+@pytest.mark.parametrize("editable", [False, True])
+@pytest.mark.parametrize("pending", [False, True])
+def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pending):
+    import sysconfig
+    import venv
+
+    runtime = tmp_path / "runtime"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(runtime)
+    interpreter = runtime / "bin" / "python"
+    packages = (
+        runtime
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    # Read shared dependencies without executing their editable-install .pth hooks.
+    (packages / "dependencies.pth").write_text(sysconfig.get_path("purelib") + "\n")
+    if editable:
+        (packages / "chatbook-editable.pth").write_text(str(ROOT) + "\n")
+    marker = tmp_path / "runtime-import-reached"
+    (packages / "sitecustomize.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "class StopBeforeModelEffects:\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname == 'chatterbox':\n"
+        f"            Path({str(marker)!r}).write_text('runtime reached after guard')\n"
+        "            raise SystemExit(0)\n"
+        "sys.meta_path.insert(0, StopBeforeModelEffects())\n"
+    )
+    home = tmp_path / "home"
+    config = tmp_path / "custom-config"
+    config.write_text("private config")
+    root = home / ".config" / "tldw_cli" / "recovery-bootstrap"
+    root.parent.mkdir(parents=True, mode=0o700)
+    if pending:
+        register_pending(root, "op", ("p",), tmp_path / "control", (config,))
+    env = dict(
+        os.environ, HOME=str(home), TLDW_CONFIG_PATH=str(config), PYTHONUNBUFFERED="1"
+    )
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    provenance = subprocess.run(
+        [
+            str(interpreter),
+            "-c",
+            "import importlib.util; print(importlib.util.find_spec('tldw_chatbook') is not None)",
+        ],
+        env=env,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    assert provenance.returncode == 0, provenance.stderr
+    assert provenance.stdout.strip() == str(editable)
+    result = subprocess.run(
+        [
+            str(interpreter),
+            str(ROOT / "tldw_chatbook/TTS/backends/chatterbox_process.py"),
+        ],
+        env=env,
+        cwd=tmp_path,
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    if pending:
+        assert result.returncode != 0
+        assert "Recovery required: recovery_pending" in result.stderr, result.stderr
+        assert not marker.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert marker.read_text() == "runtime reached after guard"
+    assert not (home / ".local").exists()
+    assert not (home / ".config" / "tldw_cli" / "config.toml").exists()

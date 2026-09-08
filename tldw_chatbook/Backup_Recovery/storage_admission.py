@@ -10,6 +10,7 @@ from __future__ import annotations
 import atexit
 import os
 from pathlib import Path
+import stat
 import threading
 
 from . import bootstrap
@@ -77,6 +78,26 @@ class StorageLease:
         self.close()
 
 
+def _contains_owned_path(root: Path, selected: Path) -> bool:
+    """Authorize exact objects or descendants of a declared directory, never parents."""
+    resolved_root = root.resolve(strict=True)
+    with bootstrap.pinned_directory(resolved_root.parent) as parent:
+        info = os.stat(resolved_root.name, dir_fd=parent, follow_symlinks=False)
+    resolved_selected = selected.resolve()
+    if stat.S_ISDIR(info.st_mode):
+        return (
+            resolved_selected == resolved_root
+            or resolved_root in resolved_selected.parents
+        )
+    if not stat.S_ISREG(info.st_mode):
+        return False
+    try:
+        selected_info = resolved_selected.stat()
+    except FileNotFoundError:
+        return False
+    return (info.st_dev, info.st_ino) == (selected_info.st_dev, selected_info.st_ino)
+
+
 def _scope(root: Path, selector: Path, path: Path | None) -> tuple[str, ...]:
     pending, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
@@ -98,7 +119,7 @@ def _scope(root: Path, selector: Path, path: Path | None) -> tuple[str, ...]:
             raise bootstrap.RecoveryRequired("recovery_scope_uncertain")
         return (UNBOUND_NAMESPACE,)
     if path is not None and not any(
-        bootstrap._overlap(path, Path(p))
+        _contains_owned_path(Path(p), path)
         for p in binding["roots"] + [binding["selector"]]
     ):
         raise bootstrap.RecoveryRequired("storage_scope_not_enrolled")
@@ -135,11 +156,13 @@ def _acquire_storage(path: Path | None = None) -> StorageLease:
         existing = existing.parent
     allowed, reason = qualified_for("admission", existing)
     if not allowed:
-        # Evidence was checked above even when the platform cannot take leases.
-        if root.exists():
-            pending, profiles = bootstrap._records(root)
-            if pending:
-                raise bootstrap.RecoveryRequired("storage_admission_unavailable")
+        # Preserve a positively disjoint startup decision, while still limiting
+        # each owner path to its verified scope. Native unavailability is not a
+        # conflict with an unrelated operation and never qualifies maintenance.
+        _scope(root, selector, lexical_path(path) if path is not None else None)
+        allowed, reason = bootstrap.startup_permission(selector, root)
+        if not allowed:
+            raise bootstrap.RecoveryRequired(reason)
         return StorageLease(None)
     with _lock:
         authority = admission_authority(root)
