@@ -241,6 +241,9 @@ def resolve_adaptive_reader_layout(
             main path reallocates -- a width-starved priority layout has no
             surplus to give. Automatic widths only: obeyed as typed under
             ``custom_widths_enabled``, matching the ``list_grows`` gate.
+            It also decides the stage below the single-stage floor for a
+            profile with ``list_first_when_empty``: with nothing to read, the
+            list is kept instead of the empty work pane (task-32065).
 
     Returns:
         Current effective pane geometry.
