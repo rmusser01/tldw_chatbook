@@ -71,7 +71,9 @@ Decisions taken in brainstorming:
   `[meetings] onnx_models_dir` to pre-placed files with the same names; the user guide lists
   names, URLs and hashes.
 - **Downloader.** httpx (streaming, `trust_env` proxies). Initial URL on `github.com`;
-  redirects followed only to `*.githubusercontent.com`; anything else refused. Temp name
+  redirects followed only to `*.githubusercontent.com` or back to a host already in the
+  initial allowlist (`github.com` — GitHub's release URLs do bounce between the two);
+  anything else refused. Temp name
   then atomic rename; SHA-256 verified when a download completes and again when the worker
   loads a file. No network at import, in `prepare()`, or on screen open.
 - **When.** The fetch is the first step of the backend's own asynchronous warm-up

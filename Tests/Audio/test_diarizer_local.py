@@ -1276,6 +1276,24 @@ def test_speechbrain_env_has_no_onnx_vars_when_unconfigured():
     assert "TLDW_DIARIZER_MODELS_DIR" not in captured["env"]
 
 
+def test_speechbrain_env_has_no_onnx_vars_at_the_real_call_site():
+    """Final review Minor 5: the owner passes `settings.onnx_embedder` (and
+    the models dir) on EVERY build, engine regardless -- so the test above,
+    which configures neither, was never a guarantee about production. The env
+    write is gated on the engine now, not on the values being set."""
+    captured = {}
+
+    def _spawn(cmd, **k):
+        captured["env"] = k.get("env")
+        return FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])
+
+    d = _ready(SpeechBrainDiarizer(
+        spawn=_spawn, embedder="titanet_small", models_dir_override=Path("/tmp/onnx-models"),
+    ))
+    assert "TLDW_DIARIZER_EMBEDDER" not in captured["env"]
+    assert "TLDW_DIARIZER_MODELS_DIR" not in captured["env"]
+
+
 def test_speechbrain_warmup_status_transitions_to_ready():
     gate = threading.Event()
     proc = FakeProc(['{"id": "S1", "seq": 0, "self": false}\n'])

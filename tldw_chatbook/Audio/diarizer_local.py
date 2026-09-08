@@ -332,12 +332,17 @@ class LocalDiarizer:
             env = {**os.environ, "TLDW_DIARIZER_MAX_SPEAKERS": str(self._max)}
             # The ONNX worker has no other way to learn which embedder (and,
             # for an override/air-gapped install, which directory) the app
-            # already fetched the models into (task 4: 31827, ruling 2) --
-            # harmless to set for the speechbrain engine, which ignores them.
-            if self._embedder:
-                env["TLDW_DIARIZER_EMBEDDER"] = self._embedder
-            if self._models_dir_override is not None:
-                env["TLDW_DIARIZER_MODELS_DIR"] = str(self._models_dir_override)
+            # already fetched the models into (task 4: 31827, ruling 2).
+            # ONNX spawns only (final review Minor 5): the owner passes
+            # `settings.onnx_embedder` on EVERY build, so a SpeechBrain
+            # worker was being handed ONNX vars it ignores -- harmless, but
+            # it made `test_speechbrain_env_has_no_onnx_vars_when_unconfigured`
+            # read as a guarantee about the real call site, which it was not.
+            if self._engine == "onnx":
+                if self._embedder:
+                    env["TLDW_DIARIZER_EMBEDDER"] = self._embedder
+                if self._models_dir_override is not None:
+                    env["TLDW_DIARIZER_MODELS_DIR"] = str(self._models_dir_override)
             self._proc = self._spawn(
                 self._command(),
                 stdin=subprocess.PIPE,

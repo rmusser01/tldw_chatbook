@@ -41,6 +41,12 @@ class ModelAsset:
     #: describe the extracted member). The streamed-byte cap uses this so a
     #: 6.9 MB archive is not judged against its 6.0 MB member (re-review).
     download_size: int | None = None
+    #: For an asset downloaded as a tarball, the member `_fetch_asset`
+    #: extracts. `_fetch_asset` used to hard-code `"model.onnx"` for every
+    #: `kind == "segmentation"` asset, so fetching `SEGMENTATION_INT8` would
+    #: have extracted the FLOAT member, failed the size filter and raised
+    #: "download failed" (final review Minor 1). None for a plain file.
+    member_name: str | None = None
 
 
 #: The pyannote segmentation 3.0 model, used by every embedder's Stop pass
@@ -54,6 +60,7 @@ SEGMENTATION = ModelAsset(
     size=5_992_913,
     licence="MIT (pyannote/segmentation-3.0)",
     download_size=6_958_444,
+    member_name="model.onnx",
 )
 
 #: The int8 variant of the same tarball's `model.int8.onnx`, kept for the
@@ -65,6 +72,7 @@ SEGMENTATION_INT8 = ModelAsset(
     size=1_540_506,
     licence="MIT (pyannote/segmentation-3.0)",
     download_size=6_958_444,  # the same tarball as SEGMENTATION
+    member_name="model.int8.onnx",
 )
 
 #: Bake-off candidate embedders (spec §3/§7). Each is used for BOTH the live
@@ -159,7 +167,7 @@ _MAX_THRESHOLD = 2.0
 
 
 def _threshold_from_env(name: str, default: float) -> float:
-    """`os.environ[name]` as a cosine distance in ``(0, 2]``, or `default`.
+    """`os.environ[name]` as a cosine distance in ``(0, 2)``, or `default`.
 
     An unset, empty, unparseable or UNUSABLE value is IGNORED rather than
     raising: this is a sweep knob, and a typo in it must never take the
@@ -171,7 +179,9 @@ def _threshold_from_env(name: str, default: float) -> float:
     silently. `nan` makes ``(1 - sim) <= threshold`` false for every window, so
     the clusterer mints a fresh speaker per window up to the cap; anything at
     or past `_MAX_THRESHOLD` collapses every voice into one id; anything <= 0
-    can never match. Only a distance in ``(0, 2]`` is accepted.
+    can never match. Only a distance in ``(0, 2)`` is accepted -- 2.0 itself is
+    the collapse-everything value the sentence above names, and the guard used
+    to let it through (final review Minor 2).
     """
     try:
         value = float(os.environ[name])
@@ -179,7 +189,7 @@ def _threshold_from_env(name: str, default: float) -> float:
         return default
     # This also rejects NaN, without a separate test: every comparison with NaN
     # is False, so the chain is False and `not` makes it True.
-    if not (0.0 < value <= _MAX_THRESHOLD):
+    if not (0.0 < value < _MAX_THRESHOLD):
         return default
     return value
 
@@ -257,8 +267,12 @@ class ModelsUnavailable(RuntimeError):
     four static strings below -- never a URL, host, path or file name."""
 
 
-#: The manifest's release host and the only redirect target suffix a hop may
-#: land on (spec §3: "redirects followed only to *.githubusercontent.com").
+#: The manifest's release host and the redirect target suffix a hop may land
+#: on (spec §3). A hop back to a host in `ALLOWED_HOSTS` is allowed too --
+#: GitHub release URLs really do bounce `github.com` -> objects on
+#: `*.githubusercontent.com` and sometimes back again, and re-admitting the
+#: initial host is strictly narrower than the spec sentence reads (final
+#: review Minor 6; spec §3 now says the same).
 ALLOWED_HOSTS = ("github.com",)
 ALLOWED_REDIRECT_SUFFIX = ".githubusercontent.com"
 DOWNLOAD_BUDGET_S = 600.0
@@ -304,7 +318,7 @@ def _new_http_client():
     return httpx.Client(follow_redirects=False, trust_env=True, timeout=30.0)
 
 
-def _extract_tar_member(tar_path: Path, wanted_basename: str, dest: Path, expected_size: int) -> None:
+def _extract_tar_member(tar_path: Path, wanted_basename: str | None, dest: Path, expected_size: int) -> None:
     """Extract `wanted_basename` (`model.onnx` or `model.int8.onnx`) from the
     segmentation release tarball, rejecting any candidate that is not an
     exact `expected_size` (the manifest's size for the file it produces --
@@ -398,11 +412,12 @@ def _stream_to_file(
 def _fetch_asset(http_client, asset: ModelAsset, path: Path, deadline: float, on_bytes: Callable[[int], None]) -> None:
     """Download `asset` (retrying once on a verification failure) and
     atomically place it at `path` (spec §3/§8 -- rulings 3/4/9)."""
-    # `ensure_models` only ever fetches `SEGMENTATION` (not the int8 variant,
-    # which isn't in `model_paths`' plan -- spec §7 bake-off leaves it as a
-    # future candidate), so the tarball member wanted is always the same.
+    # The member comes from the ASSET (final review Minor 1): hard-coding
+    # `"model.onnx"` for every `kind == "segmentation"` asset meant the int8
+    # twin -- same tarball, different member -- would silently extract the
+    # float member, fail the size filter and report "download failed".
     is_tarball = asset.kind == "segmentation"
-    wanted_member = "model.onnx"
+    wanted_member = asset.member_name
     # Cap the STREAM by what is downloaded (the archive for a tarball asset),
     # never by the extracted member's size -- the two differ by ~1 MB here.
     max_bytes = (asset.download_size or asset.size) + _DOWNLOAD_SLACK_BYTES

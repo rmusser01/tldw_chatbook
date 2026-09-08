@@ -231,13 +231,14 @@ def test_env_overrides_both_thresholds_for_the_bakeoff(fake_sherpa, tmp_path, mo
     assert _Diarizer.last_config["clustering"]["threshold"] == 0.7
 
 
-@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "5.0", "0", "-0.3"])
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "5.0", "2.0", "0", "-0.3"])
 def test_out_of_range_threshold_env_values_are_ignored(bad, fake_sherpa, tmp_path, monkeypatch):
     """A float that parses is not automatically a usable threshold.
 
     These are cosine DISTANCES: `nan` makes `(1 - sim) <= nan` false for every
     window, so the live clusterer mints a new speaker per window until the cap;
-    `inf` (or any value past 2.0, the widest possible cosine distance)
+    `inf` -- or 2.0 itself, the widest possible cosine distance, which the
+    guard used to accept against its own docstring (final review Minor 2) --
     collapses every voice into S1. Both are silent, and both destroy live
     labelling for the whole meeting -- so an unusable value falls back to the
     manifest default exactly like an unparseable one (review Minor 3).
@@ -876,3 +877,37 @@ def test_stream_to_file_enforces_the_real_host_allowlist_and_relative_redirects(
     })
     _stream_to_file(client, "https://github.com/dir/x", dest_e, deadline, lambda n: None, 999)
     assert dest_e.read_bytes() == b"world"
+
+
+def test_fetching_the_int8_segmentation_asset_extracts_its_own_member(tmp_path):
+    """Final review Minor 1: `_fetch_asset` hard-coded `"model.onnx"` for
+    every `kind == "segmentation"` asset, so fetching `SEGMENTATION_INT8` --
+    the same tarball, a different member -- would have extracted the FLOAT
+    member, failed the size filter and raised "download failed". The member
+    comes from the asset now, so the manifest entry is actually fetchable.
+
+    The tarball carries BOTH members at their real relative sizes, so picking
+    the wrong one cannot accidentally pass.
+    """
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+
+    int8_body = b"I" * 1_500
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:bz2") as tf:
+        for name, content in (("model.onnx", b"F" * 9_000), ("model.int8.onnx", int8_body)):
+            info = tarfile.TarInfo(name=f"sherpa-onnx-fixture/{name}")
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+    tar = buf.getvalue()
+
+    url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/x/seg.tar.bz2"
+    asset = dataclasses.replace(
+        eng.SEGMENTATION_INT8, url=url, sha256=hashlib.sha256(int8_body).hexdigest(),
+        size=len(int8_body), download_size=len(tar),
+    )
+    dest = tmp_path / asset.file_name
+    client = _ScriptedClient({url: _fake_response(200, body=tar)})
+
+    eng._fetch_asset(client, asset, dest, time.monotonic() + 30.0, lambda n: None)
+
+    assert dest.read_bytes() == int8_body
