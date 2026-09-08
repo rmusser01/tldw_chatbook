@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:26'
-updated_date: '2026-09-08 21:00'
+updated_date: '2026-09-08 21:44'
 labels:
   - library
   - prompts
@@ -47,4 +47,6 @@ AC#2: 'Use in Console' moved out of `#library-prompt-editor-actions` (row 49 of 
 Fix round 1: it first joined `#library-prompt-mode-controls` as a fourth control. That row is a bare `Horizontal` with no overflow rule anywhere, and the prompts work pane floors at 48 cells: measured on the canvas at 40/48/56 columns, the button starts at column 48 and lands entirely outside a 44-cell canvas (at 56 the label clipped to 'Use in '). It now rides its own `#library-prompt-header-actions` row -- the same ruling task-30043 made on the media canvas when a fourth action clipped that row, and the shape the Media Reader itself uses (its action row sits beside the mode row, not in it). Pinned at 44, 80 and 140 columns.
 
 Files: tldw_chatbook/Widgets/Console/prompt_variables_dialog.py, tldw_chatbook/Widgets/Library/library_prompts_canvas.py, Tests/UI/test_library_crit8_polish_media.py, Tests/UI/test_library_prompts_canvas.py, Docs/User_Guide/library/prompts.md.
+
+Fix round 2 (critique-8 re-review, group polish-media): the header-actions row itself carries `ds-toolbar` (min-height 1, `$ds-surface-raised`), so with the button hidden -- every dirty edit, every new prompt, the conflict state -- the row still painted a full-width empty raised strip under the mode tabs, covering the fields below it. `header_actions.display` now follows `use_console.display` in both compose() and `sync_lifecycle_actions`. Pinned by `test_header_actions_row_collapses_when_use_in_console_is_hidden` in Tests/UI/test_library_crit8_polish_media.py.
 <!-- SECTION:NOTES:END -->

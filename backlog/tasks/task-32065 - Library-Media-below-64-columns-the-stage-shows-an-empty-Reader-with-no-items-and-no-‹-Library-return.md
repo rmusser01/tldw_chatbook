@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-08 18:25'
-updated_date: '2026-09-08 21:00'
+updated_date: '2026-09-08 21:45'
 labels:
   - library
   - media
@@ -54,4 +54,6 @@ Fix round 1 (three defects, all found after the first pass):
 3. `_library_entry_canvas_owner`'s `LibraryEmergencyReturn` clause was unreachable (that bar is a sibling of the route-content wrapper, never a child of the host it inspects) and is gone; the Media control still needs its own skip, because the Media host IS the swap target.
 
 Files: tldw_chatbook/Utils/adaptive_reader_state.py, tldw_chatbook/Library/library_media_reader_state.py, tldw_chatbook/UI/Screens/library_screen.py, Tests/UI/test_library_crit8_polish_media.py, Docs/User_Guide/library/media-and-conversations.md.
+
+Fix round 2 (critique-8 re-review, group polish-media): the below-64 `priority_pane=None` reset on the Media rail-row branch was not width-bounded, so it also dropped a priority the user set deliberately at ordinary widths -- at 100 columns, opening the Library pane with its grip legitimately closes Items (both do not fit beside the Reader) and sets `priority_pane='library'`; the unconditional reset then reverted that on the very next 'Browse Media' press. The clear is now bounded to `media_shell_width < LIBRARY_EMERGENCY_WIDTH` (or the shell not yet mounted), matching the below-64 band the emergency behavior above is scoped to. Pinned by `test_media_grip_priority_survives_a_library_round_trip_at_ordinary_width` in Tests/UI/test_library_crit8_polish_media.py; the existing 60x24 round-trip test is unaffected (still below the bound).
 <!-- SECTION:NOTES:END -->

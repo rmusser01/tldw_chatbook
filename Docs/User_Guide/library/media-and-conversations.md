@@ -962,3 +962,11 @@ Previous/Next. task-32068: a plain PDF whose stored author is the literal
 in Info — both live at 100x30. task-32070: after a rail search at 235x52 the
 footer is one row, and select mode lists "space toggle selection | s done
 selecting" the moment it is entered.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32065,
+fix round 2: the below-64 reset above is bounded to that band. At an
+ordinary width (100 columns, say) Library and Items do not always both fit
+beside the Reader either, so opening Library with its own grip can close
+Items the same way — a deliberate choice, not the below-64 emergency. The
+round-1 fix cleared that choice too on the next "Browse Media" press; it now
+survives re-entry at ordinary widths, and only resets below 64 columns.)*

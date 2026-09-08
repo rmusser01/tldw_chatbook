@@ -473,5 +473,9 @@ manager, a direct-pick surface, and never cycled.)*
 *Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32074: the
 Prompt-variables checkbox paints ☐/☑ instead of an empty frame whose state was
 carried by colour alone, and **Use in Console** moved from the bottom of the
-editor into the header beside Basic/Advanced/Info. task-32067: a one-page prompt
-list drops its "Page 1 of 1" counter, boundary reasons and Previous/Next.)*
+editor into the header, on its own row directly under Basic/Advanced/Info.
+task-32067: a one-page prompt list drops its "Page 1 of 1" counter, boundary
+reasons and Previous/Next. Fix round 2: that header row now hides itself along
+with the button, instead of leaving an empty raised strip; and re-entering
+Media at an ordinary width no longer drops a pane priority the user just set
+with a grip.)*

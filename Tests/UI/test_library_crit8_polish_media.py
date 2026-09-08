@@ -425,6 +425,29 @@ async def test_use_in_console_sits_in_the_prompt_editor_header() -> None:
 
 
 @pytest.mark.asyncio
+async def test_header_actions_row_collapses_when_use_in_console_is_hidden() -> None:
+    """task-32074 (fix round 2): a hidden button must not leave a bare strip.
+
+    ``#library-prompt-header-actions`` carries ``ds-toolbar`` (min-height 1,
+    a raised background), so with ``use_console.display`` False the row
+    itself still painted a full-width empty strip under the mode tabs --
+    covering every dirty edit, every new prompt, and the conflict state.
+    """
+    app = _PromptsCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        dirty=True,
+    )
+    async with app.run_test(size=(80, 40)) as pilot:
+        row = pilot.app.query_one("#library-prompt-header-actions")
+        button = pilot.app.query_one("#library-prompt-insert-console", Button)
+        assert button.display is False
+        assert row.display is False
+        assert row.region.height == 0
+
+
+@pytest.mark.asyncio
 async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -> None:
     """task-32065 AC#1, after AC#2 has been used (fix round 1).
 
@@ -478,6 +501,81 @@ async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -
             and screen.query_one("#library-media-row-0", Button).region.width > 0,
             message="The Items list never painted on the second visit.",
         )
+
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_media_grip_priority_survives_a_library_round_trip_at_ordinary_width() -> (
+    None
+):
+    """task-32065 (fix round 2): the below-64 reset must not reach 100 columns.
+
+    At NARROW_SIZE (100x30) Library and Items do not both fit beside the
+    Reader, so opening Library with its own grip legitimately closes Items
+    and sets ``priority_pane="library"`` -- an ordinary-width decision, not
+    the below-64 emergency round 1 fixed. Clearing that priority on every
+    "Browse Media" press (round 1's fix) wiped this one too: the pane the
+    user just opened closed again the moment they re-entered Media.
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+
+        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.query_one(
+                    "#library-media-reader-shell"
+                ).effective_layout.library_open
+                and not screen.query_one(
+                    "#library-media-reader-shell"
+                ).effective_layout.items_open
+            ),
+            message="The Library grip did not become the explicit priority.",
+        )
+        assert (
+            screen.query_one(
+                "#library-media-reader-shell"
+            ).effective_layout.priority_pane
+            == "library"
+        )
+
+        # Re-entering Media must keep the priority the user just set, not
+        # revert to the ordinary default (Library closed, Items open). The
+        # press is processed across several awaited steps (note/prompt/skill
+        # flush, canvas replace, THEN the priority reset this task bounds),
+        # so a predicate that is already true from the grip press above
+        # (``library_open``) would pass before that chain ever runs -- wait
+        # for the navigation-context generation to advance instead, which
+        # only happens once the press has actually been handled.
+        generation_before = screen._library_navigation_context_generation
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_navigation_context_generation
+            > generation_before,
+            message="The second 'Browse Media' press was never processed.",
+        )
+        # The priority reset (this task's fix) and its call_after_refresh
+        # resolve land a few event-loop turns after that generation bump.
+        for _ in range(20):
+            await pilot.pause(0.02)
+
+        layout = screen.query_one(
+            "#library-media-reader-shell"
+        ).effective_layout
+        assert layout.library_open is True
+        assert layout.items_open is False
 
         for media_id in tuple(service.detail_release):
             service.release(media_id)

@@ -491,6 +491,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         use_console = self.query_one("#library-prompt-insert-console", Button)
         use_console.display = clean_saved
         use_console.disabled = busy
+        # task-32074 (fix round 2): keep the row's own display in lockstep
+        # with its one control -- see the matching compose-time assignment.
+        self.query_one("#library-prompt-header-actions").display = clean_saved
         more = self.query_one("#library-prompt-more-actions", Button)
         more.display = clean_saved
         more.disabled = busy
@@ -1350,6 +1353,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         and not self.dirty
                     )
                     yield use_console
+                # task-32074 (fix round 2): the row itself carries
+                # ``ds-toolbar`` (min-height 1, a raised background), so with
+                # the button hidden -- every dirty edit, every new prompt,
+                # the conflict state -- it still painted a bare full-width
+                # strip under the mode tabs. Only ONE control lives in this
+                # row today, so its display always follows the button's.
+                header_actions.display = use_console.display
                 yield Static(
                     self.basic_unavailable_reason,
                     id="library-prompt-mode-reason",

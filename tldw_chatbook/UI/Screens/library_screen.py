@@ -22542,9 +22542,24 @@ class LibraryScreen(BaseAppScreen):
             # control hidden by its own rule. Pane PREFERENCES are untouched
             # (a manual open/close still persists); only the transient
             # starved-layout hint is cleared, and the resolver re-derives it.
-            self._media_state.reader_layout = dataclasses.replace(
-                self._media_state.reader_layout, priority_pane=None
-            )
+            #
+            # task-32065 (fix round 2): bounded to that same below-64
+            # emergency band. At an ordinary width (100 columns, say) Library
+            # and Items can each legitimately need the whole stage to
+            # themselves too -- opening Library there closes Items and sets
+            # this same ``priority_pane`` deliberately, not as a starved-width
+            # artifact. Clearing it unconditionally wiped that choice too: one
+            # "Browse Media" press closed the pane the user had just opened.
+            try:
+                media_shell_width = self.query_one(
+                    "#library-media-reader-shell"
+                ).region.width
+            except (NoMatches, QueryError):
+                media_shell_width = 0
+            if media_shell_width == 0 or media_shell_width < LIBRARY_EMERGENCY_WIDTH:
+                self._media_state.reader_layout = dataclasses.replace(
+                    self._media_state.reader_layout, priority_pane=None
+                )
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,
