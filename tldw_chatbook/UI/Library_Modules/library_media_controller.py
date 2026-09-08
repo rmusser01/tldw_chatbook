@@ -489,6 +489,11 @@ from ...Library.library_media_state import (
     MediaTrashScope,
     build_library_media_browse_state,
     build_library_media_state,
+    # (wave-7 round-2 merge) `handle_library_media_review_selected`'s ported
+    # body reads this as a BARE module global, so it resolves against THIS
+    # module's `__globals__` -- recipe SS3's module-globals-coupling shape. It
+    # must be imported here, not reached through the screen.
+    library_media_int_backing_id,
 )
 from ...Library.library_media_viewer_state import (
     build_library_media_highlight_rows,
@@ -650,6 +655,7 @@ class LibraryMediaController:
         request_library_media_browse,
         reset_library_media_search_on_mode_change,
         restore_library_media_loaded_progress,
+        restore_library_media_reader_width_on_open,
         sanitize_media_field,
         save_library_media_analysis,
         stop_library_media_filter_timer,
@@ -765,6 +771,7 @@ class LibraryMediaController:
         self._request_library_media_browse_fn = request_library_media_browse
         self._reset_library_media_search_on_mode_change_fn = reset_library_media_search_on_mode_change
         self._restore_library_media_loaded_progress_fn = restore_library_media_loaded_progress
+        self._restore_library_media_reader_width_on_open_fn = restore_library_media_reader_width_on_open
         self._sanitize_media_field_fn = sanitize_media_field
         self._save_library_media_analysis_fn = save_library_media_analysis
         self._stop_library_media_filter_timer_fn = stop_library_media_filter_timer
@@ -1183,6 +1190,10 @@ class LibraryMediaController:
     @property
     def _restore_library_media_loaded_progress(self) -> Any:
         return self._restore_library_media_loaded_progress_fn
+
+    @property
+    def _restore_library_media_reader_width_on_open(self) -> Any:
+        return self._restore_library_media_reader_width_on_open_fn
 
     @property
     def _sanitize_media_field(self) -> Any:
@@ -2131,6 +2142,11 @@ class LibraryMediaController:
             if not self.query("#library-media-canvas"):
                 self._sync_library_media_browse_state(None)
             self._sync_library_media_viewer_or_recompose()
+        # task-31979: selecting flips the view to "viewer", so the Reader now
+        # holds a document (or its loading banner) and must reclaim the width
+        # the list-view widening handed to the Items list. The in-place viewer
+        # patch above does not re-run the resolver.
+        self._restore_library_media_reader_width_on_open()
         if immediate:
             self._dispatch_library_media_detail_request(
                 pending.generation, pending.requested_id, canonical_id
@@ -3153,12 +3169,14 @@ class LibraryMediaController:
         selection = self._library_media_row_selection
         if not selection.count:
             return
-        backing_ids: list[int] = []
-        for canonical_id in selection.ids:
-            try:
-                backing_ids.append(int(str(canonical_id).rsplit(":", 1)[-1]))
-            except (ValueError, TypeError):
-                continue
+        backing_ids = [
+            backing_id
+            for backing_id in (
+                library_media_int_backing_id(canonical_id)
+                for canonical_id in selection.ids
+            )
+            if backing_id is not None
+        ]
         if not backing_ids:
             return
         self.run_worker(

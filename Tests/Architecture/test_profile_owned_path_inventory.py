@@ -332,7 +332,7 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
                 ):
                     runtime_constant_definitions.append(relative_path)
 
-    assert base_data_consumers == [("Helper_Scripts/Prompts/Prompts_Dump.py", 96)]
+    assert base_data_consumers == []
     assert runtime_constant_definitions == ["tldw_chatbook/runtime_policy/bootstrap.py"]
 
     from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path

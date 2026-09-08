@@ -21,6 +21,7 @@ from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _open_media_find,
     _painted_cells,
+    _painted_text,
     _submit_content_search_query,
     _row_is_painted_focused,
     _top_border_row,
@@ -45,6 +46,7 @@ from tldw_chatbook.UI.Library_Modules.library_media_controller import (
     LibraryMediaController,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen, _sync_library_canvas
+from tldw_chatbook.Widgets.Library.library_media_viewer import RENDERED_VIEW_NOTE
 
 
 class ControlledDetailMediaService(StaticLibraryMediaScopeService):
@@ -434,6 +436,35 @@ async def test_edit_metadata_from_read_routes_to_info_form_actions():
             "#library-media-edit-cancel",
         ):
             assert screen.query(selector)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_more_strip_move_to_trash_is_danger_marked_and_separated(size):
+    """task-31980 (critique #6 P2): the destructive More action must not end a
+    row of neutral actions unmarked and flush against them. It takes the
+    quiet-danger ink the Library's other destructive actions carry (colour
+    differs from the neutral Edit) and a left margin that holds it off its
+    neighbour, at both regimes."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+        screen.query_one("#library-media-reader-more", Button).press()
+        delete = await _wait_for_selector(screen, pilot, "#library-media-delete")
+        edit = screen.query_one("#library-media-edit", Button)
+
+        # AC#3/#4: the destructive ink is not the neutral action's ink.
+        assert delete.styles.color is not None
+        assert delete.styles.color != edit.styles.color, (
+            delete.styles.color,
+            edit.styles.color,
+        )
+        # AC#3: a real gap holds it off the neutral actions (mirrors the
+        # RAG-profile delete-button separation precedent).
+        assert delete.styles.margin.left >= 2, delete.styles.margin
 
 
 @pytest.mark.asyncio
@@ -2822,7 +2853,88 @@ async def test_non_markdown_article_says_why_the_rendered_toggle_is_absent():
         assert not viewer.viewer.is_markdown
 
         note = screen.query_one("#library-media-content-mode-note", Static)
-        assert str(note.content) == "Rendered view is for Markdown and transcripts"
+        assert str(note.content) == RENDERED_VIEW_NOTE
         # Text only: the slot gains no control.
         assert not screen.query("#library-media-content-mode-rendered")
         assert not screen.query("#library-media-content-mode-raw")
+
+
+# ---------------------------------------------------------------------------
+# task-31958: the Rendered-view note covers ANY non-Markdown item that has
+# content -- not just article/document -- and never paints above an item with
+# no stored content, where it would explain nothing.
+# ---------------------------------------------------------------------------
+
+
+def _typed_host(media_type: str, content: str):
+    """Two media items of ``media_type``, each carrying exactly ``content``.
+
+    Two, because ``_open_media_list`` waits for the second rendered row.
+    """
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Budget review {index}",
+            "type": media_type,
+            "last_modified": f"2026-07-0{index}T10:00:00Z",
+            "content": content,
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type", ["plaintext", "video"])
+async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
+    media_type: str,
+):
+    """task-31958 AC#1/AC#3: the note is not gated on the media type.
+
+    A ``plaintext``/``video`` item whose content fails the Markdown sniff
+    got the same silent blank slot the note was written to replace.
+    Painted, because the whole point is what the reader sees.
+    """
+    host = _typed_host(media_type, _FIND_COPY_CONTENT)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_article_reader(host, pilot)
+
+        viewer = screen.query_one("#library-media-viewer")
+        assert viewer.viewer.media_type == media_type
+        assert not viewer.viewer.is_markdown
+
+        note = screen.query_one("#library-media-content-mode-note", Static)
+        # Type-neutral copy (batch-3 review ruling 1): it says why THIS item
+        # has no rendered view, not which types one is for -- the old
+        # spelling told a transcript reader rendering was "for transcripts".
+        assert (
+            "No Markdown formatting to render — showing the stored text"
+            in _painted_text(host, note.region)
+        )
+        # Text only: the slot gains no control.
+        assert not screen.query("#library-media-content-mode-rendered")
+        assert not screen.query("#library-media-content-mode-raw")
+
+
+@pytest.mark.asyncio
+async def test_empty_item_paints_no_stored_content_and_no_rendered_view_note():
+    """task-31958 AC#2/AC#3: nothing to render, nothing to explain.
+
+    An item with no stored content already says so ("No stored content.");
+    the note above it claimed a rendered view was withheld for a formatting
+    reason, when there is no content at all.
+    """
+    host = _typed_host("article", "")
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_article_reader(host, pilot)
+
+        viewer = screen.query_one("#library-media-viewer")
+        assert not viewer.viewer.has_content
+        body = screen.query_one("#library-media-viewer-content")
+        assert "No stored content." in _painted_text(host, body.region)
+
+        assert not screen.query("#library-media-content-mode-note")
+        assert RENDERED_VIEW_NOTE not in _painted_text(host, viewer.region)

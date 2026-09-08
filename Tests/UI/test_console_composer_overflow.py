@@ -533,6 +533,8 @@ async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
         composer.load_draft(_BOUNDARY_TEXT)
         composer.focus()
         await pilot.pause()
+        # This checks the Home window's visible caret, not blink timing.
+        composer._cursor_blink_timer.pause()
         composer.move_cursor_home()
         await pilot.pause()
         assert composer.cursor_index == 0

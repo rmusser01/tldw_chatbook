@@ -52,6 +52,10 @@ _TOKEN_FIELDS = frozenset(
         # label vocabulary in Metrics/metrics_logger.py rather than inventing a
         # second dialect for the same idea.
         "component",
+        "attempt_id",
+        "app_version",
+        "python_version",
+        "sqlite_version",
     }
 )
 _INTEGER_FIELDS = frozenset(
@@ -72,9 +76,10 @@ _INTEGER_FIELDS = frozenset(
         "threshold_ms",
         "mounts",
         "removes",
+        "sqlite_code",
     }
 )
-_BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled"})
+_BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})
 _LIST_FIELDS = frozenset(
     {
         "argument_names",

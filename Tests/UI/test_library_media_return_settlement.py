@@ -252,13 +252,20 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
                 for item in screen._library_media_browse_controller.retained_items
             ),
         )
+        # task-31979: the signature is derived from the canonical item-open
+        # reader width, not the live tracker's, so the empty-reader list
+        # widening does not read as a layout change across list<->viewer.
+        canonical_reader_width = library_screen_module.resolve_media_reader_layout(
+            int(screen.size.width),
+            screen._media_state.reader_preferences,
+        ).reader_width
         assert layout_signature == (
             int(screen.size.width),
             int(screen.size.height),
             screen._library_notes_compact,
             screen._media_state.reader_preferences,
             library_screen_module.resolve_media_reader_layout(
-                screen._media_state.reader_layout.reader_width,
+                canonical_reader_width,
                 screen._media_state.reader_preferences,
             ),
         )

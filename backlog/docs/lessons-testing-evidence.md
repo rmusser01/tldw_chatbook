@@ -12049,3 +12049,177 @@ The SDD controller applied a three-line round-2 fix by hand (a `logger.debug` in
 and committed without `./scripts/preflight.sh`; the next task's implementer hit the diagnostic
 inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
 `logger.*` change -> read the rows, `--write`") binds the controller too.
+
+
+## Trace recovery tests need the failure before a boundary exists
+
+**TASK-31976, 2026-09-07.** A user reported “Trace capture blocked” on a fresh
+Console send, then no send and no card after choosing Send without capture.
+The existing real trace/agent tests passed because their recovery failures had
+an established boundary. A mounted Console probe with a file-backed database
+and a failure in the first boundary factory reproduced the missing case: the
+controller demanded proof from a boundary that never existed, returned unknown
+delivery, and the UI discarded the result when the trace pause disappeared.
+Zero adapter calls and a rendered frame with no recovery guidance proved the
+failure; disappearance of the card alone would have looked like success.
+
+**What to do.** Cover construction failure separately from reservation/bind
+failure. Keep the real accepted-send, database, and agent paths; replace only
+the external adapter and inject the failing boundary operation. Assert one
+provider call and the completed original turn for successful recovery, or
+painted refusal/recovery actions for a refused action. An internal result or a
+hidden card is not evidence that a message sent or that the user can recover.
+
+## A trace-only probe cannot diagnose a send that never reaches tracing
+
+**TASK-31977, 2026-09-07.** A reporter reproduced Console flicker, but the
+throwaway launcher recorded only start/end: all its hooks began at trace
+reservation. New real-sink tests also showed that an existing durable-commit
+Loguru diagnostic never reached the support artifact. The responsiveness monitor
+recorded stalls but missed repeated syncs on a responsive loop. Instrumenting
+from the visible send action and testing both the private file and actual Copy
+all action produced useful evidence for those earlier failures. Independent
+review then found that nested queued sends shared one event allowance and
+WARNING thresholds dropped the runtime/capture context; separate submission
+budgets and self-contained failure records fixed both regression tests.
+
+**What to do.** Verify the artifact a reporter will share, from the earliest
+user action through refusal or completion. Test a responsive refresh episode
+separately from a stall, and test failure records at WARNING thresholds. A
+start/end-only log is absence of coverage, not proof that the send worked.
+
+---
+
+---
+
+## A boot census must poll for serially-gated workers, not use a flat settle window
+
+**PR #2467 CI, 2026-09-06.** The "UI latency guardrails" job failed once
+with `census looks degenerate -- boot workers that always start were not
+recorded: [('_backfill_chachanotes_messages_fts', 'chachanotes-fts-backfill')]`
+and passed everywhere else, including the identical commit locally. The
+chachanotes FTS backfill is THIRD in the staggered boot fleet, which
+`boot_worker_policy.py` runs strictly serially (`MAX_CONCURRENT = 1`,
+behind the two actor-pack prefetches whose durations are "milliseconds on
+a healthy profile"). The census probe snapshotted at `_ui_ready` + a flat
+1.0 s; on a contended runner the two prefetches occasionally consumed the
+whole window before the third worker was admitted, and the anti-vacuity
+assert read that as a degenerate census.
+
+**What to do.** When a probe asserts that gated/queued work "always"
+starts, wait for the expected starts (poll with a generous deadline)
+rather than a flat window sized to the happy path. The probe already
+records STARTS rather than running state, so waiting cannot miss a worker
+that finishes quickly.
+
+## A settled paint does not prove a failed send released its busy state
+
+**TASK-32010, 2026-09-07.** Extending the existing mounted Console diagnostic
+test to press Enter with capture enabled found zero repeated full-screen
+compositor updates after a readiness exception, yet the transcript's 200ms timer
+kept running. The failed echo was correctly marked unsent, but the controller
+remained VALIDATING and refused another send. Testing slot release and an actual
+controller retry exposed the missing exception cleanup. The same omission also
+affected cancellation before provider entry.
+
+**What to do.** Check send state, retry and timer termination alongside actual
+compositor output. An orphaned polling timer is a concrete lifecycle defect;
+without repeated paint evidence, it does not establish the cause of a reporter's
+visible terminal flicker.
+
+**TASK-32012 follow-up.** Holding provider validation open after Enter still
+produced zero full-screen updates and stable geometry, but actual partial spans
+repainted the unchanged transcript title, composer reason and footer hints about
+five times per second. Suppressing equal text writes at those three widgets in
+the experiment left only caret paints. The mounted regression therefore checks
+emitted partial spans, alongside full-screen updates, and then completes the send.
+The first implementation caught only one of two heading writers; the real-paint
+assertion remained red until both were guarded. Keep responsive width and
+visibility recalculation outside text equality guards.
+
+## A diagnostic field name can erase the rest of a descriptive log line
+
+**TASK-31977.1, Console flicker investigation, 2026-09-07.** The file and
+Copy all tests retained every send stage, but a full-app Copy visible probe
+lost phase, status and failure fields. Its generic credential redactor treats
+an unquoted `*_token` assignment through end-of-line as sensitive; the random
+`attempt_token` correlation label therefore swallowed every following field.
+Extending the real collector regression to both copy actions reproduced the
+failure. Renaming the emitted field to `attempt_id` preserved the same random
+correlation value across send and refresh events without bypassing redaction.
+
+**What to do.** Exercise each export's actual transformation chain. A
+metadata-only bulk export passing does not prove the descriptive live view
+retains that metadata. Avoid credential-like labels for non-credential IDs;
+keep credential redaction intact and verify both privacy and diagnostic detail.
+
+## Equal widget geometry can hide text moving on every caret blink
+
+**TASK-32012.1, Console flicker investigation, 2026-09-07.** Settled-screen
+probes showed no full-screen updates or repeated geometry changes, and the
+composer's existing blink tests passed. Comparing the text in both phases
+instead found 763 mismatches across 4,092 sampled caret positions. At width 11,
+`hello world` painted `hello ` / `world▌` while visible, then `hello world` /
+` ` while hidden: a space and a block have equal cell widths but different
+word boundaries. Mounted Enter-failure tests reproduced the moving word at
+80×24 and 97×30. Hit testing also missed that word because it wrapped the
+space-based layout. This establishes composer text movement, not the external
+reporter's exact whole-screen flicker.
+
+**What to do.** Compare actual painted characters and their positions across
+animation phases, alongside geometry and compositor activity. Wrap with one
+stable caret glyph and hide its mapped character afterward. Pasted-tab cases
+caught an offset mistake in the initial fix: tab expansion must be reflected
+in caret/style offsets and reversed for click mapping. Keep these cases plus
+literal caret-like text, Unicode and history suggestions in the regression.
+
+PR #2498 review added a second coordinate check: terminal cells are not Python
+character offsets. Eight mounted CJK/emoji/combining-text cases caught clicks
+landing after the final expanded tab space. A follow-up `❤️` case caught a
+prefix-width cutoff inside its variation-selector sequence. Hit testing now
+uses whole grapheme boundaries measured with the wrapper's cell-width policy;
+clicking either emoji cell and then typing must preserve the emoji.
+
+---
+
+Region assertions inside the Console left rail need the rail explicitly opened
+
+**task-31207, 2026-09-05.** The new appearance-control geometry test read
+`Region(0, 0, 0, 0)` for every conversation row button — the pre-existing
+star and title buttons included — while the identical script run OUTSIDE
+pytest laid out perfectly (icon at x=4 width 4). The divergence was not
+timing, bytecode, or import order (all were chased first): the Console left
+rail starts COLLAPSED under the fresh test config's saved rail preference,
+and `display: none` on `#console-left-rail` zeroes every descendant region.
+The standalone probe passed only because it read the developer's real
+`~/.config`, where the rail happens to be open — a config-dependent pass.
+
+**What to do.** Before asserting any geometry inside the Console left rail,
+open it explicitly (`console._set_console_rail_preference(left_open=True)`
+plus a pause) and use the stylesheet-carrying harness (`StyledConsoleHarness`):
+under a bare harness the new width-4 control has no CSS rule and defaults to
+a wide auto width that eats the row — the TASK-2154.1 "new widget in a shared
+row" trap reproduced exactly here. DOM/label queries work collapsed; regions
+do not. If a region reads exactly zero for EVERY widget in a subtree, climb
+the ancestor chain and look for `display: none` before suspecting layout or
+the harness.
+
+---
+
+A dirty tree is not provenance — verify suspected pre-existing failures against a clean HEAD worktree
+
+**task-31210, 2026-09-06.** Twelve `test_console_native_chat_flow.py` tests
+failed during the task-31207 sweep, and the failure (`ChatScreen has no
+attribute '_retrieval'`) was blamed on the in-flight `wiring.py` refactor
+sitting uncommitted in the working tree — a plausible story, reported as fact.
+A clean `git worktree add /tmp/head-verify HEAD` run showed the same tests
+**red at HEAD**: the breakage predated both the feature branch and the
+in-flight changes. The actual cause (eager unguarded controller reads in
+`console_view_hooks` hitting bare-`__new__` test screens) was only found
+because the worktree check ruled the plausible story out.
+
+**What to do.** When a probe asserts that gated/queued work "always"
+starts, wait for the expected starts (poll with a generous deadline)
+rather than a flat window sized to the happy path. The probe already
+records STARTS rather than running state, so waiting cannot miss a worker
+that finishes quickly.

@@ -1,5 +1,5 @@
 ---
-id: TASK-31976
+id: TASK-32013
 title: >-
   Library Media controller exclusion debt - 89 fixture-shape exclusions and 7
   named move candidates
@@ -98,3 +98,62 @@ sees `screen.<name>(...)` on a real instance -- a BOUND call -- which is how
 instance 2 above went unnoticed until the test ran. Any census over method
 names here must include the bound-receiver spelling alongside the unbound and
 quoted-string ones.
+
+## A third census gap, found by the round-2 reconciliation
+
+`Tests/Architecture/test_library_media_wiring.py::test_media_controller_binds_
+every_name_its_moved_bodies_need` (the `_MEDIA_CONTROLLER_BOUND_NAMES`
+coverage check) is **one-directional**. It asserts that all 92 LISTED names
+resolve to a `property` on `LibraryMediaController`, and that the list has no
+duplicates. It does not assert the converse -- that every name a moved body
+actually references is IN the list -- so it stays green when a new reference
+arrives with no binding, which is the direction the failure travels.
+
+Measured: this branch added NINE group-(e) bindings across two `origin/dev`
+reconciliations (eight in round 1, one in round 2) and the check passed
+before and after each, unchanged, because the new names were simply not in
+its tuple. What actually caught the missing bindings both times was an ad-hoc
+AST resolver run by hand over the controller class.
+
+**And the shape it cannot see at all:** round 2's ported
+`handle_library_media_review_selected` reads `library_media_int_backing_id`
+as a BARE MODULE GLOBAL (dev promoted it out of a `LibraryScreen` method
+into `Library/library_media_state.py`), so it resolves against the
+controller module's own `__globals__`. That is recipe SS3's
+module-globals-coupling shape; no `self.<attr>` census and no property check
+can reach it, and unbound it is a `NameError` on every "Review selected"
+press.
+
+**Fix shape** (deliberately NOT done inside a merge commit, same reasoning as
+the two rulings above): make the check bidirectional -- AST-walk the moved
+bodies for `self.<attr>` loads, subtract the generated state shims and the
+framework-service properties, and assert the remainder is exactly
+`_MEDIA_CONTROLLER_BOUND_NAMES`; then separately assert that every bare
+`ast.Name` load in a moved body resolves in the controller module's globals.
+Both are cheap, and both are checks this program has had to run by hand at
+every reconciliation.
+
+## Renumbering provenance
+
+**Filed as TASK-31976 on 2026-09-07 22:06; renumbered to TASK-32013 the same
+day.** `origin/dev` had already minted TASK-31976 at 20:53 ("Recover Console
+sends after trace boundary construction failure") in the 75-commit
+`fix/media-riders` race that landed between this branch's first `origin/dev`
+reconciliation and its second. Both sessions swept for a maximum before
+filing; both observed the same pre-merge maximum from different worktrees,
+which is precisely the failure mode `backlog/docs/lessons-backlog-hygiene.md`
+records from 2026-08-21 (TASK-19573/TASK-19601) and precisely why the fix
+there was a tie-break rule rather than a wider leapfrog.
+
+Applying that rule: the OLDER `created_date` keeps the id regardless of
+status, so dev's 20:53 task keeps TASK-31976 and this one moved. The new id
+was taken after a fresh sweep across every remote ref and every local backlog
+directory (observed maximum 32012). Inbound references updated in the same
+commit: TASK-31249's cross-pointer and
+`Tests/UI/test_review_set_walker.py`'s fixture comment.
+
+Two references are deliberately NOT rewritten, because rewriting them would
+falsify a record rather than fix a pointer: the round-1 merge commit
+(`3c11f902a`) and follow-up commit (`2c4c4d709`) messages name TASK-31976,
+and they are published history on PR #2501. This section is the bridge for
+anyone who follows them here.

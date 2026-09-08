@@ -33,8 +33,8 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.css.query import NoMatches
 
-from ...Chat.console_chat_models import (
-    CONSOLE_GLOBAL_WORKSPACE_ID,
+from ...Chat.console_appearance import ConsoleConversationAppearance
+from ...Chat.console_chat_models import (    CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleRunMarker,
@@ -140,6 +140,11 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+# PR #2480 review (#7): the batched appearance map is cached on the same
+# order as the persisted-rows cache -- short enough that an appearance
+# change made elsewhere shows up promptly, long enough that the several
+# merges inside one state build share one read.
+CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS = 2.0
 CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY = (
     "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
     "Your previous Console chat is still active."
@@ -678,6 +683,10 @@ class ConsoleWorkspaceController:
         # current truth before toggling), never race two pool threads into
         # a stale double-star.
         self._console_star_toggle_lock = asyncio.Lock()
+        # PR #2480 review (#7): TTL cache for the batched appearance map so
+        # recurring merge calls do not re-query per sync; cleared on write.
+        self._console_appearance_map_cache: dict[str, tuple[str, str]] | None = None
+        self._console_appearance_map_cached_at: float = 0.0
         self._character_conversation_activation_coordinator = None
 
     @property
@@ -2535,6 +2544,75 @@ class ConsoleWorkspaceController:
             ),
             run_markers=run_markers,
         )
+    def _console_conversation_appearance_map(
+        self, conversation_ids: Iterable[str]
+    ) -> dict[str, tuple[str, str]]:
+        """Batch-read sanitized conversation appearance keyed by id.
+
+        task-31207: one batched SELECT decorates every browser row (native,
+        membership, and persisted alike — merged native rows supersede the
+        persisted row that carried the metadata, so the map is the single
+        source for all of them). Failures degrade to "no appearance".
+
+        PR #2480 review (#7): the merge runs on recurring sync paths (and
+        several times per state build), so the full map is cached under a
+        short TTL rather than re-queried per merge; a successful appearance
+        write clears the cache (see `_write_console_conversation_appearance_
+        off_loop`) alongside the persisted-rows cache. Unknown ids simply
+        miss the cached map, exactly like a failed read.
+        """
+        service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        get_appearances = getattr(service, "get_conversation_appearances", None)
+        if not callable(get_appearances):
+            return {}
+        wanted = {str(value) for value in conversation_ids if value}
+        if not wanted:
+            return {}
+        cache_at = getattr(self, "_console_appearance_map_cached_at", 0.0)
+        cached_map = getattr(self, "_console_appearance_map_cache", None)
+        now = time.monotonic()
+        if (
+            cached_map is not None
+            and now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
+            and wanted <= set(cached_map)
+        ):
+            return cached_map
+        try:
+            appearances = get_appearances(sorted(wanted))
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to read Console conversation appearances"
+            )
+            return cached_map if cached_map is not None else {}
+        merged_map = dict(cached_map or {})
+        merged_map.update(
+            {
+                str(conversation_id): (
+                    str(appearance.icon or ""),
+                    str(appearance.color or ""),
+                )
+                for conversation_id, appearance in appearances.items()
+            }
+        )
+        self._console_appearance_map_cache = merged_map
+        self._console_appearance_map_cached_at = now
+        return merged_map
+
+    @staticmethod
+    def _apply_console_browser_appearance_state(
+        row: ConsoleConversationBrowserInputRow,
+        appearances: dict[str, tuple[str, str]],
+    ) -> ConsoleConversationBrowserInputRow:
+        """Apply persisted appearance metadata to one browser row."""
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id or conversation_id not in appearances:
+            return row
+        icon, color = appearances[conversation_id]
+        if row.icon == icon and row.color == color:
+            return row
+        return replace(row, icon=icon, color=color)
 
     def _native_console_browser_rows(
         self,
@@ -2768,6 +2846,18 @@ class ConsoleWorkspaceController:
         native_rows = self._native_console_switcher_rows(cached_named_rows)
         rows = self._merge_console_switcher_memory_rows(
             native_rows, cached_named_rows
+        )
+        # task-31208: decorate the switcher projection with per-conversation
+        # appearance (icon + color) the same way the rail's merge does, so
+        # both surfaces show the same customization.
+        appearance_map = self._console_conversation_appearance_map(
+            str(row.conversation_id or "").strip()
+            for row in rows
+            if str(row.conversation_id or "").strip()
+        )
+        rows = tuple(
+            self._apply_console_browser_appearance_state(row, appearance_map)
+            for row in rows
         )
         profile, token = self._console_switcher_authority()
         runtime = getattr(self.app_instance, "console_runtime", None)
@@ -3356,9 +3446,24 @@ class ConsoleWorkspaceController:
         merged: list[ConsoleConversationBrowserInputRow] = []
         seen: set[tuple[str, ...]] = set()
         starred_ids = self._starred_console_conversation_ids()
-        for group in row_groups:
+        # PR #2480 review (#4): several callers pass one-shot generators (flat
+        # search settlement, paginated workspace search); materialize each
+        # group ONCE here -- the appearance pass below would otherwise
+        # exhaust them and silently drop their rows.
+        materialized_groups = [tuple(group) for group in row_groups]
+        conversation_ids = sorted(
+            {
+                str(row.conversation_id or "").strip()
+                for group in materialized_groups
+                for row in group
+                if str(row.conversation_id or "").strip()
+            }
+        )
+        appearances = self._console_conversation_appearance_map(conversation_ids)
+        for group in materialized_groups:
             for raw_row in group:
                 row = self._apply_console_browser_star_state(raw_row, starred_ids)
+                row = self._apply_console_browser_appearance_state(row, appearances)
                 identity = self._console_browser_display_identity(row)
                 if not identity[-1] or identity in seen:
                     continue
@@ -4266,6 +4371,15 @@ class ConsoleWorkspaceController:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
             self._set_active_workspace_for_console_session(session_id)
+            session = next(item for item in store.sessions() if item.id == session_id)
+            try:
+                await self._refresh_console_effective_scope_and_sync(session)
+            except Exception:  # noqa: BLE001 - optional display must not block activation
+                logger.opt(exception=True).warning(
+                    "Failed to refresh retrieval scope display on saved "
+                    "conversation activation: {}",
+                    session_id,
+                )
             self._sync_console_chat_core_state()
             sync_result = self._sync_native_console_chat_ui_fn()
             if inspect.isawaitable(sync_result):
@@ -5208,8 +5322,16 @@ class ConsoleWorkspaceController:
         *,
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
+        reuse_existing: bool = False,
     ) -> bool | None:
         """Load a persisted saved conversation into a native Console session.
+
+        Args:
+            conversation_id: Exact persisted conversation identity.
+            target_scope_type: Optional fallback scope for cold hydration.
+            target_workspace_id: Optional fallback workspace for cold hydration.
+            reuse_existing: Prefer an open runtime after validating the saved
+                record. History opts in; explicit fresh-session callers do not.
 
         Returns:
             True on success; None on a transient failure this method already
@@ -5265,6 +5387,21 @@ class ConsoleWorkspaceController:
                 store, prior_active_session_id
             )
             return False
+
+        if reuse_existing:
+            matches = [
+                session
+                for session in store.sessions()
+                if str(session.persisted_conversation_id or "") == target
+            ]
+            if matches:
+                session = next(
+                    (item for item in matches if item.id == store.active_session_id),
+                    matches[0],
+                )
+                return await self.open_console_workspace_conversation(
+                    f"native:{session.id}"
+                )
 
         conversation = tree.get("conversation")
         if not isinstance(conversation, dict):
@@ -6131,6 +6268,142 @@ class ConsoleWorkspaceController:
                     break
         collapsed = not bool(group.collapsed if group is not None else False)
         self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
+        self._sync_console_workspace_context()
+
+    def _open_console_conversation_appearance_picker(
+        self,
+        conversation_id: str,
+        *,
+        conversation_title: str = "",
+        icon: str = "",
+        color: str = "",
+    ) -> None:
+        """Open the per-conversation icon + color picker (task-31207)."""
+        normalized_id = str(conversation_id or "").strip()
+        if not normalized_id:
+            # Same guard copy as the star: an unpersisted native session has
+            # no conversations row to carry metadata yet.
+            self.app_instance.notify(
+                "Save this conversation before customizing it.",
+                severity="warning",
+            )
+            return
+        # Deferred import (PR #2480 CI): the picker's module (and the emoji
+        # catalog machinery it pulls in) must not join the boot path -- the
+        # ui-ready module census and the boot CSS byte budget both ratchet
+        # on eagerly parsed modules, and neither should grow for a modal
+        # opened a handful of times per session.
+        from ...Widgets.Console.console_appearance_picker_modal import (
+            ConsoleAppearancePickerModal,
+        )
+
+        self.push_screen(
+            ConsoleAppearancePickerModal(
+                conversation_id=normalized_id,
+                conversation_title=str(conversation_title or ""),
+                icon=icon or None,
+                color=color or None,
+            ),
+            callback=partial(
+                self._on_console_conversation_appearance_result,
+                normalized_id,
+                str(conversation_title or ""),
+            ),
+        )
+
+    def _on_console_conversation_appearance_result(
+        self,
+        conversation_id: str,
+        conversation_title: str,
+        appearance: "ConsoleConversationAppearance | None",
+    ) -> None:
+        """Apply the picker's result; ``None`` means it was cancelled."""
+        if appearance is None:
+            return
+        service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        set_appearance = getattr(service, "set_conversation_appearance", None)
+        if not callable(set_appearance):
+            self.app_instance.notify(
+                "Conversation appearance is unavailable.",
+                severity="warning",
+            )
+            return
+        self.run_worker(
+            self._write_console_conversation_appearance_off_loop(
+                set_appearance, conversation_id, appearance, conversation_title
+            ),
+            group="console-conversation-appearance",
+            exit_on_error=False,
+        )
+
+    async def _write_console_conversation_appearance_off_loop(
+        self,
+        set_appearance: Callable[..., bool],
+        conversation_id: str,
+        appearance: "ConsoleConversationAppearance",
+        conversation_title: str,
+    ) -> None:
+        """Durably write one appearance change off the loop, then repaint.
+
+        task-15471 discipline (same as the star toggle): the DB write runs
+        off the event loop, guarded for per-connection memory DBs. Metadata
+        writes also invalidate the persisted-rows TTL cache so the next tray
+        sync re-reads rows instead of painting the stale appearance.
+        """
+        try:
+
+            def _write_appearance() -> bool:
+                return bool(
+                    set_appearance(
+                        conversation_id=conversation_id,
+                        appearance=appearance,
+                    )
+                )
+
+            db = getattr(
+                getattr(self.app_instance, "local_chat_conversation_service", None),
+                "db",
+                None,
+            )
+            if bool(getattr(db, "is_memory_db", False)):
+                wrote = _write_appearance()
+            else:
+                wrote = await asyncio.to_thread(_write_appearance)
+        except asyncio.CancelledError:
+            try:
+                self._sync_console_workspace_context()
+            except Exception:
+                logger.debug("Appearance-write cancellation re-sync failed")
+            raise
+        except Exception:
+            logger.error("Unable to write Console conversation appearance")
+            self.app_instance.notify(
+                "Could not update the conversation's appearance.",
+                severity="error",
+            )
+            return
+        if not wrote:
+            self.app_instance.notify(
+                "Could not update the conversation's appearance; try again.",
+                severity="warning",
+            )
+            return
+        # Untitled-conversation guard + markup escape: same toast rules the
+        # star toggle established (task-3024, TASK-357).
+        title = next(iter(str(conversation_title or "").splitlines()), "").strip()
+        title_suffix = f' "{escape_markup(title)}"' if title else ""
+        if appearance.icon is None and appearance.color is None:
+            self.app_instance.notify(f"Cleared the icon for{title_suffix}.")
+        else:
+            self.app_instance.notify(f"Updated the icon for{title_suffix}.")
+        self._invalidate_console_persisted_rows_cache()
+        # PR #2480 review (#7): the appearance write must also clear the
+        # appearance-map TTL cache, or the next merge repaints the stale
+        # appearance for up to the TTL window.
+        self._console_appearance_map_cache = None
+        self._console_appearance_map_cached_at = 0.0
         self._sync_console_workspace_context()
 
     def _toggle_console_conversation_star(

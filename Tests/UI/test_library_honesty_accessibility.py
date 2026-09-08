@@ -1168,6 +1168,7 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
     """
     from tldw_chatbook.Library.library_notes_state import LibraryNotesListState
     from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ACTION_LABEL_PAD,
         LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     )
     from tldw_chatbook.UI.Screens.library_screen import (
@@ -1206,14 +1207,17 @@ async def test_compact_presentation_keeps_marker_and_retiers_the_stash():
 
         # Enable while compact through the shared patcher: the re-tiered
         # stash must yield the COMPACT spelling, not "Export selected".
+        # task-31959: the enabled spelling reserves the marker's own width
+        # (``align=True``) so the word holds its column across the flip --
+        # in BOTH the patcher and the compact rewrite below.
         export_btn.disabled = False
         _patch_library_disabled_marker_label(export_btn)
-        assert str(export_btn.label) == "Export"
+        assert str(export_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Export"
 
         # Compact -> wide while enabled: wide spelling, still no marker,
         # stash re-tiers back.
         canvas.apply_compact_presentation(False)
-        assert str(export_btn.label) == "Export selected"
+        assert str(export_btn.label) == f"{LIBRARY_ACTION_LABEL_PAD}Export selected"
         assert export_btn._library_disabled_marker_base == "Export selected"
 
         # Disable while wide through the shared patcher: the marker returns

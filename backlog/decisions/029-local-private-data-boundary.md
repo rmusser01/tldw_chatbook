@@ -171,3 +171,37 @@ return.
 - [ADR-006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)
 - [ADR-012: Provider Credential Settings Boundary](012-provider-credential-settings-boundary.md)
 - [ADR-021: File-Backed Notes Disk Authority and Recovery Replica](021-file-backed-notes-disk-authority-and-recovery.md)
+
+## Amendment (2026-09-07, TASK-31977) — Console send and refresh diagnostics
+
+The owner approved extending the existing diagnostic system after a blocked-send /
+rapid-refresh report produced only launcher start/end markers. Admit
+`console_send_stage`, `ui_refresh_churn`, and `diagnostic_events_dropped` as
+operational events through the existing persistent schema and Logs collector.
+Console stages use fixed phase/status/category tokens, exception class names,
+numeric SQLite error codes, elapsed durations, a random diagnostic attempt token
+(unrelated to conversation/message/workspace identities), capture-enabled state,
+and application/Python/SQLite version tokens. No exception messages, traceback
+locals, private IDs, paths, or provider payloads are admitted.
+
+Reuse the responsiveness monitor's background drain for these events, with a
+bounded nonblocking queue. Diagnostic delivery is best effort, must not change
+send admission or recovery, and must never perform file writes on the UI loop.
+Send attempts have a bounded event allowance; overflow is disclosed without
+recording discarded payloads. Monitor teardown drains with a bounded wait off the
+UI loop. No new file, database, export surface or retention policy is introduced.
+
+The monitor records excessive Console-sync or screen-recompose activity over
+heartbeat windows even when heartbeat lag is below the stall threshold. Emit
+once per continuous excessive-activity episode, rearming after a quiet window;
+ordinary polling and token streaming are not per-frame log events. These are
+observations, not authorization to cancel providers or suppress application
+state updates. Fixes to the actual refresh loop require separate causal evidence.
+
+**TASK-31977.1 field correction (2026-09-07).** Emit the random diagnostic
+correlation value as `attempt_id`, replacing `attempt_token`. The live Logs
+redactor treats an unquoted `*_token` assignment as a credential through the
+end of the line, which removed approved phase and failure fields. The new
+spelling carries exactly the same random value through send and refresh events.
+Credential redaction, metadata admission, retention and excluded data are
+unchanged; no log record receives a redaction exemption.

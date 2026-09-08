@@ -2739,6 +2739,7 @@ class ConsoleSessionController:
                 target.conversation_id,
                 target_scope_type=target.scope_type or None,
                 target_workspace_id=target.workspace_id,
+                reuse_existing=True,
             )
             if resumed is False:
                 # TASK-717: record missing - same honest feedback and broken

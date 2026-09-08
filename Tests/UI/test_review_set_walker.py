@@ -15,6 +15,9 @@ import pytest
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.review_set_service import ReviewSetService
+from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+    LibraryMediaController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.library_media_rows import summary_row
 
@@ -1549,3 +1552,106 @@ def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
     assert any(
         "capped at the first" in message for message, _severity in fake._notices
     ), fake._notices
+
+
+# ---------------------------------------------------------------------------
+# task-31962: the "Review selected" handler shares the ONE id coercion
+# ---------------------------------------------------------------------------
+
+
+class _ReviewSelectedControllerFake:
+    """The one production hop the "Review selected" delegator makes.
+
+    (wave-7 round-2 merge) ``handle_library_media_review_selected`` lives on
+    ``LibraryMediaController``; the screen keeps a one-line delegator. The
+    controller reaches the two state fields through its GENERATED shims, the
+    worker through a group-(e) late-binding property, and ``run_worker`` as a
+    framework service -- all three reproduced here so the REAL controller body
+    runs against this file's own fakes. Same disposition as the round-1
+    ``_MoreHandlerControllerFake`` (see TASK-32013): retarget the fixture
+    rather than revert a mover from inside a merge commit.
+    """
+
+    def __init__(self, screen) -> None:
+        self._screen = screen
+
+    @property
+    def _library_media_bulk_delete_in_flight(self):
+        return self._screen._media_state.bulk_delete_in_flight
+
+    @property
+    def _library_media_row_selection(self):
+        return self._screen._media_state.row_selection
+
+    @property
+    def _review_selected_worker(self):
+        return self._screen._review_selected_worker
+
+    @property
+    def run_worker(self):
+        return self._screen.run_worker
+
+    def handle_library_media_review_selected(self, event) -> None:
+        return LibraryMediaController.handle_library_media_review_selected(
+            self, event
+        )
+
+
+def test_review_selected_handler_shares_the_one_id_coercion():
+    """Every shape the handler's own inline ``rsplit`` used to handle.
+
+    A prefixed display id and a bare int both convert; a legacy ``media-<n>``
+    row id is skipped rather than raising. ``local:media:0`` is skipped too
+    -- the shared helper refuses non-positive ids, and no media row has one.
+    """
+    captured: dict[str, object] = {}
+
+    def worker(backing_ids):
+        captured["ids"] = backing_ids
+        return "coroutine-stand-in"
+
+    started: list[dict] = []
+    fake = SimpleNamespace(
+        # (wave-7 merge) both fields are `LibraryMediaState` fields now.
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=False,
+            row_selection=SimpleNamespace(
+                count=4,
+                ids=("local:media:7", "3", "media-9", "local:media:0"),
+            ),
+        ),
+        _review_selected_worker=worker,
+        run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
+    )
+    fake._media_controller = _ReviewSelectedControllerFake(fake)
+
+    LibraryScreen.handle_library_media_review_selected(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert captured["ids"] == (7, 3)
+    assert len(started) == 1, started
+    assert started[0]["group"] == "library_review_set"
+
+
+def test_review_selected_handler_starts_nothing_when_no_id_coerces():
+    """All-junk selection: no worker, rather than an empty review set."""
+    started: list[dict] = []
+    fake = SimpleNamespace(
+        # (wave-7 merge) both fields are `LibraryMediaState` fields now.
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=False,
+            row_selection=SimpleNamespace(
+                count=2, ids=("media-9", "local:media:abc")
+            ),
+        ),
+        _review_selected_worker=lambda backing_ids: "unused",
+        run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
+    )
+    fake._media_controller = _ReviewSelectedControllerFake(fake)
+
+    LibraryScreen.handle_library_media_review_selected(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert started == []

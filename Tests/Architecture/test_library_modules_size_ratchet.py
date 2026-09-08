@@ -232,8 +232,9 @@ _BUDGETS: dict[str, int] = {
     # RED on `origin/dev` itself and has been since before the wave-6
     # merge-base: the file is dev's, the creep is dev's, and no Library
     # extraction has ever touched it. Measured at each merge: 410 (wave-6),
-    # 649 (wave-7's own `origin/dev` reconciliation, 2026-09-07) against a
-    # pin of 371 -- dev's creep has now MORE than tripled the overshoot.
+    # 649 (wave-7's own `origin/dev` reconciliation, 2026-09-07) and **686**
+    # 75 commits later the SAME DAY (round 2) against a pin of 371 -- dev's
+    # creep has now nearly doubled the file and is still accelerating.
     # Raising it from a passing branch would launder dev-side debt behind a
     # Library merge, which this file's own guidance forbids; it needs an
     # owner on dev. Recorded in recipe §7's documented-pre-existing list.
@@ -302,7 +303,28 @@ _BUDGETS: dict[str, int] = {
     #        `_sync_library_media_surfaces_or_recompose`). They stay
     #        screen-resident; keyword-only arity 83 -> 91.
     # No other body was touched: the 140 movers are otherwise unchanged.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4612,
+    #
+    # 2026-09-07, wave-7 ROUND 2 (dev's 75-commit `fix/media-riders` race):
+    # 4612 -> 4630 (+18), itemised:
+    #   +7   the TWO mover bodies dev edited
+    #        (`_select_library_media_reader_row` +5,
+    #        `handle_library_media_review_selected` +2). Both ports verified
+    #        TEXT- and AST-identical to dev's own screen version, on the same
+    #        precondition as round 1 (both controller bodies were still
+    #        byte-identical to dev's pre-edit version before porting).
+    #   +6   a NINTH group-(e) binding
+    #        (`_restore_library_media_reader_width_on_open`, dev's new screen
+    #        method that the ported selection body now calls): 1 signature
+    #        parameter, 1 assignment, 4 property lines. Keyword-only arity
+    #        91 -> 92.
+    #   +5   an IMPORT, not a binding: the ported
+    #        `handle_library_media_review_selected` reads
+    #        `library_media_int_backing_id` as a BARE MODULE GLOBAL (dev
+    #        promoted it out of a method), so it resolves against THIS
+    #        module's `__globals__` -- recipe SS3's module-globals-coupling
+    #        shape, which no `self.<attr>` census can see. Imported here with
+    #        a 4-line comment saying so.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4630,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

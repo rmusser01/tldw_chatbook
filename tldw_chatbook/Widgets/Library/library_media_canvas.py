@@ -590,12 +590,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # label it rebuilds holds the same column
         # (``_patch_library_disabled_marker_label``).
         #
-        # Scope, fix round 1: applied on the MEDIA canvas only. The
-        # Conversations and Notes canvases stash the same marker base on
-        # their own "Export selected" (`library_conversations_canvas.py`,
-        # `library_notes_canvas.py`) and `_apply_library_row_toggle` patches
-        # all three kinds, so those two still shift -- a follow-up, not a
-        # widened diff.
+        # task-31959 carried the same reservation to the sibling canvases
+        # (`library_conversations_canvas.py`, `library_notes_canvas.py`,
+        # `library_prompts_canvas.py`), so every select-mode action that
+        # flips with the selection count now holds its column.
         button._library_disabled_marker_align = True
         button.disabled = bulk_disabled
         # F-018: a disabled action says why.
@@ -1112,6 +1110,17 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 analyze_row.styles.height = "auto"
                 with analyze_row:
                     yield self._analyze_selected_button()
+                if self.analysis_action_reason:
+                    # task-31981: surface the blocker inline (below its own
+                    # row), not only on the hover tooltip -- the same grammar
+                    # the Reader's Generate gate and the Export gate use, so a
+                    # keyboard-first user sees WHY Analyze is off.
+                    yield Static(
+                        self.analysis_action_reason,
+                        id="library-media-analyze-selected-reason",
+                        classes="library-media-action-reason",
+                        markup=False,
+                    )
                 # task-2853's danger-isolation rule, upgraded: Delete gets a
                 # whole row, so it is never adjacent to any other action.
                 danger_row = Horizontal(

@@ -50,7 +50,7 @@ Wave 7 (2026-09-07, the media series' `origin/dev` reconciliation merge, 306 com
 - Tests/UI/test_screen_navigation.py -- 32 failed / 110 passed on dev 0bb00beaf, and the SAME 32 names on the merged wave-7 branch. This is a large, unowned dev-side regression in its own right, much wider than the ~30 churning failures the wave-6 merge recorded
 - Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[library_conversations_controller.py] -- RED on dev: the file shrank 1738 -> 1686 without its row being lowered, 52 slack against a 50 tolerance
 - Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[library_media_browse_controller.py] -- the standing dev red, fourth consecutive Library wave, now **649 vs a pin of 371** (410 at the wave-6 merge). Dev's creep has more than tripled the overshoot. Deliberately NOT re-pinned by any Library wave: no Library extraction has touched the file, and raising it from a passing branch would launder dev-side debt
-- The Media controller's own exclusion debt (89 fixture-shape exclusions and 7 named move candidates) is NOT on this census -- those tests all PASS. It is TASK-31976, filed separately because its done condition is about fixture shapes blocking extraction, not about failing tests
+- The Media controller's own exclusion debt (89 fixture-shape exclusions and 7 named move candidates) is NOT on this census -- those tests all PASS. It is TASK-32013, filed separately because its done condition is about fixture shapes blocking extraction, not about failing tests
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->

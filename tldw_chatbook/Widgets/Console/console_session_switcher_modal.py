@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import sha1
 from typing import Any, ClassVar
 from uuid import uuid4
@@ -34,6 +35,10 @@ from tldw_chatbook.Chat.console_conversation_activation import (
     ConsoleActivationResultKind,
     ConsoleConversationActivationResult,
 )
+from tldw_chatbook.Chat.console_glyphs import (
+    GLYPH_APPEARANCE_ASCII_SET,
+    GLYPH_APPEARANCE_PLACEHOLDER,
+)
 from tldw_chatbook.Chat.console_switcher_state import (
     CONSOLE_SWITCHER_PAGE_LIMIT,
     ActivityGroup,
@@ -53,6 +58,10 @@ from tldw_chatbook.Utils.input_validation import (
     validate_console_character_query,
     validate_console_switcher_query,
 )
+from tldw_chatbook.Widgets.glyph_fallback import (
+    ascii_glyph_mode,
+    resolve_glyph,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -69,6 +78,36 @@ _GROUP_LABELS = {
     "open": "OPEN AGENT TABS",
     "saved": "SAVED CHATS",
 }
+
+
+def _switcher_icon_prefix(entry: ConsoleSwitcherActiveResult) -> str:
+    """Return the Rich-markup icon prefix for one switcher row (task-31208).
+
+    Mirrors the Context rail row: the custom icon, colored when a color is
+    set, left of the title; a fixed ASCII substitute in ASCII-glyph mode,
+    where arbitrary user emoji cannot render. ``UnavailableSessionNotice``
+    results carry no appearance, hence the getattr reads.
+    """
+    icon = str(getattr(entry, "icon", "") or "")
+    color = str(getattr(entry, "color", "") or "")
+    if not icon and not color:
+        return ""
+    # PR #2480 review (#8): a color-only appearance renders the colored
+    # placeholder glyph, exactly like the Context rail row -- losing the
+    # marker in Ctrl+K would make the two surfaces disagree.
+    if ascii_glyph_mode():
+        glyph = GLYPH_APPEARANCE_ASCII_SET
+    elif icon:
+        glyph = icon
+    else:
+        glyph = resolve_glyph(GLYPH_APPEARANCE_PLACEHOLDER)
+    escaped = escape_markup(glyph) if glyph else ""
+    if not escaped:
+        return ""
+    if color:
+        return f"[{color}]{escaped}[/] "
+    return f"{escaped} "
+
 SEARCH_DEBOUNCE_SECONDS = 0.2
 ACTIVE_PROJECTION_POLL_SECONDS = 0.2
 RESULT_DISAPPEARED_COPY = (
@@ -571,7 +610,7 @@ class ConsoleSessionSwitcherModal(
                     else 0
                 )
         self.run_worker(
-            self._refresh_results(query),
+            partial(self._refresh_results, query),
             exclusive=True,
             group="console-session-switcher-reconcile",
         )
@@ -1120,10 +1159,16 @@ class ConsoleSessionSwitcherModal(
         metadata = sanitize_character_display_label(
             self._entry_metadata(entry), max_characters=_SUBTITLE_LIMIT
         )
-        label = f"{marker} {state:<18} {display_title}"
+        # task-31208: the conversation's custom icon, colored when set,
+        # sits between the state column and the title (from_markup so the
+        # prefix's color tag renders; title/metadata stay escaped).
+        label = (
+            f"{marker} {state:<18} "
+            f"{_switcher_icon_prefix(entry)}{escape_markup(display_title)}"
+        )
         if metadata:
-            label = f"{label}\n  {metadata}"
-        return Text(label)
+            label = f"{label}\n  {escape_markup(metadata)}"
+        return Text.from_markup(label)
 
     @staticmethod
     def _fallback_state(entry: ConsoleSwitcherResult) -> str:
@@ -1849,6 +1894,16 @@ class ConsoleSessionSwitcherModal(
             pass
         history_is_current = (
             self._mode is SwitcherMode.HISTORY or self._widened_to_history
+        )
+        mode_label = (
+            "Character chats"
+            if self._mode is SwitcherMode.CHARACTER_CHATS
+            else "History"
+            if history_is_current
+            else "Active"
+        )
+        self.query_one("#console-switcher-modal", Vertical).border_title = Text(
+            f"Switch or resume [{mode_label}]"
         )
         active.set_class(
             self._mode is SwitcherMode.ACTIVE and not history_is_current,

@@ -742,7 +742,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             management_toolbar.styles.height = "auto"
             with management_toolbar:
                 yield Button(
-                    library_disabled_action_label("Select page", select_page_disabled),
+                    # task-31959 (batch-3 review, minor 3): padded too --
+                    # it sits auto-width LEFT of "Clear all" in this row, so
+                    # its own flip moved its padded neighbours two cells.
+                    library_disabled_action_label(
+                        "Select page", select_page_disabled, align=True
+                    ),
                     id="library-prompts-select-page",
                     classes="library-canvas-action",
                     compact=True,
@@ -760,7 +765,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
                 yield Button(
-                    library_disabled_action_label("Clear all", clear_disabled),
+                    # task-31959: the enabled spelling reserves the "○"
+                    # marker's own width, so the word holds its column when
+                    # the first selection enables this action.
+                    library_disabled_action_label(
+                        "Clear all", clear_disabled, align=True
+                    ),
                     id="library-prompts-clear-selection",
                     classes="library-canvas-action",
                     compact=True,
@@ -792,7 +802,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 selection_toolbar.styles.height = "auto"
                 with selection_toolbar:
                     yield Button(
-                        library_disabled_action_label(label, selection_disabled),
+                        # task-31959: same marker-width reservation as
+                        # "Clear all" above -- these flip with the count too.
+                        library_disabled_action_label(
+                            label, selection_disabled, align=True
+                        ),
                         id=action_id,
                         classes="library-canvas-action",
                         compact=True,

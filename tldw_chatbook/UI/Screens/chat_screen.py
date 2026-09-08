@@ -17914,6 +17914,16 @@ class ChatScreen(BaseAppScreen):
     async def _submit_console_native_draft(
         self, draft: str, session_id: str | None = None
     ) -> None:
+        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+
+        async with send_diagnostic_scope(
+            "ui_submit", self._ui_responsiveness_monitor()
+        ):
+            await self._submit_console_native_draft_observed(draft, session_id)
+
+    async def _submit_console_native_draft_observed(
+        self, draft: str, session_id: str | None = None
+    ) -> None:
         controller = self._ensure_console_chat_controller()
         self._console_draft_spend_refresh.stop()
         self._start_console_transcript_sync_timer()
@@ -18287,6 +18297,17 @@ class ChatScreen(BaseAppScreen):
         return await self._send_console_message_from_visible_action()
 
     async def _send_console_message_from_visible_action(self) -> bool:
+        """Observe the visible action before command parsing and send gating."""
+        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+
+        async with send_diagnostic_scope(
+            "ui_action", self._ui_responsiveness_monitor()
+        ) as diagnostic:
+            sent = await self._send_console_message_from_visible_action_observed()
+            diagnostic.outcome = "dispatched" if sent else "not_dispatched"
+            return sent
+
+    async def _send_console_message_from_visible_action_observed(self) -> bool:
         """Route the visible Console send action through the native controller.
 
         Returns:
@@ -18421,8 +18442,14 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Compatibility delegate for the one typed queue-aware dispatcher."""
 
-        result = await self._prompt_queue.dispatch(draft, stash=stash)
-        return result.status is not ConsolePromptDispatchStatus.REFUSED
+        from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+
+        async with send_diagnostic_scope(
+            "ui_dispatch", self._ui_responsiveness_monitor()
+        ) as diagnostic:
+            result = await self._prompt_queue.dispatch(draft, stash=stash)
+            diagnostic.outcome = result.status.value
+            return result.status is not ConsolePromptDispatchStatus.REFUSED
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -23539,6 +23566,19 @@ class ChatScreen(BaseAppScreen):
                 self._workspace.retry_workspace_tree_search(),
                 group="console-workspace-tree-search",
                 exclusive=True,
+            )
+            return
+        if button_id and button_id.startswith("console-conversation-appearance-"):
+            # task-31207: the row's leftmost icon control opens the
+            # appearance picker (icon + color).
+            event.stop()
+            self._workspace._open_console_conversation_appearance_picker(
+                str(getattr(event.button, "conversation_id", "") or "").strip(),
+                conversation_title=str(
+                    getattr(event.button, "conversation_title", "") or ""
+                ),
+                icon=str(getattr(event.button, "icon", "") or ""),
+                color=str(getattr(event.button, "color", "") or ""),
             )
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):

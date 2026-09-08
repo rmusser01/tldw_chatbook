@@ -333,6 +333,79 @@ async def test_row_activation_keeps_items_mounted_and_loads_permanent_reader():
         )
 
 
+# task-31979: a title long enough that a fixed ~56-cell list pane truncates it,
+# with a distinctive tail token past column 56 so a painted assertion proves the
+# widened list shows substantially more of it.
+_LONG_MEDIA_TITLE = (
+    "Meeting recording with an intentionally verbose descriptive title "
+    "that overruns the narrow list ZZZTAILMARKER"
+)
+assert len(_LONG_MEDIA_TITLE) >= 90
+assert _LONG_MEDIA_TITLE.index("ZZZTAILMARKER") > 56
+
+
+def _long_title_media_items():
+    items = _two_media_items()
+    items[0] = {**items[0], "title": _LONG_MEDIA_TITLE}
+    return items
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+async def test_empty_reader_lets_the_list_paint_a_long_title_and_restores_on_open(
+    size,
+):
+    """task-31979 AC#1/#2/#3: with no item open the list pane absorbs the empty
+    Reader's width and paints the long title's tail; opening an item narrows the
+    list and restores the Reader's width."""
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, _two_conversations(), media=_long_title_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen, shell = await _open_media_shell(host, pilot)
+        items = shell.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        empty = shell.effective_layout
+        assert screen._media_state.view != "viewer"
+        if size[0] == 235:
+            # Wide terminal: the list absorbs the empty Reader's wasted width
+            # and paints the title's tail token, which sits past column 56.
+            assert empty.items_width > 56
+            assert "ZZZTAILMARKER" in _painted_text_in_region(pilot.app, items.region)
+        else:
+            # 100x30 is already width-starved (nothing to reallocate); the
+            # layout must be byte-for-byte the pre-task default -- no regression.
+            assert empty == resolve_media_reader_layout(
+                shell.region.width, screen._media_state.reader_preferences
+            )
+
+        # Open the long-titled item -> the Reader takes a document again.
+        items.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.reader_session.loaded_id is not None,
+            message="Activated media detail never settled into Reader",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.view == "viewer",
+            message="Opening an item did not enter the viewer",
+        )
+        if size[0] == 235:
+            # Opening restores the split: the list narrows, the Reader widens.
+            await _wait_for_condition(
+                pilot,
+                lambda: shell.effective_layout.reader_width > empty.reader_width,
+                message="Opening an item did not restore the Reader width",
+            )
+            opened = shell.effective_layout
+            assert opened.items_width < empty.items_width
+            assert opened.reader_width > empty.reader_width
+
+
 @pytest.mark.asyncio
 async def test_non_media_library_routes_keep_the_existing_shell():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -379,6 +452,10 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
                     shell.region.width,
                     screen._media_state.reader_preferences,
                     previous=shell.effective_layout,
+                    # task-31979: _open_media_shell leaves the shell in the
+                    # list view with no item open, so the Reader's wasted
+                    # width flows into the Items list.
+                    reader_has_item=False,
                 )
             ),
             message=f"Media shell did not settle at {size}",

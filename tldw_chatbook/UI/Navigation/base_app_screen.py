@@ -15,6 +15,7 @@ from .main_navigation import MainNavigationBar
 
 if TYPE_CHECKING:
     from textual.widget import Widget
+
     from tldw_chatbook.app import TldwCli
 
 
@@ -319,6 +320,12 @@ class BaseAppScreen(Screen):
         interaction has since legitimately captured (which must be left
         alone).
         """
+        try:
+            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_refresh("screen_recompose")
+        except Exception:  # noqa: BLE001, S110 - diagnostics cannot interfere with teardown
+            pass
         self.release_mouse_capture_for_teardown()
         await super().recompose()
         self.sweep_stale_mouse_capture()

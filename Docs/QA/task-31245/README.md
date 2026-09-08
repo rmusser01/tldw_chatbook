@@ -2,6 +2,9 @@
 
 This directory records measured evidence, not blanket release acceptance.
 
+The [2026-09-07 switcher follow-up](switcher-reuse-and-mode-follow-up.md) records
+the duplicate-tab and selected-mode corrections reported during manual QA.
+
 ## Standalone Keyword retrieval
 
 [Raw manifest and 300 timings](keyword-scale-4fcbf7721.json) were captured on

@@ -32,6 +32,9 @@ from textual.worker import WorkerState
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Library.library_media_state import (
+    library_media_int_backing_id,
+)
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -67,6 +70,16 @@ from Tests.UI.test_library_shell import (
     _two_conversations,
     _wait_for_condition,
     _wait_for_selector,
+)
+
+
+from tldw_chatbook.Library.ingest_analysis import NO_ANALYSIS_PROVIDER_NEXT_STEP
+
+#: task-31981: the full surfaced reason for the no-provider case, derived
+#: from the source's next-step constant so only the reason half is pinned
+#: here (the "reason · action" join and next step live in the source).
+_NO_PROVIDER_REASON = (
+    f"No analysis provider is configured · {NO_ANALYSIS_PROVIDER_NEXT_STEP}."
 )
 
 
@@ -1788,6 +1801,49 @@ def _keyword_media_items() -> list[dict[str, object]]:
     ]
 
 
+@pytest.mark.asyncio
+async def test_reprojection_skips_rows_the_page_does_not_retain():
+    """task-31961: a bulk Analyze over a multi-page selection reads ONE page.
+
+    ``has_analysis`` is re-read per saved item, and every read costs an
+    id-scoped SELECT. An item outside the retained page has no mounted row
+    to repaint, so its read can only ever be thrown away -- the membership
+    test that decides that belongs ABOVE the fetch, not after it.
+    """
+    host = _review_state_host(count=24, analysed=0)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+
+        retained = {
+            str(item["id"])
+            for item in screen._library_media_browse_controller.retained_items
+        }
+        assert len(retained) == 20, retained
+        off_page = [
+            media_id
+            for media_id in (f"local:media:{index}" for index in range(1, 25))
+            if media_id not in retained
+        ]
+        assert len(off_page) == 4, off_page
+        on_page = sorted(retained)[:2]
+
+        service = host.app_instance.media_reading_scope_service
+        searches_before = len(service.search_calls)
+        # The selection spans both pages, exactly as a bulk Analyze over a
+        # "select all" does.
+        for media_id in [*on_page, *off_page]:
+            await screen._reproject_library_media_analysis_row(media_id)
+
+        extra = service.search_calls[searches_before:]
+        assert len(extra) == len(on_page), extra
+        allowlists = [call["id_allowlist"] for call in extra]
+        assert allowlists == [
+            [library_media_int_backing_id(media_id)] for media_id in on_page
+        ], allowlists
+
+
 async def _apply_media_filter(screen, pilot, query: str) -> None:
     """Type into the Items filter and wait for the browse scope to apply."""
     screen.query_one("#library-media-filter", Input).value = query
@@ -1901,7 +1957,7 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         assert str(generate.label) == expected_label
         # The marker is not just on the widget -- it reaches the glass.
         assert expected_label in _painted(host, generate.region)
-        assert str(generate.tooltip) == "No analysis provider is configured."
+        assert str(generate.tooltip) == _NO_PROVIDER_REASON
         # Belt and braces: the handler refuses with the same sentence.
         warnings: list[str] = []
         screen._notify_library_media_analysis_warning = warnings.append
@@ -1909,8 +1965,68 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
             SimpleNamespace(stop=lambda: None)
         )
         await pilot.pause()
-        assert warnings == ["No analysis provider is configured."]
+        assert warnings == [_NO_PROVIDER_REASON]
         assert screen._media_state.generating_analysis is False
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_reader_generate_reason_is_painted_inline_not_hover_only(size):
+    """task-31981 AC#1/#4: the blocked Generate's reason reaches the glass
+    as an always-visible line adjacent to the control, not only as a mouse
+    tooltip a keyboard user can never reach. Painted at both sizes, no hover.
+    AC#2: the reason names the next step (Settings ▸ Providers & Models)."""
+    host = _host()  # the test config configures no analysis provider
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        await _switch_to_analysis(screen, pilot)
+        reason_line = screen.query_one("#library-media-analysis-generate-reason", Static)
+        painted = _painted(host, reason_line.region).replace("\n", " ")
+        assert "No analysis provider is configured" in painted, painted
+        # AC#2: the next step, not just the fault.
+        assert "Settings" in painted, painted
+        assert "Providers & Models" in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_reader_generate_reason_line_is_absent_when_a_provider_is_ready():
+    """task-31981: with a ready provider the inline reason line is gone and
+    Generate is live -- the line is the blocker's carrier, not chrome."""
+    host = _analysed_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                library_screen_module,
+                "analysis_unavailable_reason",
+                lambda *_a, **_k: "",
+            )
+            await _open_first_reader_row(screen, pilot)
+            await _switch_to_analysis(screen, pilot)
+            assert not screen.query("#library-media-analysis-generate-reason")
+            generate = screen.query_one("#library-media-analysis-generate", Button)
+            assert generate.disabled is False
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size):
+    """task-31981 AC#1/#4: the select-mode bulk Analyze gates on the same
+    provider condition, and its reason must paint inline too -- same silence,
+    same fix, at both sizes with no hover."""
+    host = _host()  # the test config configures no analysis provider
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._toggle_library_media_select_mode()
+        await _wait_for_selector(screen, pilot, "#library-media-analyze-selected")
+        await pilot.pause()
+        analyze = screen.query_one("#library-media-analyze-selected", Button)
+        assert analyze.disabled is True
+        reason_line = screen.query_one("#library-media-analyze-selected-reason", Static)
+        painted = _painted(host, reason_line.region).replace("\n", " ")
+        assert "No analysis provider is configured" in painted, painted
+        assert "Providers & Models" in painted, painted
 
 
 @pytest.mark.asyncio
@@ -2469,6 +2585,98 @@ async def test_media_facet_failure_paints_the_same_callout():
         retry = screen.query_one("#library-media-retry", Button)
         assert retry in callout.query(Button)
         assert len(screen.query("#library-media-retry")) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_media_load_failure_names_the_reopen_recovery():
+    """task-31982 AC#2: a second consecutive failed Retry stops repeating.
+
+    The critique's residue: the callout's Retry re-issued on the same failed
+    path and repainted the identical sentence with no next step. When the
+    same reason recurs on a consecutive Retry the message must name the
+    recovery action instead -- reopen Chatbook to reconnect to the store.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        calls = await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        first = " ".join(_painted(host, copy.region).split())
+        # The FIRST failure is silent about the recovery step -- one honest
+        # sentence, exactly as before.
+        assert first == "Couldn't load page 1 · database is locked", first
+
+        screen.query_one("#library-media-load-failure").query_one(
+            "#library-media-retry", Button
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) == 2,
+            message="The callout's Retry never re-issued.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="The retried request never settled.",
+        )
+        await pilot.pause()
+
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        second = " ".join(_painted(host, copy.region).split())
+        assert second.startswith("Couldn't load page 1 · database is locked"), second
+        assert "reopen Chatbook to reconnect to the media database" in second, second
+
+
+@pytest.mark.asyncio
+async def test_facet_only_failure_leaves_the_row_supported_actions_live():
+    """task-31982 AC#1/#4: the facet read and the row read are independent.
+
+    ``list_library_media_types`` and ``search_media`` are separate queries on
+    separate worker groups with independent failure fences, so a facet
+    failure over a healthy page must NOT disable the actions the row data
+    supports -- Export, Review, Select and Trash stay live because their own
+    read succeeded.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+
+        async def _fails(**_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        host.app_instance.media_reading_scope_service.list_library_media_types = _fails
+        screen._request_library_media_facets()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.facet_failure is not None
+                and not controller.facet_loading
+            ),
+            message="The forced Media facet failure never settled.",
+        )
+        await pilot.pause()
+
+        # The page read succeeded, its rows are retained, and the "nothing to
+        # select" predicate the whole-list gate reads stays False.
+        assert controller.page_failure is None
+        assert len(controller.retained_items) == 2
+        assert not screen._library_media_list_unselectable()
+
+        # ...so every action the row data supports stays live and un-gated.
+        for widget_id, label in (
+            ("#library-media-export", "Export…"),
+            ("#library-media-review", "Review these"),
+            ("#library-media-trash-open", "Trash"),
+            ("#library-media-select-toggle", "Select"),
+        ):
+            button = screen.query_one(widget_id, Button)
+            assert not button.disabled, widget_id
+            assert str(button.label) == label, widget_id
 
 
 @pytest.mark.asyncio
@@ -3725,3 +3933,266 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
         assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
         painted = _painted(host, grid.region)
         assert "Open manager" in painted, painted
+
+
+# ---------------------------------------------------------------------------
+# task-31956: the reviewed decoration costs O(visible rows), not O(active set)
+# ---------------------------------------------------------------------------
+
+
+def _count_set_loads(service) -> list[str]:
+    """Count whole-set loads through ``service``, returning the tally list."""
+    loads: list[str] = []
+    inner = service.get_active_review_set
+
+    def counted():
+        review_set = inner()
+        loads.append("" if review_set is None else review_set.set_id)
+        return review_set
+
+    service.get_active_review_set = counted
+    return loads
+
+
+async def _decoration_fixture(host, pilot):
+    """A settled Media list with a two-item active set over four rows.
+
+    The load tally starts counting BEFORE the canvas build that follows the
+    create, so it covers the first real decoration rather than a cache the
+    fixture already warmed.
+    """
+    screen = await _open_media_list(host, pilot)
+    service = screen._review_set_service()
+    set_id = service.create_review_set(
+        "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+    )
+    loads = _count_set_loads(service)
+    _sync_library_canvas(screen, "media")
+    for _ in range(3):
+        await pilot.pause()
+    items = screen._library_media_browse_controller.retained_items
+    assert len(items) == 4, items
+    return screen, service, set_id, items, loads
+
+
+def _reviewed(rows) -> list[bool | None]:
+    return [row["reviewed"] for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
+    """task-31956 AC#1: an unchanged set is read once, not per canvas build.
+
+    ``get_active_review_set`` loads the header AND every pinned item row (up
+    to ``REVIEW_SET_CAP`` = 500) and the decoration ran it at every one of
+    the ~30 viewer-flip sync sites, to stamp at most a page of rows. The
+    map is now cached against the service's write revision, so repeated
+    builds cost the rows they decorate and nothing else.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, _service, _set_id, items, loads = await _decoration_fixture(
+            host, pilot
+        )
+        # The canvas build inside the fixture already decorated this page.
+        assert len(loads) == 1, loads
+
+        first = screen._decorate_library_media_reviewed(items)
+        for _ in range(20):
+            screen._decorate_library_media_reviewed(items)
+
+        assert len(loads) == 1, loads
+        assert _reviewed(first) == [False, False, None, None], first
+
+
+@pytest.mark.asyncio
+async def test_marking_an_item_done_invalidates_the_decoration_cache():
+    """task-31956 AC#2: the mark seam is a write, so the next page is right.
+
+    Every write goes through the service's one transaction helper, which is
+    what the cache keys off -- so this holds for the ``m`` gesture, the
+    walker's auto-mark, and a direct service call alike.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, loads = await _decoration_fixture(
+            host, pilot
+        )
+        assert len(loads) == 1, loads
+
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            False,
+            False,
+            None,
+            None,
+        ]
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+        marked = screen._decorate_library_media_reviewed(items)
+
+        assert _reviewed(marked) == [True, False, None, None], marked
+        assert len(loads) == 2, loads
+
+
+@pytest.mark.asyncio
+async def test_leaving_and_re_entering_review_invalidates_the_decoration_cache():
+    """task-31956 AC#2: activation is a write too -- the markers follow it."""
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+
+        service.deactivate_active()
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+
+        service.activate(set_id)
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            False,
+            False,
+            None,
+            None,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_write_landing_during_the_load_is_not_stamped_as_included():
+    """Fix round 1: the stamp is the revision read BEFORE the load.
+
+    `dismiss`/`undismiss` commit on a thread (`asyncio.to_thread`) while
+    this thread decorates, so a write can land between the read of the set
+    and the stamp. Stamping the revision read AFTER the load would claim
+    that write was included, freezing a map that no later sync repairs --
+    the rows would keep painting marks the set no longer has. Stamping the
+    earlier value only costs one extra read.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+
+        healthy = service.get_active_review_set
+
+        def racing():
+            # The snapshot this call will cache...
+            review_set = healthy()
+            # ...and a write that commits (and bumps) before it is stamped.
+            service.mark_item_done(set_id, backing_media_id=1, done=True)
+            return review_set
+
+        # Invalidate first, so the racing build is the one that loads.
+        service.set_cursor(set_id, 0)
+        service.get_active_review_set = racing
+        stale = screen._decorate_library_media_reviewed(items)
+        assert _reviewed(stale) == [False, False, None, None], stale
+
+        service.get_active_review_set = healthy
+        fresh = screen._decorate_library_media_reviewed(items)
+        assert _reviewed(fresh) == [True, False, None, None], fresh
+
+
+@pytest.mark.asyncio
+async def test_a_storage_error_is_never_cached_as_no_active_set():
+    """task-30042 doctrine survives the cache: it fails OPEN, and forgets.
+
+    A cached failure would cost the markers for the rest of the session on
+    one transient read error, so the failure is what is NOT remembered --
+    every build retries while the cache is invalid, and the markers return
+    with the storage.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+        # A write invalidates the cache, so the next decoration must read.
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+
+        attempts: list[str] = []
+        healthy = service.get_active_review_set
+
+        def boom():
+            attempts.append("read")
+            raise sqlite3.OperationalError("database is locked")
+
+        service.get_active_review_set = boom
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+        assert len(attempts) == 2, attempts
+
+        service.get_active_review_set = healthy
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            True,
+            False,
+            None,
+            None,
+        ]
+
+
+# ---------------------------------------------------------------------------
+# task-31957: the preview pane names the analysis state the row names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("row_index", "expected", "other"),
+    [(0, "Analysed: yes", "Analysed: no"), (2, "Analysed: no", "Analysed: yes")],
+)
+@pytest.mark.asyncio
+async def test_the_preview_pane_paints_the_selected_items_analysis_state(
+    row_index: int, expected: str, other: str
+):
+    """task-31957: the pane answers for an analysed AND an un-analysed item.
+
+    Painted on the real screen, over the real projection: rows 1-2 of
+    ``_review_state_host`` carry an analysis and rows 3-4 do not, and the
+    pane has to say which one the selection is on -- the row's line says
+    "· analysed" or nothing, and until now the pane said neither.
+
+    ``show_preview`` is flipped on for the assertion: since the permanent
+    Reader shipped (``d99fb4a9c``) the screen passes ``show_preview=False``
+    for every Media canvas path, so this pane is not on screen today -- see
+    the batch-2 report. Everything else here is production: the screen's
+    stylesheet, the pane's real geometry (a ~15-cell text measure inside
+    the Items pane, which is why the line is kept short), and the state
+    built by the same browse projection the rows come from.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+        screen.query_one(f"#library-media-row-{row_index}", Button).press()
+        for _ in range(3):
+            await pilot.pause()
+
+        canvas = screen.query_one("#library-media-canvas")
+        canvas.show_preview = True
+        await canvas.recompose()
+        for _ in range(3):
+            await pilot.pause()
+
+        preview = screen.query_one("#library-media-preview")
+        assert preview.region.area > 0, preview.region
+        painted = _painted(host, preview.region)
+
+        assert expected in painted, painted
+        assert other not in painted, painted
+        # The pane describes the item whose row is selected, not a
+        # neighbour: its title is painted right above the answer.
+        assert f"Doc {row_index + 1}" in painted, painted

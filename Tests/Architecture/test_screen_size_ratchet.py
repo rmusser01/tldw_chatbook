@@ -703,7 +703,35 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # swap): three of them WRITES, which is the silent class -- a write to a
     # deleted flat name creates a stray attribute split from the state object
     # instead of raising.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35626, 1289),
+    #
+    # 2026-09-07, wave-7 ROUND 2: `origin/dev` raced 75 more commits (the
+    # `fix/media-riders` series, actively editing this same media cluster)
+    # while PR #2501 was open. Fresh `_measure()`: 35626/1289 -> 35743/1290.
+    #
+    # Method SET check again, and it is exact both ways: `merged - branch` is
+    # dev's TWO new names (`_library_media_empty_list_fallback_target`,
+    # `_restore_library_media_reader_width_on_open`) and `branch - merged` is
+    # the ONE name dev itself deleted (`_library_media_int_backing_id`, which
+    # dev promoted to a module-level function in
+    # `Library/library_media_state.py`). Net +1: 1289 + 2 - 1 = 1290. No
+    # wave-7 delegator was lost.
+    #
+    # Line delta +117 against dev's own +121 (38525 -> 38646). The difference
+    # is the TWO mover bodies dev edited (`_select_library_media_reader_row`
+    # +5, `handle_library_media_review_selected` +2), which follow the body
+    # into the controller and so are not taken here: 121 - 7 = 114, plus this
+    # merge's own +3 for the ninth group-(e) construction-site kwarg
+    # (`restore_library_media_reader_width_on_open`, 3 lines). 114 + 3 = 117.
+    # Construction-site kwargs 91 -> 92.
+    #
+    # Six further screen-side flat-field references arrived in dev's new
+    # task-31979 width-restore code and were retargeted to `_media_state`
+    # (line-neutral). ONE is a write (`reader_layout = layout`) -- and one of
+    # the reads sat INSIDE a body this wave had already retargeted, where the
+    # auto-merge dropped dev's new flat line in among our retargeted ones
+    # without a conflict. That is the case for running the census over the
+    # merged tree rather than over the conflict hunks.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35743, 1290),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

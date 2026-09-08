@@ -3260,6 +3260,73 @@ async def test_select_mode_marker_replaces_the_review_state_slot_in_place():
 
 
 # ---------------------------------------------------------------------------
+# task-31955 AC#3: the analysed marker AND the keyword reason survive the
+# in-place density and select-mode rebuilds. Both live in the row's stashed
+# `secondary`, and both in-place patchers re-derive the label from it -- the
+# parity this pins is that neither patcher drops half the line.
+# ---------------------------------------------------------------------------
+
+_MARKED_SECONDARY = "article \u00b7 2m \u00b7 analysed \u00b7 keyword: notes"
+
+
+def _marked_secondary_state(*, select_mode: bool) -> LibraryMediaCanvasState:
+    rows = (
+        LibraryMediaRow(
+            media_id="1",
+            title="Opening remarks",
+            media_type="article",
+            secondary=_MARKED_SECONDARY,
+            selected=True,
+        ),
+    )
+    return LibraryMediaCanvasState(
+        rows=rows,
+        type_options=("All", "article"),
+        active_type="All",
+        status_copy="",
+        empty_copy="",
+        selected_id="1",
+        preview_lines=(),
+        count=len(rows),
+        select_mode=select_mode,
+    )
+
+
+class _MarkedSecondaryCanvasApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_marked_secondary_state(select_mode=False),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_row_reason_markers_survive_the_in_place_density_and_select_toggles():
+    """No recompose: both patchers rebuild the label from the same stash."""
+    app = _MarkedSecondaryCanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        def label() -> str:
+            return str(canvas.query_one(".library-media-row", Button).label)
+
+        def assert_marked(where: str) -> None:
+            painted = label()
+            assert "\u00b7 analysed" in painted, (where, painted)
+            assert "\u00b7 keyword: notes" in painted, (where, painted)
+
+        assert_marked("composed")
+        for compact in (True, False):
+            canvas.apply_compact_presentation(compact)
+            await pilot.pause()
+            assert_marked(f"density={compact}")
+        for select_mode in (True, False):
+            canvas.apply_reader_state(_marked_secondary_state(select_mode=select_mode))
+            await pilot.pause()
+            assert_marked(f"select_mode={select_mode}")
+
+
+# ---------------------------------------------------------------------------
 # task-31635 (critique #5 item 4): a bulk action's label must not move when
 # its enabled state flips. The "○ " disabled marker is part of the label, so
 # crossing 0 -> 1 selected shifted every bulk action two cells left, right

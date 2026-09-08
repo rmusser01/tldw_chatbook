@@ -1345,6 +1345,82 @@ class ReversibleLibraryMediaScopeService(StaticLibraryMediaScopeService):
         return dict(item)
 
 
+class NonMappingRestoreScopeService(ReversibleLibraryMediaScopeService):
+    """An Undo whose restore returns an unexpected shape for ONE id.
+
+    task-31982 AC#3: ``restore_media_item`` here neither raises nor returns a
+    usable Mapping for ``non_mapping_backing_id`` -- it returns ``True``. The
+    undo handler used to count that as neither success nor failure, so the
+    receipt undercounted and the still-failed id dropped from the retry set.
+    """
+
+    def __init__(self, media_items, *, non_mapping_backing_id: int):
+        super().__init__(media_items)
+        self._non_mapping_backing_id = non_mapping_backing_id
+
+    async def restore_media_item(self, *, media_id, **kwargs):
+        item = self.trashed.pop(media_id, None)
+        if media_id == self._non_mapping_backing_id:
+            return True  # unexpected shape: not a Mapping, no exception
+        if item is not None:
+            self.media_items = [*self.media_items, item]
+        return dict(item) if item is not None else {}
+
+
+@pytest.mark.asyncio
+async def test_bulk_undo_counts_a_non_mapping_restore_as_a_still_failed_id() -> None:
+    """task-31982 AC#3: a restore that returns a non-Mapping is a failure.
+
+    Two items are deleted; on Undo the write layer restores one (a Mapping)
+    and returns ``True`` for the other. The receipt must read "1 of 2" with
+    the non-Mapping id still named (retryable), not silently drop it and
+    claim a clean undo.
+    """
+    app = _build_media_test_app()
+    service = NonMappingRestoreScopeService(_two_media_items(), non_mapping_backing_id=1)
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    app.media_reading_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=NARROW_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-selected")
+        screen.query_one("#library-media-select-all", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-media-delete-selected", Button
+            ).disabled,
+            message="Select all never enabled bulk delete.",
+        )
+        screen.query_one("#library-media-delete-selected", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-bulk-delete-confirm")
+        screen.query_one("#library-media-bulk-delete-confirm", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._media_state.bulk_delete_in_flight
+                and len(screen._media_state.delete_receipt_ids) == 2
+            ),
+            message="The two-item bulk delete never settled on its receipt.",
+        )
+        await pilot.pause()
+
+        screen.query_one("#library-media-bulk-delete-undo", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._media_state.bulk_delete_in_flight
+                and screen._media_state.delete_receipt_undo_failure != ""
+            ),
+            message="The undo never reported its non-Mapping failure.",
+        )
+
+        assert screen._media_state.delete_receipt_undo_failure.startswith("1 of 2 ")
+        assert screen._media_state.delete_receipt_ids == ("local:media:1",)
+
+
 @pytest.mark.asyncio
 async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> None:
     """task-31220 AC: the confirmation promises "You can undo right away", so

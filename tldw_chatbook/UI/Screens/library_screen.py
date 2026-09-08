@@ -174,6 +174,7 @@ from ...Library.library_media_state import (
     MediaTrashBrowseState,
     MediaTrashScope,
     build_library_media_trash_state,
+    library_media_int_backing_id,
 )
 from ...Library.library_media_reader_state import (
     LibraryMediaReaderSessionState,
@@ -3028,6 +3029,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             restore_library_media_loaded_progress=(
                 lambda *a, **k: self._restore_library_media_loaded_progress(*a, **k)
+            ),
+            restore_library_media_reader_width_on_open=(
+                lambda *a, **k: self._restore_library_media_reader_width_on_open(*a, **k)
             ),
             sanitize_media_field=(
                 lambda *a, **k: self._sanitize_media_field(*a, **k)
@@ -7453,6 +7457,35 @@ class LibraryScreen(BaseAppScreen):
                 severity="warning",
             )
 
+    def _restore_library_media_reader_width_on_open(self) -> None:
+        """Reclaim the Reader's width when an item opens (task-31979).
+
+        Selecting an item flips the view to the viewer, so the list-view
+        widening -- which hands the empty Reader's columns to the Items list --
+        must be undone. Patched straight onto the shell so it does NOT advance
+        the presentation epoch or re-arm return settlement: the full resolver
+        sync (``_sync_library_media_reader_layout_from_shell``) does both, and
+        doing either mid-open corrupts the media-return settlement fence.
+        """
+        try:
+            shell = self.query_one(
+                "#library-media-reader-shell", LibraryMediaReaderShell
+            )
+        except (NoMatches, QueryError):
+            return
+        if not self._library_adaptive_reader_allocation_is_current(shell):
+            return
+        layout = resolve_media_reader_layout(
+            shell.region.width,
+            self._media_state.reader_preferences,
+            previous=self._media_state.reader_layout,
+            reader_has_item=self._media_state.view == _MEDIA_VIEW_VIEWER,
+        )
+        if layout == self._media_state.reader_layout:
+            return
+        shell.sync_layout(layout)
+        self._media_state.reader_layout = layout
+
     def _sync_library_media_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
@@ -7504,6 +7537,10 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.reader_preferences,
             previous=previous,
             priority=priority,
+            # task-31979: only the viewer shows a real document; in the list
+            # and trash views the Reader holds just its placeholder, so its
+            # width goes to the Items list to stop long titles truncating.
+            reader_has_item=self._media_state.view == _MEDIA_VIEW_VIEWER,
         )
         layout_changed = layout != self._media_state.reader_layout
         focused = self.focused
@@ -8892,7 +8929,9 @@ class LibraryScreen(BaseAppScreen):
 
         (The third case, a row class whose list is EMPTY, is closed at
         the channel itself: notes now falls back to its filter input the
-        way prompts and skills already did.)
+        way prompts and skills already did. Media's empty page has no
+        unconditional control to fall back to, so it is closed in the
+        predicate instead -- it stands down when nothing is there.)
         """
         if self._library_focus_channel_owns_this_window():
             return
@@ -8907,11 +8946,14 @@ class LibraryScreen(BaseAppScreen):
         ``_focus_library_list_entry`` -- deliberately those two and no
         more, so this predicate stays a statement about which route/stage
         the channel serves and never a second copy of its row-picking
-        logic. Two no-landing cases are knowingly left inside "owns":
-        a pending Find focus whose input never mounts, and an empty
-        Media list whose four fallback controls are all absent or
-        disabled -- both narrow, both end at ``None`` rather than at a
-        wrong widget.
+        logic. The one exception is Media's EMPTY page (Qodo #2483): its
+        recovery controls are conditional, and a filter MISS composes none
+        of them, so the channel lands nothing there -- the shared
+        ``_library_media_empty_list_fallback_target`` answers that for
+        both this predicate and the channel itself rather than being
+        re-derived here. One no-landing case is still knowingly left
+        inside "owns": a pending Find focus whose input never mounts --
+        narrow, and it ends at ``None`` rather than at a wrong widget.
         """
         if self._media_state.find_focus_pending:
             return True
@@ -8919,10 +8961,18 @@ class LibraryScreen(BaseAppScreen):
             return False
         if self._library_emergency_stage == "rail-only":
             return False
-        return (
-            _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
-            is not None
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
+            self._library_selected_row_id
         )
+        if row_class is None:
+            return False
+        if (
+            row_class == "library-media-row"
+            and not self.query(f".{row_class}")
+            and self._library_media_empty_list_fallback_target() is None
+        ):
+            return False
+        return True
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -10827,6 +10877,36 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._focus_library_list_entry()
 
+    def _library_media_empty_list_fallback_target(self) -> Widget | None:
+        """The control an EMPTY Media list can hand keyboard focus to.
+
+        The first of Media's four recovery controls that is both present
+        and enabled, or ``None`` when the page offers none. One owner for
+        both readers: ``_focus_library_list_entry`` lands on it, and
+        ``_library_focus_channel_owns_this_window`` asks whether there is
+        anything to land on at all -- a filter MISS composes none of these
+        four (the canvas returns right after its query-echoing status
+        line), so the answer has to be the same in both places or the seam
+        stands down for a channel that never arrives. The miss page's own
+        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
+        with nothing here the shared seam restores the filter ``Input``
+        (the right place to retype), and listing Clear would put the
+        predicate back into "owns" and re-open the gap.
+        """
+        for selector in (
+            "#library-media-type-filter",
+            "#library-media-empty-clear-type",
+            "#library-media-empty-import",
+            "#library-media-retry",
+        ):
+            try:
+                control = self.query_one(selector, Widget)
+            except (NoMatches, QueryError):
+                continue
+            if not getattr(control, "disabled", False):
+                return control
+        return None
+
     def _focus_library_list_entry(self) -> None:
         """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
 
@@ -10875,20 +10955,11 @@ class LibraryScreen(BaseAppScreen):
                     self.set_focus(control)
                     return
             if row_class == "library-media-row":
-                for selector in (
-                    "#library-media-type-filter",
-                    "#library-media-empty-clear-type",
-                    "#library-media-empty-import",
-                    "#library-media-retry",
-                ):
-                    try:
-                        control = self.query_one(selector, Widget)
-                    except (NoMatches, QueryError):
-                        continue
-                    if not getattr(control, "disabled", False):
-                        self._library_notes_programmatic_focus_target = control
-                        self.set_focus(control)
-                        return
+                control = self._library_media_empty_list_fallback_target()
+                if control is not None:
+                    self._library_notes_programmatic_focus_target = control
+                    self.set_focus(control)
+                    return
             return
         if (
             row_class == "library-media-row"
@@ -15327,13 +15398,43 @@ class LibraryScreen(BaseAppScreen):
         service = self._review_set_service()
         if service is None:
             return tuple(items)
+        # task-31956: ``get_active_review_set`` loads the set HEADER AND
+        # every pinned item row (``REVIEW_SET_CAP`` = 500 of them), and this
+        # runs at every one of the ~30 viewer-flip sync sites -- a whole-set
+        # load to stamp at most a page. The map is memoised against the
+        # service's write ``revision``, which every mutating method bumps
+        # through its one transaction helper, so a done mark, a set
+        # create/activate/deactivate and a dismiss all invalidate it
+        # without a per-gesture invalidation call a new writer could forget.
+        # Read BEFORE the load, and stamp with THAT (fix round 1): a write
+        # committing during the load (``dismiss``/``undismiss`` run through
+        # ``asyncio.to_thread`` while this thread decorates) would otherwise
+        # be stamped as already included, leaving a stale map under a
+        # current revision that no later sync repairs. A stale-LOW stamp
+        # only costs one extra read.
         try:
-            review_set = service.get_active_review_set()
+            revision = service.revision
+            cached = getattr(self, "_review_done_map_cache", None)
+            if cached is not None and cached[0] == revision:
+                done_by_id = cached[1]
+            else:
+                review_set = service.get_active_review_set()
+                done_by_id = (
+                    None
+                    if review_set is None
+                    else {
+                        item.backing_media_id: item.done
+                        for item in review_set.items
+                    }
+                )
+                self._review_done_map_cache = (revision, done_by_id)
         except Exception:
+            # Every ASK of the service is inside the guard, stamp included:
+            # the failure is deliberately NOT cached, so one transient read
+            # error costs one build's markers, not the session's.
             return tuple(items)
-        if review_set is None:
+        if done_by_id is None:
             return tuple(items)
-        done_by_id = {item.backing_media_id: item.done for item in review_set.items}
         return tuple(
             {**item, "reviewed": done_by_id.get(item["backing_media_id"])}
             for item in items
@@ -15356,10 +15457,20 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_media_layout_signature(self) -> tuple[object, ...]:
-        """Return terminal allocation plus pure effective Media pane layout."""
-        reader_width = self._media_state.reader_layout.reader_width
+        """Return terminal allocation plus pure effective Media pane layout.
+
+        task-31979: derived from the canonical item-open reader width, not the
+        live tracker's, so the empty-reader list widening -- a deterministic,
+        reversible list-view state that hands the empty Reader's columns to the
+        Items list -- never reads as a layout change that would deny an exact
+        return across the list<->viewer transition.
+        """
+        canonical = resolve_media_reader_layout(
+            int(self.size.width),
+            self._media_state.reader_preferences,
+        )
         pure_layout = resolve_media_reader_layout(
-            reader_width,
+            canonical.reader_width,
             self._media_state.reader_preferences,
         )
         return (
@@ -23239,6 +23350,16 @@ class LibraryScreen(BaseAppScreen):
                             restored_items.append(
                                 self._library_media_mutation_summary(media_id, result)
                             )
+                        else:
+                            # task-31982 AC#3: a restore that returned an
+                            # unexpected shape (not a Mapping, no exception)
+                            # committed nothing usable. Counting it as
+                            # neither success nor failure let the receipt
+                            # total drift and dropped the id from the
+                            # retryable set -- it is a failure, mapped like
+                            # the unavailable path so the count stays honest.
+                            failed.append(media_id)
+                            failure_reason = failure_reason or "restore returned no record"
                     except Exception as exc:
                         logger.warning(
                             "Failed to restore a Library media item in bulk-delete "
@@ -31283,13 +31404,9 @@ class LibraryScreen(BaseAppScreen):
             The loaded item's position when the Reader holds one of the
             set's items, else ``review_set.cursor``.
         """
-        loaded = getattr(
-            self._media_state.reader_session, "loaded_backing_id", None
+        loaded = library_media_int_backing_id(
+            getattr(self._media_state.reader_session, "loaded_backing_id", None)
         )
-        try:
-            loaded = int(loaded) if loaded is not None else None
-        except (TypeError, ValueError):
-            loaded = None
         if loaded is None:
             return review_set.cursor
         return next(
@@ -33425,11 +33542,18 @@ class LibraryScreen(BaseAppScreen):
             authoritative.
         """
         controller = self._library_media_browse_controller
-        if not controller.retained_items:
+        # task-31961: the membership test goes ABOVE the fetch. A bulk
+        # Analyze over a multi-page selection saves items the retained page
+        # never mounted, and an id-scoped SELECT for one of those can only
+        # be thrown away -- ``note_analysis_state`` would refuse it anyway,
+        # one round trip later. (This subsumes the old "no retained items at
+        # all" guard: an empty page holds no member.)
+        target = str(media_id)
+        if not any(str(item["id"]) == target for item in controller.retained_items):
             return
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         search_media = getattr(service, "search_media", None)
-        backing_id = self._library_media_int_backing_id(media_id)
+        backing_id = library_media_int_backing_id(media_id)
         if not callable(search_media) or backing_id is None:
             return
         try:
@@ -33457,13 +33581,6 @@ class LibraryScreen(BaseAppScreen):
             str(row.get("id") or ""), has_analysis=bool(row.get("has_analysis"))
         ):
             _sync_library_canvas(self, "media", allow_screen_fallback=False)
-
-    def _library_media_int_backing_id(self, media_id: str) -> int | None:
-        """The integer backing id for ``media_id``, or None when it has none."""
-        try:
-            return int(self._library_media_backing_id(media_id))
-        except (TypeError, ValueError):
-            return None
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.
