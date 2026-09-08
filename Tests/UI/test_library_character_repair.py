@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from textual.containers import Container, Horizontal
 from textual.widgets import Button, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -105,6 +106,75 @@ def _controller(service: _Service):
         focus_refresh=lambda: refresh_focus.append(True),
     )
     return controller, invalidations, returns, refresh_focus
+
+
+@pytest.mark.asyncio
+async def test_repair_dialog_keeps_action_order_and_direct_parentage() -> None:
+    """Local button deduplication must preserve the existing dialog structure."""
+    controller, *_ = _controller(_Service(()))
+    app = ConsolidatedCSSApp()
+    async with app.run_test() as pilot:
+        dialog = LibraryCharacterRepairDialog(controller, CONTEXT)
+        await app.push_screen(dialog)
+        await dialog.workers.wait_for_complete()
+        await pilot.pause()
+        container = dialog.query_one("#library-character-repair-dialog", Container)
+        assert [type(child) for child in container.children] == [
+            Static,
+            Static,
+            Select,
+            Static,
+            Button,
+            Horizontal,
+        ]
+        actions = container.children[-1]
+        assert actions.has_class("character-repair-actions")
+        assert [
+            (type(button), str(button.label), button.id) for button in actions.children
+        ] == [
+            (Button, "Refresh", "library-character-repair-refresh"),
+            (Button, "Repair", "library-character-repair-apply"),
+            (Button, "Cancel", "library-character-repair-cancel"),
+        ]
+        buttons = list(dialog.query(Button))
+        assert [button.id for button in buttons] == [
+            "library-character-repair-next",
+            "library-character-repair-refresh",
+            "library-character-repair-apply",
+            "library-character-repair-cancel",
+        ]
+        assert all(button.has_class("character-repair-action") for button in buttons)
+        assert buttons[0].parent is container
+        assert str(buttons[0].label) == "Next 20 characters"
+        assert buttons[0].disabled
+        assert dialog.query_one(Select).has_class("character-repair-select")
+
+
+@pytest.mark.asyncio
+async def test_repair_status_updates_resolve_the_current_widget() -> None:
+    """Status writes update in place but never retain a replaced status widget."""
+    controller, *_ = _controller(_Service(()))
+    app = ConsolidatedCSSApp()
+    async with app.run_test() as pilot:
+        dialog = LibraryCharacterRepairDialog(controller, CONTEXT)
+        await app.push_screen(dialog)
+        await dialog.workers.wait_for_complete()
+        await pilot.pause()
+        original = dialog.query_one("#library-character-repair-status", Static)
+        dialog._set_status("First status")
+        assert str(original.renderable) == "First status"
+        assert dialog.query_one("#library-character-repair-status", Static) is original
+        await original.remove()
+        replacement = Static("Replacement status", id="library-character-repair-status")
+        await dialog.query_one("#library-character-repair-dialog", Container).mount(
+            replacement, before="#library-character-repair-next"
+        )
+        dialog._set_status("Current status")
+        assert str(replacement.renderable) == "Current status"
+        assert str(original.renderable) == "First status"
+        assert (
+            dialog.query_one("#library-character-repair-status", Static) is replacement
+        )
 
 
 @pytest.mark.asyncio
