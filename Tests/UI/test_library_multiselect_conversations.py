@@ -35,7 +35,7 @@ from Tests.UI.test_library_shell import (
     _build_test_app,
     _active_library_screen,
     _conversation_records,
-    _painted_label_column,
+    _painted_text,
     _seed_conversations,
     _wait_for_condition,
     _two_conversations,
@@ -530,16 +530,30 @@ async def test_library_conversation_stale_state_disables_actions_but_allows_reco
 # ---------------------------------------------------------------------------
 
 
+def _painted_word_column(host, button, word: str) -> int:
+    """Absolute column where ``word`` is painted inside ``button`` (task-31959).
+
+    Mirrors the Notes/Prompts sibling helper: measures the WORD, not the
+    first painted glyph. task-32042 gave the Conversations select toolbar
+    Media's full-label treatment, so "Export selected" no longer clips at
+    the pane's width -- the invariant this pins is that the WORD "Export"
+    holds its column across the disabled flip (the "○ " marker paints two
+    cells to its left while disabled, the reserved pad holds it while
+    enabled), exactly as Notes measures it.
+    """
+    painted = _painted_text(host, button.region)
+    assert word in painted, (word, painted)
+    return button.region.x + painted.index(word)
+
+
 @pytest.mark.asyncio
 async def test_conversations_export_label_holds_its_column_across_the_first_selection():
-    """The painted "Export selected" label starts in the same column.
+    """The painted "Export" word holds its column across the first selection.
 
     Drives the REAL screen, because the shift lives on the in-place
     ``_apply_library_row_toggle`` patch a row press takes -- not on
-    compose. At the conversations pane's own width the label is clipped,
-    so the pin is where it starts painting: "○" at that column while
-    disabled, "Export…" at the SAME column once the first selection
-    enables it.
+    compose. The word stays put ("○ " prefixes it while disabled, the
+    reserved pad holds it while enabled).
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -556,7 +570,7 @@ async def test_conversations_export_label_holds_its_column_across_the_first_sele
             screen, pilot, "#library-conversations-export-selected"
         )
         assert export.disabled
-        before = _painted_label_column(host, export)
+        before = _painted_word_column(host, export, "Export")
 
         screen.query_one("#library-conversation-row-0", Button).press()
         await _wait_for_condition(
@@ -569,8 +583,53 @@ async def test_conversations_export_label_holds_its_column_across_the_first_sele
         await pilot.pause()
 
         export = screen.query_one("#library-conversations-export-selected", Button)
-        after = _painted_label_column(host, export)
+        after = _painted_word_column(host, export, "Export")
         assert after == before, (before, after)
+
+
+# ---------------------------------------------------------------------------
+# task-32042 (critique #7 P1): the Conversations select toolbar was a degraded
+# copy of Media's -- all four actions (count + Select all + Clear + Export
+# selected) shared ONE ds-toolbar row at width:1fr, so at the narrow
+# conversations list pane they split the row evenly and every label truncated
+# ("Selec", "Exp") while "0 selected" wrapped. Media (task-30043) keeps each
+# action at its content width across a multi-row toolbar; this pins the
+# Conversations toolbar to that same treatment at both supported sizes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)])
+async def test_conversations_select_labels_paint_in_full_like_media(size):
+    """Every Conversations select action paints its full word, unwrapped count."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+
+        count = await _wait_for_selector(
+            screen, pilot, "#library-conversations-selected-count"
+        )
+        select_all = screen.query_one("#library-conversations-select-all", Button)
+        clear = screen.query_one("#library-conversations-select-clear", Button)
+        export = screen.query_one("#library-conversations-export-selected", Button)
+
+        # Full, untruncated action labels (no "Selec"/"Exp" mid-word cuts).
+        assert "Select all 2 shown" in _painted_text(host, select_all.region)
+        assert "Clear" in _painted_text(host, clear.region)
+        assert "Export selected" in _painted_text(host, export.region)
+
+        # "0 selected" reads on one line, not the awkward wrap critique saw.
+        painted_count = _painted_text(host, count.region)
+        assert "0 selected" in painted_count
+        assert count.region.height == 1, painted_count
 
 
 # ---------------------------------------------------------------------------
