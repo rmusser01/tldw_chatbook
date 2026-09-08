@@ -261,6 +261,7 @@ def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch)
 
     monkeypatch.setattr(crypto.subprocess, "Popen", observe)
     outcome = []
+    cancel = Event()
 
     def execute():
         try:
@@ -269,7 +270,7 @@ def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch)
                 target,
                 password=b"pipe-password-sentinel",
                 decrypt=False,
-                cancel=Event(),
+                cancel=cancel,
             )
         except Exception as exc:
             outcome.append(exc)
@@ -278,18 +279,21 @@ def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch)
     peak_parent, peak_child = baseline, 0
     thread = Thread(target=execute)
     thread.start()
-    deadline = time.monotonic() + 30
-    while thread.is_alive() and time.monotonic() < deadline:
-        peak_parent = max(peak_parent, psutil.Process().memory_info().rss)
-        for child, _, _ in children:
-            try:
-                peak_child = max(
-                    peak_child, psutil.Process(child.pid).memory_info().rss
-                )
-            except psutil.NoSuchProcess:
-                pass
-        thread.join(0.01)
-    assert not thread.is_alive(), "pipe backpressure deadlocked"
+    try:
+        deadline = time.monotonic() + 30
+        while thread.is_alive() and time.monotonic() < deadline:
+            peak_parent = max(peak_parent, psutil.Process().memory_info().rss)
+            for child, _, _ in children:
+                try:
+                    peak_child = max(
+                        peak_child, psutil.Process(child.pid).memory_info().rss
+                    )
+                except psutil.NoSuchProcess:
+                    pass
+            thread.join(0.01)
+        assert not thread.is_alive(), "pipe backpressure deadlocked"
+    finally:
+        _cleanup_stream_worker(thread, cancel, children)
     assert outcome == []
     assert peak_parent - baseline < 32 * 1024**2
     assert 200 * 1024**2 < peak_child < 384 * 1024**2
@@ -581,3 +585,53 @@ def test_nonregular_resource_does_not_block_capability(
     )
     assert probe.returncode == 0
     assert probe.stdout.strip() == b"(False, 'helper_unavailable')"
+
+
+def _cleanup_stream_worker(thread, cancel, children):
+    """Bound teardown even when a pipe regression ignores cancellation."""
+    cancel.set()
+    thread.join(0.2)
+    try:
+        for child, _, _ in children:
+            if child.poll() is None:
+                child.terminate()
+            try:
+                child.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+    finally:
+        thread.join(5)
+    assert not thread.is_alive(), "stream worker survived child cleanup"
+
+
+def test_backpressure_harness_reaps_stalled_work():
+    import sys
+
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "print('ready', flush=True); time.sleep(60)",
+        ],
+        stdout=subprocess.PIPE,
+    )
+    cancel = Event()
+    thread = Thread(target=lambda: child.stdout.read())
+    try:
+        assert child.stdout.readline() == b"ready\n"
+        thread.start()
+        assert thread.is_alive() and child.poll() is None
+        _cleanup_stream_worker(thread, cancel, [(child, (), {})])
+        assert not thread.is_alive()
+        assert child.returncode is not None
+        assert cancel.is_set()
+    finally:
+        # Protect the regression test itself when the cleanup helper is broken.
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+        if thread.ident is not None:
+            thread.join(5)
+        child.stdout.close()
