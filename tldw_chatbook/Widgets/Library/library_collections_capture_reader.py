@@ -28,9 +28,22 @@ from tldw_chatbook.Library.collections_capture_models import (
     CaptureSummary,
     SavedCaptureSearch,
 )
+from tldw_chatbook.Library.library_collections_service import (
+    LegacyCollectionsReadOnlyError,
+)
 from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
 from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
     CollectionsCaptureControllerState,
+)
+
+#: task-32057 AC#4. The reason half is scoped to LEGACY Collections on
+#: purpose: the captures browser around it accepts writes (Quick Capture),
+#: so an unqualified "Collections are read-only" would be false here. The
+#: next-step half is the service's own ``recovery`` string, so the copy
+#: cannot drift from the error that produces it.
+LEGACY_COLLECTIONS_READ_ONLY_NOTICE = (
+    "Legacy Collections are read-only on this profile · "
+    f"{LegacyCollectionsReadOnlyError.recovery}"
 )
 CollectionsReaderMode = Literal["read", "highlights", "notes", "info"]
 CollectionsScope = Literal[
@@ -601,17 +614,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 classes="destination-purpose",
                 markup=False,
             )
-            if self.presentation.legacy_recovery_rows:
-                supported, reason = self.presentation.capability("legacy_recovery")
-                yield Button(
-                    f"Legacy Collections data… ({self.presentation.legacy_recovery_rows})",
-                    id="library-collections-legacy-recovery",
-                    compact=True,
-                    disabled=not supported,
-                    tooltip=reason or "Inspect and export preserved legacy data.",
-                )
-            if self.presentation.legacy_recovery_open:
-                yield from self._compose_legacy_recovery()
+            yield from self._compose_legacy_recovery_disclosure()
             return
         capture = resolved.capture
         yield Static(
@@ -741,14 +744,33 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             "Delete Permanently…",
             button_id="library-collections-hard-delete",
         )
-        legacy_supported, legacy_reason = self.presentation.capability("legacy_recovery")
+        yield from self._compose_legacy_recovery_disclosure()
+
+    def _compose_legacy_recovery_disclosure(self) -> ComposeResult:
+        """Render the legacy-data entry point with its read-only reason.
+
+        task-32057 AC#4: ``LocalLibraryCollectionsService`` refuses every
+        create/rename/delete/restore/add-item with
+        ``LegacyCollectionsReadOnlyError``, and the canvas used to offer
+        the "Legacy Collections data…" button with no statement that the
+        records behind it can only be read and exported. The reason and
+        the next step ride one line, and the next step is the service's
+        own ``recovery`` string rather than a second copy of it.
+        """
         if self.presentation.legacy_recovery_rows:
+            supported, reason = self.presentation.capability("legacy_recovery")
+            yield Static(
+                LEGACY_COLLECTIONS_READ_ONLY_NOTICE,
+                id="library-collections-legacy-read-only",
+                classes="destination-purpose",
+                markup=False,
+            )
             yield Button(
                 f"Legacy Collections data… ({self.presentation.legacy_recovery_rows})",
                 id="library-collections-legacy-recovery",
                 compact=True,
-                disabled=not legacy_supported,
-                tooltip=legacy_reason or "Inspect and export preserved legacy data.",
+                disabled=not supported,
+                tooltip=reason or "Inspect and export preserved legacy data.",
             )
         if self.presentation.legacy_recovery_open:
             yield from self._compose_legacy_recovery()

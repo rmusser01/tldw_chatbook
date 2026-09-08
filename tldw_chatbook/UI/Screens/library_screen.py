@@ -11421,6 +11421,49 @@ class LibraryScreen(BaseAppScreen):
             # being browsed, so every OTHER content type's refresh doesn't
             # pay for an off-thread keyring read it has no use for).
             self._refresh_library_skills_trust_posture()
+        self.run_worker(
+            self._prefetch_library_collections_count(),
+            group="library_collections_count_prefetch",
+            exclusive=True,
+        )
+
+    async def _prefetch_library_collections_count(self) -> None:
+        """Fill the Collections rail count before the row is ever visited.
+
+        task-32057 AC#2: the capture count rides
+        ``LibraryCollectionsCaptureController.state.exact_total``, which
+        only exists once a page has been loaded -- and until this, the
+        only thing that loaded one was opening the canvas. So the rail
+        painted a bare "Collections" beside "Media (11)"/"Notes (7)",
+        indistinguishable from Search / RAG, whose count is absent by
+        design. This runs the SAME page-1 request the canvas issues (the
+        one enumerator, not a second count query that could disagree with
+        the list), then repaints the rail the way a snapshot change does.
+
+        Cheap and idempotent: it returns immediately once any page is
+        loaded, so the canvas visit itself never pays for it twice.
+        """
+        collections = self._collections_controller
+        controller = collections._ensure_library_collections_capture_controller()
+        if controller is None or controller.state.page is not None:
+            return
+        controller.adopt_active_authority()
+        request = collections._library_collections_capture_request()
+        if request is None:
+            return
+        try:
+            loaded = await controller.load_page(request)
+        except Exception:
+            logger.debug("Library Collections count prefetch failed.")
+            return
+        if not loaded or not self.is_mounted:
+            return
+        self._library_entry_reconcile_dirty = True
+        self._library_snapshot_state_generation += 1
+        self._schedule_library_entry_reconcile(
+            self._library_snapshot_state_generation,
+            self._library_entry_route_key(),
+        )
 
     def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
         return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
