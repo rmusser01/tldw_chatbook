@@ -62,6 +62,33 @@ def _settings(tmp_path, **over) -> mo.MeetingSettings:
     return mo.MeetingSettings(**base)
 
 
+#: What `resolve_engine` is told is installed unless a test says otherwise
+#: (31827 task 5). Every verdict in this file has to be a property of the
+#: SETTINGS under test, never of what the host venv happens to have: the
+#: `_store` fixture below mints its records with the SpeechBrain model id,
+#: and which engine resolves decides which model id the owner asks the store
+#: for. Without this pin a machine with sherpa-onnx but no torch resolves
+#: "onnx" and every stored record reads as `needs_reenrollment`.
+_PINNED_INSTALLED = frozenset(mo.DIARIZATION_MODULES)
+
+
+@pytest.fixture(autouse=True)
+def _pin_installed_engine_packages(monkeypatch):
+    """Resolve engines against `_PINNED_INSTALLED`, not the host's site-packages.
+
+    A test that passes its OWN `find_spec` (the `resolve_engine` tests) is
+    driving resolution deliberately and runs against the real implementation.
+    """
+    real = mo.resolve_engine
+
+    def pinned(settings, find_spec=None):
+        if find_spec is not None:
+            return real(settings, find_spec=find_spec)
+        return real(settings, find_spec=lambda name, *a: object() if name in _PINNED_INSTALLED else None)
+
+    monkeypatch.setattr(mo, "resolve_engine", pinned)
+
+
 class FakeJobRegistry:
     """Stand-in for `app.library_ingest_jobs`: listeners + one job state."""
 
@@ -219,7 +246,7 @@ def test_build_diarizer_construction_failure_returns_none(tmp_path, monkeypatch)
     def boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", boom)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", boom)
     settings = _settings(tmp_path, live_diarization=True, diarizer_backend="local")
     assert mo.build_diarizer(settings) is None
 
@@ -236,6 +263,122 @@ def test_live_diarization_active_true_for_local_backend_with_deps(tmp_path, monk
     owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="local")
     prepared = owner.prepare()
     assert prepared.live_diarization_active is True
+
+
+# ---- engine resolution (31827 task 5, spec §4) ---------------------------
+def test_resolve_engine_walks_auto_order_by_find_spec(tmp_path):
+    s = _settings(tmp_path, live_diarization=True, diarizer_backend="auto")
+    have = {"sherpa_onnx", "numpy"}
+    fs = lambda name, *a: object() if name in have else None           # noqa: E731
+    assert mo.resolve_engine(s, find_spec=fs) == ("onnx", ())          # torch absent -> onnx
+    have |= set(mo.ENGINE_MODULES["speechbrain"])
+    assert mo.resolve_engine(s, find_spec=fs)[0] == mo.AUTO_ORDER[0]   # both present -> order decides
+    assert mo.resolve_engine(s, find_spec=lambda *a: None) == (None, mo.ENGINE_MODULES[mo.AUTO_ORDER[-1]])
+
+
+def test_resolve_engine_explicit_choice_reports_its_missing_packages(tmp_path):
+    s = _settings(tmp_path, live_diarization=True, diarizer_backend="speechbrain")
+    assert mo.resolve_engine(s, find_spec=lambda *a: None) == (None, ("torch", "torchaudio", "speechbrain", "sklearn"))
+    # An explicit choice never walks on to the other engine, however complete
+    # that one's packages are (spec §8: "explicit choice only").
+    onnx_only = lambda name, *a: object() if name in ("sherpa_onnx", "numpy") else None    # noqa: E731
+    assert mo.resolve_engine(s, find_spec=onnx_only)[0] is None
+    assert mo.resolve_engine(s, find_spec=lambda *a: object()) == ("speechbrain", ())
+    # "server" is reserved: no engine, and nothing to install for it either.
+    server = _settings(tmp_path, diarizer_backend="server")
+    assert mo.resolve_engine(server, find_spec=lambda *a: object()) == (None, ())
+
+
+def test_resolve_engine_treats_an_unimportable_module_as_absent(tmp_path):
+    """`find_spec` raises for a namespace-package shadow or a broken install;
+    the owner must read that as "not available", never propagate it."""
+    def boom(name, *a):
+        raise ValueError(f"{name}.__spec__ is not set")
+
+    s = _settings(tmp_path, live_diarization=True, diarizer_backend="onnx")
+    assert mo.resolve_engine(s, find_spec=boom) == (None, ("sherpa_onnx", "numpy"))
+
+
+def test_legacy_local_backend_value_reads_as_auto(tmp_path):
+    assert _settings(tmp_path, diarizer_backend="local").diarizer_backend == "auto"
+    assert _settings(tmp_path).diarizer_backend == "auto"              # the new default
+    with pytest.raises(ValueError):
+        _settings(tmp_path, diarizer_backend="bogus")
+    with pytest.raises(ValueError):
+        _settings(tmp_path, onnx_embedder="bogus")
+    assert _settings(tmp_path).onnx_embedder == "titanet_small"
+    assert _settings(tmp_path, onnx_models_dir="").onnx_models_dir is None
+    assert _settings(tmp_path, onnx_models_dir=str(tmp_path / "m")).onnx_models_dir == tmp_path / "m"
+
+
+def test_settings_from_config_reads_the_engine_keys(tmp_path):
+    values = {"diarizer_backend": "onnx", "onnx_embedder": "campplus_en",
+              "onnx_models_dir": str(tmp_path / "air-gapped")}
+    settings = mo.MeetingSettings.from_config(lambda s, k, d: values.get(k, d), data_dir=tmp_path)
+    assert settings.diarizer_backend == "onnx" and settings.onnx_embedder == "campplus_en"
+    assert settings.onnx_models_dir == tmp_path / "air-gapped"
+
+    default = mo.MeetingSettings.from_config(lambda s, k, d: d, data_dir=tmp_path)
+    assert default.diarizer_backend == "auto" and default.onnx_embedder == "titanet_small"
+    assert default.onnx_models_dir is None
+
+
+def test_prepare_reports_engine_missing_and_models_ready(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: ("onnx", ()))
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx",
+        onnx_models_dir=str(tmp_path / "models"),      # empty: nothing fetched yet
+    )
+    prepared = owner.prepare()
+    assert prepared.diarizer_engine == "onnx" and prepared.diarizer_missing == ()
+    assert prepared.diarizer_models_ready is False     # fetched at Start, not now...
+    assert prepared.live_diarization_active is True    # ... so they never gate live labels
+
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: ("speechbrain", ()))
+    owner.prepared = None
+    prepared = owner.prepare()
+    assert prepared.diarizer_engine == "speechbrain" and prepared.diarizer_models_ready is True
+
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: (None, ("sherpa_onnx",)))
+    owner.prepared = None
+    prepared = owner.prepare()
+    assert prepared.diarizer_engine is None and prepared.diarizer_missing == ("sherpa_onnx",)
+    assert prepared.live_diarization_active is False and prepared.diarizer_models_ready is False
+
+
+def test_prepare_reports_onnx_models_ready_once_the_files_are_there(tmp_path, monkeypatch):
+    """The positive control for the flag above: `models_ready` is presence +
+    byte size under `onnx_models_dir`, so an air-gapped directory reads True."""
+    from tldw_chatbook.Audio import diarizer_engine_onnx as onnx
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: ("onnx", ()))
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / onnx.SEGMENTATION.file_name).write_bytes(b"\0" * onnx.SEGMENTATION.size)
+    (models / onnx.EMBEDDERS["titanet_small"].file_name).write_bytes(
+        b"\0" * onnx.EMBEDDERS["titanet_small"].size
+    )
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx", onnx_models_dir=str(models),
+    )
+    assert owner.prepare().diarizer_models_ready is True
+
+
+def test_build_diarizer_passes_the_resolved_engine(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    seen: dict = {}
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda **kw: seen.update(kw) or object())
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: ("onnx", ()))
+    settings = _settings(
+        tmp_path, live_diarization=True, diarizer_backend="onnx",
+        onnx_models_dir=str(tmp_path / "m"),
+    )
+    assert mo.build_diarizer(settings) is not None
+    assert seen["engine"] == "onnx" and seen["embedder"] == "titanet_small"
+    assert seen["models_dir_override"] == tmp_path / "m"
 
 
 def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
@@ -282,6 +425,8 @@ def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkey
 
 def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
+    # No engine resolves at all (31827): neither stack is installed.
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: (None, ("torch",)))
     owner, _, _ = _owner(tmp_path, live_diarization=True)
     owner.prepare(); session = owner.start()
     assert session._diarizer is None
@@ -879,15 +1024,20 @@ class FakeKeys:
         return self.key
 
 
-def _store(tmp_path, *, keys=None, centroid=(0.6, 0.8), enrolled=True, meetings=1):
-    """A real `VoiceprintStore` on a temp path with an injected key provider."""
+def _store(tmp_path, *, keys=None, centroid=(0.6, 0.8), enrolled=True, meetings=1, model_id=None):
+    """A real `VoiceprintStore` on a temp path with an injected key provider.
+
+    `model_id` defaults to the SpeechBrain engine's -- the engine
+    `_pin_installed_engine_packages` resolves -- so a record minted here is
+    the ACTIVE engine's unless a test deliberately says otherwise (31827).
+    """
     from tldw_chatbook.Audio import voiceprint as vp
     from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
 
     store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys or FakeKeys())
     if enrolled:
         store.save(vp.Voiceprint(
-            model_id=MODEL_ID, centroid=vp.unit_normalise(centroid), sample_count=10.0,
+            model_id=model_id or MODEL_ID, centroid=vp.unit_normalise(centroid), sample_count=10.0,
             meetings_contributed=meetings, created_at="2026-09-06T00:00:00",
             updated_at="2026-09-06T00:00:00", threshold_used=0.2,
         ))
@@ -895,7 +1045,7 @@ def _store(tmp_path, *, keys=None, centroid=(0.6, 0.8), enrolled=True, meetings=
 
 
 class FakeBackend:
-    """Stands in for `SpeechBrainDiarizer` (its whole task-4 surface)."""
+    """Stands in for `LocalDiarizer` (its whole task-4 surface)."""
 
     def __init__(self, *, voiceprint=None, centroid=(0.0, 1.0), seconds=5.0, **kwargs):
         self.voiceprint = list(voiceprint) if voiceprint else None
@@ -936,25 +1086,36 @@ class FakeBackend:
         self.closed += 1
 
 
-def _backend_spy(monkeypatch, backend=None):
+def _backend_spy(monkeypatch, backend=None, *, engine="speechbrain"):
     """Replace `build_diarizer` with a spy; returns (backend, seen kwargs).
 
-    Also declares the diarization stack installed. A spied backend means
-    "this run HAS live speaker labels", and since final review I1 the voice
-    gate reads `prepared.live_diarization_active` -- which is computed from
-    `diarization_requirements()`, i.e. from whether torch happens to be in
-    the test machine's venv. Pinning it here keeps every voice test's verdict
-    a property of the settings under test, not of the host.
+    Also declares the diarization stack installed and pins the RESOLVED
+    engine (ruling 11). A spied backend means "this run HAS live speaker
+    labels", and since final review I1 the voice gate reads
+    `prepared.live_diarization_active` -- computed from `resolve_engine()`
+    (31827 task 5), i.e. from what happens to be in the test machine's venv.
+    `diarization_requirements` stays pinned too: the Library's offline ingest
+    flag still reads it.
+
+    `engine` also decides the model id the owner asks the store for, so it
+    defaults to the engine `_store` mints its records with; a test about the
+    ONNX engine passes `engine="onnx"` (and a matching store).
     """
     seen: dict = {}
     made = backend if backend is not None else FakeBackend()
 
     def build(settings, **kwargs):
-        seen.update(kwargs)
+        # What the real `build_diarizer` would forward to `LocalDiarizer`,
+        # so a spied test still pins the engine/embedder/models-dir kwargs.
+        seen.update(
+            engine=engine, embedder=settings.onnx_embedder,
+            models_dir_override=settings.onnx_models_dir, **kwargs,
+        )
         made.voiceprint = list(kwargs.get("voiceprint") or []) or None
         return made
 
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: (engine, ()))
     monkeypatch.setattr(mo, "build_diarizer", build)
     return made, seen
 
@@ -1009,7 +1170,7 @@ def test_build_diarizer_without_a_vector_enrolls_nothing(tmp_path, monkeypatch):
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     seen: dict = {}
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda **kw: seen.update(kw) or object())
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda **kw: seen.update(kw) or object())
     mo.build_diarizer(_settings(tmp_path, live_diarization=True))
     assert seen["voiceprint"] is None
 
@@ -1021,7 +1182,7 @@ def test_build_diarizer_forwards_the_vector_and_the_match_settings(tmp_path, mon
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     seen: dict = {}
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda **kw: seen.update(kw) or object())
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda **kw: seen.update(kw) or object())
     settings = _settings(
         tmp_path, live_diarization=True, voice_match_threshold=0.3, voice_match_min_seconds=6.0,
     )
@@ -1236,6 +1397,189 @@ def test_voice_match_is_on_again_once_live_labels_are_enabled(tmp_path, monkeypa
     assert owner.prepare().voice_match == mo.VoiceMatchState("on", None)
 
 
+# ---- per-engine model ids (31827 task 5, spec §6) ------------------------
+class _RecordingStore:
+    """A voiceprint store that records the model id it is asked for."""
+
+    def __init__(self, result):
+        self.result = result
+        self.expected: list[str | None] = []
+
+    def exists(self):
+        return True
+
+    def load(self, expected_model_id=None, timeout_s=1.5):
+        self.expected.append(expected_model_id)
+        return self.result
+
+
+def _reenrollment_store(stored_model_id):
+    """A store whose record was written by ANOTHER engine."""
+    from tldw_chatbook.Audio import voiceprint as vp
+
+    return _RecordingStore(vp.LoadResult(
+        voiceprint=None, reason="needs_reenrollment", mode="keyring",
+        stored_model_id=stored_model_id,
+    ))
+
+
+def test_start_stamps_engine_and_model_id_onto_meta(tmp_path, monkeypatch):
+    from tldw_chatbook.Audio.diarizer_local import model_id_for
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch, engine="onnx")
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx",
+        voiceprint_store=_store(tmp_path, enrolled=False),
+    )
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.diarizer_engine == "onnx"
+    assert session.meta.diarizer_model_id == model_id_for("onnx")
+    folder = Path(session.meta.folder)
+    owner.stop()
+    payload = json.loads((folder / "meeting.json").read_text())
+    assert payload["diarizer_engine"] == "onnx"
+    assert payload["diarizer_model_id"] == model_id_for("onnx")
+
+
+def test_start_stamps_no_engine_when_none_resolves(tmp_path, monkeypatch):
+    """The negative control: a meeting recorded with coarse labels says so
+    rather than claiming an engine that never ran (spec §4 "Stamping")."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: (None, ("torch",)))
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, enrolled=False))
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.diarizer_engine is None and session.meta.diarizer_model_id is None
+    owner.stop()
+
+
+def test_voiceprint_load_uses_the_resolved_engines_model_id(tmp_path, monkeypatch):
+    from tldw_chatbook.Audio import voiceprint as vp
+    from tldw_chatbook.Audio.diarizer_local import model_id_for
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch, engine="onnx")
+    record = vp.Voiceprint(
+        model_id=model_id_for("onnx"), centroid=vp.unit_normalise((0.6, 0.8)), sample_count=10.0,
+        meetings_contributed=1, created_at="2026-09-06T00:00:00",
+        updated_at="2026-09-06T00:00:00", threshold_used=0.2,
+    )
+    store = _RecordingStore(vp.LoadResult(voiceprint=record, reason=None, mode="keyring"))
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx", voiceprint_store=store,
+    )
+    owner.prepare()
+    owner.start()
+    assert store.expected == [model_id_for("onnx")]     # never the SpeechBrain id
+    assert owner.voice_match == mo.VoiceMatchState("on", None)
+    owner.stop()
+
+
+def test_switch_copy_names_the_engines(tmp_path, monkeypatch):
+    from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch, engine="onnx")
+    store = _reenrollment_store(MODEL_ID)               # recorded with SpeechBrain
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx", voiceprint_store=store,
+    )
+    owner.prepare()
+    owner.start()
+    assert owner.voice_match.state == "off" and owner.voice_match.reason == "needs_reenrollment"
+    assert owner.voice_match.detail == "Voiceprint was recorded with SpeechBrain; the active engine is ONNX."
+    owner.stop()
+
+
+def test_no_switch_copy_for_an_unrecognisable_stored_model_id(tmp_path, monkeypatch):
+    """Only the two known engines get named; anything else leaves the reason
+    to speak for itself rather than putting a raw model id on screen."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch, engine="onnx")
+    store = _reenrollment_store("some-other-vendor/model@abc")
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, diarizer_backend="onnx", voiceprint_store=store,
+    )
+    owner.prepare()
+    owner.start()
+    assert owner.voice_match.reason == "needs_reenrollment" and owner.voice_match.detail is None
+    owner.stop()
+
+
+def test_no_learning_offer_when_the_stored_voiceprint_is_from_another_engine(tmp_path, monkeypatch):
+    """Spec §6: an offer merges into the stored print, and a print from
+    another engine is in a different vector space -- Enroll replaces it."""
+    from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
+
+    _backend_spy(monkeypatch, engine="onnx")
+    store = _reenrollment_store(MODEL_ID)
+    owner = _tap_owner(
+        tmp_path, monkeypatch, live_diarization=True, diarizer_backend="onnx", voiceprint_store=store,
+    )
+    session = owner.start()
+    folder = Path(session.meta.folder)
+    result = owner.stop()
+    _write_wav(folder / "you.wav", b"\x01\x02" * 1600)   # the qualifying plain-call sample
+    assert owner.learning_offer(result) is None
+
+
+def test_learning_offer_still_made_for_the_active_engines_voiceprint(tmp_path, monkeypatch):
+    """The negative control for the gate above: same meeting shape, same
+    engine on both sides -- the offer stands."""
+    from tldw_chatbook.Audio.diarizer_local import model_id_for
+
+    _backend_spy(monkeypatch, engine="onnx")
+    store = _store(tmp_path, model_id=model_id_for("onnx"))
+    owner = _tap_owner(
+        tmp_path, monkeypatch, live_diarization=True, diarizer_backend="onnx", voiceprint_store=store,
+    )
+    session = owner.start()
+    folder = Path(session.meta.folder)
+    result = owner.stop()
+    _write_wav(folder / "you.wav", b"\x01\x02" * 1600)
+    offer = owner.learning_offer(result)
+    assert offer is not None and offer.kind == "mic_channel"
+
+
+def test_diarizer_status_reads_the_live_backends_warm_up(tmp_path, monkeypatch):
+    """The rail's per-second tick (spec §3): the LIVE meeting's backend first,
+    then the worker retained for a learning offer, then None."""
+    from tldw_chatbook.Audio.diarizer_local import model_id_for
+
+    backend = FakeBackend()
+    backend.warmup_status = "downloading 12 / 35 MB"
+    _backend_spy(monkeypatch, backend, engine="onnx")
+    owner = _tap_owner(                                     # call mode: an offer qualifies
+        tmp_path, monkeypatch, live_diarization=True, diarizer_backend="onnx",
+        voiceprint_store=_store(tmp_path, model_id=model_id_for("onnx")),
+    )
+    assert owner.diarizer_status() is None                  # nothing built yet
+    owner.start()
+    assert owner.diarizer_status() == "downloading 12 / 35 MB"
+    backend.warmup_status = "ready"
+    owner.stop()
+    assert owner.diarizer_status() == "ready"               # retained for the offer
+    owner.dismiss_learning()
+    assert owner.diarizer_status() is None
+
+
+def test_owner_never_imports_an_engine_package(tmp_path):
+    """Spec §4: the owner decides availability by `find_spec` alone -- an
+    `import torch` here would put the 2 GB stack in the UI process."""
+    src = Path(mo.__file__).read_text()
+    assert "import sherpa_onnx" not in src and "import torch" not in src
+
+
+def test_optional_deps_lists_the_onnx_diarization_feature():
+    from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES
+
+    feature = OPTIONAL_FEATURES["diarization_onnx"]
+    assert feature.package_dependencies == ("sherpa_onnx", "numpy")
+    assert feature.label == "Speaker diarization (ONNX)"
+
+
 def test_prepare_reports_store_unavailable_without_raising(tmp_path, monkeypatch):
     """Review M2: a store that cannot be opened at all is a different repair
     from a record that would not decrypt."""
@@ -1388,7 +1732,7 @@ def test_accepting_an_offer_reports_the_warm_up(tmp_path, monkeypatch):
     assert owner._retained_diarizer is None          # nothing warm to borrow
 
     spawned = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: spawned)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: spawned)
     seen: list[str] = []
     assert owner.accept_learning(offer, progress=seen.append) is True
     assert seen == ["warming up"]                    # the same static word enrollment uses
@@ -1507,7 +1851,7 @@ def test_enroll_from_mic_saves_a_voiceprint_from_memory_only(tmp_path, monkeypat
     from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
 
     backend = FakeBackend(centroid=(3.0, 4.0), seconds=27.0)
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     PcmRecorder.instances = []
     store = _store(tmp_path, enrolled=False)
     owner, _, _ = _owner(tmp_path, voiceprint_store=store)
@@ -1531,7 +1875,7 @@ def test_enroll_from_mic_reports_a_failed_embed_without_saving(tmp_path, monkeyp
 
     backend = FakeBackend()
     backend.enroll_from_pcm = lambda pcm, sr: None
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     store = _store(tmp_path, enrolled=False)
     owner, _, _ = _owner(tmp_path, voiceprint_store=store)
     owner._mic_factory = PcmRecorder
@@ -1548,7 +1892,7 @@ def test_enroll_from_mic_reports_a_missing_recorder(tmp_path, monkeypatch):
     from tldw_chatbook.Audio.recording_service import AudioRecordingError
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
 
     def no_recorder(**kwargs):
@@ -1567,7 +1911,7 @@ def test_enroll_from_mic_never_opens_the_mic_when_the_worker_is_unavailable(tmp_
     def no_worker(*a, **kw):
         raise RuntimeError("spawn failed")
 
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", no_worker)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", no_worker)
     PcmRecorder.instances = []
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
     owner._mic_factory = PcmRecorder
@@ -1584,7 +1928,7 @@ def test_enroll_from_mic_uses_the_configured_microphone(tmp_path, monkeypatch):
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     selected: list = []
 
     class DeviceRecorder(PcmRecorder):
@@ -1608,7 +1952,7 @@ def test_enroll_from_mic_refuses_when_the_configured_microphone_is_gone(tmp_path
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     store = _store(tmp_path, enrolled=False)
     owner, _, _ = _owner(tmp_path, mic_device="Shure MV7", voiceprint_store=store)
     owner._mic_factory = PcmRecorder          # enumerates nothing
@@ -1627,7 +1971,7 @@ def test_enroll_from_mic_refuses_when_the_recorder_rejects_the_microphone(tmp_pa
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
 
     class RejectingRecorder(PcmRecorder):
         def get_audio_devices(self):
@@ -1652,7 +1996,7 @@ def test_enroll_from_mic_can_be_cancelled_mid_recording(tmp_path, monkeypatch):
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     PcmRecorder.instances = []
     store = _store(tmp_path, enrolled=False)
     owner, _, _ = _owner(tmp_path, voiceprint_store=store)
@@ -1682,7 +2026,7 @@ def test_enroll_from_mic_returns_cancelled_before_it_records(tmp_path, monkeypat
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     PcmRecorder.instances = []
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
     owner._mic_factory = PcmRecorder
@@ -1703,7 +2047,7 @@ def test_start_refuses_while_an_enrollment_holds_the_mic(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
     owner._mic_factory = PcmRecorder
     owner.prepare()
@@ -1728,7 +2072,7 @@ def test_enroll_from_mic_refuses_a_second_concurrent_enrollment(tmp_path, monkey
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
     owner._mic_factory = PcmRecorder
     second: list = []
@@ -1899,7 +2243,7 @@ def test_enrollment_owns_its_worker_while_an_offer_is_answered(tmp_path, monkeyp
     assert offer is not None
 
     enroll_backend = FakeBackend(centroid=(3.0, 4.0), seconds=27.0)
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: enroll_backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: enroll_backend)
     owner._mic_factory = PcmRecorder
     answered: list = []
 
@@ -1924,7 +2268,7 @@ def test_the_recorder_is_released_when_a_recording_slice_raises(tmp_path, monkey
     import tldw_chatbook.Audio.diarizer_local as diarizer_local
 
     backend = FakeBackend()
-    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    monkeypatch.setattr(diarizer_local, "LocalDiarizer", lambda *a, **kw: backend)
     PcmRecorder.instances = []
     store = _store(tmp_path, enrolled=False)
     owner, _, _ = _owner(tmp_path, voiceprint_store=store)

@@ -92,10 +92,11 @@ def test_meeting_owner_imports_without_numpy_and_leaves_the_mixer_unloaded():
 
         capture_pulled = "tldw_chatbook.Audio.meeting_capture" in sys.modules
         voiceprint_pulled = "tldw_chatbook.Audio.voiceprint" in sys.modules
-        print(f"RESULT: OWNER IMPORTED, capture_pulled={capture_pulled}, voiceprint_pulled={voiceprint_pulled}")
+        engine_pulled = sorted(n for n in ("sherpa_onnx", "numpy") if n in sys.modules)
+        print(f"RESULT: OWNER IMPORTED, capture_pulled={capture_pulled}, voiceprint_pulled={voiceprint_pulled}, engine_pulled={engine_pulled}")
     """)
     result = _run_probe(script)
-    assert "RESULT: OWNER IMPORTED, capture_pulled=False, voiceprint_pulled=False" in result.stdout, (
+    assert "RESULT: OWNER IMPORTED, capture_pulled=False, voiceprint_pulled=False, engine_pulled=[]" in result.stdout, (
         f"meeting_owner did not import cleanly without numpy, or pulled in "
         f"the mixer/voiceprint module at boot (exit={result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
@@ -115,10 +116,11 @@ def test_meetings_screen_imports_pull_in_no_voiceprint_module():
         import tldw_chatbook.UI.Screens.meetings_screen  # noqa: F401
 
         pulled = "tldw_chatbook.Audio.voiceprint" in sys.modules
-        print(f"RESULT: SCREEN IMPORTED, voiceprint_pulled={pulled}")
+        engine_pulled = sorted(n for n in ("sherpa_onnx", "numpy") if n in sys.modules)
+        print(f"RESULT: SCREEN IMPORTED, voiceprint_pulled={pulled}, engine_pulled={engine_pulled}")
     """)
     result = _run_probe(script)
-    assert "RESULT: SCREEN IMPORTED, voiceprint_pulled=False" in result.stdout, (
+    assert "RESULT: SCREEN IMPORTED, voiceprint_pulled=False, engine_pulled=[]" in result.stdout, (
         f"importing meetings_screen pulled in Audio.voiceprint at module "
         f"scope (exit={result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
@@ -143,7 +145,9 @@ def test_app_import_pulls_in_no_diarizer_module():
         watched = (
             "tldw_chatbook.Audio.diarizer_local",
             "tldw_chatbook.Audio.diarizer_worker",
+            "tldw_chatbook.Audio.diarizer_engine_onnx",
             "torch",
+            "sherpa_onnx",
         )
         pulled = sorted(name for name in watched if name in sys.modules)
         print(f"RESULT: PULLED={pulled}")
