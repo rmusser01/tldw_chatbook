@@ -326,3 +326,12 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # dual-receiver guard are the only behaviour-relevant lines, and both are
 # mutation-verified.
 3d670ee38d828424a4371222c03eb03614f6f668
+
+# Wave-8 task 3 fix round 1, 2026-09-08 -- still mechanical. Three
+# `SimpleNamespace` fakes in `test_library_media_trash.py` gain a
+# `_notes_state` seed, because the three MEDIA-named screen methods they drive
+# UNBOUND read the notes focus counter through the cleanup's own
+# `getattr(self._notes_state, ...)` receiver fix. Three seeds, three comment
+# lines, zero assertions touched; plus the wiring test's task-3 docstring
+# paragraph and the recipe's own record of the census hole that hid them.
+9d8244c72ef56b75b337503ba92d6ad90c772303
