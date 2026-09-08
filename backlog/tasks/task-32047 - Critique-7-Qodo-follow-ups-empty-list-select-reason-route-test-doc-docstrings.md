@@ -3,9 +3,10 @@ id: TASK-32047
 title: >-
   Critique #7 Qodo follow-ups: empty-list select reason, / route test, doc +
   docstrings
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-08 18:01'
+updated_date: '2026-09-08 18:35'
 labels:
   - library
   - media
@@ -22,8 +23,14 @@ Consolidated Qodo follow-ups from the critique #7 fix PRs. (a, BUG) The zero-sel
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The zero-selection reason is shown only when nothing is selected AND at least one selectable row exists; a successful empty list in select mode shows no 'select items' message (kept mounted for layout), with a test for an empty refresh while select mode is active
-- [ ] #2 An integration test opens the Prompts canvas, presses /, and asserts focus lands on the Prompts filter (not the rail search)
-- [ ] #3 The two size-parametrized keyboard tests carry a one-line summary + Args: describing the size tuple
-- [ ] #4 The shortcut guide's `/` description matches the actual per-canvas routing (no over-claimed fallback)
+- [x] #1 The zero-selection reason is shown only when nothing is selected AND at least one selectable row exists; a successful empty list in select mode shows no 'select items' message (kept mounted for layout), with a test for an empty refresh while select mode is active
+- [x] #2 An integration test opens the Prompts canvas, presses /, and asserts focus lands on the Prompts filter (not the rail search)
+- [x] #3 The two size-parametrized keyboard tests carry a one-line summary + Args: describing the size tuple
+- [x] #4 The shortcut guide's `/` description matches the actual per-canvas routing (no over-claimed fallback)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Consolidated critique #7 Qodo follow-ups. (a, BUG) The zero-selection bulk-action reason (task-32045) is now VISIBLE only when `selected_count==0 AND rendered_count>0 AND not bulk_list_failed` -- a successful EMPTY media list in select mode paints nothing (widget stays mounted via visibility for layout); red-first pin + the empty-refresh case. (b) Added a Prompts `/`-route integration test (seeds a real prompt, opens the canvas, / focuses #library-prompts-filter, not the rail search) -- the route from task-32046 was Media-only pinned. (c) Args: docstrings on the two size-parametrized keyboard tests. (d) library.md `/` fallback reworded to describe the ROUTING (`/` isn't wired to Skills/Collections/Search-RAG/Study, so it focuses the rail search) rather than falsely claiming those canvases lack a filter -- they DO have filter/query inputs, / just doesn't route there (fixed at review after the first wording over-claimed). (e) CORRECTED a controller misdiagnosis: the media scroll-restore pins' RED was NOT a test-fixture backend gap (`Local prompt/study/quiz backend is unavailable` is caught-and-logged noise at library_screen.py:13083, tolerated) -- it was a STALE-ATTRIBUTE migration miss in test_library_media_reader_scroller_resolution.py (`screen._library_media_reader_session/_content_mode/_read_scroll_by_id` -> `screen._media_state.*`, the real LibraryMediaState fields; LibraryScreen defines no such bare attrs). 6-line test-only fix; the file is 6/6 green and the crit6 scroll-restore pins (task-31968) pass again. No production change for (b)-(e); the only production file touched is library_media_canvas.py (item a). Files: library_media_canvas.py, Tests/UI/test_library_shell.py, Tests/UI/test_library_media_render_fixes.py, Tests/UI/test_library_media_reader_scroller_resolution.py, Docs/User_Guide/library.md.
+<!-- SECTION:NOTES:END -->

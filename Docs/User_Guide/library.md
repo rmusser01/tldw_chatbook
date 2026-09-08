@@ -398,7 +398,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 | Key | Action |
 |---|---|
-| / | Focus the filter of the list you're on — the Media, Conversations, Prompts, or Notes canvas's own **Title/keyword…** / filter box — so the footer's "/ focus search" lands where you're looking. On the landing, or on a tool canvas with no filter of its own (Skills, Collections, Search / RAG, Study), it focuses the rail's **Search Library…** box instead. Never fires while a text field already has focus. Get started has no hidden search target; use **Explore all tools** or a direct route. |
+| / | Focus the filter of the list you're on — the Media, Conversations, Prompts, or Notes canvas's own **Title/keyword…** / filter box — so the footer's "/ focus search" lands where you're looking. On the landing, or on a canvas `/` isn't wired to (Skills, Collections, Search / RAG, Study), it focuses the rail's **Search Library…** box instead — those canvases have their own filter/query inputs, but `/` does not route to them today. Never fires while a text field already has focus. Get started has no hidden search target; use **Explore all tools** or a direct route. |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 | ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
