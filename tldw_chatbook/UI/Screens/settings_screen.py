@@ -166,7 +166,7 @@ from ...config import (
     ProviderSettingsError,
     CanvasConfigPolicy,
     RuntimeConfigSnapshot,
-    _default_base_data_dir,
+    _selected_default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     apply_console_capture_settings,
     build_canvas_config_policy,
@@ -10154,13 +10154,11 @@ class SettingsScreen(BaseAppScreen):
         return safe_user_name if safe_user_name else "default_user"
 
     def _configured_user_data_dir_path(self) -> Path:
-        """Read-only mirror of get_user_data_dir()'s resolution logic (minus
-        the mkdir side effect), so the Settings display never diverges from
-        the path the app actually uses. Uses _default_base_data_dir() (the
-        same call-time HOME resolution as get_user_data_dir()'s fallback)
-        rather than the import-time-frozen BASE_DATA_DIR_CLI constant --
-        those two can disagree, e.g. under test-isolated HOME (task-519
-        review)."""
+        """Display the selected profile path without creating directories.
+
+        Share HOME resolution and the durable fallback selection with the
+        runtime resolver, including fresh-install recovery under ADR-127.
+        """
         configured_data_dir = self._read_cli_config_value_without_writes(
             "paths", "data_dir", None
         )
@@ -10171,7 +10169,7 @@ class SettingsScreen(BaseAppScreen):
         base_data_dir = (
             Path(str(configured_data_dir)).expanduser()
             if configured_data_dir
-            else _default_base_data_dir()
+            else _selected_default_base_data_dir()
         )
         return validate_path_simple(
             base_data_dir / self._configured_user_folder_name(),
