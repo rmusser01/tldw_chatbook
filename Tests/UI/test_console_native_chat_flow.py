@@ -136,6 +136,10 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_context import (
+    truncate_console_row_cells,
+    wrap_console_conversation_title,
+)
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 from tldw_chatbook import config as config_module
 from Tests.console_provider_doubles import provider_resolution, with_destination
@@ -6301,7 +6305,18 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         assert "\n" in row_text
         # TASK-374 removes the redundant workspace/group label from grouped
         # conversation rows while retaining a non-default state differentiator.
-        assert "active session" in row_text
+        tray = row.query_ancestor(ConsoleWorkspaceContextTray)
+        state_row = next(
+            item
+            for item in _console_conversation_browser_rows(console)
+            if item.selected
+        )
+        assert tray._conversation_detail_status(state_row.status) == "active session"
+        assert "active session" in str(row.tooltip)
+        assert row_text.splitlines()[-1] == truncate_console_row_cells(
+            tray._conversation_row_secondary("active session", state_row.updated_label),
+            tray._browser_title_budget(),
+        )
         assert "workspace-thread" not in row_text
         assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
         # The row metadata also carries a relative age label appended after
@@ -10427,12 +10442,30 @@ async def test_flat_conversations_default_loads_global_and_default_history():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_workspace_conversation_text(
-            console, pilot, "Global persisted default"
+        expected_titles = {
+            "global-default": "Global persisted default",
+            "workspace-default": "Default workspace persisted",
+        }
+        await _wait_for_browser_render(
+            pilot,
+            lambda: all(
+                _workspace_conversation_row_by_id(console, row_id) is not None
+                for row_id in expected_titles
+            ),
+            lambda: _console_workspace_conversation_texts(console),
         )
-        await _wait_for_workspace_conversation_text(
-            console, pilot, "Default workspace persisted"
-        )
+        state_titles = {
+            row.conversation_id: row.title
+            for row in _console_conversation_browser_rows(console)
+        }
+        for row_id, title in expected_titles.items():
+            row = _workspace_conversation_row_by_id(console, row_id)
+            tray = row.query_ancestor(ConsoleWorkspaceContextTray)
+            assert state_titles[row_id] == title
+            assert title in str(row.tooltip)
+            assert _widget_text(row).splitlines()[:-1] == list(
+                wrap_console_conversation_title(title, tray._browser_title_budget())
+            )
 
         calls = app.chat_conversation_scope_service.list_calls
         assert any(call.get("scope_type") == "global" for call in calls)
@@ -10486,12 +10519,30 @@ async def test_flat_conversations_prefers_sync_local_service():
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_workspace_conversation_text(
-            console, pilot, "Local global default"
+        expected_titles = {
+            "local-global": "Local global default",
+            "local-default": "Local workspace default",
+        }
+        await _wait_for_browser_render(
+            pilot,
+            lambda: all(
+                _workspace_conversation_row_by_id(console, row_id) is not None
+                for row_id in expected_titles
+            ),
+            lambda: _console_workspace_conversation_texts(console),
         )
-        await _wait_for_workspace_conversation_text(
-            console, pilot, "Local workspace default"
-        )
+        state_titles = {
+            row.conversation_id: row.title
+            for row in _console_conversation_browser_rows(console)
+        }
+        for row_id, title in expected_titles.items():
+            row = _workspace_conversation_row_by_id(console, row_id)
+            tray = row.query_ancestor(ConsoleWorkspaceContextTray)
+            assert state_titles[row_id] == title
+            assert title in str(row.tooltip)
+            assert _widget_text(row).splitlines()[:-1] == list(
+                wrap_console_conversation_title(title, tray._browser_title_budget())
+            )
 
         assert app.local_chat_conversation_service.list_calls
         assert app.chat_conversation_scope_service.list_calls == []
@@ -11198,7 +11249,19 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert selected_row is not None
         selected_row_label = str(selected_row.label)
         assert "\n" in selected_row_label
-        assert "active session" in selected_row_label
+        tray = selected_row.query_ancestor(ConsoleWorkspaceContextTray)
+        state_row = next(
+            item
+            for item in _console_conversation_browser_rows(console)
+            if item.conversation_id == "persisted-chat-1"
+        )
+        assert tray._conversation_detail_status(state_row.status) == "active session"
+        assert "Saved research chat" in str(selected_row.tooltip)
+        assert "active session" in str(selected_row.tooltip)
+        assert selected_row_label.splitlines()[-1] == truncate_console_row_cells(
+            tray._conversation_row_secondary("active session", state_row.updated_label),
+            tray._browser_title_budget(),
+        )
         assert selected_row.has_class("console-workspace-conversation-row-selected")
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)

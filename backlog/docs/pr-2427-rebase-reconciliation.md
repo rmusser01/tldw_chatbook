@@ -397,3 +397,32 @@ The seven narrow selector replacements also remain pending approval.
 Remote dev was checked again and remains
 `37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`, already contained in this branch.
 Final-head verification/review and normal merge remain open.
+
+## Complete native-label qualification
+
+The complete native-chat file now finishes **351 passed**, no failures or
+skips, in 522.77 seconds. Evidence:
+`/private/tmp/pr2427-native-label-complete.log`. This supersedes the running
+status above and the earlier 383/4 group result for the four repaired native
+assertions; it does not imply the independent architecture/CSS gates pass.
+Only the four tests and their wrap/truncation imports changed. Full titles
+remain checked in normalized state and tooltips, actual labels against the
+row's ancestor tray budget, and existing persistence/selection/service/resume
+assertions remain intact. Scoped Ruff checks, formatting of changed ranges,
+diff checks, and independent review pass. Unrelated formatter changes were
+removed rather than expanding this test-only patch.
+
+The ownership-sensitive fixture detail is that the mounted Console contains
+multiple context trays. A first-tray query measures a hidden tray's fallback
+budget (10), not the displayed row owner's budget (13). The assertions use
+`row.query_ancestor(ConsoleWorkspaceContextTray)` to avoid that mismatch.
+This validates label generation, not compositor-level painted-text fit: a
+read-only probe also noted an older action-control/chrome discrepancy between
+a 13-cell label budget and 11-cell content region, requiring separate visual
+verification with the pending appearance work.
+
+The Qodo transaction repair was published as
+`1eab524d523b093d4efa471c99e12f9f96f6dc21`; reply 3954746315 records the
+complete 22-test evidence. Both that thread and the historically inapplicable
+LoopDeps thread are resolved. Additional commits still require final-head
+review. No merge or gate bypass has been performed.
