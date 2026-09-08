@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-08 18:24'
+updated_date: '2026-09-08 20:04'
 labels:
   - library
   - notes
@@ -26,3 +27,9 @@ Typing 'My first note', Tab, and a body within ~0.4 s produced the stored title 
 - [ ] #1 Typing into a focused editor is never interrupted by a recompose or focus reset
 - [ ] #2 A test types rapidly during the first-content graduation and asserts title and body land in the right fields
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+NOT STARTED in the polish-shell pass -- ran out of budget after the other nine. Two things a follower should know before picking it up. (1) The likely trigger named in the description is now partly gone: task-32063 stopped the graduation notice (and its recompose-triggering announcement flag) from firing on any transition except STARTER -> GRADUATED, so the mid-typing recompose on a populated profile's first read cannot happen the same way. (2) The AC still stands on its own -- 'typing into a focused editor is never interrupted by a recompose or focus reset' needs the guard, not just the removed trigger. Note that Tests/UI/test_library_entry_compose_once.py already has the machinery for this (a gated LibraryNotesCanvas.recompose that a test can hold open mid-flight); test_library_notes_recompose_does_not_steal_newer_focus is the closest existing pin.
+<!-- SECTION:NOTES:END -->

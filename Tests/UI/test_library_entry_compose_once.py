@@ -425,9 +425,12 @@ async def test_library_landing_syncs_unknown_to_starter_without_duplicate_action
         assert app.query_one("#library-hub-action-new-note", Button) is note_action
         assert len(app.query("#library-hub-action-import")) == 1
         assert len(app.query("#library-hub-action-new-note")) == 1
-        assert "1 Add · 2 Find · 3 Use" in str(
-            app.query_one("#library-hub-orientation", Static).renderable
-        )
+        # task-32072: the orientation line became three controls; the
+        # retained-widget promise this test exists for still holds.
+        assert [
+            str(app.query_one(f"#library-hub-step-{name}", Button).label)
+            for name in ("import", "find", "use")
+        ] == ["Import a file", "Find it", "Use it in Console"]
 
 
 @pytest.mark.asyncio

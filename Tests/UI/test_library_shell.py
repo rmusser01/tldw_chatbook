@@ -1461,7 +1461,12 @@ async def test_library_starter_landing_orients_without_counts_or_search() -> Non
             )
             await pilot.pause()
 
-            assert "1 Add · 2 Find · 3 Use" in _visible_text(screen)
+            # task-32072: the orientation line became three live controls
+            # that unlock in order.
+            visible = _visible_text(screen)
+            for step in ("Import a file", "Find it", "Use it in Console"):
+                assert step in visible
+            assert "1 Add · 2 Find · 3 Use" not in visible
             assert (
                 str(screen.query_one("#library-canvas-landing", Static).renderable)
                 == "Add something useful, then use it in Console or Study."
@@ -2706,15 +2711,27 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             )
             assert screen._library_onboarding_all_empty is True
 
+            # task-32066: below 120 columns the landing canvas hides and the
+            # rail owns navigation (library.md's own compact contract), so
+            # only the rail half is on screen at the narrow size.
+            compact = size[0] < 120
             selectors = (
                 "#library-rail-collapse",
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"#library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "#library-rail-explore-all",
-                "#library-hub-heading",
-                "#library-hub-orientation",
-                "#library-hub-action-import",
-                "#library-hub-action-new-note",
+            ) + (
+                ()
+                if compact
+                else (
+                    "#library-hub-heading",
+                    # task-32072: the orientation line is three controls now.
+                    "#library-hub-step-import",
+                    "#library-hub-step-find",
+                    "#library-hub-step-use",
+                    "#library-hub-action-import",
+                    "#library-hub-action-new-note",
+                )
             )
             visible_widgets = screen._compositor.visible_widgets
             for selector in selectors:
@@ -2731,9 +2748,17 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
                 f"library-row-{LIBRARY_ROW_CREATE_NOTE}",
                 "library-rail-explore-all",
-                "library-hub-action-import",
-                "library-hub-action-new-note",
-            ]
+            ] + (
+                []
+                if compact
+                else [
+                    "library-hub-step-import",
+                    "library-hub-step-find",
+                    "library-hub-step-use",
+                    "library-hub-action-import",
+                    "library-hub-action-new-note",
+                ]
+            )
             real_focus_order = [widget.id for widget in screen.focus_chain]
             library_start = real_focus_order.index("library-rail-collapse")
             assert real_focus_order[library_start:] == expected_focus_order
@@ -2760,8 +2785,12 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             assert "Page 0" not in painted
             assert "No recent" not in painted
             assert "Checking existing Library content…" not in painted
-            assert "Get started" in painted
-            assert "1 Add · 2 Find · 3 Use" in painted
+            if not compact:
+                assert "Get started" in painted
+                # task-32072: three live controls, not one orientation line.
+                assert "Import a file" in painted
+                assert "Find it" in painted
+                assert "Use it in Console" in painted
             assert "Import…" in painted
             assert "New note" in painted
             assert "Explore all tools" in painted
@@ -6367,16 +6396,17 @@ def test_library_dead_inspector_copy_is_removed():
 
 
 @pytest.mark.asyncio
-async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
-    """F-011: rail rows are one terminal line by default -- the blanket
-    "in Library" second line (pure stutter on all ~11 rows) is gone. A
-    meta line survives ONLY where it discriminates: the Study handoff
-    rows, which are a two-step trip out of Library to another screen.
+async def test_rail_rows_are_one_line_including_the_handoff_rows():
+    """F-011: rail rows are one terminal line -- the blanket "in Library"
+    second line (pure stutter on all ~11 rows) is gone.
 
-    task-2854: the meta line reads "opens staging canvas", not "opens
-    Study" -- the click this row responds to only ever opens a Library-
-    local staging canvas; leaving Library for Study is a second click
-    ("Continue in Study") from inside that canvas.
+    task-32069: so is the handoff rows' own second line. F-011 kept one for
+    the three Study rows ("see what carries over", after task-2854 retired
+    the false "opens Study"), and critique #8 measured what that cost: six
+    rail rows for three destinations, with the same sentence printed three
+    times in the primary nav. The promise moved onto the staging canvas that
+    keeps it (``LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY``), which is where a
+    reader is when it matters.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -6393,17 +6423,14 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
         }
         rows = list(screen.query("Button.library-rail-row"))
         assert rows, "expected rail rows to be mounted"
+        assert handoff_ids <= {row.id for row in rows}
         for row in rows:
             label = str(row.label)
-            if row.id in handoff_ids:
-                assert "\n" in label, f"{row.id} lost its handoff discriminator"
-                assert "see what carries over" in label
-                assert "opens Study" not in label
-                assert row.styles.height.value == 2
-            else:
-                assert "\n" not in label, f"{row.id} still carries a second line"
-                assert "in Library" not in label
-                assert row.styles.height.value == 1
+            assert "\n" not in label, f"{row.id} still carries a second line"
+            assert "in Library" not in label
+            assert "see what carries over" not in label
+            assert "opens Study" not in label
+            assert row.styles.height.value == 1
 
 
 @pytest.mark.asyncio
