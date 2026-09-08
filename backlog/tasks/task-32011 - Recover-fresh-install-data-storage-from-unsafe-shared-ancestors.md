@@ -1,11 +1,11 @@
 ---
 id: TASK-32011
 title: Recover fresh-install data storage from unsafe shared ancestors
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 00:30'
-updated_date: '2026-09-08 00:45'
+updated_date: '2026-09-08 00:50'
 labels:
   - bug
   - storage
@@ -27,7 +27,7 @@ Fresh installs can fail during configuration import when existing .local or shar
 - [x] #3 The original ownership, symlink, private-mode, and unsafe-home protections remain enforced for all selected storage.
 - [x] #4 Real config-import and SQLite persistence regression tests cover fresh launch and restart, and targeted storage checks pass.
 - [x] #5 Settings storage diagnostics show the selected default data location without creating directories.
-- [ ] #6 A one-off Linux CI workflow validates the exact PR head against dev on supported Python versions and retains test evidence.
+- [x] #6 A one-off Linux CI workflow validates the exact PR head against dev on supported Python versions and retains test evidence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,4 +58,6 @@ Architecture validation: 14 checks pass, including production profile-path inven
 Limitations: recovery applies to absent default data roots, not existing-data migration, unsafe HOME, or config-directory failures. The legacy Helper_Scripts/Prompts/Prompts_Dump.py compatibility-constant consumer remains outside normal runtime root resolution. No full-suite sweep, release, or deployment was performed.
 
 Follow-up: prepare an isolated PR against current origin/dev and run one-off Linux CI at the PR head. Reapplied only this task patch; README and Settings context were adapted to the newer dev layout.
+
+PR #2495 targets dev from isolated branch codex/fresh-install-private-storage. One-off Ubuntu 24.04 run https://github.com/rmusser01/tldw_chatbook/actions/runs/34174533166 passed at cff48b34d14eb0dee7fe083f4e6a6ad9767d6f71 on Python 3.11, 3.12, and 3.13: 437 tests passed and 4 platform-only tests skipped in each job. Each job also launched the installed tldw-cli under ancestor modes 0775 and 0755 and confirmed private fallback retention. JUnit artifacts were uploaded for all three interpreters. This supplies the previously missing native Linux evidence. The isolated current-dev local targeted run passed 439 tests with 2 Windows-only skips.
 <!-- SECTION:NOTES:END -->
