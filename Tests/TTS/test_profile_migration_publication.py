@@ -1798,6 +1798,144 @@ def test_cancellation_at_every_post_ponr_stage_is_deferred_then_redelivered(
     assert not tuple(tmp_path.glob(".profile-migration-*.rollback.sqlite3"))
 
 
+@pytest.mark.parametrize("failure_path", ["rollback", "rollback_deferred", "deferred"])
+def test_publication_retains_close_failure_without_resuming_multislot_work(
+    tmp_path, monkeypatch, failure_path
+):
+    from tldw_chatbook.TTS.profile_errors import _migration_cleanup_owner
+
+    module = _publication_module()
+    slot = module.ProfileMigrationPublicationSlot
+    artifacts = []
+    destinations = []
+    for selected_slot, leaf, version in (
+        (slot.ACTIVE, "profiles.sqlite3", 4),
+        (slot.PRE_V4, "profiles.pre-v4.sqlite3", 3),
+    ):
+        candidate_path = (
+            tmp_path / module.PROFILE_MIGRATION_CANDIDATE_LEAVES[selected_slot]
+        )
+        destination_path = tmp_path / leaf
+        _store(candidate_path, version=version, marker="new")
+        _store(destination_path, version=3, marker="old")
+        artifacts.append(_prepared(module, candidate_path, selected_slot, "new"))
+        destinations.append(_retained(module, destination_path, selected_slot, "old"))
+    signal = asyncio.CancelledError("PRIVATE deferred cancellation")
+    armed = False
+    proxies = []
+    pins = []
+    post_failure = []
+    raw_closes = []
+    real_open = module._open_exact
+    real_connect = module.connect_private_sqlite_descriptor
+    real_close = os.close
+
+    def open_exact(identity):
+        result = real_open(identity)
+        if armed and not proxies:
+            pins.append(result[:2])
+        return result
+
+    def connect(*args, **kwargs):
+        if proxies and proxies[0].close_calls:
+            post_failure.append("validation")
+        connection = real_connect(*args, **kwargs)
+        if armed and not proxies:
+            proxy = CloseOnceFailure(connection)
+            proxies.append(proxy)
+            return proxy
+        return connection
+
+    def observe_operation(name, operation):
+        def observed(*args, **kwargs):
+            if proxies and proxies[0].close_calls:
+                post_failure.append(name)
+            return operation(*args, **kwargs)
+
+        return observed
+
+    def close(fd):
+        if proxies and proxies[0].close_calls:
+            raw_closes.append(fd)
+        return real_close(fd)
+
+    def stage_hook(stage):
+        nonlocal armed
+        if (
+            stage is module.ProfileMigrationPublicationStage.PONR
+            and failure_path != "rollback"
+        ):
+            armed = failure_path == "deferred"
+            raise signal
+        if stage is module.ProfileMigrationPublicationStage.BACKUP_REOPENED:
+            armed = True
+            raise OSError("PRIVATE publication completion failure")
+
+    monkeypatch.setattr(module, "_open_exact", open_exact)
+    monkeypatch.setattr(module, "connect_private_sqlite_descriptor", connect)
+    monkeypatch.setattr(os, "close", close)
+    for name in (
+        "_rename_exact",
+        "_fsync_exact",
+        "_content_evidence",
+        "_append_journal",
+        "_cleanup_exact",
+    ):
+        monkeypatch.setattr(
+            module, name, observe_operation(name, getattr(module, name))
+        )
+    try:
+        with pytest.raises(BaseException) as failure:
+            module.publish_profile_migration(
+                active_candidate=artifacts[0],
+                backup_candidates=artifacts[1:],
+                active_destination=destinations[0],
+                backup_destinations=destinations[1:],
+                stage_hook=stage_hook,
+            )
+        owner = _migration_cleanup_owner(failure.value)
+        assert owner is not None
+        if failure_path != "rollback":
+            assert failure.value is signal
+        else:
+            assert isinstance(failure.value, ProfileMigrationCleanupError)
+            assert failure.value.__cause__ is None
+            assert failure.value.__context__ is None
+            assert "PRIVATE" not in repr(failure.value)
+        assert post_failure == []
+        assert raw_closes == []
+        parent_fd, file_fd = pins[0]
+        assert owner.connection is proxies[0]
+        assert owner.file_fd == file_fd
+        assert owner.parent_fd == parent_fd
+        os.fstat(file_fd)
+        os.fstat(parent_fd)
+        journal = next(tmp_path.glob("*.migration-publication.json"))
+        journal_before = journal.read_bytes()
+        assert module.parse_profile_migration_journal(journal_before).phase == (
+            "publishing" if failure_path == "deferred" else "restoring"
+        )
+        namespace_before = sorted(path.name for path in tmp_path.iterdir())
+        owner.close()
+        owner.close()
+        assert proxies[0].close_calls == 2
+        assert raw_closes == [file_fd, parent_fd]
+        assert post_failure == []
+        assert journal.read_bytes() == journal_before
+        assert sorted(path.name for path in tmp_path.iterdir()) == namespace_before
+        with pytest.raises(sqlite3.ProgrammingError):
+            proxies[0].execute("SELECT 1")
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
+        for parent_fd, file_fd in pins:
+            for fd in (file_fd, parent_fd):
+                try:
+                    real_close(fd)
+                except OSError:
+                    pass
+
+
 def test_completion_and_restoration_failure_retains_recovery_set_and_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
