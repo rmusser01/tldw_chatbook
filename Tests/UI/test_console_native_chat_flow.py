@@ -7873,7 +7873,7 @@ async def test_cancel_after_character_session_commit_consumes_without_replay(
         _block_post_commit_sync,
     )
 
-    consume_task = asyncio.create_task(screen._consume_pending_chat_handoff())
+    consume_task = asyncio.create_task(screen._session._consume_pending_chat_handoff())
     await asyncio.wait_for(sync_started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
     consume_task.cancel()
     await consume_task
@@ -7882,7 +7882,7 @@ async def test_cancel_after_character_session_commit_consumes_without_replay(
     assert len(store.messages) == 1
     assert not runtime.app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
-    await screen._consume_pending_chat_handoff()
+    await screen._session._consume_pending_chat_handoff()
 
     assert len(store.messages) == 1
     assert not runtime.app.pending_handoffs.has_pending(HandoffChannel.CHAT)

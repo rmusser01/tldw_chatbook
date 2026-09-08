@@ -741,3 +741,11 @@ were added. Production code and the writer/unmount/durable-repair assertions are
 unchanged. The weakref case plus complete Message and moved-seam guard files:
 **32 passed** (`/private/tmp/pr2427-cleanup-fixture-green.log`). Full settings-file
 qualification remains open. See the incident in lessons-testing-evidence.md.
+
+The live-work harness lacked the app bundle at the app-CSS tier. A RED-first
+exact `host.css_path == app.css_path` control now proves the production Console
+boot stack, using the existing ConsolidatedCSSApp bracketing rather than loading
+unrelated routes. All 13 zero-width paint/readiness/evidence failures pass with
+their original assertions; the complete live-work file is **69 passed / 1 failed**
+(`/private/tmp/pr2427-task4-live-complete.log`). The remaining Watchlists
+latest-active-run mock failure is independent and still under investigation.

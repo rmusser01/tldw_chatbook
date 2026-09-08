@@ -138,6 +138,7 @@ from textual.widgets import Select
 
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
@@ -629,6 +630,31 @@ def _visual_identity_options_for_db(
     )
 
 
+def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
+    """Return whether a handoff is a Personas "Open in Console" preview transcript.
+
+    These are staged by ``PersonasPreviewController.open_in_console`` with the
+    workbench's fixed ``source="personas"`` identity and a
+    ``"preview-conversation"`` item type. They carry no ``start_chat`` intent,
+    so they miss the character-session path (task-427); task-428 routes them
+    into a fresh, dedicated Console conversation rather than reusing (and
+    polluting) whatever conversation happens to be active. The predicate is
+    deliberately narrow: Personas "Start Chat" (``"{kind}-card"``) and "Attach"
+    handoffs do not match.
+
+    Args:
+        payload: A handoff staged into the native Console.
+
+    Returns:
+        ``True`` only for a Personas "Open in Console" preview-conversation
+        handoff; ``False`` for every other source/item type.
+    """
+    return (
+        str(payload.source or "").strip() == "personas"
+        and str(payload.item_type or "").strip() == "preview-conversation"
+    )
+
+
 class ConsoleSessionController:
     """Owns the Console shell's native session lifecycle: start/activate/
     swap/promote/rename, per-session settings, the Ctrl+K switcher's choice
@@ -703,6 +729,11 @@ class ConsoleSessionController:
             bool,
         ],
         workspace_display_name: Callable[[str], str],
+        stage_library_rag_launch: Callable[[ConsoleLiveWorkLaunch], None],
+        set_handoff_auto_open_inspector: Callable[[bool], None],
+        load_handoff_composer_if_empty: Callable[[str], None],
+        handoff_sync_callback_accessor: Callable[[], Callable[[], Any]],
+        pending_chat_handoffs_accessor: Callable[[], PendingHandoffStore],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -719,6 +750,12 @@ class ConsoleSessionController:
         focus restoration. It retains the documented legacy `_screen`
         exception only for the framework services above; the moved family
         itself never reaches through `_screen` or into the DOM.
+
+        The two Chat-handoff bodies also live here. Their consumption guard
+        is controller-owned; named live ports retain the current handoff
+        store, retrieval staging, Inspector flag, composer DOM hook and exact
+        Screen sync callback. Session calls stay local and workspace title
+        lookup reuses the existing named seam.
 
         Args:
             screen: The Console screen. Used ONLY for the framework
@@ -833,6 +870,14 @@ class ConsoleSessionController:
                 first-chat provider/model selection onto screen controls.
             restore_first_chat_focus: Late-bound restoration of an opaque focus
                 token after the native async projection is synchronized.
+            stage_library_rag_launch: Live retrieval-owner staging seam.
+            set_handoff_auto_open_inspector: Set the presentation flag before
+                staging synchronously projects the Inspector.
+            load_handoff_composer_if_empty: Screen-owned composer DOM hook.
+            handoff_sync_callback_accessor: Return the current Screen coroutine
+                function itself, preserving the worker's callback identity.
+            pending_chat_handoffs_accessor: Read the current app's handoff store
+                when consumption begins, not when this controller is built.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -881,8 +926,14 @@ class ConsoleSessionController:
         self._capture_fork_image_selections_fn = capture_fork_image_selections
         self._validate_fork_image_selections_fn = validate_fork_image_selections
         self._workspace_display_name_fn = workspace_display_name
+        self._stage_library_rag_launch = stage_library_rag_launch
+        self._set_handoff_auto_open_inspector = set_handoff_auto_open_inspector
+        self._load_handoff_composer_if_empty = load_handoff_composer_if_empty
+        self._handoff_sync_callback_accessor = handoff_sync_callback_accessor
+        self._pending_chat_handoffs_accessor = pending_chat_handoffs_accessor
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
+        self._handoff_consumption_in_progress = False
         self._console_visible_draft_session_id: str | None = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
@@ -906,6 +957,222 @@ class ConsoleSessionController:
         self._first_chat_handoff_notified_revision: int | None = None
         self._fork_validation_generation = 0
         self._active_fork_request: _ConsoleForkRequest | None = None
+
+    async def _consume_pending_chat_handoff(
+        self,
+        *,
+        suppress_released_failure: bool = False,
+    ) -> None:
+        """Claim one Chat handoff and stage it directly in native Console.
+
+        Args:
+            suppress_released_failure: Return after a transfer failure only
+                when this invocation released its exact claim for retry.
+        """
+        if self._handoff_consumption_in_progress:
+            return
+
+        try:
+            store = self._pending_chat_handoffs_accessor()
+            claim = store.claim(HandoffChannel.CHAT)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Chat handoff acquisition failed (channel={}, exception_category={})",
+                HandoffChannel.CHAT.value,
+                type(exc).__name__,
+            )
+            raise
+        if claim is None:
+            return
+
+        self._handoff_consumption_in_progress = True
+        try:
+            payload = claim.value
+
+            # The native Console composes no legacy tab surface. A
+            # Personas Start-Chat character handoff gets a dedicated
+            # character-bound session with its greeting seeded
+            # (task-427); anything else -- or a character session that
+            # failed to build -- stages into the Console live-work lane
+            # so the context lands in Staged Context instead of being
+            # dropped with a warning.
+            if await self._start_character_console_session(payload):
+                store.acknowledge(claim)
+                return
+            self._stage_handoff_as_console_live_work(payload)
+            store.acknowledge(claim)
+        except asyncio.CancelledError:
+            try:
+                store.release(claim)
+            except Exception as exc:
+                logger.warning(
+                    "Chat handoff cancellation release failed "
+                    "(channel={}, revision={}, exception_category={})",
+                    claim.channel.value,
+                    claim.revision,
+                    type(exc).__name__,
+                )
+            raise
+        except Exception as exc:
+            try:
+                released = store.release(claim)
+            except Exception as release_exc:
+                released = False
+                logger.warning(
+                    "Chat handoff transfer release failed "
+                    "(channel={}, revision={}, exception_category={})",
+                    claim.channel.value,
+                    claim.revision,
+                    type(release_exc).__name__,
+                )
+            logger.warning(
+                "Chat handoff transfer failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            if suppress_released_failure and released:
+                return
+            raise
+        finally:
+            self._handoff_consumption_in_progress = False
+
+    def _stage_handoff_as_console_live_work(self, payload: ChatHandoffPayload) -> None:
+        """Stage a Use-in-Console handoff into the native staged-context lane."""
+        from pydantic import ValidationError
+
+        from tldw_chatbook.Chat.citation_evidence_models import (
+            EvidenceBundle,
+            EvidenceReference,
+        )
+        from tldw_chatbook.Utils.input_validation import sanitize_string
+
+        def _safe_text(value: Any, max_length: int = 500) -> str:
+            return sanitize_string(str(value or ""), max_length=max_length).strip()
+
+        # Handoff bodies can reach 80k characters; cap and sanitize at this
+        # boundary before any of it lands in the staged payload.
+        snippet = _safe_text(payload.display_summary or payload.body, max_length=4_000)
+        title = _safe_text(payload.title) or "Untitled"
+        launch_payload: dict[str, Any] = {
+            "target_id": _safe_text(payload.content_ref or payload.source_id or title),
+            "item_type": _safe_text(payload.item_type),
+            "source_id": _safe_text(payload.source_id),
+            "snippet": snippet,
+            "suggested_prompt": _safe_text(payload.suggested_prompt, max_length=4_000),
+            "runtime_backend": _safe_text(payload.runtime_backend),
+            "source_selector_state": _safe_text(payload.source_selector_state),
+            "metadata": dict(payload.metadata or {}),
+        }
+        # Task-2 review bonus find (Task 9): this used to run only when
+        # `"rag" in (payload.source or "").lower()`. RAG-class sources gate
+        # Console sends on available evidence, and that gate is exactly why
+        # this branch existed -- but restricting bundle-building to a
+        # source-name substring meant every OTHER handoff (Library media,
+        # Library conversations, Library notes, and any future source that
+        # doesn't happen to spell "rag") staged visibly in the strip/tray
+        # while `capture_console_staged_evidence_for_chat` silently returned
+        # `LocalRagContextResult(None, None)` on send, because
+        # `payload.get("evidence_bundle")` was never a mapping for them: a
+        # live content-loss bug, not merely a missing gate. The gate itself
+        # is dropped rather than widened to an allowlist of known source
+        # names, since an allowlist only recreates the same class of bug for
+        # the next new source. Every handoff staged here now always carries
+        # a single-reference bundle (title stands in when the snippet is
+        # empty) so it can never dead-end the send, and the non-RAG sources
+        # this restores content for are never subject to the RAG evidence
+        # send-gate in the first place (`_console_send_blocked_reason` only
+        # checks it for a source whose label mentions "rag").
+        try:
+            launch_payload["evidence_bundle"] = EvidenceBundle(
+                bundle_id=_safe_text(payload.content_ref or payload.source_id)
+                or "handoff-evidence",
+                query=_safe_text(payload.suggested_prompt) or title,
+                source=_safe_text(payload.source) or "Search/RAG",
+                references=(
+                    EvidenceReference(
+                        evidence_id="S1",
+                        source_id=_safe_text(payload.source_id) or "unknown",
+                        source_type=_safe_text(payload.item_type) or "rag-result",
+                        title=title,
+                        snippet=snippet or title,
+                        authority_label=_safe_text(payload.runtime_backend) or "local",
+                        content_ref=payload.content_ref,
+                    ),
+                ),
+            ).to_payload()
+        except (TypeError, ValueError, ValidationError) as exc:
+            logger.warning(
+                "Could not build evidence bundle for handoff (exception_category={})",
+                type(exc).__name__,
+            )
+
+        # PR-4/task-1: route through the staging SEAM, never a bare
+        # assignment. This method finishes via `_sync_native_console_chat_ui`,
+        # which refreshes the chip but not the staged-evidence strip or the
+        # Inspector tray -- so a "Use in Console" handoff landing on a
+        # composed screen used to read "Sources: 1 staged" with nothing
+        # listed and no reachable un-stage control, and then had the strip
+        # announce "Evidence sent" for evidence the user was never shown.
+        # The auto-open flag is set BEFORE staging for the same reason the
+        # Library-RAG failure path does: staging syncs the rail state
+        # synchronously, so a flag set afterwards misses that pass.
+        self._set_handoff_auto_open_inspector(True)
+        self._stage_library_rag_launch(
+            ConsoleLiveWorkLaunch.from_values(
+                source=payload.source,
+                title=payload.title,
+                payload=launch_payload,
+                status=payload.status or "staged",
+            )
+        )
+
+        suggested_prompt = launch_payload["suggested_prompt"]
+        if suggested_prompt:
+            store = self._ensure_console_chat_store()
+            if _is_personas_preview_handoff(payload):
+                # task-428: a Roleplay "Open in Console" handoff must land in
+                # its own fresh, focused conversation -- never bleed into (or
+                # reuse) whatever Console conversation is already active.
+                # ``create_session`` pre-activates the new session, which IS an
+                # active-session switch: snapshot the composer first (TASK-339)
+                # so any keystrokes typed in the settle window before the
+                # deferred ``_sync_console_session_draft`` carry forward into
+                # the new session instead of being saved to the old one and
+                # wiped. We deliberately do NOT poke the composer here -- the
+                # sync pass below owns it and loads the new session's draft;
+                # poking it would save this prompt back into the old session.
+                # ``title`` (a sanitized ``payload.title``) is a real,
+                # non-default title, so the send-time auto-titler
+                # (``_maybe_auto_title_session``) leaves it as-is rather than
+                # renaming it after the prefilled instruction.
+                self._capture_console_draft_switch_snapshot()
+                session = store.create_session(
+                    title=title,
+                    workspace_id=store.workspace_context.active_workspace_id,
+                    settings=self._default_console_session_settings(),
+                )
+                store.set_session_draft(session.id, suggested_prompt)
+            else:
+                session = store.ensure_session(
+                    title=self._workspace_initial_session_title(
+                        store.workspace_context.active_workspace_id
+                    ),
+                    workspace_id=store.workspace_context.active_workspace_id,
+                    settings=self._default_console_session_settings(),
+                )
+                if not store.session_draft(session.id).strip():
+                    store.set_session_draft(session.id, suggested_prompt)
+                self._load_handoff_composer_if_empty(suggested_prompt)
+
+        self.run_worker(
+            self._handoff_sync_callback_accessor(),
+            exclusive=True,
+            group="console-sync",
+        )
 
     # -- Framework services (live-read via `@property`) --------------------
 

@@ -714,7 +714,7 @@ async def test_console_use_in_console_handoff_reaches_the_strip() -> None:
         await _wait_for_selector(screen, pilot, STRIP_ID)
         assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
 
-        screen._stage_handoff_as_console_live_work(
+        screen._session._stage_handoff_as_console_live_work(
             ChatHandoffPayload(
                 source="Library Search/RAG",
                 title="Transformer notes",

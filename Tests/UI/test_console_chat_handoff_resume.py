@@ -146,7 +146,7 @@ async def test_suspending_again_stops_the_pending_chat_resume_timer(
 
         def hold_chat_timer(delay, callback, **kwargs):
             timer = set_timer(delay, callback, **kwargs)
-            if callback == console._consume_pending_chat_handoff:
+            if callback == console._session._consume_pending_chat_handoff:
                 # Hold only delivery, not the real Timer's suspend/stop lifecycle.
                 timer.pause()
                 timers.append(timer)

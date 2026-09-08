@@ -1932,6 +1932,19 @@ def build_console_controllers(
     screen._session = ConsoleSessionController(
         screen,
         app_instance=screen.app_instance,
+        stage_library_rag_launch=(
+            lambda launch: screen._retrieval._stage_console_library_rag_launch(launch)
+        ),
+        set_handoff_auto_open_inspector=(
+            lambda value: setattr(
+                screen, "_pending_console_launch_auto_open_inspector", value
+            )
+        ),
+        load_handoff_composer_if_empty=(
+            lambda prompt: screen._load_console_handoff_composer_if_empty(prompt)
+        ),
+        handoff_sync_callback_accessor=lambda: screen._sync_native_console_chat_ui,
+        pending_chat_handoffs_accessor=lambda: screen.app_instance.pending_handoffs,
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
         current_chat_store_accessor=lambda: screen._console_chat_store,
         ensure_console_chat_controller=(

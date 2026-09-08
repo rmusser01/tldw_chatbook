@@ -501,7 +501,9 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                 HandoffChannel.CHAT,
                 _chat_handoff("first"),
             )
-            first_consumer = asyncio.create_task(chat._consume_pending_chat_handoff())
+            first_consumer = asyncio.create_task(
+                chat._session._consume_pending_chat_handoff()
+            )
             await asyncio.wait_for(first_started.wait(), timeout=6.0)
             app.pending_handoffs.stage(
                 HandoffChannel.CHAT,
@@ -514,7 +516,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
             assert chat._pending_console_launch_context is not None
             assert chat._pending_console_launch_context.title == "first"
 
-            await chat._consume_pending_chat_handoff()
+            await chat._session._consume_pending_chat_handoff()
 
             assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
             assert app.pending_handoffs.claim(HandoffChannel.CHAT) is None
@@ -526,7 +528,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
 
             with monkeypatch.context() as failure_patch:
                 failure_patch.setattr(
-                    chat,
+                    chat._session,
                     "_stage_handoff_as_console_live_work",
                     fail_native_staging,
                 )
@@ -535,10 +537,10 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                     _chat_handoff("retry-after-failure"),
                 )
                 with pytest.raises(RuntimeError, match="PRIVATE_HANDOFF_FAILURE"):
-                    await chat._consume_pending_chat_handoff()
+                    await chat._session._consume_pending_chat_handoff()
             assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
-            await chat._consume_pending_chat_handoff()
+            await chat._session._consume_pending_chat_handoff()
             assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
             cancellation_started = asyncio.Event()
@@ -560,7 +562,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                     _chat_handoff("retry-after-cancellation"),
                 )
                 cancelled_consumer = asyncio.create_task(
-                    chat._consume_pending_chat_handoff()
+                    chat._session._consume_pending_chat_handoff()
                 )
                 await asyncio.wait_for(cancellation_started.wait(), timeout=6.0)
                 cancelled_consumer.cancel()
@@ -568,7 +570,7 @@ async def test_native_console_chat_handoff_settles_exact_claim_and_keeps_replace
                     await cancelled_consumer
             assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
-            await chat._consume_pending_chat_handoff()
+            await chat._session._consume_pending_chat_handoff()
             assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
     finally:
         await _close_production_app(app)
