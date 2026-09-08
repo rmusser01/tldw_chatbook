@@ -3,9 +3,10 @@ id: TASK-32039
 title: >-
   Critique #6 fix-wave Qodo follow-ups: reason-staleness on resume, validation,
   stale test
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-08 06:18'
+updated_date: '2026-09-08 07:05'
 labels:
   - library
   - media
@@ -23,9 +24,15 @@ Consolidated follow-ups from Qodo review of the critique #6 fix PRs. Two are cor
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The repeated-fault 'reopen Chatbook' recovery step no longer fires on the first failure of a Library resume or a changed page/query/type/nav/facet context (the fault reason is scoped to its context or cleared when the context changes); a genuine consecutive Retry of the same context still escalates
-- [ ] #2 The bulk-Analyze inline reason and gate refresh when Library resumes or provider configuration changes, so a provider configured mid-session is reflected without a restart
-- [ ] #3 resolve_adaptive_reader_layout raises a clear TypeError for a non-boolean reader_has_item, documented in Raises, with unit coverage
-- [ ] #4 Both split-sheet bundle tests (test_generated_stylesheet_includes_library_media_rules AND its twin test_generated_stylesheet_includes_library_shell_rules) assert their library selectors in screen_agentic_library.tcss (the runtime-loaded split sheet), not the boot bundle, and pass
-- [ ] #5 The critique-#6 test-hygiene nits are addressed: the new imports form one contiguous local group, and the parameterized painted tests carry a Google-style summary + Args for the size parameter
+- [x] #1 The repeated-fault 'reopen Chatbook' recovery step no longer fires on the first failure of a Library resume or a changed page/query/type/nav/facet context (the fault reason is scoped to its context or cleared when the context changes); a genuine consecutive Retry of the same context still escalates
+- [x] #2 The bulk-Analyze inline reason and gate refresh when Library resumes or provider configuration changes, so a provider configured mid-session is reflected without a restart
+- [x] #3 resolve_adaptive_reader_layout raises a clear TypeError for a non-boolean reader_has_item, documented in Raises, with unit coverage
+- [x] #4 Both split-sheet bundle tests (test_generated_stylesheet_includes_library_media_rules AND its twin test_generated_stylesheet_includes_library_shell_rules) assert their library selectors in screen_agentic_library.tcss (the runtime-loaded split sheet), not the boot bundle, and pass
+- [x] #5 The critique-#6 test-hygiene nits are addressed: the new imports form one contiguous local group, and the parameterized painted tests carry a Google-style summary + Args for the size parameter
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Five Qodo follow-ups from the critique #6 fix wave. A (correctness): the media browse controller's repeated-fault detection now pairs each reason with a SHA-256 context fingerprint over (query, media_type, sort_by, page) for both the page and facet fences, requires BOTH to match to escalate, clears both on success, and `clear_fault_episode()` runs first in on_screen_resume -- so a resume auto-refresh or a context change no longer gets the 'reopen Chatbook' clause on its first failure, while a genuine same-context Retry still escalates. B (correctness): on_screen_resume drops the bulk-Analyze reason memo so a mid-session provider config is reflected on return; the fix initially cleared a nonexistent screen attribute (dead no-op) and its pin crashed on a removed shim -- corrected in a fix round to `_media_state.analyze_reason_cache` and `_media_state.row_selection.count` (red-first confirmed). C: resolve_adaptive_reader_layout bool-validates reader_has_item (TypeError, Raises: doc, parametrized test). D: both split-sheet bundle tests (media AND the shell twin) retargeted from the boot bundle to screen_agentic_library.tcss where TASK-15450 moved the rules. E: import grouping + docstring Args nits. Files: library_media_browse_controller.py, library_screen.py, adaptive_reader_state.py, Tests/UI/test_library_media_render_fixes.py, Tests/UI/test_library_shell.py, Tests/Library/test_library_adaptive_reader_state.py.
+<!-- SECTION:NOTES:END -->
