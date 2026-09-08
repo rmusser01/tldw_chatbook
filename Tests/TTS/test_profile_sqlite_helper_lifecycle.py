@@ -734,10 +734,10 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.DB.private_sqlite_process import HELPER_ADMISSION
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+import tldw_chatbook.app as app_module
 
+app_module.get_tts_profiles_db_path = lambda: Path(sys.argv[1])
 app = _build_test_app()
-repository = app._tts_profile_repository
-repository._database_path = Path(sys.argv[1])
 state, owner_count = sys.argv[2], int(sys.argv[3])
 siblings = []
 statements = []
@@ -756,6 +756,8 @@ if state == "partial":
 
 async def exercise():
     ensured = await app._ensure_tts_profile_repository()
+    repository = app._tts_profile_repository
+    assert repository is not None
     if state == "partial":
         assert ensured is None
         assert repository._helper_restart_required

@@ -47,7 +47,6 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileServiceError,
     ProfileValidationError,
 )
-from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_reference_types import (
     CanonicalTTSCloneReference,
     TTSCloneReference,
@@ -105,6 +104,7 @@ from tldw_chatbook.TTS.voice_bundle_codec import (
 # by the PEP 562 `__getattr__` at the bottom instead, so the public package
 # API is unchanged and the module loads on first attribute access.
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
     from tldw_chatbook.TTS.voice_bundle_service import (
         TTSVoiceBundleHandle,
         TTSVoiceBundleImportChoice,
@@ -122,23 +122,30 @@ _LAZY_VOICE_BUNDLE_SERVICE_NAMES = frozenset(
         "TTSVoiceBundleReview",
     }
 )
+_LAZY_PROFILE_REPOSITORY_NAMES = frozenset({"TTSProfileRepository"})
 
 
 def __getattr__(name: str) -> object:
-    """Resolve the deferred voice-bundle-service exports on first access.
+    """Resolve deferred package exports on first access.
 
     Args:
         name: The attribute requested from this package.
 
     Returns:
-        object: The attribute, imported from ``voice_bundle_service`` and
-        cached in the module globals so later reads skip this hook.
+        object: The requested attribute, cached in the module globals so later
+            reads skip this hook.
 
     Raises:
         AttributeError: For any other name, so ``from tldw_chatbook.TTS
             import <submodule>`` still falls through to the normal submodule
             import machinery.
     """
+    if name in _LAZY_PROFILE_REPOSITORY_NAMES:
+        from tldw_chatbook.TTS import profile_repository
+
+        value = getattr(profile_repository, name)
+        globals()[name] = value
+        return value
     if name in _LAZY_VOICE_BUNDLE_SERVICE_NAMES:
         from tldw_chatbook.TTS import voice_bundle_service
 
@@ -150,7 +157,11 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     """List the eager and deferred names this package serves."""
-    return sorted(set(globals()) | _LAZY_VOICE_BUNDLE_SERVICE_NAMES)
+    return sorted(
+        set(globals())
+        | _LAZY_PROFILE_REPOSITORY_NAMES
+        | _LAZY_VOICE_BUNDLE_SERVICE_NAMES
+    )
 
 
 __all__ = [
