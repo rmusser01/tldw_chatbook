@@ -1043,3 +1043,20 @@ approved snapshot writer independently measures that under-cap total and
 refreshes only the CSS snapshot without force. Its diff includes the already
 present 26-byte ConsoleSelectionMenu drift plus the 557-byte Watchlists rule;
 neither is a cap increase or hidden stylesheet change.
+
+The 203-commit rebase onto `9a54013f07` completed without conflicts at
+`957da1ba0e`; the saved pre-rebase checkpoint remains at
+`codex/pr2427-before-keyboard-rebase-20260908`. Comparing saved and rebased trees
+shows only upstream keyboard code/tests and documentation additions. Its
+23-line handler addition reproduces a 35,412/35,393 Screen breach. Step 33
+shortens only the existing on_key docstring by 21 lines, retaining its task and
+keyboard/focus facts. The full Screen AST is identical after removing that one
+docstring; Screen is 35,391 lines / 1,260 methods with unchanged ceilings.
+
+Post-rebase complete size/module/assembly/packaging/pre-import/UI-ready checks
+pass **65 tests in 14.98s** (`/private/tmp/pr2427-rebased-guards.log`). UI-ready
+is 973/973 modules; pre-import is 496/500 modules and 362,737/378,740 lines.
+All six derived-artifact checks pass, including all 3,603 Backlog task records
+(`/private/tmp/pr2427-keyboard-rebase-preflight.log`). The full rebased shell
+and fourteen-file mounted cohort are running on frozen sources; they remain
+required before a merge-ready claim.
