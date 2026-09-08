@@ -1332,7 +1332,12 @@ async def test_feedback_reaches_the_real_database_unmocked(tmp_path):
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
             _stub_comment_modal(screen, "needs a retry bound")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             # The controller caches the store it was built with, so the
@@ -1479,7 +1484,12 @@ async def test_comment_annotation_reaches_the_real_database_unmocked(tmp_path):
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
             _stub_comment_modal(screen, "tighten error paths")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
