@@ -811,12 +811,10 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._media_state.reader_layout.library_open,
             message="Library grip did not collapse the Library pane.",
         )
-        # task-31633: with the one-cell grips (AC#2) and list growth (AC#1)
-        # the Items pane is already on its 56-cell comfort ceiling at this
-        # size, so the collapsed rail's cells go to the Reader instead. The
-        # collapse still moves cells -- just not into a pane that is full.
-        assert items.region.width >= initial_width
-        assert shell.work.region.width > initial_reader_width
+        # task-31979: Trash has no loaded item, so its empty Reader stays on
+        # the 46-cell work floor and the collapsed rail's cells widen Items.
+        assert items.region.width > initial_width
+        assert shell.work.region.width == initial_reader_width == 46
 
         search = screen.query_one("#library-media-trash-search", Input)
         search.focus()

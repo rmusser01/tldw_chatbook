@@ -765,3 +765,71 @@ target, label and status assertions remain. The complete live-work file now
 passes **70/70** in 72.27 seconds
 (`/private/tmp/pr2427-watch-route-complete.log`); scoped Ruff and diff checks pass.
 No production code or stylesheet changed in this repair.
+
+### Complete-inventory follow-up
+
+The four-file Library inventory finished **968 passed / 31 failed** in 1775.21
+seconds (`/private/tmp/pr2427-fixture-complete.log`). This is retained as a
+non-green result. The six render failures subsequently pass in the complete
+render/side-by-side/focus-cue group: **162 passed** in 198.28 seconds
+(`/private/tmp/pr2427-fixture-final.log`). Metadata normalization preserves
+title-slot coordinates, wide empty-Reader geometry is exactly Items 145 /
+Reader 46, and the two-cell destructive gap retains complete action labels.
+
+The shell reconciliation cohort passes **25/27** in 105.45 seconds
+(`/private/tmp/pr2427-shell-cohort.log`). Exact compact Notes geometry now
+includes TASK-31645's one-row Lab strip, preserving fixed controls, focus,
+identity and six-row surplus growth. Import is located by stable action;
+grip collapse and width assertions follow TASK-31633/31951/31952. Independent
+review found no weakened contracts. Its two remaining failures were attributed
+separately: a real canonical Media deep-link selection mismatch, and an ingest
+fixture missing production consolidated defaults. The latter's real compositor
+hit the fold hint over Clear after an unstyled 23-row navigation bar; using the
+existing ConsolidatedCSSApp passes the original click/clear/focus/identity test
+and a new three-row navigation assertion (RED/GREEN logs:
+`/private/tmp/pr2427-clear-{red,green}.log`). Broader requalification is pending.
+
+The old Console unmount expectations now explicitly use the existing exact-owner
+Textual removal helper after real navigation. TASK-31520 deliberately keeps a
+normally suspended Console attached; its warm-reuse coverage remains unchanged.
+All 45 original cancellation/identity/raw-draft assertions survive, plus a
+single-production-Console control. The Canvas watcher case retains gateway
+absence, watcher identity, disable latching and disposal while asserting the
+existing shared store/controller identity. Complete ownership and screen-reuse
+files: **31 passed** in 58.87 seconds (`/private/tmp/pr2427-compat-final.log`).
+
+Existing-owner private cleanup removes exactly 22 Screen wrappers and retargets
+their direct consumers; two constructor lambdas retain late owner binding.
+Module AST comparison shows no unrelated logic change. New replacement-owner
+controls and complete wiring files pass **24 tests**
+(`/private/tmp/pr2427-private-cleanup-green.log`). LibraryScreen is now 35,393
+lines / 1,260 methods; its line pin was lowered from 35,777, not raised.
+The complete Screen/module ratchets are **47 passed / 1 failed**: only Media
+Browse remains over its unchanged limit, **589 / 371**. Its proposed state
+separation and the two Watchlists focus-cue repairs still await approval.
+
+Current CSS qualification: **17 passed**, 803,101 / 804,000 boot bytes and
+273 / 274 broad subjects. All six local derived-artifact checks pass (599
+diagnostic owners, 3,597 unique task records, 113 schema tables, 281 index pins).
+Qodo reports zero active findings on published 3b40d68710 and all six inline
+threads are resolved; these are checkpoint observations, not final-head merge
+qualification.
+
+The Media deep-link fix now derives the requested Items identity from the
+existing local Reader only in viewer mode. Both pure builders retain page
+membership fallback; list mode, external detail and an empty Reader retain
+their existing anchor. No new owner, mutation or scheduling was introduced.
+Nine direct controls and six cold/warm RAG variants (legacy, numeric and
+canonical IDs) pass **15/15** after RED reproduction; the target is explicitly
+the non-first row, with exact Items/Reader identity, title and detail-call
+checks. Independent correctness review found no issues.
+
+The combined complete-file/consumer qualification is **887 passed / 15 failed**
+in 694.24 seconds (`/private/tmp/pr2427-library-qualified.log`). It includes
+complete Prompts/Skills canvas, characterization and Reader files; complete
+Media state, Reader state/flow, browse, wiring, deep-link and new projection
+files; every one of the 56 direct ingest-harness consumers; and all six RAG
+variants. All Media and ingest selections pass. Seven Prompt and eight Skills
+failures remain under investigation; exactly-once refresh, stale-page, hit-test,
+priority-pane and dirty-draft assertions have not been waived. This checkpoint
+is not merge-ready and does not claim the full Library shell file is green.

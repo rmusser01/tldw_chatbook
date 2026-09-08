@@ -431,8 +431,27 @@ _PROMPTS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: evidence script (`Docs/superpowers/reviews/evidence/task-22033/
 #: task22033_live_matrix_runner.py`) -- a census narrowed to the two usual
 #: roots reports it as zero-referenced.
+#: TASK-31932 adds 16 private names after retargeting their screen-only
+#: consumers to the established owner; the deferred callbacks remain intact.
 _PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        # TASK-31932: remaining callers name the existing owner directly.
+        "_library_prompt_editor_active",
+        "_sync_library_prompt_selection",
+        "_sync_library_prompt_memberships",
+        "_stop_library_prompts_search_debounce",
+        "_capture_library_prompts_filter_cursor",
+        "_invalidate_library_prompt_detail_generation",
+        "_invalidate_library_prompt_history",
+        "_sync_library_prompt_history_region",
+        "_update_library_prompt_status_static",
+        "_notify_prompt_dirty_veto",
+        "_clear_library_prompt_delete_pending",
+        "_library_prompt_write_worker_is_active",
+        "_sync_library_prompt_mutation_presentation",
+        "_library_prompt_nearest_survivor_focus",
+        "_notify_library_prompt_delete_failure",
+        "_refocus_library_prompt_delete_action",
         "_apply_library_prompt_detail_failure",
         "_apply_library_prompt_save_outcome",
         "_await_library_prompt_durable_call",
@@ -587,8 +606,8 @@ def test_screen_delegates_prompt_handlers() -> None:
 
     Mirrors `test_screen_delegates_ingest_handlers`: a same-name forwarding
     check, not a loose "the controller is referenced somewhere" substring
-    check. Skips the 39 names in
-    `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 3's census) and
+    check. Skips the names in `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`
+    (39 from task 3 plus 16 from TASK-31932's direct-owner cleanup) and
     instead asserts each such name is genuinely ABSENT from
     `LibraryScreen`, so a future accidental re-add would fail loudly here
     rather than silently reintroducing dead code.
