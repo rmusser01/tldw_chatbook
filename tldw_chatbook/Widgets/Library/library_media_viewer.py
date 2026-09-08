@@ -444,7 +444,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     yield Button("Open original", id="library-media-open-original", compact=True)
                 if not self.external_detail:
                     yield Button("Open manager", id="library-media-open", compact=True)
-                    yield Button("Move to trash", id="library-media-delete", compact=True)
+                    # task-31980 (critique #6 P2): the one destructive action
+                    # in this strip takes the Library's quiet-danger class --
+                    # muted ink + a left margin (the more-actions rule zeroes
+                    # button margins, so the class's own is restored by an
+                    # id-scoped rule) -- so it reads apart from the neutral
+                    # actions instead of ending the row unmarked and flush.
+                    yield Button(
+                        "Move to trash",
+                        id="library-media-delete",
+                        classes="library-media-action-danger",
+                        compact=True,
+                    )
 
     def _compose_mode_toolbar(self) -> ComposeResult:
         """Render one explicit mode selector; external detail remains read-only."""

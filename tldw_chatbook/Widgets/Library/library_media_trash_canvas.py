@@ -616,7 +616,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     )
                     cancel.styles.min_width = 0
                     cancel.styles.padding = 0
-                    cancel.styles.margin = (0, -1, 0, 0)
+                    # task-31980 (critique #6 P2): no negative pull toward the
+                    # destructive commit -- the safe button stands clear of it.
+                    cancel.styles.margin = 0
                     yield cancel
                     confirm = Button(
                         "Delete permanently",
@@ -626,8 +628,10 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     )
                     confirm.styles.min_width = 0
                     confirm.styles.padding = 0
-                    confirm.styles.margin = 0
-                    confirm.styles.offset = (-1, 0)
+                    # task-31980: hold the destructive commit >=3 cells off the
+                    # focused Cancel; its $error ink is set app-tier by the
+                    # `#library-media-trash-delete-confirm` rule.
+                    confirm.styles.margin = (0, 0, 0, 3)
                     yield confirm
             return
 
