@@ -210,3 +210,128 @@ def test_preexisting_target_of_any_type_is_preserved(tmp_path, target_kind):
     assert stage.read_bytes() == b"candidate"
     assert original.read_bytes() == b"previous"
     assert target.exists()
+
+
+def test_native_directory_full_flush_supported(tmp_path):
+    """Qualify the actual post-metadata barrier on this native filesystem."""
+    import fcntl
+
+    (tmp_path / "entry").write_bytes(b"new")
+    with pinned_directory(tmp_path) as parent:
+        os.fsync(parent)
+        assert fcntl.fcntl(parent, fcntl.F_FULLFSYNC) == 0
+
+
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_full_flush_occurs_after_publication(tmp_path, monkeypatch, kind):
+    import fcntl
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    source, destination = tmp_path / "stage", tmp_path / "published"
+    if kind == "file":
+        source.write_bytes(b"candidate")
+    else:
+        source.mkdir()
+        (source / "content").write_bytes(b"candidate")
+    calls = []
+    native_fcntl = fcntl.fcntl
+
+    def observe(fd, command, *args):
+        result = native_fcntl(fd, command, *args)
+        if command == fcntl.F_FULLFSYNC:
+            calls.append((os.fstat(fd).st_ino, source.exists(), destination.exists()))
+        return result
+
+    monkeypatch.setattr(native_files.fcntl, "fcntl", observe)
+    publish_new(source, destination)
+    parent_inode = tmp_path.stat().st_ino
+    assert (parent_inode, False, True) in calls
+
+
+def test_failed_post_publication_full_flush_preserves_published_evidence(
+    tmp_path, monkeypatch
+):
+    import errno
+    import fcntl
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    source, destination = tmp_path / "stage", tmp_path / "published"
+    source.write_bytes(b"candidate")
+    native_fcntl = fcntl.fcntl
+    parent_inode = tmp_path.stat().st_ino
+
+    def fail_after_native_metadata_flush(fd, command, *args):
+        result = native_fcntl(fd, command, *args)
+        if (
+            command == fcntl.F_FULLFSYNC
+            and os.fstat(fd).st_ino == parent_inode
+            and destination.exists()
+        ):
+            raise OSError(errno.EIO, "injected_post_publication_flush_failure")
+        return result
+
+    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_after_native_metadata_flush)
+    with pytest.raises(OSError, match="injected_post_publication_flush_failure"):
+        publish_new(source, destination)
+    assert not source.exists()
+    assert destination.read_bytes() == b"candidate"
+    # No cleanup/replace retry is allowed after an ambiguous publication result.
+    source.write_bytes(b"another")
+    with pytest.raises(FileExistsError):
+        publish_new(source, destination)
+    assert destination.read_bytes() == b"candidate"
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "missing_protocol",
+        "unsupported_protocol",
+        "previous_protocol",
+        "boolean_protocol",
+        "string_operations",
+        "mixed_operations",
+        "missing_operations",
+        "unknown_operation",
+        "unknown_field",
+        "boolean_schema",
+        "wrong_rows_type",
+    ],
+)
+def test_malformed_qualification_evidence_never_grants_capability(
+    tmp_path, monkeypatch, invalid
+):
+    from tldw_chatbook.Backup_Recovery import qualification
+
+    record = json.loads(
+        Path(qualification.__file__).with_name("native_qualification.json").read_text()
+    )
+    row = record["evidence"][0]
+    if invalid == "missing_protocol":
+        row.pop("protocol")
+    elif invalid == "unsupported_protocol":
+        row["protocol"] = 999
+    elif invalid == "previous_protocol":
+        row["protocol"] = 1
+    elif invalid == "boolean_protocol":
+        row["protocol"] = True
+    elif invalid == "string_operations":
+        row["operations"] = "publish_new"
+    elif invalid == "mixed_operations":
+        row["operations"].append(9)
+    elif invalid == "missing_operations":
+        row.pop("operations")
+    elif invalid == "unknown_operation":
+        row["operations"].append("unreviewed_operation")
+    elif invalid == "unknown_field":
+        row["future_policy"] = "automatic"
+    elif invalid == "boolean_schema":
+        record["schema_version"] = True
+    else:
+        record["evidence"] = row
+    (tmp_path / "native_qualification.json").write_text(json.dumps(record))
+    monkeypatch.setattr(qualification, "__file__", str(tmp_path / "qualification.py"))
+    assert qualification.qualified_for("publish_new", tmp_path) == (
+        False,
+        "qualification_evidence_invalid",
+    )

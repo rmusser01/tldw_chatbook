@@ -16,7 +16,7 @@
         "publish_directory",
         "admission"
       ],
-      "protocol": 1,
+      "protocol": 2,
       "tests": [
         "Tests/Backup_Recovery/test_native_files.py",
         "Tests/Backup_Recovery/test_admission.py"

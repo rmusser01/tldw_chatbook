@@ -35,10 +35,10 @@ import json, sys, sqlite3
 from pathlib import Path
 from tldw_chatbook.Backup_Recovery.admission import Admission
 root, action, names, extra = sys.argv[1:]
-a = Admission(Path(root))
 names = tuple(json.loads(names))
 print("attempting", flush=True)
 try:
+    a = Admission(Path(root))
     if action == "remap":
         a.remap(names[0], (Path(extra),), 10)
         print("remapped", flush=True)
@@ -342,7 +342,10 @@ def test_crashed_remapping_process_keeps_fail_closed_reservation(
     remap.wait(timeout=10)
     release(writer)
     child = launch(admission.control_root, "normal")
-    assert line(child) == "AdmissionError:remap_recovery_required"
+    assert line(child) in {
+        "AdmissionError:remap_recovery_required",
+        "AdmissionError:registry_publication_recovery_required",
+    }  # Crash may precede durable local-intent retirement; both states stay fenced.
     assert source.read_bytes() == b"original"
     assert target.read_bytes() == b"new"
 
@@ -371,3 +374,281 @@ def test_crashed_maintenance_holder_reopens_admission(registered, launch):
     maintenance.wait(timeout=10)
     assert line(writer) == "entered"
     release(writer)
+
+
+@pytest.mark.parametrize("phase", ["reservation", "final_mapping"])
+def test_failed_remap_metadata_barrier_preserves_authority_across_processes(
+    registered, tmp_path, monkeypatch, phase
+):
+    import errno
+    import fcntl
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    admission, source = registered
+    target = tmp_path / "new"
+    target.write_bytes(b"candidate")
+    control_inode = admission.control_root.stat().st_ino
+    native_fcntl = fcntl.fcntl
+    injected = []
+
+    def fail_published_registry_barrier(fd, command, *args):
+        result = native_fcntl(fd, command, *args)
+        if command != fcntl.F_FULLFSYNC or os.fstat(fd).st_ino != control_inode:
+            return result
+        state = json.loads((admission.control_root / "registry.json").read_text())
+        entry = state["entries"]["a"]
+        matches = (
+            bool(entry["pending"])
+            if phase == "reservation"
+            else entry["roots"] == [str(target)] and entry["pending"] is None
+        )
+        if matches and not injected:
+            injected.append(True)
+            raise OSError(errno.EIO, "injected_registry_barrier_failure")
+        return result
+
+    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_published_registry_barrier)
+    with pytest.raises(OSError, match="injected_registry_barrier_failure"):
+        admission.remap("a", (target,), 2)
+    code = """
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.admission import Admission, AdmissionError
+try:
+    admission = Admission(Path(sys.argv[1]))
+    with admission.normal(("a",)):
+        print("admitted")
+except AdmissionError as error:
+    print(str(error))
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", code, str(admission.control_root)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert child.returncode == 0, child.stderr
+    assert child.stdout.strip() in {
+        "remap_recovery_required",
+        "registry_publication_recovery_required",
+    }
+    assert source.read_bytes() == b"original"
+    assert target.read_bytes() == b"candidate"
+    if phase == "final_mapping":
+        intent = json.loads(
+            (admission.control_root / "registry.pending.json").read_text()
+        )
+        assert intent["before"]["entries"]["a"]["pending"]
+        assert intent["before"]["entries"]["a"]["roots"] == [str(source)]
+        assert intent["after"]["entries"]["a"]["roots"] == [str(target)]
+
+
+def _child_admission_result(control):
+    code = """
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.admission import Admission, AdmissionError
+try:
+    admission = Admission(Path(sys.argv[1]))
+    if sys.argv[2] == "normal":
+        with admission.normal(("a",)):
+            print("admitted")
+    else:
+        print("initialized")
+except AdmissionError as error:
+    print(str(error))
+"""
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            code,
+            str(control),
+            "normal" if (control / "registry.json").exists() else "initial",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert child.returncode == 0, child.stderr
+    return child.stdout.strip()
+
+
+def test_initial_registry_barrier_failure_retains_before_after_evidence(
+    tmp_path, monkeypatch
+):
+    import errno
+    import fcntl
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    control = tmp_path / "control"
+    native_fcntl = fcntl.fcntl
+
+    def fail_initial_barrier(fd, command, *args):
+        result = native_fcntl(fd, command, *args)
+        if (
+            command == fcntl.F_FULLFSYNC
+            and (control / "registry.json").exists()
+            and os.fstat(fd).st_ino == control.stat().st_ino
+        ):
+            raise OSError(errno.EIO, "injected_initial_registry_barrier_failure")
+        return result
+
+    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_initial_barrier)
+    with pytest.raises(OSError, match="injected_initial_registry_barrier_failure"):
+        Admission(control)
+    intent = json.loads((control / "registry.pending.json").read_text())
+    assert intent["version"] == 1 and intent["before"] is None
+    assert intent["after"] == {"version": 1, "entries": {}}
+    assert _child_admission_result(control) == "registry_publication_recovery_required"
+
+
+@pytest.mark.parametrize("failure", ["unlink", "cleanup_barrier"])
+def test_remap_cleanup_failure_exposes_only_durably_committed_mapping(
+    registered, tmp_path, monkeypatch, failure
+):
+    import errno
+    import fcntl
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    admission, source = registered
+    control = admission.control_root
+    target = tmp_path / "new"
+    target.write_bytes(b"candidate")
+    native_fcntl, native_unlink = fcntl.fcntl, os.unlink
+    final_mapping_barriers = []
+
+    def final_state():
+        entry = json.loads((control / "registry.json").read_text())["entries"]["a"]
+        return entry["roots"] == [str(target)] and entry["pending"] is None
+
+    def observe_or_fail(fd, command, *args):
+        result = native_fcntl(fd, command, *args)
+        if (
+            command == fcntl.F_FULLFSYNC
+            and os.fstat(fd).st_ino == control.stat().st_ino
+            and final_state()
+        ):
+            if (control / "registry.pending.json").exists():
+                final_mapping_barriers.append(True)
+            elif failure == "cleanup_barrier":
+                assert final_mapping_barriers
+                raise OSError(errno.EIO, "injected_intent_cleanup_failure")
+        return result
+
+    def fail_unlink(name, *args, **kwargs):
+        if name == "registry.pending.json" and final_state() and failure == "unlink":
+            assert final_mapping_barriers
+            raise OSError(errno.EIO, "injected_intent_cleanup_failure")
+        return native_unlink(name, *args, **kwargs)
+
+    monkeypatch.setattr(native_files.fcntl, "fcntl", observe_or_fail)
+    monkeypatch.setattr(os, "unlink", fail_unlink)
+    with pytest.raises(OSError, match="injected_intent_cleanup_failure"):
+        admission.remap("a", (target,), 2)
+    assert final_mapping_barriers
+    assert source.read_bytes() == b"original"
+    assert target.read_bytes() == b"candidate"
+    if failure == "unlink":
+        assert (control / "registry.pending.json").exists()
+        assert (
+            _child_admission_result(control) == "registry_publication_recovery_required"
+        )
+    else:
+        assert not (control / "registry.pending.json").exists()
+        assert _child_admission_result(control) == "admitted"
+        assert final_state()  # Mapping passed its full native barrier before cleanup.
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "corrupt",
+        "unsupported_version",
+        "invalid_before",
+        "invalid_after",
+        "oversized",
+        "mismatched",
+    ],
+)
+def test_existing_write_intent_is_never_overwritten_or_cleared(registered, kind):
+    admission, source = registered
+    control = admission.control_root
+    state = json.loads((control / "registry.json").read_text())
+    record = {"version": 1, "write_id": "a" * 32, "before": state, "after": state}
+    if kind == "unsupported_version":
+        record["version"] = 999
+    elif kind == "invalid_before":
+        record["before"] = {"version": True, "entries": {}}
+    elif kind == "invalid_after":
+        record["after"] = {"entries": {}}
+    elif kind == "mismatched":
+        record["after"]["entries"] = {}
+    raw = (
+        b"broken"
+        if kind == "corrupt"
+        else b"x" * 2200000
+        if kind == "oversized"
+        else json.dumps(record).encode()
+    )
+    intent = control / "registry.pending.json"
+    intent.write_bytes(raw)
+    intent.chmod(0o600)
+    assert _child_admission_result(control) == "registry_publication_recovery_required"
+    with pytest.raises(AdmissionError, match="registry_publication_recovery_required"):
+        admission.register("b", (source,))
+    assert intent.read_bytes() == raw
+
+
+@pytest.mark.parametrize("phase", ["intent_file", "intent_directory"])
+def test_failed_intent_barrier_never_replaces_registry(
+    registered, tmp_path, monkeypatch, phase
+):
+    import errno
+    import fcntl
+    from tldw_chatbook.Backup_Recovery import native_files
+
+    admission, source = registered
+    control = admission.control_root
+    original = (control / "registry.json").read_bytes()
+    target = tmp_path / "new"
+    target.write_bytes(b"candidate")
+    native_fcntl = fcntl.fcntl
+
+    def fail_intent_barrier(fd, command, *args):
+        result = native_fcntl(fd, command, *args)
+        intent = control / "registry.pending.json"
+        if command == fcntl.F_FULLFSYNC and intent.exists():
+            expected_inode = (
+                intent.stat().st_ino
+                if phase == "intent_file"
+                else control.stat().st_ino
+            )
+            if os.fstat(fd).st_ino == expected_inode:
+                raise OSError(errno.EIO, "injected_intent_barrier_failure")
+        return result
+
+    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_intent_barrier)
+    with pytest.raises(OSError, match="injected_intent_barrier_failure"):
+        admission.remap("a", (target,), 2)
+    assert (control / "registry.json").read_bytes() == original
+    assert (control / "registry.pending.json").exists()
+    assert _child_admission_result(control) == "registry_publication_recovery_required"
+    assert source.read_bytes() == b"original"
+    assert target.read_bytes() == b"candidate"
+
+
+def test_registry_write_cannot_reinitialize_a_disappeared_existing_generation(
+    registered,
+):
+    from tldw_chatbook.Backup_Recovery.admission import _Registry
+    from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+
+    admission, _ = registered
+    registry = admission.control_root / "registry.json"
+    registry.unlink()
+    with pinned_directory(admission.control_root) as parent:
+        with pytest.raises(FileNotFoundError):
+            admission._write(parent, _Registry(version=1))
+    assert not registry.exists()
+    assert not (admission.control_root / "registry.pending.json").exists()

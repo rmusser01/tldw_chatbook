@@ -1214,8 +1214,8 @@ Admission owns private control-root registry records and persistent lock files; 
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._create_lock | open | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._open | open | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | open | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | write | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | write | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/native_files.py | _flush_private_tree | open | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_directory | mkdir | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_file | open | 1 | generic_boundary | backup_native_storage |
@@ -1249,3 +1249,49 @@ The concrete `renameatx_np` callable assignment and `os.replace` seams are now c
 | tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | generic |
 | tldw_chatbook/Video_Generation/video_store.py | VideoStore._commit_sibling | os.replace | 1 | process_artifact | process |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | recursive_scrape.save_progress | os.replace | 1 | unsupported | miscellaneous |
+
+## Local write-intent retirement census (TASK-31987 review fix)
+
+The control owner now exclusively creates bounded version-1 before/after write intents through `Admission._write_new_record`, and retires a matching intent through `os.unlink` only after the registry file/parent full native barriers complete. Intent removal is a persistence boundary, not disposable cleanup authority. The census now recognizes concrete OS unlink calls/import aliases, including the existing removal candidates below. Existing unsupported/generic classifications are retained per producer; newly surfaced symbols remain unsupported within their known cohort (the secure temporary-file helper remains a generic boundary). No new capture/exclusion qualification is implied.
+
+| Module | Qualified symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
+| tldw_chatbook/Character_Chat/visual_identity.py | _discard_pinned_directory | os.unlink | 1 | unsupported | files |
+| tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_text_from_image | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_pdf | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend.transcribe | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend.transcribe_buffer | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_with_parakeet_mlx | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_buffer_with_parakeet_mlx | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/video_processing.py | LocalVideoProcessor._discard_temp_cookiefile | os.unlink | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_copy | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.create_file | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.move_file | os.unlink | 2 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.delete_file | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | os.unlink | 1 | unsupported | notes |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | cleanup_persona_visual_authoring_workspace | os.unlink | 2 | unsupported | assets |
+| tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_workspace_asset | os.unlink | 1 | unsupported | assets |
+| tldw_chatbook/Persona_Visual/importer.py | _delete_candidate | os.unlink | 3 | unsupported | assets |
+| tldw_chatbook/Persona_Visual/publication.py | _delete_pinned_directory | os.unlink | 1 | unsupported | assets |
+| tldw_chatbook/TTS/audio_cpp_guided_launch.py | AudioCppGeneratedLaunchArtifact.cleanup | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/audio_cpp_guided_launch.py | _remove_partial_artifact | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | os.unlink | 2 | unsupported | tts |
+| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._transcribe_audio | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_migration_namespace.py | remove_zero_reusable_tombstone | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | os.unlink | 2 | unsupported | tts |
+| tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | os.unlink | 2 | unsupported | tts |
+| tldw_chatbook/TTS/profile_reference_materialization.py | _cleanup_materialization_sync | os.unlink | 2 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _unlink_if_present | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/voice_bundle_service.py | _cleanup_operation | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.unlink | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.unlink | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.unlink | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | os.unlink | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | generic |
+| tldw_chatbook/Utils/secure_temp_files.py | secure_temp_file | os.unlink | 1 | generic_boundary | generic |
+| tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | scrape_entire_site | os.unlink | 1 | unsupported | miscellaneous |

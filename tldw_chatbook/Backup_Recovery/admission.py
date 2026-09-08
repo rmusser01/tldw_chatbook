@@ -51,10 +51,21 @@ class _Entry(BaseModel):
 
 class _Registry(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
-    version: int = 1
+    version: int
     entries: dict[str, _Entry] = Field(default_factory=dict)
 
 
+class _WriteIntent(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    version: int
+    write_id: str
+    before: _Registry | None
+    after: _Registry
+
+
+_REGISTRY_LIMIT = 1048576
+_INTENT_LIMIT = 2 * _REGISTRY_LIMIT + 65536
+_INTENT_NAME = "registry.pending.json"
 _local = threading.local()
 
 
@@ -75,7 +86,7 @@ class Admission:
         with self._directory() as fd:
             if created:
                 self._create_lock(fd, "registry.lock")
-                self._write(fd, _Registry())
+                self._write(fd, _Registry(version=1), initial=True)
             # Never reconstruct missing state in an existing control root.
             with self._lock(fd, "registry.lock", fcntl.LOCK_SH):
                 self._read(fd)
@@ -169,11 +180,46 @@ class Admission:
             raise ValueError("invalid_admission_timeout")
         return time.monotonic() + timeout
 
+    def _read_intent(self, parent: int) -> _WriteIntent | None:
+        try:
+            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY)
+        except FileNotFoundError:
+            return None
+        try:
+            raw = os.read(fd, _INTENT_LIMIT + 1)
+            if len(raw) > _INTENT_LIMIT:
+                raise ValueError("intent_too_large")
+            intent = _WriteIntent.model_validate_json(raw)
+            states = (
+                (intent.after,)
+                if intent.before is None
+                else (intent.before, intent.after)
+            )
+            if (
+                intent.version != 1
+                or len(intent.write_id) != 32
+                or any(c not in "0123456789abcdef" for c in intent.write_id)
+            ):
+                raise ValueError("intent_invalid")
+            if any(
+                state.version != 1
+                or len(state.model_dump_json().encode()) > _REGISTRY_LIMIT
+                for state in states
+            ):
+                raise ValueError("intent_state_invalid")
+            return intent
+        except (ValidationError, ValueError):
+            raise AdmissionError("registry_publication_recovery_required") from None
+        finally:
+            os.close(fd)
+
     def _read(self, parent: int) -> _Registry:
+        if self._read_intent(parent) is not None:
+            raise AdmissionError("registry_publication_recovery_required")
         fd = self._open(parent, "registry.json", os.O_RDONLY)
         try:
-            data = os.read(fd, 1048577)
-            if len(data) > 1048576:
+            data = os.read(fd, _REGISTRY_LIMIT + 1)
+            if len(data) > _REGISTRY_LIMIT:
                 raise AdmissionError("registry_too_large")
             result = _Registry.model_validate_json(data)
             if result.version != 1:
@@ -184,11 +230,8 @@ class Admission:
         finally:
             os.close(fd)
 
-    def _write(self, parent: int, registry: _Registry) -> None:
-        name = f"registry-{uuid.uuid4().hex}.tmp"
-        data = registry.model_dump_json().encode()
-        if len(data) > 1048576:
-            raise AdmissionError("registry_too_large")
+    @staticmethod
+    def _write_new_record(parent: int, name: str, data: bytes) -> None:
         fd = os.open(
             name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -203,7 +246,44 @@ class Admission:
             fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
         finally:
             os.close(fd)
+
+    def _write(
+        self, parent: int, registry: _Registry, *, initial: bool = False
+    ) -> None:
+        """Journal local authority before replacement; ambiguous writes stay fenced."""
+        try:
+            before = self._read(parent)
+        except FileNotFoundError:
+            if not initial:
+                raise
+            before = None  # Only initial construction may publish the first registry.
+        if initial and before is not None:
+            raise AdmissionError("registry_initialization_conflict")
+        write_id = uuid.uuid4().hex
+        intent = _WriteIntent(
+            version=1, write_id=write_id, before=before, after=registry
+        )
+        data = registry.model_dump_json().encode()
+        intent_data = intent.model_dump_json().encode()
+        if (
+            registry.version != 1
+            or len(data) > _REGISTRY_LIMIT
+            or len(intent_data) > _INTENT_LIMIT
+        ):
+            raise AdmissionError("registry_too_large")
+        # Exclusive creation refuses any existing intent, even if it looks stale.
+        # A failed/partial intent write is deliberately retained and fails closed.
+        self._write_new_record(parent, _INTENT_NAME, intent_data)
+        flush_directory(parent)
+        name = f"registry-{write_id}.tmp"
+        self._write_new_record(parent, name, data)
         os.replace(name, "registry.json", src_dir_fd=parent, dst_dir_fd=parent)
+        flush_directory(parent)
+        # Only this successfully flushed generation permits intent retirement.
+        # Cleanup failure either leaves evidence or exposes this durable mapping.
+        if self._read_intent(parent) != intent:
+            raise AdmissionError("registry_publication_recovery_required")
+        os.unlink(_INTENT_NAME, dir_fd=parent)
         flush_directory(parent)
 
     @staticmethod

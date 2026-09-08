@@ -49,8 +49,13 @@ def pinned_directory(root: Path) -> Iterator[int]:
 
 
 def flush_directory(fd: int) -> None:
-    """Persist directory entries; propagate failure without success claims."""
+    """Flush metadata then the native device cache; propagate ambiguous failure.
+
+    This barrier runs after each rename/metadata publication, not just before it.
+    Darwin APFS directory F_FULLFSYNC is directly qualified by native tests.
+    """
     os.fsync(fd)
+    fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
 
 
 def create_private_directory(destination: Path) -> None:

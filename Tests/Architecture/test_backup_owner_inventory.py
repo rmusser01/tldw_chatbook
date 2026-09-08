@@ -49,6 +49,7 @@ PRODUCER_CALLS = frozenset(
         "delete_password",
         "renameatx_np",
         "os.replace",
+        "os.unlink",
     }
 )
 
@@ -70,8 +71,11 @@ def census(source: str) -> Counter:
         if isinstance(value, ast.Attribute):
             if value.attr == "renameatx_np":
                 return "renameatx_np"
-            if value.attr == "replace" and getattr(value.value, "id", None) in os_names:
-                return "os.replace"
+            if (
+                value.attr in {"replace", "unlink"}
+                and getattr(value.value, "id", None) in os_names
+            ):
+                return f"os.{value.attr}"
         return None
 
     # This is a conservative call census, not Python name/signature inference.
@@ -81,8 +85,8 @@ def census(source: str) -> Counter:
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 imported_candidates.setdefault(alias.asname or alias.name, set()).add(
-                    "os.replace"
-                    if node.module == "os" and alias.name == "replace"
+                    f"os.{alias.name}"
+                    if node.module == "os" and alias.name in {"replace", "unlink"}
                     else alias.name
                 )
         if isinstance(node, ast.Assign) and (candidate := native_candidate(node.value)):
@@ -287,3 +291,13 @@ filesystem.replace(stage, destination)
 commit_record(stage, destination)
 """
     assert census(source)[("<module>", "os.replace")] == 2
+
+
+def test_census_records_native_intent_removal_boundary():
+    source = """
+import os as filesystem
+from os import unlink as remove_intent
+filesystem.unlink("registry.pending.json", dir_fd=parent)
+remove_intent("registry.pending.json", dir_fd=parent)
+"""
+    assert census(source)[("<module>", "os.unlink")] == 2

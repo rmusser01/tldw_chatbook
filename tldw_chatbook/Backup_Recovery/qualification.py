@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import ctypes
-import json
 import os
 import platform
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 # Darwin's statfs64 ABI from the installed sys/mount.h; no pathname shell probe.
@@ -50,16 +51,60 @@ def native_identity(fd: int) -> dict[str, str | int]:
     }
 
 
+# Protocol 2 includes a full native barrier after metadata publication. Evidence
+# for the earlier fsync-only protocol must never authorize the amended operations.
+_QUALIFICATION_PROTOCOL = 2
+_OPERATIONS = frozenset(
+    {"publish_new", "publish_file", "publish_directory", "admission"}
+)
+
+
+class _Identity(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    os: str
+    release: str
+    arch: str
+    python: str
+    filesystem: str
+    flags: int
+
+
+class _EvidenceRow(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    identity: _Identity
+    operations: list[str] = Field(min_length=1)
+    protocol: int
+    tests: list[str] = Field(min_length=1)
+    date: str
+    scope: str
+
+
+class _Evidence(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    schema_version: int
+    evidence: list[_EvidenceRow]
+
+
 def _qualified_identity(
     operation: str, identity: dict[str, str | int]
 ) -> tuple[bool, str]:
-    evidence = json.loads(
-        Path(__file__).with_name("native_qualification.json").read_text()
-    )
-    if evidence.get("schema_version") != 1:
+    try:
+        raw = Path(__file__).with_name("native_qualification.json").read_text()
+    except OSError:
+        return False, "qualification_unavailable"
+    try:
+        evidence = _Evidence.model_validate_json(raw)
+    except ValidationError:
         return False, "qualification_evidence_invalid"
-    for row in evidence["evidence"]:
-        if row["identity"] == identity and operation in row["operations"]:
+    if evidence.schema_version != 1 or any(
+        row.protocol != _QUALIFICATION_PROTOCOL
+        or not set(row.operations) <= _OPERATIONS
+        or len(set(row.operations)) != len(row.operations)
+        for row in evidence.evidence
+    ):
+        return False, "qualification_evidence_invalid"
+    for row in evidence.evidence:
+        if row.identity.model_dump() == identity and operation in row.operations:
             return True, "qualified_native_evidence"
     return False, "operation_not_qualified"
 
