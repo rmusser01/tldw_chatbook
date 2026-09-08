@@ -1825,3 +1825,53 @@ worker and concurrent bootstrap authority ownership; exact causality is still to
 be resolved. A generic stop/cancel is not a safe drain, and this debt is not moved
 to Task26. Full commands/traces and blocked network-attempt disclosure are in the
 phase2 execution report.
+
+### Task10 phase3: core native lifetimes, with explicit borrower retirement
+
+Under ADR-126 and controller rulings54–55, exact installed `CharactersRAGDB`,
+`MediaDatabase`, `PromptsDatabase`, `LibraryCollectionsDB` and `LibraryIngestJobsDB`
+instances now bind their selected paths to actual ordinary SQLite leases. The
+private SQLite weak lookup is identity lookup only; the core participant strongly
+retains every registered native handle until successful explicit native close.
+Actual ordinary leases, pending acquisitions and retiring holds remain independent
+blockers, including unregistered/failed constructor and unmatched factory returns.
+The source census call counts are unchanged; no table row or semantic owner is
+promoted to complete runtime coverage by these declarations.
+
+Managed transaction scopes preserve existing native connection/cursor APIs,
+including ChaCha nested/borrowed ownership and Collections read transactions.
+A pause closes new cached getters and transaction admission. Existing exact
+operations may finish; transaction exit never revokes an escaped native borrower.
+Different installed participants may obtain independent ordinary admission only
+while the local/target gates are open; they inherit no outer descendant authority.
+A pause racing that fresh acquisition refuses it and leaves the outer scope live.
+
+Explicit source-owner close reserves the source cache against new managed work,
+closes outside coordinator locks and preserves references on failure. Per-thread
+caches retire independently; Ingest's one retained connection protects operations
+from all accessing threads and must close on its actual creating thread. Idle
+foreign-thread caches, escaped cursors/connections and borrowed raw transactions
+remain blockers until their owner explicitly retires them. A dead affine source
+thread requires restart if its handle was not retired before exit. Memory remains
+memory-owned; uninstalled subclasses retain ordinary behavior without installed
+participant or descendant authority. Direct/qualified/imported production subclass
+inspection found none in this cohort; the coordinated-reader test subclass remains
+ordinary and unqualified.
+
+This bounded phase is **not all-thread caller lifecycle qualification**. Required
+next boundaries include `LibraryScreen._run_library_service_call` and its actual
+Collections/Prompts/Media/ChaCha callers, the synchronous local services that return
+materialized results to those pool jobs, `TldwCli._run_library_ingest_queue` plus
+`LibraryIngestJobRegistry._persist`/`_persist_delete`/`requeue`, and the UI-owned
+`_library_ingest_jobs_store` created by `_restore_ingest_jobs`. The current
+`on_unmount` close follows parser shutdown and is not reusable pause/resume.
+`ChatbookImporter.import_chatbook` owns multi-database transactions; Creator,
+Persona publication and other DB-plus-file producers still require their full
+operation and source-thread retirement boundary. A generic executor hook, source
+name, zero count, GC, or `check_same_thread=False` does not prove borrower release.
+
+Task31993 remains In Progress/all AC unchecked. Startup is retained, runtime
+coverage still refuses, and no app/headless responder or Complete capability is
+installed. The phase2 combined-order app callback/bootstrap failure remains an
+explicit Task10 app/lifecycle obligation. The separately reproduced pre-phase3
+Media historical-schema fixture belongs to later schema/migration qualification.

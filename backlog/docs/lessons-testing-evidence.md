@@ -9,6 +9,25 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## SQLite trace callbacks can hide a new admission refusal (TASK-31993)
+
+**Incident.** Core transaction enrollment made two existing Prompts WAL-race tests
+stop observing a version/snapshot conflict. Their trace callback synchronously
+writes through a second real Prompts instance. The first implementation treated
+that nested instance as an unauthorized descendant of the outer transaction;
+SQLite swallowed the callback exception, so the winning write never happened and
+the outer API appeared successful. The tests failed with DID NOT RAISE ConflictError,
+not with the actual admission refusal. Controller ruling55 preserves that ordinary
+behavior with independently admitted nested operations while gates are open; a
+pause still refuses a new different-participant scope.
+
+**What to do.** When a trace-callback-driven race disappears, inspect the callback's
+actual domain effects and exception boundary before blaming the outer transaction.
+Keep real competing-writer outcomes, nested failure restoration and paused-admission
+checks; an observer callback returning control does not prove its write succeeded.
+
+---
+
 ## SQLite closed-handle evidence must run on the creating thread (TASK-31993)
 
 **Incident.** The first Event/Sync maintenance lifetime fixture checked a worker's

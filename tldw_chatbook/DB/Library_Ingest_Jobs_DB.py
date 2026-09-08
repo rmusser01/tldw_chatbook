@@ -18,6 +18,13 @@ from loguru import logger
 from tldw_chatbook.STT.persistence import dump_failed_transcription_attempt
 
 from .base_db import BaseDB
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
 from .private_sqlite import connect_private_sqlite
 
 
@@ -33,6 +40,7 @@ class LibraryIngestJobsDB(BaseDB):
         self._conn: sqlite3.Connection | None = None
         super().__init__(db_path, client_id)  # calls _initialize_schema()
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Open a write transaction that rolls back on failure."""
@@ -46,13 +54,19 @@ class LibraryIngestJobsDB(BaseDB):
         else:
             conn.commit()
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
+        self._conn = _core_cached_connection(self, self._conn)
         if self._conn is None:
             self._conn = connect_private_sqlite(
                 "db.library_ingest_jobs",
                 self.db_path_str,
                 check_same_thread=False,
             )
+            _register_core_connection(self, self._conn)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             # NORMAL is safe under WAL and avoids an fsync per commit -- writes
@@ -63,12 +77,14 @@ class LibraryIngestJobsDB(BaseDB):
 
     def close(self) -> None:
         if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                logger.opt(exception=True).debug("LibraryIngestJobsDB: close failed")
-            finally:
-                self._conn = None
+            with _core_closing(self, self._conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    self._conn.close()
+                    self._conn = None
+                except Exception:
+                    logger.opt(exception=True).debug("LibraryIngestJobsDB: close failed")
 
     def _migrate_v1_to_v2(self) -> None:
         """Add JSON columns for ingest options, progress, error detail, and content hash.

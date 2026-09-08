@@ -10,6 +10,7 @@ import sqlite3
 import stat
 import sys
 import warnings
+import weakref
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
@@ -30,6 +31,8 @@ from tldw_chatbook.Utils.private_paths import (
 
 
 _SQLITE_CONNECT = sqlite3.connect
+# Identity lookup only. Actual ordinary leases and core participants own lifetimes.
+_ordinary_connections = weakref.WeakKeyDictionary()
 
 
 class SQLiteTargetKind(StrEnum):
@@ -1259,6 +1262,18 @@ def _with_storage_admission(function):
                         raise
                     if not constructing:
                         lease.close()
+                        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+                        with storage._changed:
+                            _ordinary_connections.pop(self, None)
+                            participant = getattr(lease, "resource_participant", None)
+                            if participant is not None:
+                                from tldw_chatbook.Backup_Recovery.participants import _retired_core_connections
+
+                                _retired_core_connections.add(self)
+                                participant.connections.pop(self, None)
+                                lease.resource_participant = None
+                            storage._changed.notify_all()
 
                 def __del__(self):
                     # Match sqlite's abandoned-connection retirement, including rollback.
@@ -1274,6 +1289,11 @@ def _with_storage_admission(function):
             constructing = False
             if getattr(connection, "_admission_close_attempted", False):
                 connection._admission_close_attempted = False
+            if type(connection) is AdmittedConnection and hasattr(lease, "resource_policy"):
+                from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+                with storage._lock:
+                    _ordinary_connections[connection] = lease
             if hasattr(lease, "attach"):
                 lease.attach(connection)
             return connection

@@ -104,20 +104,22 @@ def _check_operation(operation, path=None):
 
 @contextmanager
 def _repository_operation(participant):
-    from .participants import _installed_repositories
+    from .participants import _installed_repositories, _check_core_retirement
 
     previous = getattr(_operation_local, "operation", None)
     with _changed:
         if previous is not None:
+            _check_operation(previous, previous.path)
+        reuse = previous is not None and previous.participant is participant
+        if reuse:
             _check_operation(previous, participant.path)
-            if previous.participant is not participant:
-                raise bootstrap.RecoveryRequired("operation_provenance_invalid")
         else:
             if (
                 participant not in _installed_repositories
                 or participant.repository() is None
             ):
                 raise bootstrap.RecoveryRequired("repository_participant_not_installed")
+            _check_core_retirement(participant)
             if participant.closed or _pause is not None:
                 raise bootstrap.RecoveryRequired("storage_locally_paused")
             operation = object.__new__(_Operation)
@@ -127,10 +129,14 @@ def _repository_operation(participant):
             operation.task = _task_identity()
             operation.lease = None
             _operations.add(operation)
-    if previous is not None:
+    if reuse:
         yield previous
         return
     try:
+        # A different installed participant gets independent *ordinary* admission
+        # while the gate is open. The outer scope stays counted but confers no
+        # descendant authority on this new acquisition (ruling55).
+        _operation_local.operation = None
         operation.path = participant.path
         operation.resolved_path = participant.path.resolve()
         parent = participant.path.parent.stat()
@@ -139,19 +145,25 @@ def _repository_operation(participant):
         with _changed:
             if _pause is not None or participant.closed:
                 raise bootstrap.RecoveryRequired("storage_locally_paused")
+            _check_core_retirement(participant)
             operation.key = operation.lease._key
             operation.hold = _holds.get(operation.key)
             _operation_local.operation = operation
         yield operation
     finally:
-        # Close the operation's native lifetime before erasing its accounting.
-        # Its descendants keep their own tokens until positive resource close.
-        _operation_local.operation = previous
-        if operation.lease is not None:
-            operation.lease.close()
-        with _changed:
-            _operations.discard(operation)
-            _changed.notify_all()
+        _operation_local.operation = None
+        try:
+            # Its descendants retain independent tokens until positive close.
+            if operation.lease is not None:
+                operation.lease.close()
+            with _changed:
+                _operations.discard(operation)
+                _changed.notify_all()
+        finally:
+            with _changed:
+                if previous is not None:
+                    _check_operation(previous, previous.path)
+                _operation_local.operation = previous
 
 
 class _Acquisition:

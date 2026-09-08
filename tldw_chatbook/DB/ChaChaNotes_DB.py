@@ -65,6 +65,13 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_operation,
+    _register_core_connection,
+)
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
@@ -2902,6 +2909,7 @@ UPDATE db_schema_version
             ) from e
 
     # --- Connection Management ---
+    @_core_getter
     def _get_thread_connection(self) -> sqlite3.Connection:
         """
         Retrieves or creates a thread-local SQLite connection.
@@ -2915,7 +2923,7 @@ UPDATE db_schema_version
         roughly doubling the raw statement count for query-heavy paths. It is
         now gated behind an idle threshold (``_LIVENESS_PING_IDLE_SECONDS``):
         connections here are thread-local and long-lived, and
-        ``close_connection()`` always clears the thread-local reference, so a
+        successful ``close_connection()`` clears the thread-local reference, so a
         recently-used connection is known-good without a ping. A connection
         idle past the threshold still gets the full ping + transparent-reopen
         treatment.
@@ -2926,7 +2934,11 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If connecting to the database fails.
         """
+        from tldw_chatbook.Backup_Recovery.participants import _core_access
+
+        _core_access(self)
         conn = getattr(self._local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn:
             last_used = getattr(self._local, "conn_last_used", None)
             if (
@@ -2936,14 +2948,14 @@ UPDATE db_schema_version
                 try:
                     conn.execute("SELECT 1")  # Check if connection is still alive
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    logger.warning(
-                        f"Thread-local connection for {self.db_path_str} was closed or became unusable. Reopening."
-                    )
+                    # A failed ping does not prove a live native borrower can be
+                    # revoked. Only SQLite's closed-handle state permits revival.
                     try:
-                        conn.close()
-                    except sqlite3.Error:
-                        # Ignore connection close errors - connection may already be closed
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Native already closed; failures retain refs.
+                    else:
+                        raise
                     conn = None
 
         if not conn:
@@ -2955,6 +2967,7 @@ UPDATE db_schema_version
                     check_same_thread=False,  # Required for threading.local approach
                     timeout=15,  # Maybe slightly increase timeout?
                 )
+                _register_core_connection(self, conn)
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode=WAL;")
@@ -3048,60 +3061,61 @@ UPDATE db_schema_version
         If the database is file-based and in WAL mode, it attempts to perform
         a WAL checkpoint (TRUNCATE) before closing to commit changes from the WAL file
         to the main database file.
-        If a transaction is active and uncommitted on this connection, it attempts a rollback.
-        Clears the connection reference from `threading.local` for the current thread.
+        Explicit ordinary close retains its legacy rollback behavior. Active
+        managed file work and paused borrowed transactions instead keep the handle.
+        The caller must release its native borrowers before requesting close; the
+        cache reference is cleared only after successful native retirement.
         """
         conn = getattr(self._local, "conn", None)
         if conn is not None:
-            try:
-                if not self.is_memory_db:
-                    # Resolve any pending transaction before checkpointing
-                    if conn.in_transaction:
-                        try:
-                            logger.warning(
-                                f"Connection to {self.db_path_str} is in an uncommitted transaction during close. Attempting rollback."
-                            )
-                            conn.rollback()  # Attempt rollback if transaction is open
-                        except sqlite3.Error as rb_err:
-                            logger.error(
-                                f"Rollback attempt during close for {self.db_path_str} failed: {rb_err}"
-                            )
-                            # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
-                            # However, conn.close() below should still be attempted.
-
-                    # Checkpoint WAL only if not in a failed transaction state that prevents it
-                    # and WAL mode is active.
-                    # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
-                    if not conn.in_transaction:  # Re-check after potential rollback
-                        mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
-                        if mode_row and mode_row[0].lower() == "wal":
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    if not self.is_memory_db:
+                        # Resolve any pending transaction before checkpointing
+                        if conn.in_transaction:
                             try:
-                                logger.debug(
-                                    f"Attempting WAL checkpoint (TRUNCATE) before closing {self.db_path_str} on thread {threading.get_ident()}."
-                                )
-                                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                                logger.debug(
-                                    f"WAL checkpoint TRUNCATE executed for {self.db_path_str}."
-                                )
-                            except sqlite3.Error as cp_err:
                                 logger.warning(
-                                    f"WAL checkpoint failed for {self.db_path_str}: {cp_err}"
+                                    f"Connection to {self.db_path_str} is in an uncommitted transaction during close. Attempting rollback."
                                 )
-                conn.close()
-                logger.debug(
-                    f"Closed connection for thread {threading.get_ident()} to {self.db_path_str}."
-                )
-            except (
-                sqlite3.Error
-            ) as e:  # Catches errors from execute, checkpoint, or close
-                logger.warning(
-                    f"Error during SQLite connection close/checkpoint for {self.db_path_str} on thread {threading.get_ident()}: {e}"
-                )
-            finally:
-                # This ensures that the reference is cleared from threading.local
-                # even if conn.close() itself raised an exception.
-                if hasattr(self._local, "conn"):
+                                conn.rollback()  # Attempt rollback if transaction is open
+                            except sqlite3.Error as rb_err:
+                                logger.error(
+                                    f"Rollback attempt during close for {self.db_path_str} failed: {rb_err}"
+                                )
+                                # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
+                                # However, conn.close() below should still be attempted.
+
+                        # Checkpoint WAL only if not in a failed transaction state that prevents it
+                        # and WAL mode is active.
+                        # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
+                        if not conn.in_transaction:  # Re-check after potential rollback
+                            mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
+                            if mode_row and mode_row[0].lower() == "wal":
+                                try:
+                                    logger.debug(
+                                        f"Attempting WAL checkpoint (TRUNCATE) before closing {self.db_path_str} on thread {threading.get_ident()}."
+                                    )
+                                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                                    logger.debug(
+                                        f"WAL checkpoint TRUNCATE executed for {self.db_path_str}."
+                                    )
+                                except sqlite3.Error as cp_err:
+                                    logger.warning(
+                                        f"WAL checkpoint failed for {self.db_path_str}: {cp_err}"
+                                    )
+                    conn.close()
                     self._local.conn = None
+                    logger.debug(
+                        f"Closed connection for thread {threading.get_ident()} to {self.db_path_str}."
+                    )
+                except (
+                    sqlite3.Error
+                ) as e:  # Catches errors from execute, checkpoint, or close
+                    logger.warning(
+                        f"Error during SQLite connection close/checkpoint for {self.db_path_str} on thread {threading.get_ident()}: {e}"
+                    )
 
     def backup_database(self, backup_file_path: str) -> bool:
         """
@@ -16909,6 +16923,15 @@ class TransactionContextManager:
         self.immediate = bool(immediate)
 
     def __enter__(self):
+        self._maintenance_context = _core_operation(self.db)
+        self._maintenance_context.__enter__()
+        try:
+            return self._enter_transaction()
+        except BaseException as error:
+            self._maintenance_context.__exit__(type(error), error, error.__traceback__)
+            raise
+
+    def _enter_transaction(self):
         # Ensure transaction_depth is initialized for this thread
         if not hasattr(self.db._local, "transaction_depth"):
             self.db._local.transaction_depth = 0
@@ -16942,6 +16965,12 @@ class TransactionContextManager:
             return self.conn.cursor()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return self._exit_transaction(exc_type, exc_val, exc_tb)
+        finally:
+            self._maintenance_context.__exit__(exc_type, exc_val, exc_tb)
+
+    def _exit_transaction(self, exc_type, exc_val, exc_tb):
         """
         Handles the exit of the transaction context.
 

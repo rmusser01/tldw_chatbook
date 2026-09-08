@@ -1073,7 +1073,7 @@ def test_existing_database_is_hardened_before_raw_connect(tmp_path, monkeypatch)
 
     def observe_connect(database, **kwargs):
         observed_modes.append(stat.S_IMODE(target.stat().st_mode))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1094,7 +1094,7 @@ def test_existing_0400_database_is_hardened_before_writable_raw_connect(
 
     def observe_connect(database, **kwargs):
         observed_modes.append(stat.S_IMODE(target.stat().st_mode))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1350,7 +1350,7 @@ def test_existing_sidecars_are_hardened_before_raw_connect(
 
     def observe_connect(database, **kwargs):
         observed_modes.append(stat.S_IMODE(sidecar.stat().st_mode))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1376,7 +1376,7 @@ def test_existing_0400_sidecars_are_hardened_before_writable_raw_connect(
 
     def observe_connect(database, **kwargs):
         observed_modes.append(stat.S_IMODE(sidecar.stat().st_mode))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1484,7 +1484,7 @@ def test_safe_sidecar_replacement_at_first_open_is_fully_revalidated(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1532,7 +1532,7 @@ def test_safe_sidecar_replacement_at_writable_reopen_is_fully_revalidated(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1583,7 +1583,7 @@ def test_missing_sidecars_are_not_precreated(tmp_path, monkeypatch):
             Path(f"{target}{suffix}").exists()
             for suffix in ["-wal", "-shm", "-journal"]
         )
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1616,7 +1616,7 @@ def test_optional_sidecar_unlinked_after_open_is_treated_as_vanished(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite, "_open_artifact_fd", unlink_after_open)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
@@ -1657,7 +1657,7 @@ def test_optional_replaced_sidecar_unlinked_after_initial_open_is_vanished(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(
         private_sqlite,
@@ -1711,7 +1711,7 @@ def test_optional_replaced_sidecar_unlinked_after_writable_reopen_is_vanished(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(
         private_sqlite,
@@ -1761,7 +1761,7 @@ def test_optional_safe_sidecar_replacement_after_unlink_is_fully_revalidated(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
     connection = connect_private_sqlite("db.base", target)
@@ -1800,7 +1800,7 @@ def test_eligible_0644_sidecar_replacement_is_hardened_before_raw_connect(
 
     def observe_connect(database, **kwargs):
         observed_modes.append(stat.S_IMODE(sidecar.stat().st_mode))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_then_open)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
@@ -1837,7 +1837,7 @@ def test_optional_sidecar_disappearing_during_open_is_treated_as_absent(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite, "_open_artifact_fd", unlink_before_open)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
@@ -1882,7 +1882,7 @@ def test_optional_sidecar_initial_unlinked_snapshot_revalidates_current_generati
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(
         private_sqlite.private_paths, "_posix_guards_available", lambda: True
@@ -1928,7 +1928,7 @@ def test_safe_sidecar_replacement_during_postcondition_is_revalidated(
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(
         private_sqlite,
@@ -2332,7 +2332,7 @@ def test_read_only_path_query_characters_are_percent_encoded(tmp_path, monkeypat
 
     def capture_connect(database, **kwargs):
         captured.append((database, kwargs))
-        return sqlite3.Connection(":memory:")
+        return kwargs.get("factory", sqlite3.Connection)(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", capture_connect)
     connection = connect_private_sqlite(

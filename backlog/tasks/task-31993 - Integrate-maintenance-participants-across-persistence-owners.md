@@ -120,3 +120,62 @@ Final self-review added three behavioral RED cases for forged/instance-shadowed
 validation callbacks, then enforced exact token type and direct class validation
 for operation/pause identity. The final32 focused cases and scoped static checks
 pass; no caller-supplied validation callback can confer authority.
+
+### Phase3 implementation plan (before code)
+
+1. Inspect the five concrete core SQLite owners and propose exact operation, borrower, native retirement and safe reuse APIs to the controller before shared edits.
+2. Establish behavioral RED for failed native-close reference retention, late mutation refusal, transaction ownership and native cached-handle drain; retain unresolved borrowers and actual thread-affinity blockers truthfully.
+3. Integrate the controller-approved bounded lifetime strategy for ChaChaNotes, Media, Prompts, Library Collections and Library Ingest Jobs. Preserve memory, managed/nested/borrowed transaction semantics and all-thread evidence; no generic close, rollback, garbage collection or caller-selected owner token qualifies drainage.
+4. Verify actual domain constructors/transactions and independent native maintenance exclusion, then targeted affected SQLite/domain/admission/census checks and scoped static/self-review checks.
+5. Record exact supported boundaries, remaining limitations and evidence, commit only this phase, and leave Task31993 In Progress with unchecked ACs.
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of approved runtime lifetime contract, preserving ADR-004 mapping and ADR-036 ownership. No startup retirement, full runtime-coverage promotion or production responder in this phase.
+
+Phase3 plan refinement, controller ruling54 (before shared edits): retain native APIs and implement conservative explicit source-thread borrower retirement. Managed transaction exit does not invalidate escaped native connections/cursors. Installed all-thread handle records and actual ordinary leases remain until successful explicit native close; raw/escaped/foreign-idle consumers truthfully block drainage. Later Task10 caller/app/headless job ownership boundaries must positively retire those caches at proven source-thread safe points before idling. This is a phase division, not reduced Task10 acceptance or a permanent unsupported declaration. No generic facade or executor redesign.
+
+### Phase3 implementation notes
+
+Under ADR-126 and controller rulings54–55, five exact installed core SQLite owners
+now gate cached getters and managed scopes, strongly retain actual native handle/
+lease associations and reserve explicit source-thread retirement. Existing native
+connection/cursor, nested/borrowed transaction and memory APIs remain intact.
+Managed exit does not revoke escaped borrowers. Failed native close or live liveness
+probe keeps references and exclusion. Distinct thread caches retire independently;
+Ingest's shared cache protects every accessing thread. Independent nested installed
+operations preserve ordinary multi-instance calls only through fresh gate-checked
+admission; no descendant authority transfers. Native registry association cannot
+be stolen by a second same-path instance. Uninstalled subclasses remain ordinary,
+unqualified callers; exact raw/unmatched returns remain actual blockers.
+
+Behavioral RED/GREEN covers five owners' close failures, native observer exclusion,
+late getters, admitted work/escaped cursors, active-work close, safe cache reuse,
+source-thread races, liveness failure and same-path association. Combined focused
+core/phase2 lifetimes:91 passed; final association fix's8-case affected subset passed
+(no claimed92-case whole rerun). Final private SQLite guards:316 passed/1 existing
+Windows skip after16 test spies were corrected to honor their supplied real native
+factory. Final affected Prompts/Chatbooks guards:43 passed. Earlier capture checks:
+62 passed. Full exact commands, overlapping-run limits and failed intermediate
+runs are retained in task-10-phase3-report.md; no full suite was run.
+
+The earlier domain check had257 passed/3 failed: two new real Prompts trace callback
+conflict regressions were fixed under ruling55; the remaining Media historical-schema
+fixture independently fails on immutable phase BASEb778f3883e7174bba0a1887363d53cf02af49240
+with duplicate chunk_engine_version. Controller carries that malformed fixture to
+Task13 historical-schema qualification; no migration change or replacement fixture
+was made here. The known phase2 combined-order app callback/bootstrap failure remains
+an explicit Task10 app/lifecycle obligation. Removed incorrect new-directory test
+oracle/speculative constructor work is disclosed as abandoned self-review, not
+behavioral regression proof. Scoped fatal lint, touched focused-module formatting
+and diff checks pass; the actual callback incident is recorded in testing lessons.
+
+Phase3 is complete, **Task10 is incomplete**. Startup lifetime remains installed,
+runtime coverage refuses, and no responder is enabled. Actual Library pool-service
+jobs, app-owned ingest persistence/parser callbacks, Chatbooks/Persona compound
+producers and remaining raw/config/model/TTS/operational/app/headless cohorts need
+full mutation and positive source-thread handle retirement before idle. Idle foreign
+caches, escaped raw objects and dead affine threads remain truthful blockers; these
+are required next integration work, not reduced final acceptance. Updated owner
+inventory names the exact caller handoffs without promoting syntax rows. Existing
+ADR-126/design references remain authoritative; all31993 ACs remain unchecked and
+status In Progress pending whole-task implementation and independent review.
