@@ -916,3 +916,11 @@ including the receipt string above. Added the Analysis tab's
 description (AC#5) — it was previously undocumented. Verified in
 real-screen tests for the choice row's painted text and its scope-change
 invalidation.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32060:
+**s** now enters Select mode from any focused Items row, in every layout
+that shows the list beside the Reader — it used to be inert (and drop its
+footer chip) wherever the Reader still had a real exit, e.g. the
+Library-collapsed layout at 100x30. The bulk-delete confirm sentence also
+wraps instead of clipping at the Items pane's narrowest, which is 32 cells,
+not the 36 the list canvas used to claim.)*
