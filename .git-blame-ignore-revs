@@ -314,3 +314,15 @@ ec731818132255dbf8b30deb6ba2f9a20ff20ecf
 # retargeted at the file the code moved to, and both size-ratchet rows are
 # re-pinned. Zero method bodies edited.
 a529dbd3ed0b13502b8d100e3053e0bea5baa119
+
+# Wave-8 task 3, 2026-09-08 -- the notes cleanup, and the LAST cleanup PR of
+# the eight-wave Library decomposition. Mechanical only: 571 screen-side
+# `self._library_note*` receivers retargeted to `self._notes_state.<field>` at
+# `ast` attribute spans, 43 `getattr` receiver fixes, 4 dotted dispatch-dict
+# string values, 1,031 test attribute retargets across 26 files, 11 fixture
+# nestings, the generated shim block deleted, 26 unreferenced delegators
+# pruned, 11 dead imports removed, and both size-ratchet rows re-pinned. No
+# method body was edited; the notes `canvas_sync.py` dotted branch and its
+# dual-receiver guard are the only behaviour-relevant lines, and both are
+# mutation-verified.
+3d670ee38d828424a4371222c03eb03614f6f668
