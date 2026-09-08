@@ -19,6 +19,14 @@ in a dedicated, versioned SQLite database owned through one application-scoped
 `TTSProfileRepository`. The profile store is separate from character cards,
 provider configuration, and the main conversation database.
 
+Construction timing clarification (2026-09-08, TASK-31942, ADR-097): the app
+captures the configured profile path and initializes lifecycle state during
+construction, but imports and constructs its one repository on first use through
+the existing ensure method. An app close request permanently prevents subsequent
+construction or reopening, including when profiles were never used. This defers
+pure startup cost without changing repository ownership, serialized operations,
+or ADR-125's pre-SQL admission and native-finalization requirements.
+
 A profile is a complete reusable generation selection: immutable UUID, bounded
 display name and normalized uniqueness key, canonical provider ID, exact model
 ID, nullable exact voice ID, response format, speed, validated provider-safe

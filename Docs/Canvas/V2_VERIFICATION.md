@@ -318,3 +318,46 @@ environment-blocked qualification, not the complete affected-selection gate.
 Known semaphore/inventory failures and the measured startup-budget breach remain;
 whole-correction review and V2 admission are still pending. The repair report and
 raw Canvas/baseline logs are preserved with the Task 7 evidence.
+
+## Authorized startup-budget repayment — 2026-09-08
+
+TASK-31942 Task7b defers pure TTS profile-repository construction through the
+existing app-owned first-use method. The configured path is still captured at
+app construction, concurrent callers share one owner/open task, and close latches
+even before first use. ADR-028 clarifies construction timing; ADR-097 budgets and
+ADR-125 native SQLite admission/finalization remain unchanged.
+
+The initial cut reached 963/972 at UI readiness but shifted the same 16 modules
+onto screen preload, breaching 516/500. The required guard caught this. A scoped
+profile-library import deferral now loads the genuine voice-bundle choice class
+only at the existing user-decision helper; postponed annotations do not load the
+portability/repository implementation. No service, repository, Canvas owner,
+budget constant or snapshot was changed.
+
+Implementation commits: `bd96a923c4`, `ae629ed080`. Targeted results:
+
+- App ownership: 44 passed; an inherited shutdown-order fixture was reconciled
+  with explicit recording hooks, without modifying production shutdown.
+- Native helper/repository lifecycle and import closure: 246 passed, including
+  the actual-app ordinary/abrupt exit gates with real first-use construction.
+- Existing bundle UI selection: 59 passed, 104 deselected.
+- Final performance/provenance/Canvas-startup selection: 50 passed, 5 warnings,
+  65.92s. Import625/660; UI-ready963/972; preload499/500 modules,
+  364325/378740 LOC and110163/123319 largest-route LOC.
+- Controller check on committed `ae629ed080`: 5 passed, 3 warnings, 21.78s.
+  This independently confirmed both UI/preload counts, real import/first-choice
+  behavior, and ordinary idle/partial-setup native exit preservation.
+
+The annotation-only follow-up had its own two-test passing check. Changed-span
+static checks found no introduced findings; 474 inherited Ruff findings and four
+pre-existing formatter-dirty files remain, so aggregate lint is not green.
+Warnings include existing dependency/syntax issues, intentional budget-headroom
+notices and the known host joblib serial fallback. Screen preload has only one
+module of remaining headroom. No dependency/host repair or full suite was run.
+
+Task-scoped independent review approved spec compliance and quality with no
+Critical/Important findings. The startup-budget breach is
+repaid, but known semaphore/inventory gaps, whole-correction review and Canvas V2
+admission remain separate, incomplete gates. TASK-31942 remains In Progress and
+V2 remains disabled. Exact commands, RED/GREEN evidence and scoped static results
+are preserved in this plan's `task-7b-report.md` and controller verification.
