@@ -7193,19 +7193,22 @@ pure-move recipe above.
 
 ### The eight-wave trajectory, measured
 
-Screen `_BUDGETS` values read by `git show <commit>:<path>` at each wave's
-boundary commits, never carried over from a report:
+**Every cell below was re-measured at the close** by `git show
+<commit>:tldw_chatbook/UI/Screens/library_screen.py` piped through an `ast`
+walk of the `LibraryScreen` class body — the ratchet's own semantics, not
+`wc -l`, and not carried over from any report. All sixteen boundary
+measurements agree with the `_BUDGETS` row recorded at that commit.
 
-| Wave | Subsystem(s) | Start | Final | Screen delta |
+| Wave | Subsystem(s) | Start (commit) | Final (commit) | Screen delta |
 |---|---|---|---|---|
-| 1 | conversations (exemplar) | 45134 / 1300 | 43965 / 1282 | **−1,169 / −18** |
-| 2 | export + collections | 43965 / 1282 | 42411 / 1267 | **−1,554 / −15** |
-| 3 | search + RAG | 43977 / 1316 | 42940 / 1304 | **−1,037 / −12** |
-| 4 | skills | 43225 / 1311 | 41155 / 1295 | **−2,070 / −16** |
-| 5 | ingest | 41574 / 1302 | 40094 / 1296 | **−1,480 / −6** |
-| 6 | prompts | 41393 / 1321 | 37574 / 1282 | **−3,819 / −39** |
-| 7 | media | 37537 / 1282 | 34669 / 1260 | **−2,868 / −22** |
-| 8 | notes | 35777 / 1290 | **32230 / 1258** | **−3,547 / −32** |
+| 1 | conversations (exemplar) | 45134 / 1300 (`49733bda7`) | 43965 / 1282 (`847cdde7f`) | **−1,169 / −18** |
+| 2 | export + collections | 43965 / 1282 (`2b20ebbb9`) | 42411 / 1267 (`39a976321`) | **−1,554 / −15** |
+| 3 | search + RAG | 43977 / 1316 (`315cd4c3c`) | 42940 / 1304 (`5ee7b60b9`) | **−1,037 / −12** |
+| 4 | skills | 43225 / 1311 (`2372ea764`) | 41155 / 1295 (`f42f75d98`) | **−2,070 / −16** |
+| 5 | ingest | 41574 / 1302 (`9e62dd8f7`) | 40094 / 1296 (`5b9c7bdf4`) | **−1,480 / −6** |
+| 6 | prompts | 41393 / 1321 (`e5e03846a`) | 37574 / 1282 (`33cffc4a4`) | **−3,819 / −39** |
+| 7 | media | 37537 / 1282 (`83e17323e`) | 34669 / 1260 (`014f695fc`) | **−2,868 / −22** |
+| 8 | notes | 35777 / 1290 (`889e12b86`) | **32230 / 1258** (`841261666`) | **−3,547 / −32** |
 
 **The eight waves' own PRs removed 17,544 lines and 160 `FunctionDef`s.**
 The screen went 45,134 → 32,230, a net of −12,904 — and the 4,640-line gap
