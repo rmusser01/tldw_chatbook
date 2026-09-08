@@ -5958,7 +5958,6 @@ class LibraryFileNotesWorkspace(Vertical):
             if self._active and self.is_mounted
             else None
         )
-        self._publish_structural_wait(wait)
         self._update_root_surface()
         return wait
 
@@ -5971,24 +5970,8 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._structural_wait_timer is not None:
             self._structural_wait_timer.stop()
             self._structural_wait_timer = None
-        self._publish_structural_wait(None)
         self._update_root_surface()
         self._update_controls()
-
-    def _publish_structural_wait(self, wait: StructuralWait | None) -> None:
-        """Tell the owning Library screen which wait is on screen, if any.
-
-        Duck-typed and best effort: this workspace also mounts standalone
-        (harnesses, the narrow reader shell), where there is no screen to
-        register with and no exit gate to keep honest.
-        """
-        try:
-            screen = self.screen
-        except Exception:
-            return
-        adopt = getattr(screen, "adopt_library_structural_wait", None)
-        if callable(adopt):
-            adopt(wait)
 
     def _abandon_root_change_task(self, task: asyncio.Task[Any]) -> None:
         """Cancel the wait's task and release the canvas in the same beat.

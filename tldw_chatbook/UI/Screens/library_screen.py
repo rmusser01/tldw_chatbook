@@ -3603,11 +3603,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_external_submit_consent: _LibraryIngestStartConsent | None = None
         self._library_external_submit_busy: bool = False
         self._library_external_submit_status: str = ""
-        #: task-32055: the one structural wait (folder change, skill import,
-        #: export write) currently on screen. Set by whichever canvas owns
-        #: the operation; consulted by the exit paths, which abandon it
-        #: rather than being blocked by it.
-        self._library_structural_wait: StructuralWait | None = None
+        #: task-32055: the screen-owned structural waits (skill import,
+        #: export write), one slot per owner -- a background export and a
+        #: skill import can be in flight at once, and neither may render or
+        #: cancel the other's. The File Notes folder change keeps its own
+        #: wait on the workspace, which also owns every way out of it.
+        self._library_structural_waits: dict[str, StructuralWait] = {}
         self._library_model_install_progress_label: str = ""
         self._library_model_install_progress_owner: str | None = None
         #: The 5s first-load failsafe armed in ``on_mount``; retained so
@@ -11084,41 +11085,33 @@ class LibraryScreen(BaseAppScreen):
             cancel=cancel,
             owner=owner,
         )
-        self._library_structural_wait = wait
+        self._library_structural_waits[owner] = wait
         if repaint is not None:
             # One shot: the line only changes once, when patience runs out.
             self.set_timer(STRUCTURAL_WAIT_PATIENCE_SECONDS, repaint)
         return wait
 
     def _library_structural_wait_for(self, owner: str) -> StructuralWait | None:
-        """Return the in-flight wait when it belongs to ``owner``."""
-        wait = self._library_structural_wait
-        return wait if wait is not None and wait.owner == owner else None
+        """Return ``owner``'s in-flight wait, if it has one."""
+        return self._library_structural_waits.get(owner)
 
     def _end_library_structural_wait(self, owner: str) -> None:
         """Clear the wait once ``owner``'s operation has settled."""
-        if self._library_structural_wait_for(owner) is not None:
-            self._library_structural_wait = None
+        self._library_structural_waits.pop(owner, None)
 
     @on(Button.Pressed, "#library-structural-wait-cancel")
     def _library_structural_wait_cancel_pressed(self, event: Button.Pressed) -> None:
-        """Abandon whatever structural wait the visible canvas is showing."""
+        """Abandon the skill import behind the Import row's Cancel.
+
+        The File Notes workspace mounts a button with this id too, but
+        handles and stops it itself (it owns that wait), so the only press
+        that reaches the screen is the Skills Import row's; the export ships
+        its own ``#library-export-cancel``.
+        """
         event.stop()
-        wait = self._library_structural_wait
+        wait = self._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT)
         if wait is not None:
             wait.request_cancel()
-
-    def adopt_library_structural_wait(self, wait: StructuralWait | None) -> None:
-        """Record the one in-flight structural wait a canvas is showing.
-
-        task-32055: canvases own their own operation; the screen keeps the
-        single registry so the exit paths below can abandon whatever is
-        running without knowing which canvas started it.
-
-        Args:
-            wait: The wait that just started, or ``None`` when it settled.
-        """
-        self._library_structural_wait = wait
 
     async def _flush_active_file_notes(self) -> bool:
         """Delegate the common leave guard only while Files owns Notes.
@@ -19462,16 +19455,18 @@ class LibraryScreen(BaseAppScreen):
         return self._export_controller._refresh_library_export_status_line()
 
     def _library_export_status_line(self) -> str:
-        """Render the Export quiet line: the live wait, else the raw status.
+        """Render the Export quiet line: the status, plus the wait's suffix.
 
-        task-32055: while the bundle write is running, the wait owns this
-        line so it can start saying "still working" and pointing at Cancel
-        once it outlives the patience window.
+        task-32055: the run's own status -- the per-phase progress tick
+        (``Collecting notes…  3/12``) while it has one -- always owns this
+        line; a slow bundle write only appends "still working · Cancel" to
+        whatever it currently says.
         """
+        status = self._export_state.status
         wait = self._library_structural_wait_for(WAIT_OWNER_EXPORT)
-        if wait is not None and self._export_state.running:
-            return wait.status_line(time.monotonic())
-        return self._export_state.status
+        if wait is None or not self._export_state.running:
+            return status
+        return wait.with_patience_suffix(status, time.monotonic())
 
     def _update_library_export_canvas_after_run(self) -> None:
         """Targeted DOM update once an export run finishes (success or failure).
@@ -24962,15 +24957,30 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _library_skills_import_status_line(self) -> str:
-        """Render the Import row's line: the live wait, else the receipt."""
+        """Render the Import row's line: the receipt, plus the wait's suffix.
+
+        task-32055: the row's own status owns this line -- including an
+        in-flight refusal ("An import is already in progress.") -- and a
+        slow import only appends "still working · Cancel" to it.
+        """
+        status = self._library_skills_import_status
         wait = self._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT)
-        if wait is not None and self._library_skills_import_in_flight:
-            return wait.status_line(time.monotonic())
-        return self._library_skills_import_status
+        if wait is None or not self._library_skills_import_in_flight:
+            return status
+        return wait.with_patience_suffix(status, time.monotonic())
 
     def _repaint_library_skills_import_status(self) -> None:
-        """Re-render the Import row once the wait stops being quiet."""
-        if not self._library_skills_import_in_flight:
+        """Re-render the Import row once the wait stops being quiet.
+
+        Runs off a timer, so the row it was armed on may be long gone:
+        leaving Skills mid-import is supported. Without the same guard the
+        patch below uses, this would reach whatever canvas is on screen --
+        the File Notes workspace mounts a button with the very same id.
+        """
+        if (
+            not self._library_skills_import_in_flight
+            or not self._library_skills_import_row_visible()
+        ):
             return
         self._patch_library_skills_import_status_line(
             self._library_skills_import_status_line()
@@ -24978,15 +24988,21 @@ class LibraryScreen(BaseAppScreen):
         try:
             self.query_one("#library-structural-wait-cancel", Button).display = True
         except (NoMatches, QueryError):
-            _sync_library_canvas(self, "skills")
+            # No button to reveal on this row: nothing to repaint, and a
+            # whole-canvas recompose would only destroy live state.
+            pass
+
+    def _library_skills_import_row_visible(self) -> bool:
+        """Whether this screen's Skills Import row is the one on screen."""
+        return (
+            self.is_mounted
+            and self.app.screen is self
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+        )
 
     def _patch_library_skills_import_status_line(self, text: str) -> None:
         """Patch only the mounted Import row status widget."""
-        if (
-            not self.is_mounted
-            or self.app.screen is not self
-            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
-        ):
+        if not self._library_skills_import_row_visible():
             return
         try:
             self.query_one("#library-skills-import-status", Static).update(text)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -264,6 +265,14 @@ async def test_skill_import_wait_reports_still_working_and_can_be_cancelled(
             == "Inspecting/importing… · still working · Cancel"
         )
 
+        # An in-flight refusal must still reach the row: the wait owns the
+        # suffix, never the whole line (crit8 review #2).
+        screen.handle_library_skills_import_run(SimpleNamespace(stop=lambda: None))
+        await pilot.pause()
+        assert _static_text(screen, "#library-skills-import-status") == (
+            "An import is already in progress. · still working · Cancel"
+        )
+
         cancel = screen.query_one(STRUCTURAL_WAIT_CANCEL, Button)
         assert cancel.display
         cancel.press()
@@ -347,10 +356,108 @@ async def test_export_wait_reports_still_working_beside_its_cancel(
         )
         assert screen.query_one("#library-export-cancel", Button).display
 
+        # Per-phase progress keeps the line; the wait only appends to it
+        # (crit8 review #1).
+        screen._apply_library_export_progress(
+            screen._export_state.run_id, "notes", 3, 12
+        )
+        await pilot.pause()
+        assert _static_text(screen, "#library-export-status-line") == (
+            "Collecting notes…  3/12 · still working · Cancel"
+        )
+
         screen.query_one("#library-export-cancel", Button).press()
         await pilot.pause()
         assert screen._library_structural_wait_for(WAIT_OWNER_EXPORT) is None
         assert _static_text(screen, "#library-export-status-line") == "Cancelling…"
+
+
+@pytest.mark.asyncio
+async def test_skill_import_patience_repaint_stays_off_other_rows(
+    tmp_path, monkeypatch
+) -> None:
+    """The 3 s repaint must not touch whatever row the user left for.
+
+    crit8 review #3: leaving Skills mid-import used to let the patience
+    timer flip the File Notes workspace's identically-id'd Cancel button on,
+    or recompose that unrelated canvas whole.
+    """
+    from tldw_chatbook.Library.library_structural_wait import WAIT_OWNER_SKILL_IMPORT
+    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+
+    root = tmp_path / "linked"
+    root.mkdir()
+    (root / "note.md").write_text("note", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica)
+    async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+        screen = pilot.app.screen
+        # An import started on the Skills row; the user is now on Folder files.
+        assert screen._library_skill_import_coordinator.claim(str(tmp_path / "alpha"))
+        wait = screen._begin_library_structural_wait(
+            "Inspecting/importing",
+            WAIT_OWNER_SKILL_IMPORT,
+            cancel=lambda: None,
+        )
+        wait.started_at -= 5.0
+        synced: list[str] = []
+        monkeypatch.setattr(
+            library_screen_module,
+            "_sync_library_canvas",
+            lambda _screen, kind: synced.append(kind),
+        )
+
+        screen._repaint_library_skills_import_status()
+        await pilot.pause()
+
+        assert "skills" not in synced
+        assert not workspace.query_one(STRUCTURAL_WAIT_CANCEL, Button).display
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_a_folder_change_never_steals_another_surfaces_wait(
+    blocked_root_change,
+) -> None:
+    """A folder change must leave the Skills row's own wait alone.
+
+    crit8 review #4: the File Notes workspace used to publish into the
+    screen's single wait slot, so a folder change overwrote a running skill
+    import's wait and its Cancel silently stopped working.
+    """
+    from tldw_chatbook.Library.library_structural_wait import WAIT_OWNER_SKILL_IMPORT
+
+    old_root, new_root, blocked = blocked_root_change
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=old_root, replica=replica)
+    async with _production_workspace_context(workspace, size=(120, 40)) as pilot:
+        screen = pilot.app.screen
+        cancelled: list[str] = []
+        skill_wait = screen._begin_library_structural_wait(
+            "Inspecting/importing",
+            WAIT_OWNER_SKILL_IMPORT,
+            cancel=lambda: cancelled.append("skill-import"),
+        )
+
+        await _start_blocked_root_change(pilot, workspace, blocked, new_root)
+        assert screen._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT) is skill_wait
+
+        workspace.query_one(STRUCTURAL_WAIT_CANCEL, Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace._structural_wait is None,
+            "Cancel did not clear the folder change",
+        )
+        assert screen._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT) is skill_wait
+
+        # And the Skills row's Cancel still reaches the import it belongs to.
+        screen._library_structural_wait_cancel_pressed(
+            SimpleNamespace(stop=lambda: None)
+        )
+        assert cancelled == ["skill-import"]
+    await workspace.shutdown()
+    replica.close()
 
 
 @pytest.mark.asyncio

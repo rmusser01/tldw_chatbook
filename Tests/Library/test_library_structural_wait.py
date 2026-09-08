@@ -45,6 +45,28 @@ def test_patience_window_is_configurable_and_defaults_to_three_seconds() -> None
     assert wait.status_line(105.0, patience_seconds=30.0) == "Changing folder…"
 
 
+def test_is_slow_flips_when_the_patience_window_closes() -> None:
+    wait = _wait()
+
+    assert wait.is_slow(102.9) is False
+    assert wait.is_slow(103.0) is True
+    assert wait.is_slow(101.0, patience_seconds=0.5) is True
+
+
+def test_patience_suffix_keeps_a_callers_own_progress_line() -> None:
+    """A surface with real progress owns the line; the wait only appends."""
+    wait = _wait(cancel=lambda: None)
+    progress = "Collecting notes…  3/12"
+
+    assert wait.with_patience_suffix(progress, 102.9) == progress
+    assert wait.with_patience_suffix(progress, 103.0) == (
+        "Collecting notes…  3/12 · still working · Cancel"
+    )
+    assert _wait().with_patience_suffix(progress, 103.0) == (
+        "Collecting notes…  3/12 · still working"
+    )
+
+
 def test_cancel_runs_once_and_reports_whether_it_fired() -> None:
     calls: list[int] = []
     wait = _wait(cancel=lambda: calls.append(1))

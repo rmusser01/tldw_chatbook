@@ -238,7 +238,7 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
         fake._library_entry_reconcile_is_current = lambda *_args: True
         # task-32055: the canvas state now renders the structural wait's own
         # line while an export runs, and the completion path clears the wait.
-        fake._library_structural_wait = None
+        fake._library_structural_waits = {}
         fake._library_export_status_line = (
             lambda: LibraryScreen._library_export_status_line(fake)
         )
@@ -312,7 +312,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
             ),
             query_one=pilot.app.query_one,
         )
-        fake._library_structural_wait = None
+        fake._library_structural_waits = {}
         fake._library_export_status_line = (
             lambda: LibraryScreen._library_export_status_line(fake)
         )

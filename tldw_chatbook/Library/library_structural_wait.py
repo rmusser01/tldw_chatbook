@@ -51,12 +51,48 @@ class StructuralWait:
     owner: str = ""
     _cancelled: bool = field(default=False, init=False, repr=False)
 
+    def is_slow(
+        self,
+        now: float,
+        patience_seconds: float = STRUCTURAL_WAIT_PATIENCE_SECONDS,
+    ) -> bool:
+        """Whether this wait has outlived its patience window at ``now``."""
+        return now - self.started_at >= patience_seconds
+
+    def with_patience_suffix(
+        self,
+        base: str,
+        now: float,
+        patience_seconds: float = STRUCTURAL_WAIT_PATIENCE_SECONDS,
+    ) -> str:
+        """Append the still-working suffix to a caller-owned status line.
+
+        A surface with something better to say than the label -- an export's
+        per-phase progress, a refused second import -- keeps its own line and
+        the wait only adds to it once it stops being quiet.
+
+        Args:
+            base: The surface's own line, already complete.
+            now: Current ``time.monotonic()`` reading.
+            patience_seconds: How long the wait stays quiet before it
+                reports that it is still working.
+
+        Returns:
+            ``base`` inside the patience window; after it, ``base`` plus
+            ``" · still working"`` and ``" · Cancel"`` when this wait can
+            actually be cancelled.
+        """
+        if not self.is_slow(now, patience_seconds):
+            return base
+        line = f"{base} · still working"
+        return f"{line} · Cancel" if self.cancel is not None else line
+
     def status_line(
         self,
         now: float,
         patience_seconds: float = STRUCTURAL_WAIT_PATIENCE_SECONDS,
     ) -> str:
-        """Return the status copy for this wait at ``now``.
+        """Return the status copy for a surface with no line of its own.
 
         Args:
             now: Current ``time.monotonic()`` reading.
@@ -68,11 +104,7 @@ class StructuralWait:
             ``"<label>… · still working"`` plus ``" · Cancel"`` when this
             wait can actually be cancelled.
         """
-        line = f"{self.label}…"
-        if now - self.started_at < patience_seconds:
-            return line
-        line = f"{line} · still working"
-        return f"{line} · Cancel" if self.cancel is not None else line
+        return self.with_patience_suffix(f"{self.label}…", now, patience_seconds)
 
     def request_cancel(self) -> bool:
         """Run the cancel callable at most once.
