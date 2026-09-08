@@ -48,7 +48,8 @@ Tests (TDD, red→green): `Tests/UI/test_library_media_side_by_side.py::test_bul
 
 Modified files: `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py`, `Tests/UI/test_library_media_side_by_side.py`, `Tests/UI/test_library_media_render_fixes.py`, `Docs/User_Guide/library/media-and-conversations.md`.
 
+<!-- SECTION:NOTES:END -->
+
 ## Renumbering provenance
 
 Filed as TASK-31978 during critique #6's fix wave; renumbered to TASK-31982 because a concurrent session landed its own TASK-31978 on dev first (2026-08-21 owner rule, TASK-19601: older arrival keeps the id). No other task references this one.
-<!-- SECTION:NOTES:END -->
