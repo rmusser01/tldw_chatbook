@@ -12309,3 +12309,60 @@ any NEW field access you add to a shared `library_screen` media mutation path
 that the multiselect fakes exercise must go through `getattr(..., None)` (and
 guard the None), not a bare attribute — the fakes are deliberately partial and
 will not grow a field just because production did.
+
+## Verify a named agent's model at the provider boundary (TASK-32026, 2026-09-07)
+
+**Incident.** The bulk-reader pilot needed a cheaper worker model. Existing
+AgentService tests showed that a named definition's model reached `chat_call`,
+but a recording gateway behind the real Console `_StreamingModelAdapter`
+observed `primary-model` when the child requested `cheap-worker`. The adapter
+accepted the override and then dispatched its constructor's parent resolution;
+usage normalization also labeled the call with that parent model. Testing only
+the service callback had left the actual provider behavior unverified.
+
+**Resolution.** Derive an immutable resolution per adapter call, changing only
+the model, and use it for request preparation, dispatch, and usage. The
+regression test runs parent and child calls concurrently and verifies their
+gateway model identities, unchanged shared resolution, matching usage labels,
+and isolation of the parent's continuation state. A separate real local-tool
+test verifies that the reader's allowlist still refuses a write.
+
+**Rule.** When a feature selects a model, endpoint, or credential scope, verify
+the selection at the final dispatch boundary as well as at the runtime callback.
+If parent and child share an adapter, include concurrent calls and continuation
+ownership in that check. Configuration persistence alone cannot demonstrate
+that a cheaper worker was used or that its usage was priced correctly.
+
+## Exercise real config and typed streams in a reader pilot (TASK-32026, 2026-09-08)
+
+**Incident.** The first live bulk-reader comparison made 41 calls after the
+focused offline checks were green. Every cost was unknown despite complete
+provider usage and configured prices: real `load_settings()` kept pricing
+under `COMPREHENSIVE_CONFIG_RAW`, while the evaluator read only the top level.
+Separately, ZAI stripped private reasoning from chunks into empty deltas; the
+Console's generic mapping parser rendered an unsupported-shape message for each
+one. Those locally generated strings polluted agent history and consumed output
+limits. The fake provider streams had not exercised this sanitized frame shape.
+
+**What worked.** A real-loader regression failed for normalized config while
+its raw-config control passed. A typed ZAI stream through the real Console
+normalizer reproduced three diagnostic chunks around one valid text chunk.
+Provider-local empty visible content removed the noise while native-tool
+loopback tests preserved fragments and private continuation metadata. Keep raw
+live captures immutable and put repricing/review in separate artifacts. The
+corrected repeat still failed to invoke the reader in all four delegated arms;
+fixing the harness did not establish a model-quality or savings benefit.
+
+
+## An isolated helper must import the checkout being verified (TASK-32026, 2026-09-08)
+
+**Incident.** Preparing the bulk-reader pilot PR against current dev moved file
+reads onto WorkspaceToolExecutor. Parent-process tests imported the PR worktree,
+but the shared virtual environment was installed from the older user checkout;
+the real helper starts with `python -I` and could not import workspace_tool_worker.
+A dedicated validation interpreter exposing the PR checkout to isolated imports
+restored real reads without changing the user environment.
+
+**What to do.** For subprocess-backed tests, verify package provenance inside
+the child interpreter with its actual isolation flags. A passing parent import
+from the working directory does not prove the helper will execute that code.

@@ -545,6 +545,14 @@ update, depending on whether a definition is selected in the list), **Delete**
 it). A status line under the buttons reports the outcome, including any
 validation error verbatim.
 
+**Bulk reader** fills the form with an unsaved read-only review preset; it does
+not create or overwrite a definition until you press **Save**. Its model starts
+blank. Choose a cheaper model only when the parent's provider endpoint accepts
+that model with the same sampling/thinking settings. The preset's requested
+file list is model guidance inside the active workspace, not an extra path
+permission boundary. See the [bulk-reader comparison pilot](../Examples/agents/bulk-reader/README.md)
+for its synthetic corpus, opt-in evaluator, limits, and manual review steps.
+
 **This is not a draft category.** Unlike the six "Draft — save with s"
 categories, Agents writes straight to the database on every Save or Delete —
 there is no **s**/**r** cycle and nothing to revert. Definitions are read once
