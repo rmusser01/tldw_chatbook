@@ -429,44 +429,48 @@ def test_maintenance_setup_failure_closes_handle_and_releases_exclusion(
 ) -> None:
     path = tmp_path / "maintenance-setup-failure.sqlite"
     database = CharactersRAGDB(path, "maintenance-setup-failure")
-    opened: list[sqlite3.Connection] = []
-    real_connect = trace_maintenance.connect_private_sqlite
+    try:
+        opened: list[sqlite3.Connection] = []
+        real_connect = trace_maintenance.connect_private_sqlite
 
-    def recording_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
-        connection = real_connect(*args, **kwargs)  # type: ignore[arg-type]
-        opened.append(connection)
-        return connection
+        def recording_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+            connection = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+            opened.append(connection)
+            return connection
 
-    def fail_registration(_connection: sqlite3.Connection) -> None:
-        raise RuntimeError("injected_registration_failure")
+        def fail_registration(_connection: sqlite3.Connection) -> None:
+            raise RuntimeError("injected_registration_failure")
 
-    monkeypatch.setattr(trace_maintenance, "connect_private_sqlite", recording_connect)
-    monkeypatch.setattr(
-        trace_maintenance,
-        "_install_canvas_revision_payload_validator",
-        fail_registration,
-    )
+        monkeypatch.setattr(
+            trace_maintenance, "connect_private_sqlite", recording_connect
+        )
+        monkeypatch.setattr(
+            trace_maintenance,
+            "_install_canvas_revision_payload_validator",
+            fail_registration,
+        )
 
-    with (
-        database.quiesce_connections(timeout_seconds=1.0),
-        pytest.raises(RuntimeError, match="injected_registration_failure"),
-    ):
-        PhysicalTraceCompactor(
-            database, policy=_permissive_policy()
-        )._open_maintenance_connection()
+        with (
+            database.quiesce_connections(timeout_seconds=1.0),
+            pytest.raises(RuntimeError, match="injected_registration_failure"),
+        ):
+            PhysicalTraceCompactor(
+                database, policy=_permissive_policy()
+            )._open_maintenance_connection()
 
-    assert len(opened) == 1
-    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-        opened[0].execute("SELECT 1")
-    resumed = database.get_connection()
-    assert resumed.execute("PRAGMA quick_check(1)").fetchone()[0] == "ok"
-    assert database.registered_connection_count() == 1
-    state = resumed.execute(
-        "SELECT state, lease_id, lease_owner FROM console_trace_maintenance_state "
-        "WHERE singleton_id = 1"
-    ).fetchone()
-    assert tuple(state) == ("idle", None, None)
-    database.close_connection()
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            opened[0].execute("SELECT 1")
+        resumed = database.get_connection()
+        assert resumed.execute("PRAGMA quick_check(1)").fetchone()[0] == "ok"
+        assert database.registered_connection_count() == 1
+        state = resumed.execute(
+            "SELECT state, lease_id, lease_owner FROM console_trace_maintenance_state "
+            "WHERE singleton_id = 1"
+        ).fetchone()
+        assert tuple(state) == ("idle", None, None)
+    finally:
+        database.close_connection()
 
 
 def test_integrity_verification_failure_keeps_retry_state_and_readability(
