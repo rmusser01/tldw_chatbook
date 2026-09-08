@@ -283,6 +283,66 @@ def test_recovery_does_not_treat_inaccessible_data_as_missing(tmp_path, monkeypa
     assert not (home / ".tldw_cli-data").exists()
 
 
+def test_data_root_probe_validates_before_accessing_the_filesystem(
+    tmp_path, monkeypatch
+):
+    def unexpected_probe(path):
+        pytest.fail("invalid environment-derived path reached lstat")
+
+    monkeypatch.setattr(Path, "lstat", unexpected_probe)
+    with pytest.raises(ValueError, match="dangerous pattern"):
+        config._data_root_entry_exists(tmp_path / "unsafe;home" / "data")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private lock contract")
+def test_default_root_lock_is_private_stable_and_does_not_chmod_home(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    first = config.get_user_data_dir()
+    lock = home / ".tldw_cli-data-root.lock"
+    identity = lock.stat().st_ino
+    assert config.get_user_data_dir() == first
+    assert lock.stat().st_ino == identity
+    assert _mode(lock) == 0o600
+    assert _mode(home) == 0o755
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX no-follow lock contract")
+def test_default_root_selection_rejects_symlinked_lock(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("keep me")
+    (home / ".tldw_cli-data-root.lock").symlink_to(outside)
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, None)
+
+    with pytest.raises(PrivatePathError):
+        config.get_user_data_dir()
+
+    assert outside.read_text() == "keep me"
+    assert not (home / ".local").exists()
+    assert not (home / ".tldw_cli-data").exists()
+
+
+def test_explicit_root_does_not_create_a_default_selection_lock(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _patch_data_dir_settings(monkeypatch, custom)
+
+    assert config.get_user_data_dir() == custom / "alice"
+    assert list(home.iterdir()) == []
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX fresh-install contract")
 def test_fresh_config_import_and_database_survive_restart_and_permission_repair(
     tmp_path,
@@ -304,9 +364,9 @@ assert path.parent.parent.name == '.tldw_cli-data', path
 db = connect_private_sqlite('db.chachanotes.primary', path)
 try:
     if sys.argv[1] == 'create':
-        db.execute('CREATE TABLE recovery_probe (value TEXT)')
-        db.execute('INSERT INTO recovery_probe VALUES (?)', ('survived restart',))
-        db.commit()
+        with db:
+            db.execute('CREATE TABLE recovery_probe (value TEXT)')
+            db.execute('INSERT INTO recovery_probe VALUES (?)', ('survived restart',))
     assert db.execute('SELECT value FROM recovery_probe').fetchone() == ('survived restart',)
 finally:
     db.close()

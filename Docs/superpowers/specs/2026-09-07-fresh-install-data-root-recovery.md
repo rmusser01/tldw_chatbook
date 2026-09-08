@@ -48,3 +48,19 @@ Two existing default roots are an explicit conflict, never an implicit migration
    preserve unrelated formatting in the large config module.
 6. Document the fallback and conflicts in README, self-review the diff, and record
    exact test evidence in TASK-32011. No full-suite sweep is authorized.
+
+## Qodo review follow-up
+
+1. Rebase on latest dev, then add a deterministic real two-process regression for
+   a permission repair between conventional-root refusal and fallback creation.
+2. Hold a private HOME-level interprocess lock across selection, root creation,
+   and profile-child creation. Preserve the read-only Settings helper.
+3. Validate probe paths without resolving, share the fallback directory name,
+   and use the SQLite connection transaction context in the subprocess test.
+4. Route explicitly named prompt exports through the selected runtime base,
+   update the compatibility-consumer architecture assertion, and cover custom and
+   fallback roots with actual prompt database files.
+5. Run the label-gated workflow on synchronize events too, retaining exact-head
+   checkout. Include the new race and export regressions in the Linux matrix.
+6. Reply to all six Qodo threads with evidence, rerun required checks on the
+   rebased head, and merge only when review findings and required gates are clear.

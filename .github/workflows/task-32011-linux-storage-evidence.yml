@@ -3,14 +3,16 @@ name: TASK-32011 one-off Linux storage evidence
 on:
   pull_request:
     branches: [dev]
-    types: [labeled]
+    types: [labeled, synchronize]
 
 permissions:
   contents: read
 
 jobs:
   linux-storage:
-    if: github.event.label.name == 'task-32011-linux-evidence'
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'task-32011-linux-evidence') &&
+      (github.event.action == 'synchronize' || github.event.label.name == 'task-32011-linux-evidence')
     name: Linux storage - Python ${{ matrix.python }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -42,6 +44,8 @@ jobs:
         run: |
           python -m pytest \
             Tests/test_database_path_privacy.py \
+            Tests/test_data_root_concurrency.py \
+            Tests/test_prompt_dump_storage.py \
             Tests/test_user_data_dir_isolation.py \
             Tests/test_config_private_bootstrap.py \
             Tests/Utils/test_private_paths.py \

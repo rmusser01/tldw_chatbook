@@ -8609,6 +8609,7 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 
 # --- CLI Database and Log File Path Getters ---
 BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for clarity
+_DEFAULT_DATA_FALLBACK_DIRECTORY = ".tldw_cli-data"
 # NOTE: BASE_DATA_DIR_CLI is a module-level constant frozen at IMPORT time
 # (kept for backward compatibility -- some callers reference it directly).
 # get_user_data_dir()'s fallback below does NOT use it; it resolves the
@@ -8635,6 +8636,7 @@ def _default_base_data_dir() -> Path:
 
 def _data_root_entry_exists(path: Path) -> bool:
     """Count links as existing data; never interpret access errors as absence."""
+    path = validate_path_simple(path, require_exists=False, probe_existing=False)
     try:
         path.lstat()
     except FileNotFoundError:
@@ -8645,7 +8647,7 @@ def _data_root_entry_exists(path: Path) -> bool:
 def _selected_default_base_data_dir() -> Path:
     """Read the durable default-root selection without creating directories."""
     conventional = _default_base_data_dir()
-    fallback = conventional.parents[2] / ".tldw_cli-data"
+    fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
     if not _data_root_entry_exists(fallback):
         return conventional
     if _data_root_entry_exists(conventional):
@@ -8659,8 +8661,29 @@ def _selected_default_base_data_dir() -> Path:
     return fallback
 
 
+@contextmanager
+def _default_data_root_lock() -> Iterator[None]:
+    """Serialize root selection and profile creation across starts (ADR-127)."""
+    lock_path = validate_path_simple(
+        _default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock",
+        require_exists=False,
+        probe_existing=False,
+    )
+    try:
+        create_private_text(lock_path, "")
+    except FileExistsError:
+        pass
+    # Keep this inode stable across releases and across config-file choices.
+    with open_private_text_append_stream(lock_path) as stream:
+        portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+        try:
+            yield
+        finally:
+            portalocker.unlock(stream)
+
+
 def _secure_default_data_dir() -> Path:
-    """Recover a fresh install from shared default ancestors (ADR-127)."""
+    """Recover a fresh root while the caller holds _default_data_root_lock."""
     selected = _selected_default_base_data_dir()
     try:
         return secure_private_directory(
@@ -8678,7 +8701,7 @@ def _secure_default_data_dir() -> Path:
         # Only a missing conventional root can select a new location. Existing
         # data, explicit overrides and unrelated failures must never be hidden.
         # The unchanged guard also refuses a shared/foreign/symlinked HOME.
-        fallback = conventional.parents[2] / ".tldw_cli-data"
+        fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
         return secure_private_directory(
             fallback, create=True, application_owned=True
         ).lexical_path
@@ -8781,17 +8804,19 @@ def get_user_data_dir() -> Path:
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
         configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    if configured_data_dir:
-        base_data_dir = lexical_path(configured_data_dir)
-        verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
-    else:
-        base_data_dir = _secure_default_data_dir()
-    user_dir = base_data_dir / user_folder
-    return secure_private_directory(
-        user_dir,
-        create=True,
-        application_owned=True,
-    ).lexical_path
+    with ExitStack() as stack:
+        if configured_data_dir:
+            base_data_dir = lexical_path(configured_data_dir)
+            verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
+        else:
+            stack.enter_context(_default_data_root_lock())
+            base_data_dir = _secure_default_data_dir()
+        user_dir = base_data_dir / user_folder
+        return secure_private_directory(
+            user_dir,
+            create=True,
+            application_owned=True,
+        ).lexical_path
 
 
 def _get_custom_database_path(

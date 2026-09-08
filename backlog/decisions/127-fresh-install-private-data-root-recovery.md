@@ -34,6 +34,21 @@ Never inspect/migrate database contents or silently hide an existing conventiona
 root. Existence probes use `lstat`, count dangling final symlinks as entries, and
 propagate errors other than absence instead of treating inaccessible data as new.
 
+All default-root selection and profile-directory creation run under a stable
+private `~/.tldw_cli-data-root.lock` interprocess lock. The lock file uses the
+existing no-follow private-file lifecycle and is never replaced or removed on
+release. This serializes concurrent Chatbook starts even across different config
+files, including a start that observes a permission repair while another is
+choosing the fallback. External filesystem mutations remain outside cooperative
+locking and still receive the existing fail-closed handling. Explicit custom
+roots do not acquire this default-location lock. Read-only Settings diagnostics
+do not create or lock storage.
+
+Environment-derived existence probes use central validation with
+`probe_existing=False` before `lstat`, preserving symlink evidence. The prompt
+export helper uses the runtime-selected base for its explicitly named profile;
+the historical conventional-only compatibility constant has no runtime consumers.
+
 Explicit data roots retain their existing validation and precedence, with no
 fallback. Unsafe HOME/ancestors, symlinks, foreign ownership, unavailable guards,
 and other I/O errors still fail closed. Config-file selection is unchanged; this
