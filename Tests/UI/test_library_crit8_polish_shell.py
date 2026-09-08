@@ -23,8 +23,12 @@ from Tests.UI.test_library_shell import (
     _FakeSkillsScopeService,
     _active_library_screen,
     _build_test_app,
+    _seed_conversations,
+    _two_conversations,
+    _two_notes,
     _wait_for_condition,
     _wait_for_library_shell,
+    _wait_for_selector,
 )
 
 #: The compact geometry the critique-8 live review ran at (register row 17).
@@ -164,3 +168,73 @@ async def test_skill_import_updates_the_rail_count_and_the_list_in_place():
         assert screen.query("#library-skill-row-summarize"), (
             "the imported skill must appear without re-entering the row"
         )
+
+
+# --- task-32061: Escape restores the Notes list pane ---------------------
+
+
+async def _open_first_tree_note(screen, pilot) -> None:
+    """Open the first Database note through the folder tree the canvas renders."""
+    screen.query_one("#library-row-browse-notes", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
+    screen.query_one("#library-notes-tree-note-1", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-note-title")
+    await pilot.pause()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_escape_from_the_editor_restores_the_notes_list_pane():
+    """task-32061: opening a note must not leave the list pane collapsed.
+
+    Only Library navigation auto-closes for a wide Notes work session (see
+    `Docs/User_Guide/library/notes.md`); the Notes list keeps whatever
+    visibility it had before the editor opened, and Escape returns to it.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_tree_note(screen, pilot)
+        assert screen.query_one("#library-notes-canvas").region.width > 0
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        notes_list = screen.query_one("#library-notes-canvas")
+        assert notes_list.display is True
+        assert notes_list.region.width > 0, (
+            "Escape from the editor must leave the Notes list visible"
+        )
+
+
+@pytest.mark.asyncio
+async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
+    """Restore means "the visibility it had", not "always open"."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
+        screen.query_one("#library-notes-items-grip", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_notes_reader_preferences.items_open is False
+
+        screen.query_one("#library-notes-tree-note-1", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_notes_reader_preferences.items_open is False
