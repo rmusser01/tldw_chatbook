@@ -256,6 +256,15 @@ assigned to the already-planned Task 4 extraction below.
 
 **Files:** Create `TTS/profile_validation.py`, `TTS/profile_sqlite_proof.py`, `DB/sql_identifier_core.py`, `Tests/TTS/test_profile_sqlite_proof.py`; modify `TTS/profile_schema.py`, `DB/sql_validation.py`, helper/entry/protocol/process modules, `Tests/DB/test_private_sqlite_protocol.py`, `Tests/DB/test_private_sqlite_process.py`, `Tests/DB/test_sql_validation.py` and `Tests/TTS/test_profile_schema.py`. Process changes are limited to fixed TTS operation membership and its existing planned 30-second initializer/normal five-second control budgets; no live repository lifecycle work yet.
 
+Extraction lint treatment: twelve existing broad exception-normalization/cleanup
+handlers move with the shared validator. Preserve their semantics, including
+hostile mapping refusal and control-flow precedence. Line-specific `BLE001`
+annotations with concrete safety rationales are permitted only for those proven
+relocated boundaries; record original/new locations for independent review. No
+file-wide/global suppression, trace logging, narrower exception list, or artificial
+control-flow rewrite solely to satisfy lint. Other introduced diagnostics must be
+fixed normally; a clean configured check does not mean the broad catches vanished.
+
 **Interfaces:**
 
 - Move `_validate_schema`, `_validate_schema_body`, their manifest/codec/domain helpers, `validate_profile_store_rows` and `_stream_exact_store_metadata_evidence` into `profile_validation.py`; keep compatibility imports at `profile_schema.py`. Keep signatures and error semantics, including `check_deadline`, unchanged.
@@ -293,6 +302,13 @@ def test_fixed_tts_proof_accepts_current_store_without_returning_rows(tmp_path):
 ```
 
 For the initializer's pre-live absent-sidecar state, `tts_recheck` validates that bound state; after `tts_pin_sidecars`, it requires the complete original cohort. Do not let repeated pin commands accept a replacement generation.
+
+An ordinary post-initialization TTS authority refusal must preserve the healthy
+helper, original pins and usable control channel: restoring the same exact
+authority must permit recheck and eventual close. Test this through a real helper
+lease, not only a direct `TTSProof` object. Initial proof refusal and actual
+transport/protocol/helper failure remain fail-closed; this is not permission to
+reprove a new path or continue SQLite work while authority is refused.
 
 - [ ] Run `../../.venv/bin/python -m pytest -q Tests/TTS/test_profile_sqlite_proof.py` and record RED. Extract the validator closure without changing existing schema versions/DDL or decoding behavior. Move only needed routines; migration orchestration stays in `profile_schema.py`.
 - [ ] Extend fixed namespace bootstrap to `TTS` and `TTS.migrations`. The import closure is restricted to the new validator/proof, existing profile types/errors/reference types, migration DDL modules, migration-journal bounds and stdlib leaf modules. No `profile_repository`, `profile_schema` live opener, config, providers, logging or package initializer. Test the actual child import graph and installed wheel in Task 7.
