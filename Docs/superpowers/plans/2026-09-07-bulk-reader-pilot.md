@@ -18,7 +18,9 @@ fixtures and records per-call provider usage and human-reviewable evidence.
 - No automatic routing, cross-provider routing, new dependencies or migrations.
 - The preset tools are exactly fs_list, fs_read, fs_glob, fs_grep; existing runtime permissions still apply.
 - Only targeted tests are authorized. Never run the full suite.
-- Do not make live model calls until the user selects the provider and model pair.
+- The user delegated model selection on 2026-09-08: use ZAI glm-5.3 as main
+  and glm-5.3-flash as worker. Live execution is authorized; credential
+  readiness currently prevents calls.
 - Limit the first live comparison runner to Moonshot/ZAI; refuse unsupported
   providers before application imports because their transport policies are
   outside the current bounded-request seam. The preset remains provider-neutral.
@@ -149,7 +151,10 @@ BULK_READER_PRESET = AgentDefinition(
 
 ### Completion
 
-- [ ] After user model choice, run the live comparison and review expected facts.
+- [ ] Once a ZAI credential is available, run the selected glm-5.3 /
+  glm-5.3-flash comparison and review expected facts. The 2026-09-08 preflight
+  stopped before model calls with Missing API key; see
+  backlog/docs/bulk-reader-zai-preflight-2026-09-08.md.
 - [x] Review the combined diff, integrate only this task's files into the user's
   checkout without overwriting concurrent edits, and recheck integration.
 - [x] Add task implementation notes and test/live evidence; check only satisfied

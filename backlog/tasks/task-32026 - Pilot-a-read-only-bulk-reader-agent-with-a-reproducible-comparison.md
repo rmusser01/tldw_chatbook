@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-08 04:45'
-updated_date: '2026-09-08 06:30'
+updated_date: '2026-09-08 06:37'
 labels: []
 dependencies: []
 ---
@@ -44,5 +44,5 @@ Worktree evidence: 19 focused preset/UI/adapter/regression tests passed, includi
 
 ADR required: no. ADR path: N/A. Existing named-agent/provider contracts are reused; no schema, dependency or automatic routing is introduced. Added an incident-based testing lesson about verifying model selection at the provider boundary.
 
-Live validation remains pending: no user-selected Moonshot/ZAI main/worker model pair has been supplied, no billable call was made, and no real quality or savings claim is established. Acceptance criterion 5 remains open and status stays In Progress.
+Live validation remains pending after the user delegated model selection on 2026-09-08. Selected ZAI glm-5.3 (main) and glm-5.3-flash (worker), using the existing same-provider route. The official model pages document function calling and compatible text parameters. The CLI preflight against an isolated copy of the relevant configured settings exited 2 with "zai is not ready: Missing API key. Set ZAI_API_KEY or add api_key under [api_settings.zai]." Neither supported provider had a configured or session-environment credential. No model request was made, no comparison report was written, and the original config remained byte-identical. Model quality, account access and savings remain unmeasured. Acceptance criterion 5 stays open and status remains In Progress. The selected pair, dated prices and preflight evidence are recorded in backlog/docs/bulk-reader-zai-preflight-2026-09-08.md.
 <!-- SECTION:NOTES:END -->
