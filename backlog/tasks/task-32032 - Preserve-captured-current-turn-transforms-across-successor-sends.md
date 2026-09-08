@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 05:11'
-updated_date: '2026-09-08 14:53'
+updated_date: '2026-09-08 15:50'
 labels:
   - console
   - bug
@@ -49,6 +49,7 @@ Reason: Record exact saved-source ownership for current-turn provider artifacts 
 5. Verify cold restart, edited exact source, tool successor, unknown and changed history, foreign source, stale reservation, mismatched policy, and migration rollback/upgrade with targeted real-database tests. Run affected trace suites, baseline-relative lint, changed-range formatting, and diff checks. Update task notes and documentation without commits, merging, or live profile access.
 6. Integrate restored eligible saved continuation groups through the actual controller. Prove transformed warm/cold successors and negative ownership/content controls; if a physical continuation tail exposes a mismatch, preserve the exact unchanged continuation domain and narrow the existing witness to its proven message range without generic artifact admission.
 7. Integrate current dev project-instruction ownership (TASK-31976.1) with the pinned current-turn transform and continuation proof. Preserve both ADR-097 invariants, add combined-path regressions where needed, verify the affected Console/project suites against current dev, and record reviewed integration and publication evidence. User explicitly authorized a PR against dev and playback validation after the original isolated implementation.
+8. PR #2512 Qodo follow-up: document accepted descriptors and optional source-revision returns for the two public provenance helpers; verify existing ownership regressions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -73,4 +74,6 @@ Current-dev integration validation: 121 project/transform/continuation/redaction
 All six current-dev derived gates passed, including 591 diagnostic owners and 3,445 task files with no duplicate IDs. Baseline-relative Ruff across 36 changed Python files has 1,014 inherited/current findings with zero introduced; changed Console ranges were formatted with AST equality checked, and the new combined test is fully formatted. Publication and real audio playback are handled by the coordinating task after final integration review.
 
 Final merge review is clear. The independent reviewer compared the runtime, service and witness changes with both parents and passed 43 selected project/source/retained-value/owned-retry/redaction cases. Additional actual-controller warm/cold probes preserved all three together: a saved Moonshot continuation with a credential canary, real bound AGENTS context with credential/PII filtering, and transformed-user restoration on an ordinary successor under one frozen conversation privacy policy; exact raw provider checkpoints and the original trace remained unchanged, and Capture-Off controls passed. All ten added test modules and the new combined-project test passed Ruff formatting. Staged diff --check against origin/dev passes; four first-parent whitespace warnings are unchanged upstream Library/critique files outside the PR diff. Console integration is complete; the coordinating task is completing real audio validation before committing the merge and publishing the PR.
+
+PR #2512 Qodo follow-up: added Google-style Args and Returns sections to current_turn_source_revision_id and saved_response_source_revision_id, describing accepted provenance descriptors, exact saved owner identifiers and unsupported-shape None results. No ownership or privacy logic changed. The adjacent admission/provenance gate passed 225 tests; the preceding rebased integration gate passed 173 relevant UI/TTS/DB/Console tests. Affected formatting, baseline-relative Ruff with zero new findings and all six derived checks pass. The existing ADR-097 contract is unchanged. Publication notes supersede the earlier no-commit/no-push investigation scope under the user's explicit PR and merge authorization.
 <!-- SECTION:NOTES:END -->

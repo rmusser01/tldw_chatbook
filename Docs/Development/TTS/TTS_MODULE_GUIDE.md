@@ -845,9 +845,15 @@ OPENAI_API_KEY_fallback = "sk-your-api-key"
 Kokoro streams raw PCM incrementally. Encoded responses (including WAV, MP3 and
 FLAC) collect the utterance before encoding one complete file in either engine.
 This avoids concatenating separate file headers, which can make decoders stop
-after the first chunk. Encoded output therefore waits for synthesis to finish
-and buffers audio proportional to the utterance length; choose PCM for
-incremental playback.
+after the first chunk. Each encoded request is limited to five minutes of
+24 kHz audio (7,200,000 samples). One growable buffer holds the float32 samples;
+encoding reads it without a second full float-array copy. Voice mixing applies
+the same duration limit to each voice and keeps one running mix, so retained
+audio does not grow with the number of voices. Each buffer retains at most
+28.8 MB of sample data; model inference and codec working memory are separate.
+An oversized request stops without publishing a partial audio file. Shorten
+the text or choose PCM for longer speech and incremental playback. Encoded
+output within the budget still waits for synthesis to finish.
 
 **Configuration:**
 ```toml

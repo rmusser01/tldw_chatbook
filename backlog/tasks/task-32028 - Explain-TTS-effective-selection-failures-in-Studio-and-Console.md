@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 04:56'
-updated_date: '2026-09-08 06:01'
+updated_date: '2026-09-08 15:50'
 labels:
   - tts
   - bug
@@ -39,6 +39,7 @@ Reason: Repair bounded, value-free diagnostics and recovery guidance using the e
 1. Add failing tests for actionable scoped resolution copy and bounded diagnostics in Studio and Console.
 2. Reuse a shared fixed-copy mapping for resolution failures and retain code, axis and source at existing log sites.
 3. Verify typed error branches, malicious/raw payload exclusion and unrelated failure handling; refresh the diagnostic inventory if required and document the recovery behavior.
+4. PR #2512 Qodo follow-up: document the public recovery formatter return and privacy contract; verify its existing diagnostic regressions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -51,4 +52,6 @@ No new ADR: existing ADR-039 settings ownership and ADR-029 metadata-only diagno
 The newer dev schema-v3 diagnostic inventory also tracks heuristic path candidates. Reviewed the added typed-resolution outcome_code branch: TTSEffectiveResolutionError maps to the fixed configuration_invalid outcome; resolution code/axis/source are constructor-validated metadata. Preserved the existing generic-outcome branch and legacy file_path candidate, and refreshed only this owner candidate row/count alongside the two already-reviewed owner digests. No unrelated candidate status or sink topology changed.
 
 Final combined dev verification: all six derived-artifact preflight gates passed, including the schema-v3 diagnostic inventory. The integrated TTS/settings cohort passed 200 tests under Python 3.12.11. Baseline-relative Ruff found zero new findings across all 23 changed Python files in the combined fix.
+
+PR #2512 Qodo follow-up: documented recovery_message with a Google-style Returns section and its fixed, value-free UI contract. The encoded-audio limit added for TASK-32027.1 now has literal Console recovery guidance that excludes upstream private payloads and avoids suggesting retries. The added malicious-payload regression failed before the change and passes afterward; the combined TTS gate passed 68 tests and the adjacent admission/provenance gate passed 225. Public diagnostic calls and inventory are unchanged; formatting, baseline-relative Ruff (zero introduced findings), and all six derived checks pass. No new ADR is required; ADR-039 and the existing typed error boundary remain applicable.
 <!-- SECTION:NOTES:END -->

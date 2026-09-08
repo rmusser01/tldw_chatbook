@@ -3201,6 +3201,14 @@ class TTSEventHandler:
         if isinstance(error, TTSRegistryClosedError):
             return "The TTS service is unavailable"
         if isinstance(error, TTSOperationError):
+            if (
+                error.code == "request_invalid"
+                and error.recovery_action == "shorten_text_or_use_pcm"
+            ):
+                return (
+                    "Kokoro encoded speech is limited to five minutes; "
+                    "shorten the text or choose PCM for longer speech"
+                )
             if error.code in {"configuration_invalid", "not_configured"}:
                 return "TTS is not configured; open STTS Settings"
             if error.code == "contract_incompatible":

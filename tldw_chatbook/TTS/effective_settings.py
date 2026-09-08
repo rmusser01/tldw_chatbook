@@ -130,7 +130,12 @@ class TTSEffectiveResolutionError(ValueError):
         super().__init__(f"TTS {axis} {code.replace('_', ' ')} ({location})")
 
     def recovery_message(self) -> str:
-        """Return actionable UI copy using only bounded resolution metadata."""
+        """Return actionable UI copy using only bounded resolution metadata.
+
+        Returns:
+            Guidance identifying the setting scope and recovery action, without
+            request text, raw identifiers, credentials, or exception payloads.
+        """
         location = {
             TTSSelectionSource.EXPLICIT: "the current speech request",
             TTSSelectionSource.CHARACTER_PROFILE: "the character voice profile",

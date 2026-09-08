@@ -635,9 +635,7 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
             )
         return
     required_artifacts = {
-        TraceTransformKind.MESSAGE_REWRITE: frozenset(
-            {TraceProvenanceSource.THINKING}
-        ),
+        TraceTransformKind.MESSAGE_REWRITE: frozenset({TraceProvenanceSource.THINKING}),
         TraceTransformKind.PROVIDER_OVERLAY: frozenset(
             {TraceProvenanceSource.PROVIDER_OVERLAY}
         ),
@@ -686,10 +684,14 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
         raise TraceProvenanceAlignmentError(
             "message rewrite sidecar does not match its exact owner"
         )
-    if transform is TraceTransformKind.MESSAGE_REWRITE and artifact is not None and not any(
-        type(item) is DerivedTraceProvenance
-        and item.transform is TraceTransformKind.THINKING_ATTACHMENT
-        for item in descriptor.inputs[1:]
+    if (
+        transform is TraceTransformKind.MESSAGE_REWRITE
+        and artifact is not None
+        and not any(
+            type(item) is DerivedTraceProvenance
+            and item.transform is TraceTransformKind.THINKING_ATTACHMENT
+            for item in descriptor.inputs[1:]
+        )
     ):
         raise TraceProvenanceAlignmentError(
             "message rewrite artifact requires its typed thinking attachment"
@@ -697,7 +699,15 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
 
 
 def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
-    """Return the exact source of a saved or admitted current-user row."""
+    """Return the exact source of a saved or admitted current-user row.
+
+    Args:
+        descriptor: Validated saved-revision or derived trace provenance.
+
+    Returns:
+        The saved revision identifier for a saved row or admitted current-turn
+        text transform, or None for other provenance shapes.
+    """
     if type(descriptor) is SavedRevisionTraceProvenance:
         return descriptor.revision_id
     if (
@@ -709,7 +719,15 @@ def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
 
 
 def saved_response_source_revision_id(descriptor: TraceProvenance) -> str | None:
-    """Return the exact saved owner of a response or its typed thinking replay."""
+    """Return the exact saved owner of a response or its typed thinking replay.
+
+    Args:
+        descriptor: Validated saved-revision or derived trace provenance.
+
+    Returns:
+        The saved revision identifier for a saved response or its typed thinking
+        rewrite, or None when the descriptor has no supported saved owner.
+    """
     if type(descriptor) is SavedRevisionTraceProvenance:
         return descriptor.revision_id
     if (

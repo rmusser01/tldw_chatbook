@@ -16,11 +16,27 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSEventHandler,
     TTSMessageSpeechRequestEvent,
 )
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.effective_settings import (
     TTSEffectiveResolutionError,
     TTSSelectionSource,
 )
 from tldw_chatbook.TTS.playground_types import STTSPlaygroundRequest
+
+
+def test_console_audio_limit_guidance_uses_the_safe_recovery_action():
+    error = TTSOperationError(
+        code="request_invalid",
+        message="PRIVATE upstream text must not reach Console",
+        retryable=False,
+        operation_id="fixture",
+        recovery_action="shorten_text_or_use_pcm",
+    )
+    copy = TTSEventHandler._tts_error_copy(error)
+    assert "five minutes" in copy
+    assert "shorten" in copy and "PCM" in copy
+    assert "PRIVATE" not in copy
+    assert "retry" not in copy
 
 
 @pytest.mark.parametrize(

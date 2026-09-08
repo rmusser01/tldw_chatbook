@@ -270,6 +270,9 @@ that needs attention; correct it before trying speech again. In **Lab > Speech**
 Kokoro's **Automatic (from voice)** language option follows the selected voice.
 Speech Lab starts with **Use ONNX** enabled, matching automatic reply speech;
 the switch still allows an explicit PyTorch selection.
+Kokoro WAV, MP3 and other encoded files are limited to five minutes per request.
+For longer speech, shorten the text or choose PCM; an oversized encoded request
+fails without playing a truncated file.
 
 ### Rails and handles
 

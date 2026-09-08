@@ -14,9 +14,11 @@ import wave
 import tempfile
 import shutil
 import hashlib
+from contextlib import aclosing
 from typing import AsyncGenerator, Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 from loguru import logger
 
 # Optional requests import for model downloading
@@ -40,6 +42,7 @@ except ImportError:
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
 from tldw_chatbook.TTS.base_backends import LocalTTSBackend
 from tldw_chatbook.TTS.audio_service import get_audio_service
 from tldw_chatbook.TTS.text_processing import TextChunker, TextNormalizer
@@ -75,6 +78,35 @@ KOKORO_DOWNLOAD_TIMEOUT = (
 
 #: Log a progress line at most this often during a long download.
 _KOKORO_PROGRESS_INTERVAL_SECONDS = 2.0
+
+# Encoded requests retain at most five minutes of 24 kHz mono float32 audio
+# (28.8 MB). Raw PCM does not require a complete-file buffer.
+KOKORO_MAX_ENCODED_AUDIO_SAMPLES = 24000 * 300
+
+
+def _check_audio_sample_limit(total_samples: int, max_samples: int | None) -> None:
+    """Reject an encoded utterance before retaining samples beyond its budget."""
+    if max_samples is not None and total_samples > max_samples:
+        raise TTSOperationError(
+            code="request_invalid",
+            message=(
+                "Kokoro encoded audio is limited to five minutes per request. "
+                "Shorten the text or choose PCM for longer speech."
+            ),
+            retryable=False,
+            operation_id=uuid4().hex,
+            recovery_action="shorten_text_or_use_pcm",
+        )
+
+
+def _append_audio_samples(
+    buffer: bytearray, samples: np.ndarray, max_samples: int | None
+) -> None:
+    """Copy samples into one growable float32 buffer within its sample budget."""
+    sample_count = int(np.size(samples))
+    _check_audio_sample_limit(len(buffer) // 4 + sample_count, max_samples)
+    if sample_count:
+        buffer.extend(np.asarray(samples, dtype=np.float32).tobytes())
 
 
 def _kokoro_stream_download(
@@ -807,10 +839,14 @@ class KokoroTTSBackend(LocalTTSBackend):
                 sample_rate = 24000
                 token_count = 0
                 total_samples = 0
-                sample_chunks = []
+                sample_buffer = bytearray()
                 if voice_config["is_mixed"]:
                     audio_generator = self._generate_mixed_voice(
-                        text, voice_config, speed=request.speed, lang=lang
+                        text,
+                        voice_config,
+                        speed=request.speed,
+                        lang=lang,
+                        max_samples=KOKORO_MAX_ENCODED_AUDIO_SAMPLES,
                     )
                 else:
                     audio_generator = self.kokoro_instance.create_stream(
@@ -821,34 +857,36 @@ class KokoroTTSBackend(LocalTTSBackend):
                     )
 
                 estimated_total_tokens = len(text.split()) * 2
-                async for samples, sr in audio_generator:
-                    sample_rate = sr
-                    sample_chunks.append(np.array(samples, dtype=np.float32, copy=True))
-                    total_samples += len(samples)
-                    token_count += len(samples) // 256
-                    progress = (
-                        min(0.95, token_count / estimated_total_tokens)
-                        if estimated_total_tokens > 0
-                        else 0.5
-                    )
-                    await self._report_progress(
-                        progress=progress,
-                        processed=token_count,
-                        total=estimated_total_tokens,
-                        status=f"Collecting audio: {total_samples / sample_rate:.1f}s",
-                        metrics={
-                            "sample_rate": sample_rate,
-                            "samples_collected": total_samples,
-                            "format": request.response_format,
-                        },
-                    )
+                async with aclosing(audio_generator):
+                    async for samples, sr in audio_generator:
+                        sample_rate = sr
+                        _append_audio_samples(
+                            sample_buffer, samples, KOKORO_MAX_ENCODED_AUDIO_SAMPLES
+                        )
+                        total_samples = len(sample_buffer) // 4
+                        token_count += len(samples) // 256
+                        progress = (
+                            min(0.95, token_count / estimated_total_tokens)
+                            if estimated_total_tokens > 0
+                            else 0.5
+                        )
+                        await self._report_progress(
+                            progress=progress,
+                            processed=token_count,
+                            total=estimated_total_tokens,
+                            status=f"Collecting audio: {total_samples / sample_rate:.1f}s",
+                            metrics={
+                                "sample_rate": sample_rate,
+                                "samples_collected": total_samples,
+                                "format": request.response_format,
+                            },
+                        )
 
                 if not total_samples:
                     logger.warning("KokoroTTSBackend: No audio generated")
                     yield b""
                     return
-                full_audio = np.concatenate(sample_chunks)
-                sample_chunks.clear()
+                full_audio = np.frombuffer(sample_buffer, dtype=np.float32)
                 try:
                     audio_bytes = await self.audio_service.convert_audio(
                         full_audio,
@@ -863,6 +901,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                     )
                     yield b""
                     return
+                del full_audio, sample_buffer
                 yield audio_bytes
 
                 generation_time = time.time() - start_time
@@ -894,6 +933,8 @@ class KokoroTTSBackend(LocalTTSBackend):
                     },
                 )
 
+        except TTSOperationError:
+            raise
         except Exception as e:
             logger.opt(exception=True).error(
                 f"KokoroTTSBackend: Error during ONNX generation: {e}"
@@ -952,50 +993,58 @@ class KokoroTTSBackend(LocalTTSBackend):
         }
 
     async def _generate_mixed_voice(
-        self, text: str, voice_config: Dict[str, Any], speed: float, lang: str
+        self,
+        text: str,
+        voice_config: dict[str, Any],
+        speed: float,
+        lang: str,
+        *,
+        max_samples: int | None = None,
     ) -> AsyncGenerator[tuple[np.ndarray, int], None]:
         """Generate audio with mixed voices"""
         if not voice_config["is_mixed"]:
             # Fallback to single voice
-            async for samples, sr in self.kokoro_instance.create_stream(
+            stream = self.kokoro_instance.create_stream(
                 text, voice=voice_config["primary_voice"], speed=speed, lang=lang
-            ):
-                yield samples, sr
+            )
+            total_samples = 0
+            async with aclosing(stream):
+                async for samples, sr in stream:
+                    total_samples += int(np.size(samples))
+                    _check_audio_sample_limit(total_samples, max_samples)
+                    yield samples, sr
             return
 
-        # Collect audio from each voice
-        voice_samples = []
+        # Keep one running mix and one voice buffer, independent of voice count.
+        mixed_audio = np.zeros(0, dtype=np.float32)
         sample_rate = 24000
 
         for voice, weight in voice_config["voices"]:
-            samples_list = []
-            async for samples, sr in self.kokoro_instance.create_stream(
+            sample_buffer = bytearray()
+            stream = self.kokoro_instance.create_stream(
                 text, voice=voice, speed=speed, lang=lang
-            ):
-                sample_rate = sr
-                samples_list.append(samples)
+            )
+            async with aclosing(stream):
+                async for samples, sr in stream:
+                    sample_rate = sr
+                    _append_audio_samples(sample_buffer, samples, max_samples)
+            if not sample_buffer:
+                continue
+            voice_audio = np.frombuffer(sample_buffer, dtype=np.float32)
+            if len(voice_audio) > len(mixed_audio):
+                mixed_audio = np.pad(
+                    mixed_audio, (0, len(voice_audio) - len(mixed_audio))
+                )
+            mixed_audio[: len(voice_audio)] += voice_audio * weight
+            del voice_audio, sample_buffer
 
-            if samples_list:
-                combined = np.concatenate(samples_list)
-                voice_samples.append((combined, weight))
-
-        if not voice_samples:
+        if not len(mixed_audio):
             return
-
-        # Mix the voices
-        max_length = max(len(samples) for samples, _ in voice_samples)
-        mixed_audio = np.zeros(max_length, dtype=np.float32)
-
-        for samples, weight in voice_samples:
-            # Pad if necessary
-            if len(samples) < max_length:
-                samples = np.pad(samples, (0, max_length - len(samples)))
-            mixed_audio += samples * weight
 
         # Normalize to prevent clipping
         max_val = np.abs(mixed_audio).max()
         if max_val > 1.0:
-            mixed_audio = mixed_audio / max_val
+            mixed_audio /= max_val
 
         # Yield in chunks for streaming
         chunk_size = 8192
@@ -1166,7 +1215,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             token_count = 0
             first_chunk_time = None
             total_audio_duration = 0.0
-            sample_chunks = []
+            sample_buffer = bytearray()
             estimated_total_tokens = (
                 sum(len(chunk.split()) for chunk in text_chunks) * 2
             )
@@ -1224,10 +1273,9 @@ class KokoroTTSBackend(LocalTTSBackend):
                     yield int16_samples.tobytes()
                 else:
                     # File containers must describe the complete utterance.
-                    if len(audio_data):
-                        sample_chunks.append(
-                            np.array(audio_data, dtype=np.float32, copy=True)
-                        )
+                    _append_audio_samples(
+                        sample_buffer, audio_data, KOKORO_MAX_ENCODED_AUDIO_SAMPLES
+                    )
 
                 # Track first chunk latency
                 if first_chunk_time is None:
@@ -1243,11 +1291,10 @@ class KokoroTTSBackend(LocalTTSBackend):
                 )
 
             if request.response_format != "pcm":
-                if not sample_chunks:
+                if not sample_buffer:
                     yield b""
                     return
-                audio_array = np.concatenate(sample_chunks)
-                sample_chunks.clear()
+                audio_array = np.frombuffer(sample_buffer, dtype=np.float32)
                 try:
                     audio_bytes = await self.audio_service.convert_audio(
                         audio_array,
@@ -1262,6 +1309,7 @@ class KokoroTTSBackend(LocalTTSBackend):
                     )
                     yield b""
                     return
+                del audio_array, sample_buffer
                 yield audio_bytes
 
             # Update metrics
@@ -1297,6 +1345,8 @@ class KokoroTTSBackend(LocalTTSBackend):
                     },
                 )
 
+        except TTSOperationError:
+            raise
         except Exception as e:
             logger.opt(exception=True).error(
                 f"KokoroTTSBackend: PyTorch generation failed: {e}"
