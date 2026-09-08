@@ -38,7 +38,7 @@ The screen is a two-pane workbench under a one-line purpose banner:
 | **System audio: …** status line | What the system-audio picker resolved to for this session — a native tap ("Native (macOS tap)" / "Native (parec)"), a named virtual device ("Virtual device: BlackHole"), or "Unavailable, mic only (…)" with the reason, in which case the meeting records room-mode (mic only). |
 | **Transcriber: …** status line | The speech-to-text provider and model in use, plus "(finalises per segment)" — each transcript row is a *final* for its own segment, not a running partial for the whole meeting. |
 | **Speaker labels after the meeting: …** status line | Whether offline diarization will run once you stop: "on", or "off (…)" naming the missing Python packages (see "Speaker labels" below). |
-| **Live speaker labels: …** status line | Whether speaker ids will be assigned *while* recording (what fills the Speakers legend): "on", or "off (…)" with the reason — "not enabled in settings" (`meetings.live_diarization` is off), the missing packages, or an unsupported `diarizer_backend`. |
+| **Live speaker labels: …** status line | Whether speaker ids will be assigned *while* recording (what fills the Speakers legend): "on (ONNX)" / "on (SpeechBrain)" naming the engine, or "off (…)" with the reason — "not enabled in settings" (`meetings.live_diarization` is off), the missing packages, or an unsupported `diarizer_backend`. While a meeting runs it also reports the ONNX engine's first-Start model download ("downloading 12 / 44 MB", "warming up") — see "Speaker-label engines and their models" below. |
 | Consent note | "Recording other people may require their consent." — a static reminder, not a gate; the app does not ask anyone else for consent on your behalf. |
 | **Start** | Begins recording and live transcription. Disabled while a meeting is already running or before the device probe finishes. |
 | **Pause** / **Resume** | Pauses capture and transcription in place; the same button relabels itself and resumes where it left off. |
@@ -87,8 +87,9 @@ config keys, not switches on this screen.
   speaker clusters against your voiceprint, and those only exist when a live
   diarizer is running — so with `[meetings] live_diarization = false` (the
   default) the rail reads "Voice match: off (live speaker labels off)" and
-  nothing is ever tagged. Set `live_diarization = true` (and keep the
-  diarization extra installed) to turn matching on.
+  nothing is ever tagged. Set `live_diarization = true` (with either engine
+  available — see "Speaker-label engines and their models" below) to turn
+  matching on.
 - **Plain call mode never matches.** In a call with `diarize_mic_channel`
   off (the default), the mic channel is already assumed to be you, so voice
   matching never runs there — there's nothing to disambiguate. It runs in
@@ -164,12 +165,116 @@ config keys, not switches on this screen.
   raise it if you're never matched, lower it if someone else gets matched
   as you. There is no on-screen "how close was your last match" readout
   yet — the field exists in the stored record but nothing computes it. The
-  closest thing to that number today is the opt-in test at
+  bake-off (linked below) does measure one per engine on its own corpus, and
+  its numbers say `0.2` is stricter than it needs to be: roughly `0.5` for
+  SpeechBrain, roughly `0.38` for the ONNX `titanet_small` embedder. Treat
+  those as better starting points than the shipped default, not as calibrated
+  for your voice. The closest thing to a number for *your* voice today is the
+  opt-in test at
   `Tests/Audio/test_voiceprint_real.py`, which enrolls a real voice with the
   macOS `say` command and prints the similarity it measured.
 - **The rail scrolls.** The Meetings rail is a scrolling pane, so on a
   small terminal (roughly 100×30 and below) the Voice row and the learning
   offer can sit below the fold — scroll the rail down to reach them.
+
+### Speaker-label engines and their models
+
+Live speaker labels (`meetings.live_diarization = true`) come from one of two
+engines, chosen by `meetings.diarizer_backend`:
+
+| `diarizer_backend` | What runs | What it needs installed |
+|---|---|---|
+| `"auto"` (default) | SpeechBrain if its packages are there, otherwise ONNX | either row below |
+| `"onnx"` | sherpa-onnx, plus two ONNX model files fetched on the first Start | `sherpa_onnx` and `numpy` — both are in the base install, no torch |
+| `"speechbrain"` | SpeechBrain's ECAPA model on torch | the `diarization` extra: `torch`, `torchaudio`, `speechbrain`, `sklearn` |
+| `"server"` | nothing — reserved; the rail reads "off (unsupported backend: server)" | — |
+
+`"local"`, the value this page used to document as the only one, is still
+accepted and now means `"auto"`.
+
+The "off (missing: …)" rail line names **import** names, which are not always
+what you type to install them:
+
+| The rail says missing | Install with |
+|---|---|
+| `sherpa_onnx`, `numpy` | `pip install sherpa-onnx numpy` |
+| `torch`, `torchaudio`, `speechbrain`, `sklearn` | `pip install -e ".[diarization]"` |
+
+That list only appears when you pinned an engine explicitly. Under `"auto"`
+the line reads "off (install the diarization extra)" instead, because a
+missing-package list for whichever engine happened to be tried last is not
+advice you asked for.
+
+**The ONNX engine downloads its models the first time you press Start** —
+from the sherpa-onnx GitHub releases into
+`<user data dir>/models/diarization/onnx/`. Two files: the shared
+segmentation model, plus the one embedder your `onnx_embedder` names.
+
+| File | sha256 (first 12) | Size |
+|---|---|---|
+| `pyannote-segmentation-3-0.onnx` (always) | `220ad67ca923` | 6.0 MB, fetched inside a 7.0 MB tarball |
+| `nemo_en_titanet_small.onnx` (`titanet_small`, the default) | `ad4a1802485d` | 40.3 MB |
+| `3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx` (`eres2net_en`) | `c59158379255` | 26.5 MB |
+| `wespeaker_en_voxceleb_resnet34.onnx` (`wespeaker_resnet34`) | `5ef208a9da14` | 26.5 MB |
+| `3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx` (`campplus_en`) | `357a834f702b` | 29.6 MB |
+
+Each file is verified against that hash when it lands and again every time
+the engine loads it; a bad download is discarded and retried once. Traffic
+only ever goes to `github.com` (redirects are followed only to
+`*.githubusercontent.com`), the whole fetch is bounded to 10 minutes, and
+nothing about your meeting is uploaded — the model fetch is the only network
+traffic Meetings makes.
+
+The "Live speaker labels:" rail line reports the whole sequence:
+
+| Line | What it means |
+|---|---|
+| `on (ONNX, ~47 MB of models fetched at Start)` | the models are not on disk yet; the next Start fetches them (the number is for `titanet_small`; ~33 MB for the two 26 MB embedders, ~37 MB for `campplus_en`) |
+| `downloading 12 / 44 MB` | the fetch, updated once per MB — its total counts the model files' own bytes, so it is a little under the estimate above, which counts the tarball actually transferred |
+| `warming up` | files in place; the worker process is loading them |
+| `on (ONNX)` / `on (SpeechBrain)` | labelling |
+| `off (models unavailable)` | the fetch or the load failed — recording, transcript and Library ingest are unaffected; the meeting simply keeps "You"/"Others" |
+| `off (not enabled in settings)` | `live_diarization` is `false` (the default) |
+
+Recording never waits for any of this: the download runs on its own thread
+and Start returns immediately, so a meeting that starts during the fetch
+records normally and picks up speaker ids when the engine is ready.
+
+- **`onnx_models_dir` is where the models live**, not just where they are
+  downloaded to. Leave it empty for the folder above. Point it at a folder of
+  files you placed there yourself for an air-gapped machine: a file already
+  there is hash-verified and never re-fetched — but a file that is simply
+  *absent* is still downloaded, so an offline install must pre-place **both**
+  the segmentation file and its embedder. A pre-placed file whose hash does
+  not match is refused outright and never re-fetched (the rail then reads
+  "off (models unavailable)").
+- **`onnx_embedder` picks the ONNX voice model**: `titanet_small` (default),
+  `eres2net_en`, `wespeaker_resnet34`, or `campplus_en`. It is part of your
+  voiceprint's identity, so changing it means enrolling your voice again.
+- **`auto` is not sticky.** It re-decides on every Start, so installing or
+  removing the `diarization` extra silently changes which engine labels your
+  meetings — and the two produce different kinds of vector, so an enrolled
+  voiceprint made with the other one reports "Voice match: off (needs
+  re-enrollment)". Pin `diarizer_backend = "onnx"` or `"speechbrain"` if you
+  would rather it never moved.
+
+**Which engine is better?** They were measured against each other over 188
+minutes of labelled conversation (VoxConverse + AMI) — see
+[the bake-off report](../STT_Evaluation/task-31827/report.md). ONNX wins the
+after-the-meeting accuracy (best diarization error 0.125 against SpeechBrain's
+0.371), the live-labelling purity (1.000 against 0.941) and the per-window
+latency (11.8 ms against 27.6 ms), and it needs no torch at all. What it does
+*not* win is voice-match separation — how far your enrolled voice sits from
+everyone else's — where SpeechBrain's margin is 0.734 and the best ONNX
+embedder's is 0.640. That is the one number "Remember my voice" depends on, so
+`auto` still prefers SpeechBrain when the torch extra is installed. If you do
+not use voice matching, `diarizer_backend = "onnx"` is the better pick.
+
+**Model attribution.** `nemo_en_titanet_small.onnx` is NVIDIA's TitaNet-small,
+licensed **CC-BY-4.0** (© NVIDIA), redistributed through the sherpa-onnx
+releases. The other assets: pyannote `segmentation-3.0` (MIT), WeSpeaker
+ResNet34 (Apache-2.0), and 3D-Speaker ERes2Net / CAM++ (Apache-2.0; check
+ModelScope's own terms before redistributing them).
 
 ## Common tasks
 
@@ -225,8 +330,10 @@ flat keys only — a dotted lookup into a nested table does not work here):
 | `keep_raw_tracks` | `true` | Keep the separate `you.wav` / `others.wav` files after Library ingest finishes (rather than deleting them once the raw-track cleanup runs). |
 | `post_transcribe` | `true` | Run the offline transcription pass on `mixed.wav` during Library ingest. |
 | `post_diarize` | `true` | Ask that offline pass to also diarize (assign speaker labels) — see "Speaker labels" below. |
-| `live_diarization` | `false` | Assign speaker ids while recording instead of only in the offline pass — feeds the Speakers legend. Requires the same diarization packages as `post_diarize` and `diarizer_backend` set to `"local"`. |
-| `diarizer_backend` | `"local"` | Which live diarizer to build when `live_diarization` is on. Only `"local"` is implemented today. |
+| `live_diarization` | `false` | Assign speaker ids while recording instead of only in the offline pass — feeds the Speakers legend. Needs one of the two engines below; the base install already ships the ONNX one. |
+| `diarizer_backend` | `"auto"` | Which engine assigns the live speaker ids: `"auto"`, `"onnx"`, `"speechbrain"`, or the reserved `"server"` — see "Speaker-label engines and their models" above. `"local"` still works and means `"auto"`. |
+| `onnx_embedder` | `"titanet_small"` | Which voice model the ONNX engine uses: `titanet_small`, `eres2net_en`, `wespeaker_resnet34`, `campplus_en`. Part of your voiceprint's identity — changing it means enrolling again. |
+| `onnx_models_dir` | `""` (→ `<data_dir>/models/diarization/onnx`) | Where the ONNX model files live. Point it at pre-placed files for an air-gapped install; anything missing there is still downloaded. |
 | `max_speakers` | `8` | Upper bound the local live diarizer uses when clustering voices into speaker ids. |
 | `diarize_mic_channel` | `false` | Hybrid rooms: also diarize the mic ("you") and overlap ("both") channels in call mode instead of always pre-naming them — see "Speaker labels" below. |
 | `voice_match` | `true` | Tag your own speech with your display name using an enrolled voiceprint — see "Remember my voice" above. No effect until you enroll one. |
@@ -287,9 +394,11 @@ what happens to a meeting once it's queued.
   `scikit-learn` are installed (install them together with the
   `diarization` extra: `pip install -e ".[diarization]"`); otherwise the
   "Speaker labels after the meeting" status line reads "off" and names the
-  missing packages, and diarization is simply skipped. Turning on
+  missing packages, and diarization is simply skipped. (That offline pass is
+  torch-only — the ONNX engine described in "Speaker-label engines and their
+  models" above is for the *live* labels, not for it.) Turning on
   `meetings.live_diarization` (with `diarizer_backend` left at its default,
-  `"local"`, and the same packages installed) assigns speaker ids as
+  `"auto"`, and either engine's packages installed) assigns speaker ids as
   segments arrive instead: the legend fills in with "Speaker 1", "Speaker
   2", … as each new voice is heard, and typing a name into a row's rename
   box relabels that speaker everywhere — the legend, the transcript shown so
@@ -371,7 +480,23 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against dev @ 15254e860 + feat/meeting-voiceprint @ 74b771396 (its
+*Verified against dev @ 15254e860 + feat/meeting-onnx-diarizer @ bea5225ea —
+2026-09-07. That branch added the torch-free ONNX (sherpa-onnx) live diarizer
+(TASK-31827): the "Speaker-label engines and their models" section and the
+three new `[meetings]` keys (`diarizer_backend`'s four values, `onnx_embedder`,
+`onnx_models_dir`) were verified by reading `tldw_chatbook/Audio/meeting_owner.py`
+(`DIARIZER_BACKENDS`, `ENGINE_MODULES`, `AUTO_ORDER`, the three field
+validators), `tldw_chatbook/Audio/diarizer_engine_onnx.py` (the manifest's file
+names, sizes, hashes and licences, the download allowlist and 10-minute budget,
+`onnx_models_dir` semantics) and
+`tldw_chatbook/UI/Screens/meetings_screen.py` (`_live_diarization_copy`,
+`_tick_diarizer_status`, `_onnx_download_mb`) — not by a live session: no
+meeting has been recorded on this host with `live_diarization = true`, and no
+model download has been watched on the rail. The engine-comparison paragraph
+and the `voice_match_threshold` starting values are quoted from the measured
+bake-off report in `Docs/STT_Evaluation/task-31827/`, whose numbers come from
+one Apple M-series machine (the x86 runner half was never dispatched). Earlier
+stamp: feat/meeting-voiceprint @ 74b771396 (its
 final fix wave plus the Qodo review round, which added the transfer-path and
 import-record refusals documented above) —
 2026-09-07. That branch added self-voiceprint enrollment and matching

@@ -5217,24 +5217,28 @@ post_diarize = true
 # install ships one; see diarizer_backend below for the choice.
 live_diarization = false
 # Which engine assigns the live speaker ids when live_diarization is on:
-#   "auto"        - the first engine whose packages are installed (default)
+#   "auto"        - the first engine whose packages are installed, SpeechBrain
+#                   before ONNX (default; "local" is the old name for it)
 #   "onnx"        - sherpa-onnx; ships with the base install, no torch needed
 #   "speechbrain" - needs the "diarization" extra (torch, torchaudio,
 #                   speechbrain, scikit-learn)
 #   "server"      - reserved; not available yet
-# Switching engines invalidates an enrolled voiceprint (the two produce
-# different kinds of vector), so pin this if you do not want "auto" to change
-# it for you when you add or remove the torch extra.
+# ONNX measures better on accuracy, live purity and speed; SpeechBrain
+# separates one enrolled voice from others better, which is why "auto" still
+# prefers it (Docs/STT_Evaluation/task-31827/report.md). Switching engines
+# invalidates an enrolled voiceprint (the two produce different kinds of
+# vector), so pin this if you do not want "auto" to change it for you when you
+# add or remove the torch extra.
 diarizer_backend = "auto"
 # Which speaker embedder the "onnx" engine uses: titanet_small,
 # wespeaker_resnet34, eres2net_en or campplus_en. Also part of the voiceprint
 # identity -- changing it means enrolling again.
 onnx_embedder = "titanet_small"
 # Where the ONNX model files live; empty = <data_dir>/models/diarization/onnx,
-# fetched on the first Start (~46 MB for titanet_small). Point it at a
-# directory of pre-placed files for an air-gapped install: the files already
-# there are verified and never re-fetched, and only missing ones are
-# downloaded.
+# fetched from the sherpa-onnx GitHub releases on the first Start (~47 MB for
+# titanet_small). Point it at a directory of pre-placed files for an
+# air-gapped install: the files already there are hash-verified and never
+# re-fetched, and only missing ones are downloaded.
 onnx_models_dir = ""
 # Upper bound the local live diarizer uses when clustering voices into
 # speaker ids.
