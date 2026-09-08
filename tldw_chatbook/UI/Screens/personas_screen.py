@@ -187,11 +187,13 @@ from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
     PersonaVisualCancelRequested,
     PersonaVisualClearRequested,
     PersonaVisualCustomStateDialog,
+    PersonaVisualExportRequested,
     PersonaVisualImportRequested,
     PersonaVisualPreviewRequested,
     PersonaVisualReplaceRequested,
     PersonaVisualSaveRequested,
     PersonasPersonaVisualPackWidget,
+    PetdexImportRequested,
 )
 from ...Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
@@ -9038,9 +9040,13 @@ class PersonasScreen(BaseAppScreen):
             )
             for asset in graph.assets
         }
+        exported = repository.get_active_persona_pack_for_export(snapshot.persona_id)
+        if exported is None or exported.graph.identity != graph.identity:
+            raise ValueError("persona_visual_source_changed")
         return persona_visual_draft_from_graph(
             graph,
             source_storage_keys=source_keys,
+            source_context=dict(exported.source_context),
         )
 
     async def _configure_persona_visual(
@@ -9490,7 +9496,10 @@ class PersonasScreen(BaseAppScreen):
             if cancellation is not None:
                 raise cancellation
 
-    async def _import_persona_visual_from_path(self, path: str) -> bool:
+    async def _import_persona_visual_from_path(
+        self, path: str, *, source_guard: Callable[[], bool] | None = None,
+        destination_guard: Callable[[], bool] | None = None,
+    ) -> bool:
         state = self._persona_visual_authoring
         if state is None or Path(path).suffix.lower() != ".tldw-persona-vpack":
             if state is not None:
@@ -9568,6 +9577,22 @@ class PersonasScreen(BaseAppScreen):
                 or event.is_set()
                 or not self._persona_visual_snapshot_is_current(state.snapshot)
             ):
+                await cleanup_review(review)
+                return False
+            if source_guard is not None:
+                checked = await _drain_to_thread(
+                    source_guard, task_name="personas-persona-visual-source-guard"
+                )
+                cancellation = cancellation or checked.cancellation
+                if (
+                    checked.error is not None or checked.value is not True
+                    or cancellation is not None or event.is_set()
+                    or not self._persona_visual_snapshot_is_current(state.snapshot)
+                    or (destination_guard is not None and not destination_guard())
+                ):
+                    await cleanup_review(review)
+                    return False
+            if destination_guard is not None and not destination_guard():
                 await cleanup_review(review)
                 return False
             old_workspace = state.workspace
@@ -9971,6 +9996,34 @@ class PersonasScreen(BaseAppScreen):
             group="personas-buddy-character",
             exclusive=True,
             exit_on_error=False,
+        )
+
+    @on(PetdexImportRequested)
+    def _handle_petdex_import_requested(self, message: PetdexImportRequested) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        from ...Petdex.review import review_petdex_import
+
+        self._io_dialog_active = True
+        self.run_worker(
+            review_petdex_import(self), group="personas-petdex",
+            exclusive=True, exit_on_error=False,
+        )
+
+    @on(PersonaVisualExportRequested)
+    def _handle_persona_visual_export_requested(
+        self, message: PersonaVisualExportRequested
+    ) -> None:
+        message.stop()
+        if self._io_dialog_active:
+            return
+        from ...Petdex.review import export_native_buddy
+
+        self._io_dialog_active = True
+        self.run_worker(
+            export_native_buddy(self), group="personas-native-export",
+            exclusive=True, exit_on_error=False,
         )
 
     @on(PersonaVisualImportRequested)

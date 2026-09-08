@@ -27,16 +27,13 @@ from .assets import (
 from .repository import (
     PersonaVisualIdentity,
     PersonaVisualRepository,
+    _source_context_json,
 )
 from .validation import validate_persona_visual_manifest
-
 
 _ERROR_PREFIX = "persona_visual_"
 _READ_CHUNK_BYTES = 64 * 1024
 _MANIFEST_LIMIT = 2 * 1024 * 1024
-_SOURCE_CONTEXT_KEYS = frozenset(
-    {"source_id", "provenance", "license", "source_server_commit"}
-)
 _SOURCE_KINDS = frozenset({"imported", "manual"})
 _SUFFIXES = {
     "image/png": ".png",
@@ -354,6 +351,7 @@ def publish_persona_visual(
                 )
             else:
                 graph = repository.publish_version(
+                    source_context=context or None,
                     persona_id=snapshot.persona_id,
                     manifest=manifest,
                     manifest_storage_relpath=manifest_storage,
@@ -575,26 +573,10 @@ def _validate_snapshot(
             if type(item) is not tuple or len(item) != 2:
                 raise ValueError
             key, value = item
-            if (
-                type(key) is not str
-                or key not in _SOURCE_CONTEXT_KEYS
-                or key in context
-                or type(value) is not str
-                or not value
-                or len(value) > 256
-            ):
-                raise ValueError
-            value.encode("utf-8")
-            stripped = value.strip()
-            if (
-                "/" in value
-                or "\\" in value
-                or any(ord(character) < 32 for character in value)
-                or stripped in {".", ".."}
-                or stripped.startswith(("{", "[", "~"))
-            ):
+            if type(key) is not str or key in context or type(value) is not str:
                 raise ValueError
             context[key] = value
+        _source_context_json(context)
         sources: list[tuple[str, PersonaVisualAssetMetadata]] = []
         metadata_items: list[PersonaVisualAssetMetadata] = []
         source_keys: set[str] = set()

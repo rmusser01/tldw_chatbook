@@ -3701,7 +3701,7 @@
 
     PersonasPersonaVisualPackWidget {
         width: 100%;
-        height: 30;
+        height: 33;
         min-height: 20;
         margin-top: 1;
         padding: 1;
@@ -3744,9 +3744,9 @@
 
     PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
         width: 100%;
-        height: 9;
+        height: 12;
         layout: grid;
-        grid-size: 3 3;
+        grid-size: 3 4;
         grid-gutter: 0 1;
         margin-top: 1;
     }
@@ -3763,7 +3763,7 @@
     }
 
     PersonasPersonaVisualPackWidget.-narrow {
-        height: 34;
+        height: 37;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
@@ -3906,6 +3906,23 @@
     PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
         display: none;
     }
+
+/* ===== WIDGET: PetdexImportReviewDialog (Widgets/Persona_Widgets/petdex_import_review.py) ===== */
+
+    PetdexImportReviewDialog { align: center middle; }
+    PetdexImportReviewDialog #petdex-review {
+        width: 94%; max-width: 96; height: 94%;
+        border: round $accent; background: $panel; padding: 0 1;
+    }
+    PetdexImportReviewDialog #petdex-scroll { height: 1fr; }
+    PetdexImportReviewDialog .petdex-copy { height: auto; }
+    PetdexImportReviewDialog #petdex-states { height: 10; }
+    PetdexImportReviewDialog #petdex-preview-host { height: 10; }
+    PetdexImportReviewDialog .petdex-actions { height: 3; }
+    PetdexImportReviewDialog .petdex-actions Button {
+        width: 1fr; min-width: 0; border: none;
+    }
+
 
 /* ===== WIDGET: ToolPackImportOptionsModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 

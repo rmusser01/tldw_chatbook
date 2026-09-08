@@ -24,7 +24,7 @@ from .assets import (
     load_persona_visual_asset,
     validate_persona_visual_asset_set,
 )
-from .repository import PersonaVisualRepository
+from .repository import PersonaVisualRepository, decode_native_artwork
 from .validation import validate_persona_visual_manifest
 
 
@@ -62,6 +62,10 @@ class BuddySnapshot:
 def _artwork(source: Mapping[str, Any]) -> dict[str, Any]:
     # Operational provenance and local source IDs never become creator credits.
     context = source.get("source_context", {})
+    if isinstance(context, Mapping) and "artwork" in context:
+        return decode_native_artwork(context["artwork"])
+    if "artwork" in source:
+        return decode_native_artwork(source["artwork"])
     if isinstance(context, Mapping) and ARTWORK_NAMESPACE in context:
         return artwork_context(context)[ARTWORK_NAMESPACE]
     if ARTWORK_NAMESPACE in source:

@@ -1,6 +1,6 @@
 # Import Petdex companions as native Buddies
 
-Status: Design review
+Status: Implemented in the isolated branch; verification linked below
 Date: 2026-09-07
 Creator: tldw-project
 Programme: [Buddy imports and characters](2026-09-07-buddy-character-programme-design.md)
@@ -133,3 +133,10 @@ workflow without a separate Petdex-specific character pathway.
 ADR required: yes. Define the external data-to-native import boundary, attribution
 and reviewed operational mappings before implementation. No Petdex runtime or CLI
 dependency, no new shared state catalog, and no automated third-party publication.
+
+## Implementation record
+
+[ADR-134](../../../backlog/decisions/134-reviewed-petdex-import-and-pinned-https.md),
+[implementation plan](../plans/2026-09-07-petdex-import.md), and
+[verification](../reviews/2026-09-07-petdex-import-verification.md) record the local
+Chatbook implementation. No server-native import or notice-preservation claim is made.

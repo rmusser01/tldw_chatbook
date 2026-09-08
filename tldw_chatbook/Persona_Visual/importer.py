@@ -41,7 +41,6 @@ from .contracts import (
 )
 from .repository import PersonaVisualIdentity
 
-
 PERSONA_VISUAL_PACK_SCHEMA = "tldw.persona_visual_pack.v1"
 _REQUIRED_MEMBERS = frozenset(
     {
@@ -187,6 +186,7 @@ def import_persona_visual_pack(
                 description="Imported Persona Visual pack",
                 manifest_json=manifest_json,
                 assets=draft_assets,
+                source_context=pack["source_context"],
             )
         _raise_if_cancelled(cancelled)
         if not _source_identity_current(
@@ -431,7 +431,33 @@ def _pack(value: object) -> dict[str, Any]:
     if type(persona) is dict:
         policy_rules = persona.get("policy_rules")
     rule_count = len(policy_rules) if type(policy_rules) is list else 0
-    return {"title": title, "visual_manifest": manifest, "policy_rule_count": rule_count}
+    from .repository import _source_context_json, encode_native_artwork
+    from .snapshot import _artwork
+
+    context = pack.get("source_context", {})
+    if type(context) is not dict:
+        raise ValueError
+    context = dict(context)
+    if "tldw/artwork" in context:
+        carried = encode_native_artwork(context.pop("tldw/artwork"))
+        if "artwork" in context and context["artwork"] != carried:
+            raise ValueError
+        context["artwork"] = carried
+    _source_context_json(context)
+    # Also retain legacy native public fields when converting into an editable draft.
+    if "artwork" not in context and (
+        any(
+            key in pack
+            for key in ("creator", "license", "source_url", "notices", "tldw/artwork")
+        )
+    ):
+        context["artwork"] = encode_native_artwork(_artwork(pack))
+    return {
+        "title": title,
+        "visual_manifest": manifest,
+        "policy_rule_count": rule_count,
+        "source_context": context,
+    }
 
 
 def _assets(value: object) -> tuple[dict[str, Any], ...]:
@@ -669,7 +695,9 @@ def _extract_assets(
     return tuple(draft_assets)
 
 
-def _inspect_image(path: Path | BytesIO, record: Mapping[str, Any]) -> tuple[int, int | None]:
+def _inspect_image(
+    path: Path | BytesIO, record: Mapping[str, Any]
+) -> tuple[int, int | None]:
     with Image.open(path) as image:
         if (
             image.format != _FORMAT_BY_MIME[record["mime_type"]][0]

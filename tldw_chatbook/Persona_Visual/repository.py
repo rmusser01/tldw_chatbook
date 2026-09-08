@@ -25,9 +25,15 @@ from .contracts import (
 )
 from .validation import validate_persona_visual_manifest
 
-
 _SOURCE_CONTEXT_KEYS = frozenset(
-    {"source_id", "provenance", "license", "source_server_commit"}
+    {
+        "source_id",
+        "provenance",
+        "license",
+        "source_server_commit",
+        "artwork",
+        "mapping_source",
+    }
 )
 _MAX_SOURCE_CONTEXT_VALUE_LENGTH = 256
 _ASSET_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
@@ -428,6 +434,7 @@ class PersonaVisualRepository:
         expected_identity: PersonaVisualIdentity,
         expected_persona_revision: int,
         authority_guard: Callable[[], bool],
+        source_context: object | None = None,
     ) -> PersonaVisualGraph:
         """Publish and activate the next immutable version under full-graph CAS."""
 
@@ -439,6 +446,9 @@ class PersonaVisualRepository:
         asset_writes = _asset_writes(assets)
         manifest_json, validated_manifest, manifest_sha256 = _manifest_json(
             manifest, asset_writes
+        )
+        context_json = (
+            None if source_context is None else _source_context_json(source_context)
         )
         _validate_guard(authority_guard)
         self._require_owned_write_transaction()
@@ -454,6 +464,16 @@ class PersonaVisualRepository:
                 if current.identity != expected_identity:
                     raise ValueError("persona_visual_identity_changed")
 
+                if context_json is not None:
+                    existing = self.get_active_persona_pack_for_export(persona_id)
+                    if existing is None or existing.graph.identity != current.identity:
+                        raise ValueError("persona_visual_identity_changed")
+                    context_json = _source_context_json(
+                        {
+                            **dict(existing.source_context),
+                            **json.loads(context_json),
+                        }
+                    )
                 source_manifest_json = self._read_identity_snapshot(current.identity)
                 next_number = _db_positive_int(
                     _fetchone(
@@ -482,6 +502,7 @@ class PersonaVisualRepository:
                     """
                     UPDATE persona_visual_packs
                        SET active_version_id = ?,
+                           source_context_json = COALESCE(?, source_context_json),
                            updated_at = CURRENT_TIMESTAMP,
                            version = version + 1
                      WHERE id = ? AND status = 'active'
@@ -500,6 +521,7 @@ class PersonaVisualRepository:
                     """,
                     (
                         version_id,
+                        context_json,
                         current.pack.id,
                         current.version.id,
                         current.pack.revision,
@@ -1255,7 +1277,15 @@ def _reject_json_constant(_value: str) -> None:
 def _validate_source_context_content(value: object) -> None:
     if type(value) is not dict or not set(value) <= _SOURCE_CONTEXT_KEYS:
         raise ValueError
-    for item in value.values():
+    for key, item in value.items():
+        if key == "artwork":
+            decode_native_artwork(item)
+            continue
+        if key == "mapping_source" and (
+            type(item) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_.:-]{0,63}", item) is None
+        ):
+            raise ValueError
         if not isinstance(item, str) or not item:
             raise ValueError
         item.encode("utf-8")
@@ -1382,3 +1412,27 @@ def _is_sha256(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def encode_native_artwork(record: object) -> str:
+    """Validate and encode the dedicated native pack artwork record."""
+    from tldw_chatbook.Character_Chat.artwork_attribution import (
+        ARTWORK_NAMESPACE,
+        artwork_context,
+    )
+
+    return _json_dump(artwork_context({ARTWORK_NAMESPACE: record})[ARTWORK_NAMESPACE])
+
+
+def decode_native_artwork(value: object) -> dict[str, Any]:
+    """Read only canonical, bounded public artwork; never generic provenance."""
+    from tldw_chatbook.Character_Chat.artwork_attribution import MAX_ARTWORK_BYTES
+
+    if type(value) is not str or len(value.encode("utf-8")) > MAX_ARTWORK_BYTES:
+        raise ValueError("persona_visual_source_context_invalid")
+    record = json.loads(
+        value, object_pairs_hook=_unique_object, parse_constant=_reject_json_constant
+    )
+    if encode_native_artwork(record) != value:
+        raise ValueError("persona_visual_source_context_invalid")
+    return record

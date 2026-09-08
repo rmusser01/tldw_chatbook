@@ -305,6 +305,16 @@ class ActorPackExportService:
         except PersonaVisualAssetError:
             raise ActorPackExportError("actor_pack_export_asset_unavailable") from None
         context = dict(export_graph.source_context)
+        if "artwork" in context and any(
+            value for key, value in json.loads(context["artwork"]).items() if key != "version"
+        ):
+            raise ActorPackExportError(
+                "actor_pack_export_native_artwork_requires_native_export",
+                user_message=(
+                    "This Buddy carries artwork credits that Actor Pack export cannot preserve. "
+                    "Use Export Buddy in Persona Visuals to keep the original credits and notices."
+                ),
+            )
         return ActorPackExportSection(
             kind="persona-runtime",
             manifest_path="persona-runtime/manifest.json",

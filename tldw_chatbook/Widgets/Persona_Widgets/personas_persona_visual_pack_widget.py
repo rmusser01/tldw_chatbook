@@ -48,6 +48,14 @@ class PersonaVisualImportRequested(Message):
     """Ask the screen to import one Persona Visual archive for review."""
 
 
+class PetdexImportRequested(Message):
+    """Review a Petdex source for this saved local Persona."""
+
+
+class PersonaVisualExportRequested(Message):
+    """Export the saved native Buddy with carried artwork notices."""
+
+
 class BuddyCharacterCreateRequested(Message):
     """Review a saved Buddy or native archive as an independent character."""
 
@@ -146,7 +154,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     BUNDLED_CSS = """
     PersonasPersonaVisualPackWidget {
         width: 100%;
-        height: 30;
+        height: 33;
         min-height: 20;
         margin-top: 1;
         padding: 1;
@@ -189,9 +197,9 @@ class PersonasPersonaVisualPackWidget(Vertical):
 
     PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
         width: 100%;
-        height: 9;
+        height: 12;
         layout: grid;
-        grid-size: 3 3;
+        grid-size: 3 4;
         grid-gutter: 0 1;
         margin-top: 1;
     }
@@ -208,7 +216,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     }
 
     PersonasPersonaVisualPackWidget.-narrow {
-        height: 34;
+        height: 37;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
@@ -300,6 +308,17 @@ class PersonasPersonaVisualPackWidget(Vertical):
             yield Button(
                 "From Buddy archive…",
                 id="personas-persona-visual-character-archive",
+                classes="console-action-secondary",
+            )
+
+            yield Button(
+                "Petdex…",
+                id="personas-persona-visual-petdex",
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Export saved pack…",
+                id="personas-persona-visual-export",
                 classes="console-action-secondary",
             )
 
@@ -490,6 +509,12 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self.query_one(
             "#personas-persona-visual-character-archive", Button
         ).disabled = not (available and idle)
+        self.query_one("#personas-persona-visual-petdex", Button).disabled = not (
+            available and idle and not self._dirty
+        )
+        self.query_one("#personas-persona-visual-export", Button).disabled = not (
+            available and idle and not self._dirty and activatable
+        )
         cancel_allowed = available and (
             self._dirty or self._busy in {"importing", "preparing", "previewing"}
         )
@@ -542,6 +567,16 @@ class PersonasPersonaVisualPackWidget(Vertical):
         event.stop()
         self.post_message(PersonaVisualImportRequested())
 
+    @on(Button.Pressed, "#personas-persona-visual-petdex")
+    def _petdex_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PetdexImportRequested())
+
+    @on(Button.Pressed, "#personas-persona-visual-export")
+    def _export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaVisualExportRequested())
+
     @on(Button.Pressed, "#personas-persona-visual-create-character")
     def _create_character_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -569,9 +604,11 @@ __all__ = [
     "PersonaVisualCancelRequested",
     "PersonaVisualClearRequested",
     "PersonaVisualCustomStateDialog",
+    "PersonaVisualExportRequested",
     "PersonaVisualImportRequested",
     "PersonaVisualPreviewRequested",
     "PersonaVisualReplaceRequested",
     "PersonaVisualSaveRequested",
     "PersonasPersonaVisualPackWidget",
+    "PetdexImportRequested",
 ]

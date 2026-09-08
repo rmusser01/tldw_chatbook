@@ -1,6 +1,6 @@
 # Buddy imports and animated character expressions
 
-Status: Reviewed design; implementation pending
+Status: Playback, independent character conversion, and Petdex import implemented in the isolated branch
 Date: 2026-09-07
 Creator: tldw-project
 
@@ -65,18 +65,17 @@ animated Console expressions already work.
   external import trust boundaries, local ownership and long-lived motion UX.
 - Playback decision: [ADR-128](../../../backlog/decisions/128-character-expression-playback.md)
   records the motion preference and rendering lifecycle.
-- Conversion and Petdex decisions: file separate narrowly scoped decisions before
-  their implementation plans, including the portable notice carrier and remote
-  connection validation. Explicit snapshot conversion does not authorize live
-  runtime coupling. Allocate canonical numbers against current dev/open work.
+- [ADR-074](../../../backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md)
+  includes the artwork attribution and independent snapshot conversion amendments.
+- [ADR-134](../../../backlog/decisions/134-reviewed-petdex-import-and-pinned-https.md)
+  records the Petdex mapping, native notice carrier, and pinned HTTPS boundary.
+  Explicit snapshot conversion does not introduce live runtime coupling.
 
-No database migration is expected for animation assets. Playback uses existing
-animated-image bytes and their first composited frame, avoiding a portable poster
-index extension. Conversion does require explicit provenance/notice preservation
-in publication and portable formats; current publishers/exporters do not preserve
-it sufficiently. Its separate implementation plan must define the bounded versioned
-carrier before coding. Do not claim that existing JSON storage alone proves
-end-to-end metadata portability.
+Playback and conversion require no database migration. Playback uses existing
+animated-image bytes and their first composited frame. The implemented conversion
+preserves a bounded versioned attribution/lineage carrier through actual publication
+and export; Petdex adds the canonical native Buddy artwork carrier. See each part's
+verification record for executable evidence and server interoperability limits.
 
 ## Scope and preservation
 

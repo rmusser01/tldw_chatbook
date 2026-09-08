@@ -15,9 +15,9 @@ from .assets import (
 )
 from .contracts import (
     ALLOWED_STATE_CATALOG_KINDS,
+    RESERVED_STATES,
     PersonaVisualManifest,
     PersonaVisualManifestError,
-    RESERVED_STATES,
 )
 from .publication import (
     PersonaVisualPublicationAssetSource,
@@ -27,9 +27,9 @@ from .repository import (
     PersonaVisualAssetRecord,
     PersonaVisualGraph,
     PersonaVisualIdentity,
+    _source_context_json,
 )
 from .validation import validate_persona_visual_manifest
-
 
 _INVALID = "persona_visual_draft_invalid"
 _INCOMPLETE = "persona_visual_draft_incomplete"
@@ -137,6 +137,7 @@ def create_persona_visual_import_draft(
     description: str,
     manifest_json: str,
     assets: tuple[PersonaVisualDraftAsset, ...],
+    source_context: Mapping[str, str] | None = None,
 ) -> PersonaVisualAuthoringDraft:
     """Create a validated review draft from already-confined imported sources."""
 
@@ -148,7 +149,11 @@ def create_persona_visual_import_draft(
             title=title,
             description=description,
             source_kind="imported",
-            source_context=(("provenance", "untrusted-import"),),
+            source_context=tuple(
+                sorted(
+                    {"provenance": "untrusted-import", **(source_context or {})}.items()
+                )
+            ),
             manifest_json=manifest_json,
             assets=assets,
         )
@@ -159,6 +164,7 @@ def persona_visual_draft_from_graph(
     graph: PersonaVisualGraph,
     *,
     source_storage_keys: Mapping[str, str],
+    source_context: Mapping[str, str] | None = None,
 ) -> PersonaVisualAuthoringDraft:
     """Snapshot one active graph plus caller-confined materialized source keys."""
 
@@ -187,7 +193,7 @@ def persona_visual_draft_from_graph(
             title=graph.pack.title,
             description=graph.pack.description,
             source_kind=graph.pack.source_kind,
-            source_context=(),
+            source_context=tuple(sorted((source_context or {}).items())),
             manifest_json=_canonical_json(_manifest_document(graph.version.manifest)),
             assets=assets,
         )
@@ -448,6 +454,9 @@ def _validated_draft(value: object) -> PersonaVisualAuthoringDraft:
                 or type(item[1]) is not str
             ):
                 raise ValueError
+        if len(dict(value.source_context)) != len(value.source_context):
+            raise ValueError
+        _source_context_json(dict(value.source_context))
         if type(value.manifest_json) is not str or type(value.assets) is not tuple:
             raise ValueError
         _nonnegative_int(value.revision)
