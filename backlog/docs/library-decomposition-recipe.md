@@ -1891,31 +1891,21 @@ rediscover the same red from scratch.
   the isolated verdict governs because it is the one identical on both
   trees. A Home-origin navigation-leak test; this wave's diff touches
   neither.
-- **Wave-7 Task 4 (wave close) — `Tests/UI/test_library_honesty_
-  accessibility.py::test_row_toggle_patcher_rebuilds_marker_label_both_
-  directions` is a PRE-EXISTING RED that blocks real coverage, not just a
-  flake.** It fails `assert '○ Export' == '○ Export selected'` — a
-  label-truncation assertion that fires BEFORE the body under test matters
-  — **byte-identically on the branch and on an isolated baseline worktree**,
-  in isolation on both. It earns its own entry rather than a line in a
-  shared flake list because of what it BLOCKS: it is the only real-row
-  Pilot test that drives the MEDIA `_apply_library_row_toggle` path (it
-  toggles a real `#library-media-row-0` and reads the real bulk-action
-  labels), i.e. the natural end-to-end coverage for §3's fifth-spelling
-  (computed-name) fix, which consequently had to be guarded by a ~15-line
-  screen double instead. This is wave-6 lesson 4's shape one level milder —
-  not a discovery-time raise, but an early assertion that voids everything
-  after it, and the file's own section comment says these pins exist
-  precisely because "mutation C ... survived every existing suite" — and
-  the triage rule is the same: **ask what a pre-existing red is BLOCKING
-  before filing it as "pre-existing, not mine".** Filed as **TASK-31880**;
-  remove this entry when that lands. **Wave 8 is the second wave to pay
-  this bill**: the media receiver defect (§3, §23) had to be guarded by a
-  `[controller]` parametrization of the same ~15-line screen double, for the
-  identical reason — the one real-row test that would have caught it
-  end-to-end is this red. TASK-31880 is now the coverage gate for BOTH the
-  fifth spelling and its receiver dimension, and it is named in the phase-C
-  handoff (§25) for that reason.
+- ~~Wave-7 Task 4 (wave close) — `test_row_toggle_patcher_rebuilds_marker_
+  label_both_directions`~~ **CLOSED by TASK-31880 (2026-09-08, phase C's
+  opening move); entry removed per its AC#4.** Verdict: the ASSERTION was
+  stale, not the label — task-30043 (2026-09-03) deliberately renamed
+  media's select-mode bulk actions to the short words "Export"/"Delete" for
+  the ~40-col items pane and did not update this test. A second, quieter
+  staleness sat behind it: task-28007 (2026-09-04) added an in-place
+  "Analyze" flip that calls a SCREEN method the test's duck-typed app
+  stand-in never had, so the dispatcher's blanket `except` had silently
+  rerouted every toggle here onto the full-recompose fallback. Both fixed
+  test-side; the real-row media `_apply_library_row_toggle` coverage this
+  list said the red was blocking is live again, and the test now pins
+  widget IDENTITY across each toggle so a silent fallback fails loudly.
+  The lesson it produced — **ask what a pre-existing red is BLOCKING before
+  filing it as "pre-existing, not mine"** — is kept at §22 lesson 6.
 - **Wave-8 Task 1 (notes state PR) found 3 more:**
   - `Tests/UI/test_library_recompose_ratchet.py::test_library_screen_whole_
     screen_recompose_count_is_ratcheted` — *"statement-level whole-screen
@@ -6522,7 +6512,10 @@ recorded; max gap 41–129 against 54–195, again faster at the low end).
    for the fifth-spelling fix, which consequently had to be guarded by a
    ~15-line screen double. Five waves had read that red as "pre-existing,
    not mine" and moved on, which is correct about ownership and useless
-   about consequence. Filed as TASK-31880.
+   about consequence. Filed as TASK-31880 — **closed 2026-09-08**: the
+   assertion was stale (task-30043 renamed the labels), and behind it the
+   test had been silently running on the recompose fallback since
+   task-28007 added an in-place Analyze flip the harness could not satisfy.
 7. **Two numbers can both be "36" and mean different things, and the
    program quoted them interchangeably for a whole series.** The media
    cleanup's CENSUS (files containing a moved field name at the wave-start
@@ -6681,8 +6674,9 @@ mutation-verified BOTH ways:
 `library_media_controller.py` re-pinned 4630 → 4669 in the same commit (§6),
 the +39 being one property and its docstring. **The natural end-to-end
 coverage for this — the one real-row Pilot test that drives
-`_apply_library_row_toggle` — is TASK-31880's standing red**, which is why
-this fix, like wave 7's before it, had to be guarded by a screen double.
+`_apply_library_row_toggle` — was TASK-31880's standing red** (closed
+2026-09-08), which is why this fix, like wave 7's before it, had to be
+guarded by a screen double.
 
 ### Delegator census — 159 KEEP, 26 PRUNED (14.05%)
 
@@ -7423,6 +7417,10 @@ target rather than a timing anecdote: **phase C's success condition is that
 the re-click rows go to ~0 mounts with `recompose` still 0.**
 
 **3. The coverage gate is TASK-31880, and it must be closed FIRST.**
+*(Closed 2026-09-08 — phase C's opening move; the paragraph below is the
+handoff as written, kept for the reasoning. Verdict: stale assertion, plus a
+harness gap that had rerouted the test onto the recompose fallback since
+2026-09-04. §7's entry is retired.)*
 `Tests/UI/test_library_honesty_accessibility.py::test_row_toggle_patcher_
 rebuilds_marker_label_both_directions` is the only real-row Pilot test that
 drives the `_apply_library_row_toggle` path end to end, and it has been red

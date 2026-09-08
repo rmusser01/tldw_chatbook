@@ -12527,3 +12527,25 @@ had no persisted conversation when the transform ran, so the applier returned
 unchanged text. Persist first, assert transformed wire content, and verify the
 origin's `active_request` row and exact source pin before claiming transform
 coverage. Both corrected controls passed with the discard fix.
+
+## A stale first assertion can hide a test that stopped running its own path (TASK-31880, 2026-09-08)
+
+`test_row_toggle_patcher_rebuilds_marker_label_both_directions` failed on
+`assert '○ Export' == '○ Export selected'` — a label spelling task-30043 changed
+on 2026-09-03 without updating the test. Correcting the spelling did NOT make it
+pass: one day later, task-28007 had added an in-place "Analyze" flip to
+`_apply_library_row_toggle` that calls a SCREEN method the test's duck-typed app
+stand-in never had, so the dispatcher's blanket `except Exception` swallowed the
+`AttributeError` and rerouted every toggle onto `screen.refresh(recompose=True)`.
+The test had been red for one reason and non-covering for a different, invisible
+one. Instrumenting the dispatcher's own `logger.debug` in a scratch Pilot probe
+was what surfaced it: 2 toggles, 2 fallbacks.
+
+Two rules. **When you fix a stale assertion, prove the body after it actually ran
+the path under test** — here, asserting that `query_one(...)` still returns the
+SAME widget object after the toggle, since the fallback recomposes and swaps in
+fresh ones; a mutation that forces the fallback now fails loudly instead of
+producing a plausible end state. **And a shared dispatcher with a blanket
+`except` degrades duck-typed harnesses silently every time it grows a new
+receiver call** — census the harnesses when you add one, or they keep passing
+while covering nothing.
