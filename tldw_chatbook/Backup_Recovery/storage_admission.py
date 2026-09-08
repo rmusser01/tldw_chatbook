@@ -8,6 +8,8 @@ re-enrollment. Native-unqualified ordinary use is distinct from recovery admissi
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
+import sqlite3
 import os
 from pathlib import Path
 import stat
@@ -224,3 +226,209 @@ def _after_fork() -> None:
 atexit.register(_shutdown)
 if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_after_fork)
+
+
+class _CaptureLease:
+    """A capture connection cannot outlive the native maintenance session."""
+
+    def __init__(self, scope):
+        self.scope = scope
+        self.connection = None
+        scope.resources.append(self)
+
+    def attach(self, connection):
+        self.connection = connection
+
+    def close(self):
+        if self in self.scope.resources:
+            self.scope.resources.remove(self)
+
+    def retire(self):
+        if self.connection is not None:
+            # Bypass a custom pooling/failed close before retiring native authority.
+            sqlite3.Connection.close(self.connection)
+        self.close()
+
+
+class _CaptureScope:
+    def __init__(self, session, sources, staging):
+        self.session = session
+        self.sources = sources
+        self.staging = staging
+        self.staging_identity = staging.stat()
+        self.resources = []
+        self.active = True
+
+    def check(self):
+        self.session._check()
+        if not self.active or getattr(_local, "capture_scope", None) is not self:
+            raise bootstrap.RecoveryRequired("capture_scope_inactive")
+        current = self.staging.stat()
+        if (current.st_dev, current.st_ino) != (
+            self.staging_identity.st_dev,
+            self.staging_identity.st_ino,
+        ):
+            raise bootstrap.RecoveryRequired("capture_staging_changed")
+
+    def retire(self):
+        self.active = False
+        for resource in tuple(self.resources):
+            resource.retire()
+
+
+class MaintenanceSession:
+    """Opaque native-held executor authority; only Admission can mint a session.
+
+    Captured sources are exact regular files. Staging is a precreated private
+    directory, disjoint from all enrolled and control roots. Connection handles
+    are retired before scope exit, even if a caller keeps a Python reference.
+    """
+
+    def __init__(self):
+        raise TypeError("maintenance_session_is_native_issued")
+
+    def _check(self):
+        if (
+            not self._active
+            or self._pid != os.getpid()
+            or self._thread != threading.get_ident()
+            or getattr(_local, "maintenance_session", None) is not self
+        ):
+            raise bootstrap.RecoveryRequired("maintenance_session_inactive")
+
+    @contextmanager
+    def capture_scope(self, sources: tuple[Path, ...], staging: Path):
+        self._check()
+        if getattr(_local, "capture_scope", None) is not None:
+            raise bootstrap.RecoveryRequired("nested_capture_scope")
+        if type(sources) is not tuple or not sources:
+            raise bootstrap.RecoveryRequired("capture_sources_required")
+        root = bootstrap.default_bootstrap_root()
+        if self._control.resolve(strict=True) != (root / "admission").resolve(
+            strict=True
+        ):
+            raise bootstrap.RecoveryRequired("conflicting_admission_authority")
+        with bootstrap.pinned_directory(self._control) as control_fd:
+            identity = os.fstat(control_fd)
+            if (identity.st_dev, identity.st_ino) != self._control_identity:
+                raise bootstrap.RecoveryRequired("capture_authority_changed")
+        if UNBOUND_NAMESPACE not in self._names:
+            raise bootstrap.RecoveryRequired("capture_unbound_admission_required")
+        _, profiles = bootstrap._records(root)
+        registry = bootstrap._registry(root)
+        bindings = [
+            binding
+            for profile in profiles
+            if (
+                binding := bootstrap._binding(
+                    Path(profile["selector"]), profiles, registry
+                )
+            )
+            is not None
+            and set(binding["namespaces"]) <= set(self._names)
+        ]
+        selected = []
+        for source in sources:
+            source = lexical_path(source)
+            info = source.stat()
+            if not stat.S_ISREG(info.st_mode) or not any(
+                _contains_owned_path(root, source) for root in self._roots
+            ):
+                raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+            if not any(
+                _contains_owned_path(Path(owned), source)
+                for binding in bindings
+                for owned in binding["roots"]
+            ):
+                raise bootstrap.RecoveryRequired("capture_source_binding_unverified")
+            selected.append((source.resolve(strict=True), info.st_dev, info.st_ino))
+        staging = lexical_path(staging)
+        with bootstrap.pinned_directory(staging) as fd:
+            info = os.fstat(fd)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise bootstrap.RecoveryRequired("capture_staging_not_private")
+        staging = staging.resolve(strict=True)
+        for root in self._all_roots + (self._control,):
+            root = root.resolve(strict=True)
+            if root == staging or root in staging.parents or staging in root.parents:
+                raise bootstrap.RecoveryRequired("capture_staging_overlaps_source")
+        scope = _CaptureScope(self, tuple(selected), staging)
+        self._scopes.append(scope)
+        _local.capture_scope = scope
+        try:
+            yield
+        finally:
+            try:
+                scope.retire()
+            finally:
+                if getattr(_local, "capture_scope", None) is scope:
+                    _local.capture_scope = None
+
+    def _retire(self):
+        self._active = False
+        for scope in self._scopes:
+            scope.retire()
+        if getattr(_local, "maintenance_session", None) is self:
+            _local.maintenance_session = None
+
+
+def _mint_maintenance_session(roots, all_roots, control, names, control_identity):
+    session = object.__new__(MaintenanceSession)
+    session._roots = tuple(roots)
+    session._all_roots = tuple(all_roots)
+    session._control = control
+    session._names = names
+    session._control_identity = control_identity
+    session._pid = os.getpid()
+    session._thread = threading.get_ident()
+    session._active = True
+    session._scopes = []
+    _local.maintenance_session = session
+    return session
+
+
+# A native-close failure must retain the actual locks until process exit. This is
+# intentionally a conservative quarantine, never GC-driven retry or lock release.
+_failed_capture_holds = []
+
+
+def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
+    """Private-seam consumer of an installed native-held scope, not a bypass flag.
+
+    Owner IDs are resolved through the installed SQLite registry; strings do not
+    grant authority. Session identity, physical paths and direction are checked,
+    and the returned lease tracks the actual connection lifetime.
+    """
+    scope = getattr(_local, "capture_scope", None)
+    if scope is None:
+        return None
+    scope.check()
+    from tldw_chatbook.DB.private_sqlite import SQLITE_OWNER_REGISTRY
+
+    if not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed:
+        raise bootstrap.RecoveryRequired("capture_owner_not_registered")
+    selected = lexical_path(path).resolve()
+    if read_only:
+        try:
+            info = selected.stat()
+        except FileNotFoundError:
+            info = None
+        if info is not None and any(
+            (info.st_dev, info.st_ino) == (device, inode)
+            for _, device, inode in scope.sources
+        ):
+            return _CaptureLease(scope)
+    if scope.staging not in selected.parents:
+        raise bootstrap.RecoveryRequired("capture_path_outside_scope")
+    if selected.exists():
+        info = selected.stat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or any(
+                (info.st_dev, info.st_ino) == (device, inode)
+                for _, device, inode in scope.sources
+            )
+        ):
+            raise bootstrap.RecoveryRequired("capture_target_alias")
+    return _CaptureLease(scope)

@@ -92,6 +92,18 @@ class Admission:
                 self._read(fd)
         self._identity = self._root_identity()
 
+    @classmethod
+    def open_existing(cls, control_root: Path) -> "Admission":
+        """Open established authority without recreating lost control evidence."""
+        authority = object.__new__(cls)
+        authority.control_root = control_root
+        with authority._directory() as parent:
+            with authority._lock(parent, "registry.lock", fcntl.LOCK_SH):
+                authority._read(parent)
+                info = os.fstat(parent)
+                authority._identity = (info.st_dev, info.st_ino)
+        return authority
+
     def _root_identity(self) -> tuple[int, int]:
         with self._directory() as fd:
             info = os.fstat(fd)
@@ -493,7 +505,36 @@ class Admission:
                     ):
                         raise AdmissionError("admission_scope_changed")
                     self._check(deadline, cancel)
-                    yield
+                    from .storage_admission import (
+                        _mint_maintenance_session,
+                        _failed_capture_holds,
+                    )
+
+                    session = _mint_maintenance_session(
+                        (Path(r) for n in group for r in current.entries[n].roots),
+                        (
+                            Path(r)
+                            for entry in current.entries.values()
+                            for r in entry.roots
+                        ),
+                        self.control_root,
+                        group,
+                        self._identity,
+                    )
+                    try:
+                        yield session
+                    finally:
+                        try:
+                            session._retire()
+                        except BaseException:
+                            # Transfer native ownership before context unwinding;
+                            # an unresolved connection can still mutate storage.
+                            _failed_capture_holds.append(
+                                (trial.pop_all(), leases.pop_all(), session)
+                            )
+                            raise AdmissionError(
+                                "capture_resources_not_retired"
+                            ) from None
                 else:
                     trial.close()
                     yield

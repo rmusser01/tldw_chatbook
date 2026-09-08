@@ -3,7 +3,7 @@
 Task: TASK-31986. Contract: [ADR-126](../decisions/126-complete-local-backup-and-recovery.md), extending ADR-029/030/036/059/060.
 
 This is a conservative discovery census, **not qualified complete backup coverage**.
-No capture/validation/relocation adapter is qualified by this task. Known database
+Task 3 alone qualified no payload adapter. Task 6 now qualifies the five current core SQLite layouts through the native-held adapter boundary; other owners and Complete product coverage remain pending. Known database
 selectors are resolved without opening SQLite. Other owner locators remain
 unsupported until their owner cohort extracts a pure canonical resolver. Existing
 unclassified children of selected data roots and the two canonical app namespaces
@@ -371,12 +371,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/DB/Subscriptions_DB.py | ensure_site_configs_schema | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/Workspace_DB.py | WorkspaceDB | inherits:BaseDB | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/base_db.py | BaseDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
-| tldw_chatbook/DB/private_sqlite.py | _connect_registered_sqlite | connect | 1 | generic_boundary | generic |
-| tldw_chatbook/DB/private_sqlite.py | _open_artifact_fd | open | 1 | generic_boundary | generic |
-| tldw_chatbook/DB/private_sqlite.py | _prepare_windows_artifact | open | 1 | generic_boundary | generic |
-| tldw_chatbook/DB/private_sqlite.py | migrate_profile_store_to_candidate | connect_private_sqlite_descriptor | 1 | generic_boundary | generic |
-| tldw_chatbook/DB/private_sqlite.py | open_canonical_profile_migration_destination | secure_private_directory | 1 | generic_boundary | generic |
-| tldw_chatbook/DB/private_sqlite.py | open_profile_migration_boundary_destination | secure_private_directory | 1 | generic_boundary | generic |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | unsupported | evals |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | unsupported | evals |
 | tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | mkdir | 1 | unsupported | evals |
@@ -1212,10 +1206,6 @@ Admission owns private control-root registry records and persistent lock files; 
 
 | Module | Qualified symbol | Call | Count | Classification | Cohort |
 | --- | --- | --- | --- | --- | --- |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._create_lock | open | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._open | open | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | open | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | write | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/native_files.py | _flush_private_tree | open | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_directory | mkdir | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_file | open | 1 | generic_boundary | backup_native_storage |
@@ -1228,7 +1218,6 @@ The concrete `renameatx_np` callable assignment and `os.replace` seams are now c
 
 | Module | Qualified symbol | Call | Count | Classification | Cohort |
 | --- | --- | --- | --- | --- | --- |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/native_files.py | _rename_new | renameatx_np | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._create_zip_archive | os.replace | 1 | unsupported | miscellaneous |
@@ -1256,7 +1245,6 @@ The control owner now exclusively creates bounded version-1 before/after write i
 
 | Module | Qualified symbol | Call | Count | Classification | Cohort |
 | --- | --- | --- | --- | --- | --- |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
 | tldw_chatbook/Character_Chat/visual_identity.py | _discard_pinned_directory | os.unlink | 1 | unsupported | files |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.unlink | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_text_from_image | os.unlink | 1 | unsupported | miscellaneous |
@@ -1325,3 +1313,32 @@ The shared private file create/atomic-write/append/read-harden/directory boundar
 participate, with append streams retaining admission through successful close.
 This does not qualify every raw writer in this census. Unsupported raw-owner
 cohorts still block Complete backup and replacement.
+
+## Core recovery SQLite cohort (TASK-31989)
+
+The five `recovery.core.*` backup authorities preserve all SQLite rows, FTS state and
+BLOB assets through a WAL-aware snapshot. Pure discovery resolves custom paths
+without constructing/opening domain stores. Required later-owned file assets and
+operational activation stay explicit dependencies. See [core qualification](backup-recovery-core-owners.md).
+
+| sqlite:recovery.core.chachanotes | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.media | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.prompts | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.library_collections | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.library_ingest_jobs | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
+| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
+| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-admission-and-core-recovery |
+
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._create_lock | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._open | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | open | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | write | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
+| tldw_chatbook/DB/private_sqlite.py | _connect_registered_sqlite | connect | 1 | generic_boundary | generic |
+| tldw_chatbook/DB/private_sqlite.py | _open_artifact_fd | open | 1 | generic_boundary | generic |
+| tldw_chatbook/DB/private_sqlite.py | _prepare_windows_artifact | open | 1 | generic_boundary | generic |
+| tldw_chatbook/DB/private_sqlite.py | migrate_profile_store_to_candidate | connect_private_sqlite_descriptor | 1 | generic_boundary | generic |
+| tldw_chatbook/DB/private_sqlite.py | open_canonical_profile_migration_destination | secure_private_directory | 1 | generic_boundary | generic |
+| tldw_chatbook/DB/private_sqlite.py | open_profile_migration_boundary_destination | secure_private_directory | 1 | generic_boundary | generic |

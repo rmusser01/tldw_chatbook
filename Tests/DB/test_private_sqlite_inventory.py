@@ -476,6 +476,45 @@ def _literal_string_argument(
     return None
 
 
+_CORE_RECOVERY_OWNERS = frozenset({
+    "db.chachanotes.primary", "db.media.primary", "db.prompts.primary",
+    "db.library_collections", "db.library_ingest_jobs",
+})
+
+
+def _qualified_core_recovery_dispatch(source_path, symbol, call):
+    """Review only the frozen installed five-owner dispatch, never arbitrary IDs."""
+    if symbol not in {"_CoreAdapter.capture", "_CoreAdapter.validate", "_CoreAdapter.validate_dependencies"}:
+        return False
+    expression = call.args[0] if call.args else None
+    if expression is None or ast.unparse(expression) not in {
+        "self.backup_owner_id", "adapters[owner].backup_owner_id",
+    }:
+        return False
+    tree = _parse_source(source_path)
+    factory = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "core_adapters"), None)
+    if factory is None:
+        return False
+    returns = [node.value for node in ast.walk(factory) if isinstance(node, ast.Return)]
+    if len(returns) != 1 or not isinstance(returns[0], ast.Tuple):
+        return False
+    declarations = returns[0].elts
+    if len(declarations) != 5 or any(
+        not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name)
+        or node.func.id != "_CoreAdapter" or not node.args
+        or not isinstance(node.args[0], ast.Constant) for node in declarations
+    ):
+        return False
+    if {node.args[0].value for node in declarations} != _CORE_RECOVERY_OWNERS:
+        return False
+    adapter = next((node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_CoreAdapter"), None)
+    if adapter is None:
+        return False
+    owner_property = next((node for node in adapter.body if isinstance(node, ast.FunctionDef) and node.name == "backup_owner_id"), None)
+    expected = ast.parse('"recovery.core." + self.owner_id.removeprefix("db.").removesuffix(".primary")', mode="eval").body
+    return owner_property is not None and len(owner_property.body) == 1 and isinstance(owner_property.body[0], ast.Return) and ast.dump(owner_property.body[0].value) == ast.dump(expected)
+
+
 def _private_sqlite_seam_violations(
     source_path: Path,
     production_module: str,
@@ -501,6 +540,8 @@ def _private_sqlite_seam_violations(
                 keyword_name,
             )
             if owner_id is None:
+                if production_module == "tldw_chatbook/DB/recovery_core" and _qualified_core_recovery_dispatch(source_path, symbol, call):
+                    continue
                 violations.append(
                     f"{production_module}:{symbol}: non-literal {keyword_name}"
                 )
@@ -598,10 +639,10 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 51)
+        for number in range(1, 56)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 18)
+        f"B{number:02d}" for number in range(1, 23)
     ]
 
 
@@ -928,7 +969,7 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
 
 
 def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
-    row = _inventory_rows("C")[-1]
+    row = next(row for row in _inventory_rows("C") if row["id"] == "C50")
 
     assert row == {
         "id": "C50",
@@ -1037,7 +1078,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 8,
+            "copy_private_sqlite": 13,
             "migrate_profile_store_to_candidate": 1,
             "restore_private_sqlite": 2,
         }
@@ -1072,6 +1113,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
+            ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
             (
                 "tldw_chatbook/DB/ChaChaNotes_DB",
                 "CharactersRAGDB.backup_database",
@@ -1333,3 +1375,31 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
         isinstance(node, ast.Call) and _is_sqlite3_connect(node)
         for node in ast.walk(json_backup)
     )
+
+
+@pytest.mark.parametrize("damage", ["expression", "site", "factory"])
+def test_core_recovery_dispatch_exception_does_not_broaden(tmp_path, damage):
+    source = (PROJECT_ROOT / "tldw_chatbook/DB/recovery_core.py").read_text()
+    if damage == "expression":
+        source = source.replace("copy_private_sqlite(self.backup_owner_id,", "copy_private_sqlite(requested_owner,")
+        # Formatting may split the argument onto its own line.
+        source = source.replace("self.backup_owner_id, item.path", "requested_owner, item.path")
+        source = source.replace("self.backup_owner_id,\n", "requested_owner,\n")
+    elif damage == "site":
+        source += '\nfrom tldw_chatbook.DB.private_sqlite import copy_private_sqlite\ndef unreviewed(self, source, target):\n    copy_private_sqlite(self.backup_owner_id, source, target)\n'
+    else:
+        source = source.replace('"db.media.primary", "media_db_path"', '"db.unreviewed", "media_db_path"')
+    candidate = tmp_path / "recovery_core.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, "tldw_chatbook/DB/recovery_core")
+    assert any("non-literal owner_id" in violation for violation in violations)
+
+
+def test_core_recovery_factory_exactly_matches_registered_backup_authority():
+    from tldw_chatbook.DB.recovery_core import core_adapters
+    adapters = core_adapters()
+    assert {a.owner_id for a in adapters} == _CORE_RECOVERY_OWNERS
+    assert all(a.__dataclass_params__.frozen for a in adapters)
+    assert {a.backup_owner_id for a in adapters} == {
+        name for name, policy in SQLITE_OWNER_REGISTRY.items() if policy.recovery_capture_allowed
+    }

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .admission import Admission, AdmissionTimeout
+from .admission import Admission, AdmissionTimeout, fcntl
 from .bootstrap import (
     _binding,
     _fingerprint,
@@ -87,16 +87,39 @@ def admission_authority(bootstrap_root: Path) -> Admission:
     _ensure(bootstrap_root)
     _records(bootstrap_root)
     marker = bootstrap_root / "unbound-owner"
+    created_marker = False
     if not marker.exists():
         if (bootstrap_root / "admission").exists():
             raise RecoveryRequired("recovery_scope_uncertain")
         try:
             _write(bootstrap_root, marker.name, b"local enrollment owner\n")
+            created_marker = True
         except FileExistsError:
             pass
-    authority = Admission(bootstrap_root / "admission")
-    authority.register(UNBOUND_NAMESPACE, (marker,))
-    return authority
+    if created_marker:
+        authority = Admission(bootstrap_root / "admission")
+        authority.register(UNBOUND_NAMESPACE, (marker,))
+        return authority
+    try:
+        authority = Admission.open_existing(bootstrap_root / "admission")
+        with authority._directory() as parent:
+            with authority._lock(parent, "registry.lock", fcntl.LOCK_SH):
+                registry = authority._read(parent)
+                # Validate the marker's private regular-file posture and the exact
+                # registered physical identity. Never repair missing/replaced state.
+                _registry(bootstrap_root)
+                entry = registry.entries.get(UNBOUND_NAMESPACE)
+                if (
+                    entry is None
+                    or entry.roots != [str(marker)]
+                    or entry.pending is not None
+                    or entry.proposed
+                    or not authority._tokens((marker,)) <= set(entry.historical)
+                ):
+                    raise RecoveryRequired("recovery_scope_uncertain")
+        return authority
+    except (OSError, ValueError, RuntimeError):
+        raise RecoveryRequired("recovery_scope_uncertain") from None
 
 
 def register_pending(

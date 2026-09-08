@@ -108,3 +108,18 @@ unsupported in the owner census prevent a full-protection claim.
 The AST entrypoint census in `Tests/Architecture/test_recovery_entrypoints.py` also
 classifies development/vendored examples and the external read-only grep worker.
 These are not silently treated as ordinary profile-persistence launchers.
+
+## Core capture integration (TASK-31989)
+
+Established ordinary admission now uses `Admission.open_existing` and shared-lock
+verification of the exact unbound marker/registry identity. It does not re-register
+or recreate lost evidence. Only positively initial marker creation registers the
+unbound namespace. A real disjoint bound process can therefore open/write its
+private owner while another namespace is under capture; an unbound process must
+wait behind the capture's `bootstrap.unbound` gate.
+
+Recovery consumers must use the fixed-authority opaque maintenance session and
+hold every selected source namespace plus `bootstrap.unbound`; independently
+created Admission roots cannot authorize application capture. Capture scope checks
+current local bindings and directional source/staging paths and retires native
+SQLite resources before scope exit. See [core qualification](backup-recovery-core-owners.md).

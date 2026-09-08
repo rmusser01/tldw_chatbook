@@ -76,6 +76,7 @@ class SQLiteOwnerPolicy:
     centralized_backup_allowed: bool = False
     preserve_read_only_source_mode: bool = False
     foreign_read_only_source: bool = False
+    recovery_capture_allowed: bool = False
 
 
 _PRIVATE_FILE = frozenset({SQLiteTargetKind.PRIVATE_FILE})
@@ -149,6 +150,36 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
+    ),
+    "recovery.core.chachanotes": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.media": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.prompts": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.library_collections": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.core.library_ingest_jobs": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "Native-held complete recovery snapshot; selective export policy unchanged.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
     ),
     "db.chachanotes.backup": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/ChaChaNotes_DB",
@@ -1076,7 +1107,13 @@ def _with_storage_admission(function):
             kwargs.get("read_only", False) and policy.foreign_read_only_source
         ):
             return function(owner_id, database, **kwargs)
-        lease = acquire_storage(Path(database))
+        from tldw_chatbook.Backup_Recovery.storage_admission import _acquire_capture_storage
+        lease = _acquire_capture_storage(
+            Path(database), owner_id=owner_id,
+            read_only=kwargs.get("read_only", False),
+        )
+        if lease is None:
+            lease = acquire_storage(Path(database))
         factory = kwargs.get("factory", sqlite3.Connection)
         try:
             if not isinstance(factory, type) or not issubclass(factory, sqlite3.Connection):
@@ -1103,7 +1140,10 @@ def _with_storage_admission(function):
                         pass
 
             kwargs["factory"] = AdmittedConnection
-            return function(owner_id, database, **kwargs)
+            connection = function(owner_id, database, **kwargs)
+            if hasattr(lease, "attach"):
+                lease.attach(connection)
+            return connection
         except BaseException:
             lease.close()
             raise

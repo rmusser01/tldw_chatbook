@@ -53,6 +53,11 @@ CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_recovery",
 )
 COPY_BACKUP_OWNER_IDS = (
+    "recovery.core.chachanotes",
+    "recovery.core.media",
+    "recovery.core.prompts",
+    "recovery.core.library_collections",
+    "recovery.core.library_ingest_jobs",
     "settings.bulk_backup",
     "settings.single_backup",
     "tts.profile_restore_stage",

@@ -5636,3 +5636,22 @@ switching the field to `int = Field(strict=True, ge=1, le=1)`.
 **What to do.** At serialized integer-version boundaries, test boolean values
 explicitly. Use a strict integer field with the allowed range/value constraint;
 Python's `True == 1` equality can defeat the expected literal-type distinction.
+
+## Idempotent registration can still block a disjoint storage owner (TASK-31989)
+
+**Incident.** The core recovery process probe held maintenance for one bound store
+and `bootstrap.unbound`, then asked a second process to write a different bound
+store through `connect_private_sqlite`. The write timed out even though direct
+Admission disjoint-namespace tests passed. `acquire_storage` called
+`admission_authority`, whose apparently idempotent `register` took an exclusive
+registry lock before noticing that the namespace already existed. Maintenance
+held that registry shared lock throughout capture. Opening established authority
+without creation and verifying its exact unbound marker/registry identity under a
+shared lock let the disjoint write complete during capture; the separate unbound
+same-source process still waited until release.
+
+**What to do.** Prove independence through the real owner-open route in another
+process. A low-level disjoint-lock test does not cover constructor/registration
+work preceding admission. Distinguish initial registration from read-only reuse;
+lost/corrupt/replaced authority must refuse rather than be reconstructed to make
+the fast path work.
