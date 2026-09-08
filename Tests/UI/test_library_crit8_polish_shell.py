@@ -377,6 +377,132 @@ async def test_first_note_on_a_fresh_profile_leaves_the_notes_list_visible():
         gates.release_all()
 
 
+# --- task-32062: typing is never interrupted by the graduation ----------
+
+
+@pytest.mark.asyncio
+async def test_typing_the_first_note_survives_the_graduation_transition():
+    """task-32062: 'My first note' + Tab + a body became one corrupted title.
+
+    The first note graduates the profile, and that transition landed inside
+    the ~0.4 s the reader was still typing.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+            await _type(pilot, "My first note")
+
+            # The graduation lands mid-typing, between the title and the body.
+            gates.release_all()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lifecycle is LibraryLifecycle.GRADUATED,
+                message="the first note did not graduate the profile",
+            )
+
+            screen.query_one("#library-note-body", TextArea).focus()
+            await _type(pilot, "hello from jordan")
+            await pilot.pause()
+
+            assert (
+                screen.query_one("#library-note-title", Input).value == "My first note"
+            )
+            assert (
+                screen.query_one("#library-note-body", TextArea).text
+                == "hello from jordan"
+            )
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_notes_refresh_never_rebuilds_the_editor_the_reader_is_typing_in():
+    """task-32062 AC#1: no recompose or focus reset while an editor has focus.
+
+    Every Notes refresh (a save, a list reload, the first note landing in the
+    list) routes through the canvas sync, which ended in an unconditional
+    `refresh(recompose=True)` -- rebuilding the title Input and body TextArea
+    under the reader's hands and dropping focus onto the list grip. The next
+    keystroke then went somewhere else entirely.
+    """
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            title = screen.query_one("#library-note-title", Input)
+            title.focus()
+            await pilot.pause()
+            await _type(pilot, "My first note")
+
+            # Exactly what `_sync_library_canvas(screen, "notes")` performs.
+            work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+            work.sync_state(**screen._library_note_work_pane_kwargs())
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input) is title, (
+                "the focused editor must not be rebuilt under the reader"
+            )
+            assert title.value == "My first note"
+            assert title.has_focus, (
+                f"focus was reset mid-typing to {screen.focused!r}"
+            )
+
+            await pilot.press("tab")
+            await _type(pilot, "hello")
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input).value == (
+                "My first note"
+            )
+            assert screen.query_one("#library-note-body", TextArea).text == "hello"
+    finally:
+        gates.release_all()
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_notes_recompose_runs_once_the_editor_loses_focus():
+    """The refresh is deferred, not dropped: leaving the editor applies it."""
+    gates = _first_note_gates()
+    app = _new_fresh_profile_app(gates)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(235, 52)) as pilot:
+            screen = _active_library_screen(host)
+            await _open_the_first_note_editor(screen, pilot, gates)
+            title = screen.query_one("#library-note-title", Input)
+            title.focus()
+            await pilot.pause()
+            await _type(pilot, "My first note")
+
+            work = screen.query_one("#library-note-work-pane", LibraryNoteWorkPane)
+            work.sync_state(**screen._library_note_work_pane_kwargs())
+            await pilot.pause()
+            assert screen.query_one("#library-note-title", Input) is title
+
+            screen.query_one("#library-note-back", Button).focus()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen.query_one("#library-note-title", Input) is not title, (
+                "the deferred refresh must run once the editor no longer has focus"
+            )
+    finally:
+        gates.release_all()
+
 # --- task-32063: one status line, one header, one toast ------------------
 
 

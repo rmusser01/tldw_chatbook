@@ -8,6 +8,7 @@ from typing import Any, Callable, Literal
 
 from rich.markup import escape as escape_markup
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -56,6 +57,10 @@ _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 #: per screen: the mounted list pane owns it, and a work pane beside it drops
 #: it rather than repeating the same sentence (task-32063).
 NOTES_AUTHORITY_PREFIX = "Library notes · Library database"
+
+#: The two controls a reader types a note into. A refresh that would recompose
+#: this canvas while one of them has focus is deferred instead (task-32062).
+_NOTE_EDITOR_INPUT_IDS = frozenset({"library-note-title", "library-note-body"})
 
 
 @dataclass(frozen=True)
@@ -268,6 +273,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._tree_pager_focus_guard: Callable[[], bool] | None = None
         self._tree_pager_focus_generation = 0
         self._tree_focus_intent_generation: Callable[[], int] | None = None
+        self._recompose_deferred_for_editor = False
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -604,6 +610,50 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 lasting_sync_snapshot
             )
             return
+        if previous_mode == mode and self._editor_has_focus():
+            # task-32062: a Notes refresh (a save landing, the first note
+            # reaching the list, an evidence-driven reload) recomposed the
+            # surface the reader was typing into: the title Input and body
+            # TextArea were rebuilt and focus fell onto the list grip, so the
+            # next keystrokes went somewhere else. Reported as a title that
+            # swallowed the body. Every compose input above is already stored,
+            # so the rebuild is deferred, not dropped -- `on_descendant_blur`
+            # runs it the moment the editor no longer holds focus. Only for a
+            # surface that is STAYING put: a mode change is a navigation the
+            # reader asked for and must paint immediately.
+            #
+            # Known ceiling: a banner this recompose would have painted (the
+            # "changed elsewhere" conflict, say) waits for the field to lose
+            # focus too. Interrupting a sentence to show it costs the reader
+            # their keystrokes, which is the worse half of the trade.
+            self._recompose_deferred_for_editor = True
+            return
+        self._recompose_deferred_for_editor = False
+        self.refresh(recompose=True)
+
+    def _editor_has_focus(self) -> bool:
+        """Whether this canvas's own note title or body currently has focus."""
+        try:
+            focused = self.app.focused
+        except Exception:
+            return False
+        if focused is None or focused.id not in _NOTE_EDITOR_INPUT_IDS:
+            return False
+        try:
+            return self in focused.ancestors_with_self
+        except Exception:
+            return False
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        """Apply a refresh deferred while the reader was typing."""
+        if not self._recompose_deferred_for_editor:
+            return
+        self.call_after_refresh(self._apply_deferred_editor_recompose)
+
+    def _apply_deferred_editor_recompose(self) -> None:
+        if not self._recompose_deferred_for_editor or self._editor_has_focus():
+            return
+        self._recompose_deferred_for_editor = False
         self.refresh(recompose=True)
 
     def _compose_loading(self) -> ComposeResult:
