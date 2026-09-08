@@ -1263,6 +1263,68 @@ open. Memory bypass is confirmed in the unchanged seam and covering memory tests
 Windows skips and host/platform/final gates remain unqualified. Task31942 remains
 In Progress, V2 off; no full suite, host/dependency or external action.
 
+### Task 11: Close the deferred compaction-test teardown gap
+
+**Scope:** User's continuation resumes remaining qualification after Task10.
+BASE `f2faa5d65cbcb10cabecf7a5bf8daa45da475ae4`; existing worktree
+`/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/canvas-v1`, branch
+`codex/canvas-v2-mermaid-design`. Fix only the recorded Task10 teardown Minor;
+do not restart Task10 implementation or whole-correction review.
+
+ADR required: no
+ADR path: N/A (test-only teardown; existing ADR-125 runtime contracts unchanged)
+Reason: No product code, storage, API, dependency or authority change.
+
+**Only tracked edit/commit allowed:**
+`Tests/Chat/test_console_trace_compaction.py::test_maintenance_setup_failure_closes_handle_and_releases_exclusion`.
+Read TASK-31942 and `task-10-review.md` in this plan's preserved SDD workspace.
+Root owns plan/Backlog/evidence docs; leave them unstaged. No subagents.
+
+- [x] Before the edit, run the existing case with `../../.venv/bin/python -m pytest
+  Tests/Chat/test_console_trace_compaction.py::test_maintenance_setup_failure_closes_handle_and_releases_exclusion
+  -q --tb=short --show-capture=no`. Preserve its passing functional baseline.
+- [x] Prove the review's failure-path cleanup gap using one collected, test-owned
+  probe in this SDD directory (load `Tests.conftest` before app imports). Invoke
+  the real test with its real temporary database; capture the constructed database
+  and original bound `registered_connection_count` method. Force only the late
+  count assertion to fail by overriding that instance's count accessor. Catch
+  that AssertionError, then use the original method to assert the registry is
+  empty. The control fails before the edit and passes afterward. The probe's own
+  `finally` must close the captured database even when its assertion fails. No
+  permanent meta-test, new product hook, raw user-config import or source-string
+  assertion is needed. Preserve the probe as evidence, not collected shipping code.
+- [x] Immediately after successful `CharactersRAGDB(...)` construction, wrap all
+  remaining existing test setup, monkeypatching, quiescence and assertions in
+  `try`. Remove the trailing success-only close and use exactly:
+
+```python
+finally:
+    database.close_connection()
+```
+
+  Preserve every existing assertion, exception matcher, timeout and operation;
+  do not change other tests or introduce cleanup helpers/product methods.
+- [x] Rerun the failure-path probe and the complete
+  `Tests/Chat/test_console_trace_compaction.py` and
+  `Tests/Chat/test_console_trace_compaction_admission.py` selection once. Run
+  changed-file Ruff/format checks plus `git diff --check`; retain inherited
+  formatting debt, do not wholesale-format. Self-review the exact indentation-only
+  lifetime change, then commit only the named test file with an empty verified
+  index before/after. Preserve all temporary evidence; do not clean archives.
+- [x] Write a concise `task-11-report.md` with exact baseline/RED/GREEN commands,
+  results, static debt, commit and file scope. Independent task-scoped review
+  follows before root qualification proceeds. No full suite, eleven host-blocked
+  cases/control repeat without state change, host/dependency action, external
+  PR/push/rebase/merge or V2 enablement.
+
+Task11 completed in `55f74aa009` with independent spec/quality approval, no
+Critical/Important findings. Meaningful failure-path RED/GREEN and covering
+20passes; root committed control and original target each pass independently.
+Changed-file Ruff and changed-function format pass; inherited aggregate static
+debt and Requests warning remain disclosed. AC12 checked; no new ADR. Evidence:
+`Docs/superpowers/reviews/2026-09-08-sqlite-final-local-qualification.md`.
+The test-teardown Minor is resolved; resume remaining Task7 qualification only.
+
 ## Spec coverage and handoff
 
 | Approved contract | Implementation/review unit |
@@ -1281,4 +1343,4 @@ In Progress, V2 off; no full suite, host/dependency or external action.
 | Real lock oracles, packaging, performance and actual Canvas regressions | 3, 5b, 7 |
 | Helper-aware owner tests and pure Canvas integrity support during maintenance | 10 |
 
-Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. Task10 closes the 26 BASE failures with scoped review and committed verification. Its deferred test-teardown Minor, eleven semaphore-blocked cases, platform and final affected-selection/benchmark gaps remain for qualification; they are not passing tests or permission for host cleanup/unrelated repairs.
+Plan self-review checks interfaces across tasks, all approved spec sections, exact existing test names, bounded errors and unchecked work status. Tasks1–4, Task5a, Task5b and Task6 implementation have passed independent review; do not restart them. Task7 test implementation and its import-audit correction passed task-scoped review, but final qualification is incomplete. Runtime admission, live ownership, the macOS actual-app shutdown gates and the exact five Canvas nodes have passing scoped evidence; the full correction remains unqualified. Preserve the historical editable-install failures alongside the explicitly authorized repair. Task7b closes the measured startup-budget breach without changing its ceilings. The whole-correction review and single SQLite Task8 fix-only re-review are complete; I1/M1/M2 are addressed. Separately authorized Task9 closes the three strict-inventory gaps with independent approval and diagnoses the host without mutation. Task10 closes the 26 BASE failures with scoped review and committed verification. Task11 now resolves its test-teardown Minor with independent approval. Fresh affected-selection and checkout benchmarks have completed with the explicit limits in the final-local-qualification report: 1844 affected tests pass, but the five-child Canvas run has one unresolved failure, an exact rerun fails earlier, and aggregate static checks remain nonzero. Eleven semaphore-blocked cases and platform/optional gaps remain. No failed, skipped or deselected gate is passing evidence or permission for host cleanup/unrelated repairs. A bounded source-free readiness/action diagnostic spike awaits approval before instrumentation; no new code change is underway.
