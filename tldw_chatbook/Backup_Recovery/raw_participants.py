@@ -9,6 +9,7 @@ import io
 import os
 from pathlib import Path
 import stat
+import secrets
 import sys
 import threading
 import time
@@ -16,6 +17,7 @@ import weakref
 
 from . import bootstrap, storage_admission as storage
 from .profile_paths import lexical_path
+from . import settings_file_participants as settings_files
 from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
 
 
@@ -61,6 +63,15 @@ class _RawParticipant:
                 if remaining <= 0:
                     return False
                 storage._changed.wait(min(remaining, 0.05))
+            state = _participant_state(self)
+            source = state.source()
+            if state.owner == "eval.definitions":
+                return (
+                    source._config == source._persisted_config
+                    and source.persistence_error is None
+                )
+            if state.owner == "ui.themes":
+                return not source.is_modified
             return True
 
     def resume(self):
@@ -80,6 +91,16 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    if state.owner in {
+        "eval.definitions",
+        "notes.templates",
+        "ui.themes",
+        "tamagotchi.config",
+        "runtime.source_state",
+    }:
+        binding = settings_files.binding(source)
+        if binding is None or not binding[2] or binding[1] != state.selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner in {"chat.prompt_history", "ui.state"}:
         route = (
             "prompt_history"
@@ -109,8 +130,10 @@ def _types():
 
 
 def _async_source_selection(source, route):
-    """Resolve only the two actual async file owners; labels grant no authority."""
-    if route == "prompt_history":
+    """Resolve only the three actual async file owners; labels grant no authority."""
+    if route == "note_templates":
+        selected, installed, _ = settings_files.selection(source, route, None)
+    elif route == "prompt_history":
         from ..Chat.prompt_history import PromptHistory, default_prompt_history_path
 
         if not isinstance(source, PromptHistory):
@@ -153,35 +176,43 @@ def _raw_participant(source):
     """Only installed actual sources; this does not qualify capture inventory."""
     if not _pinned_io_available():
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
-    from ..Widgets import emoji_picker
-    from ..Notes.file_notes_replica import FileNotesReplica
-
-    types = _types()
-    from ..Chat.prompt_history import PromptHistory
-
-    screen_module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
-    screen_type = getattr(screen_module, "ChatScreen", None)
-    if type(source) is PromptHistory or (
-        screen_type is not None and type(source) is screen_type
-    ):
-        route = "prompt_history" if type(source) is PromptHistory else "sidebar_state"
-        selected, installed = _async_source_selection(source, route)
+    settings_binding = settings_files.binding(source)
+    if settings_binding is not None:
+        owner, selected, installed = settings_binding
         if not installed:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
-        owner = "chat.prompt_history" if route == "prompt_history" else "ui.state"
-    elif type(source) is FileNotesReplica:
-        owner, selected = "notes.file_notes_replica", source.db_path
-    elif source is emoji_picker:
-        owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
-    elif type(source) in types:
-        owner = types[type(source)]
-        selected = (
-            source.user_templates_dir
-            if owner == "chunking.templates"
-            else source.store_path
-        )
     else:
-        raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        from ..Widgets import emoji_picker
+        from ..Notes.file_notes_replica import FileNotesReplica
+
+        types = _types()
+        from ..Chat.prompt_history import PromptHistory
+
+        screen_module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
+        screen_type = getattr(screen_module, "ChatScreen", None)
+        if type(source) is PromptHistory or (
+            screen_type is not None and type(source) is screen_type
+        ):
+            route = (
+                "prompt_history" if type(source) is PromptHistory else "sidebar_state"
+            )
+            selected, installed = _async_source_selection(source, route)
+            if not installed:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            owner = "chat.prompt_history" if route == "prompt_history" else "ui.state"
+        elif type(source) is FileNotesReplica:
+            owner, selected = "notes.file_notes_replica", source.db_path
+        elif source is emoji_picker:
+            owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
+        elif type(source) in types:
+            owner = types[type(source)]
+            selected = (
+                source.user_templates_dir
+                if owner == "chunking.templates"
+                else source.store_path
+            )
+        else:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     selected = lexical_path(selected)
     if owner == "chunking.templates":
         from ..config import get_cli_data_dir
@@ -228,6 +259,10 @@ class _State:
     files: list = field(default_factory=list)
     descriptors: set = field(default_factory=set)
     created_files: dict = field(default_factory=dict)
+    observed_files: dict = field(default_factory=dict)
+    temporary: Path | None = None
+    backup: Path | None = None
+    backup_temporary: Path | None = None
     active: bool = False
     uncertain: bool = False
 
@@ -300,7 +335,7 @@ def _close_descriptor(state, fd):
 
 
 def _retire(state):
-    if state.uncertain or state.files:
+    if state.uncertain or state.files or state.descriptors:
         return False
     for path, fd in tuple(state.pins.items()):
         _close_descriptor(state, fd)
@@ -311,6 +346,8 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route in settings_files.ROUTES:
+        return settings_files.selection(source, route, selected_read)
     if route in {"prompt_history", "sidebar_state"}:
         selected, installed = _async_source_selection(source, route)
         if selected_read is not None and lexical_path(selected_read) != selected:
@@ -387,11 +424,20 @@ def _scope(
             "service",
             "prompt_history",
             "sidebar_state",
+            "eval_config",
+            "note_templates",
+            "pet",
+            "runtime_state",
+            "runtime_read",
         }:
             selected = (
                 source.store_path
                 if route == "service"
-                else _async_source_selection(source, route)[0]
+                else (
+                    settings_files.selection(source, route, selected_read)[0]
+                    if route in settings_files.ROUTES
+                    else _async_source_selection(source, route)[0]
+                )
             )
             if selected_read is not None and lexical_path(
                 selected_read
@@ -419,8 +465,27 @@ def _scope(
         )
         installed = installed and pinned
         paths = () if directory_only else (selected,)
-        if route in {"service", "prompt_history", "sidebar_state"} and writing:
+        if (
+            route
+            in {
+                "service",
+                "prompt_history",
+                "sidebar_state",
+                "eval_config",
+                "note_templates",
+                "theme_file",
+                "theme_export",
+            }
+            and writing
+        ):
             paths += (selected.with_suffix(selected.suffix + ".tmp"),)
+        temporary = None
+        if route == "runtime_state" and writing:
+            temporary = selected.parent / f".{selected.name}.{secrets.token_hex(8)}.tmp"
+            paths += (temporary,)
+        if route == "pet" and writing:
+            temporary = selected.with_suffix(".tmp")
+            paths += (temporary,)
         parent = selected if directory_only else selected.parent
         missing = []
         anchor = parent
@@ -434,6 +499,19 @@ def _scope(
         directories = (
             tuple(reversed(missing)) if writing and route != "template_save" else ()
         )
+        if route == "runtime_read":
+            directories = ()
+        if route == "runtime_state":
+            owned = source.application_owned_directory
+            if owned is not None and lexical_path(owned) != parent:
+                raise ValueError(
+                    "Application-owned directory must be the target parent"
+                )
+            directories = (
+                (directories + ((parent,) if parent not in directories else ()))
+                if writing and owned is not None
+                else ()
+            )
         participant = None
         if installed:
             # Constructor directory selection is complete before binding.
@@ -441,11 +519,21 @@ def _scope(
                 source.user_templates_dir = selected
             participant = _raw_participant(source)
             binding = _participant_state(participant)
-            if binding.owner != "chunking.templates" and binding.selected != selected:
+            if (
+                binding.owner not in {"chunking.templates", "ui.themes"}
+                and binding.selected != selected
+            ):
                 raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         source_key = (
-            str(selected.resolve())
-            if route in {"service", "prompt_history", "sidebar_state"}
+            str(
+                (
+                    settings_files.binding(source)[1]
+                    if route in settings_files.ROUTES
+                    else selected
+                ).resolve()
+            )
+            if route
+            in {"service", "prompt_history", "sidebar_state"} | settings_files.ROUTES
             else None
         )
         with storage._changed:
@@ -479,13 +567,15 @@ def _scope(
             threading.current_thread(),
             storage._task_identity(),
             pinned=pinned,
+            temporary=temporary,
         )
         with storage._changed:
             _states[operation] = state
             storage._raw_operations.add(operation)
         # Every publication/creation target is admitted before any side effect.
         for path in (
-            paths
+            ((parent,) if route in {"pet", "theme_directory"} else ())
+            + paths
             + directories
             + ((selected,) if directory_only and not directories else ())
         ):
@@ -510,6 +600,8 @@ def _scope(
             # Ordinary path IO cannot prove a pinned recovery/source boundary.
             # Keep the actual admission result, even if native exclusion exists.
             state.identities[anchor] = anchor_identity
+        if route == "theme_directory" or (route == "pet" and writing):
+            settings_files.preflight(state, route, attempt)
         if any(
             hold is not None and hold.authority.pause_requested(hold.names)
             for hold in state.holds
@@ -522,6 +614,7 @@ def _scope(
             state.active = True
             _local.operation = operation
         _check(operation)
+        settings_files.check_members(state)
         try:
             yield operation
         except BaseException:
@@ -561,6 +654,8 @@ def _selected(operation):
 def _mkdirs(operation):
     state = _check(operation, writing=True)
     for directory in state.directories:
+        if directory in state.pins:
+            continue
         _check(operation, directory, writing=True)
         if state.pinned:
             parent = state.pins[directory.parent]
@@ -626,6 +721,9 @@ def _file(operation, path, mode):
             state.created_files[path] = (info.st_dev, info.st_ino)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError("raw_not_regular")
+        expected = state.observed_files.get(path)
+        if expected is not None and (info.st_dev, info.st_ino) != expected:
+            raise bootstrap.RecoveryRequired("raw_entry_identity_changed")
         if mode == "w":
             os.ftruncate(fd, 0)
         native = io.FileIO(fd, mode, closefd=False)
@@ -656,6 +754,22 @@ def _replace(operation, temporary, destination):
     _check(operation, destination, writing=True)
     temporary, destination = lexical_path(temporary), lexical_path(destination)
     try:
+        if destination == state.backup:
+            try:
+                info = (
+                    os.stat(
+                        destination.name,
+                        dir_fd=state.pins[destination.parent],
+                        follow_symlinks=False,
+                    )
+                    if state.pinned
+                    else destination.lstat()
+                )
+                identity = (info.st_dev, info.st_ino)
+            except FileNotFoundError:
+                identity = None
+            if identity != state.observed_files.get(destination):
+                raise bootstrap.RecoveryRequired("raw_entry_identity_changed")
         _check_temporary_identity(state, temporary)
         if state.pinned:
             os.replace(
@@ -768,4 +882,46 @@ def _service_file(source, mode):
     state = _check(operation, source.store_path, writing=mode == "w")
     if state.source is not source:
         raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    return operation
+
+
+def _unlink(operation, path):
+    """Delete only an admitted regular entry whose observed identity still holds."""
+    state = _check(operation, path, writing=True)
+    path = lexical_path(path)
+    parent = state.pins.get(path.parent)
+    info = (
+        os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+        if state.pinned
+        else path.lstat()
+    )
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise bootstrap.RecoveryRequired("raw_not_regular")
+    _check(operation, path, writing=True)
+    current = (
+        os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+        if state.pinned
+        else path.lstat()
+    )
+    expected = state.observed_files.get(path, (info.st_dev, info.st_ino))
+    if (current.st_dev, current.st_ino) != expected:
+        raise bootstrap.RecoveryRequired("raw_entry_identity_changed")
+    if state.pinned:
+        os.unlink(path.name, dir_fd=parent)
+    else:
+        path.unlink()
+    state.observed_files.pop(path, None)
+
+
+def _runtime_operation(path=None):
+    """Discover only the live source-issued RuntimeSourceStateStore operation."""
+    operation = getattr(_local, "operation", None)
+    if operation is None:
+        return None
+    state = _states.get(operation)
+    module = sys.modules.get("tldw_chatbook.runtime_policy.source_state")
+    cls = getattr(module, "RuntimeSourceStateStore", None)
+    if state is None or cls is None or not isinstance(state.source, cls):
+        return None
+    _check(operation, path, writing=True)
     return operation

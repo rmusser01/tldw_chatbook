@@ -23,6 +23,9 @@ from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
 
 
+from ..Backup_Recovery import raw_participants as raw
+
+
 class SettingsThemeEditor(Vertical):
     """Theme editor styled for the Settings screen."""
 
@@ -72,7 +75,8 @@ class SettingsThemeEditor(Vertical):
         from ..config import _get_effective_config_path
 
         self.custom_themes_path = _get_effective_config_path().parent / "themes"
-        self.custom_themes_path.mkdir(parents=True, exist_ok=True)
+        with raw._scope(self, "theme_directory", writing=True) as operation:
+            raw._mkdirs(operation)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
         self.last_focused_color_input: str | None = None
@@ -220,14 +224,15 @@ class SettingsThemeEditor(Vertical):
 
     def _load_user_themes(self, parent_node) -> None:
         """Load user-created themes from the themes directory."""
-        for theme_file in self.custom_themes_path.glob("*.toml"):
-            try:
-                with open(theme_file, "r", encoding="utf-8") as f:
-                    theme_data = toml.load(f)
-                theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
-                parent_node.add_leaf(f"user:{theme_name}")
-            except Exception as e:
-                logger.error(f"Failed to load user theme {theme_file}: {e}")
+        with raw._scope(self, "theme_directory") as operation:
+            for theme_file in raw._check(operation).observed_files:
+                try:
+                    with raw._file(operation, theme_file, "r") as f:
+                        theme_data = toml.load(f)
+                    theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
+                    parent_node.add_leaf(f"user:{theme_name}")
+                except Exception as e:
+                    logger.error(f"Failed to load user theme {theme_file}: {e}")
 
     @on(Tree.NodeSelected)
     def on_theme_selected(self, event: Tree.NodeSelected) -> None:
@@ -276,8 +281,9 @@ class SettingsThemeEditor(Vertical):
         theme_path = self.custom_themes_path / f"{theme_name}.toml"
         if theme_path.exists():
             try:
-                with open(theme_path, "r", encoding="utf-8") as f:
-                    theme_data = toml.load(f)
+                with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
+                    with raw._file(operation, theme_path, "r") as f:
+                        theme_data = toml.load(f)
 
                 self.current_theme_name = theme_name
                 self.current_theme_data = theme_data.get("colors", {})
@@ -523,8 +529,14 @@ class SettingsThemeEditor(Vertical):
         theme_path = self.custom_themes_path / f"{theme_name}.toml"
 
         try:
-            with open(theme_path, "w", encoding="utf-8") as f:
-                toml.dump(theme_data, f)
+            with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
+                temporary = theme_path.with_suffix(theme_path.suffix + ".tmp")
+                try:
+                    with raw._file(operation, temporary, "w") as f:
+                        toml.dump(theme_data, f)
+                    raw._replace(operation, temporary, theme_path)
+                finally:
+                    raw._remove_temporary(operation, temporary)
 
             self.app.notify(f"Theme '{theme_name}' saved", severity="success")
             self.is_modified = False
@@ -708,7 +720,8 @@ class SettingsThemeEditor(Vertical):
     def _delete_user_theme(self, theme_path: Path, theme_name: str) -> None:
         """Unlink a user theme file and reset the editor (post-confirmation)."""
         try:
-            theme_path.unlink()
+            with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
+                raw._unlink(operation, theme_path)
             self.app.notify(
                 f"Deleted theme '{theme_name}'", severity="success"
             )
@@ -747,9 +760,15 @@ class SettingsThemeEditor(Vertical):
         }
 
         try:
-            export_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(export_path, "w", encoding="utf-8") as f:
-                toml.dump(theme_data, f)
+            with raw._scope(self, "theme_export", writing=True, selected_read=export_path) as operation:
+                raw._mkdirs(operation)
+                temporary = export_path.with_suffix(export_path.suffix + ".tmp")
+                try:
+                    with raw._file(operation, temporary, "w") as f:
+                        toml.dump(theme_data, f)
+                    raw._replace(operation, temporary, export_path)
+                finally:
+                    raw._remove_temporary(operation, temporary)
 
             self.app.notify(f"Theme exported to: {export_path}", severity="success")
         except Exception as e:

@@ -12,6 +12,18 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 
+@pytest.fixture
+def tmp_path(tmp_path_factory, monkeypatch):
+    """Select the isolated theme root before constructing its bound editor."""
+    from tldw_chatbook import config
+
+    profile = tmp_path_factory.mktemp("theme-profile")
+    themes = profile / "themes"
+    themes.mkdir()
+    monkeypatch.setattr(config, "_get_effective_config_path", lambda: profile / "config.toml")
+    return themes
+
+
 @pytest.mark.asyncio
 async def test_settings_theme_editor_can_compose():
     app = _build_test_app()
@@ -202,7 +214,6 @@ def _isolated_editor_app_with_real_screens(
 async def test_settings_theme_editor_delete_blocks_builtin_themes(tmp_path):
     """Built-in themes (Textual defaults) are not deletable."""
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -224,7 +235,6 @@ async def test_settings_theme_editor_delete_blocks_shipped_themes(tmp_path):
     """Shipped catalog themes are not deletable and say "shipped", matching
     the tree's own grouping (Built-in / Custom catalog / User Themes)."""
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -264,7 +274,6 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
     confirming the dialog (task-1367: irreversible unlink needs a guard)."""
     theme_file = _write_user_theme(tmp_path, "my_custom_theme")
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -311,7 +320,6 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
     shipped_name = next(t.name for t in ALL_THEMES if hasattr(t, "name"))
     theme_file = _write_user_theme(tmp_path, shipped_name)
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -340,7 +348,6 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
 async def test_settings_theme_editor_delete_missing_custom_theme_warns(tmp_path):
     """Deleting a name with no saved custom theme file says so honestly."""
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -412,7 +419,6 @@ async def test_settings_theme_editor_reset_without_edits_skips_confirmation(tmp_
     """task-1371: Reset with no unsaved edits is lossless, so it runs without
     a confirmation dialog."""
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -431,7 +437,6 @@ async def test_settings_theme_editor_reset_confirms_before_discarding_edits(tmp_
     """task-1371: Reset discards unapplied edits, so it follows the Settings
     screen's revert rule (ADR-031): confirm first, cancel keeps the edits."""
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -473,7 +478,6 @@ async def test_settings_theme_editor_new_confirms_before_discarding_edits(tmp_pa
     """task-1371: New replaces the working palette, so it follows the same
     discard confirmation rule as Reset; unmodified editors skip the dialog."""
     editor = SettingsThemeEditor()
-    editor.custom_themes_path = tmp_path
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()

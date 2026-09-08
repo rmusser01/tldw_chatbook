@@ -8,7 +8,10 @@ Configuration Loader
 Loads and manages configuration from YAML files for the evaluation system.
 """
 
+import copy
 import yaml
+
+from tldw_chatbook.Backup_Recovery import raw_participants as raw
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from loguru import logger
@@ -31,22 +34,42 @@ class EvalConfigLoader:
 
         self.config_path = Path(config_path)
         self._config = None
+        self._persisted_config = None
+        self.persistence_error = None
         self._load_config()
 
     def _load_config(self):
         """Load configuration from YAML file."""
-        if not self.config_path.exists():
-            logger.warning(f"Configuration file not found: {self.config_path}")
-            self._config = self._get_default_config()
-            return
-
+        previous_config = self._config
+        previous_persisted = self._persisted_config
         try:
-            with open(self.config_path, "r") as f:
-                self._config = yaml.safe_load(f)
-            logger.info(f"Loaded configuration from {self.config_path}")
+            with raw._scope(self, "eval_config") as operation:
+                selected = raw._selected(operation)
+                if not selected.exists():
+                    logger.warning(f"Configuration file not found: {selected}")
+                    self._config = self._get_default_config()
+                    self._persisted_config = None
+                    return
+                with raw._file(operation, selected, "r") as f:
+                    loaded = yaml.safe_load(f)
+                self._config = loaded
+                self._persisted_config = copy.deepcopy(loaded)
+                self.persistence_error = None
+                logger.info(f"Loaded configuration from {selected}")
         except Exception as e:
+            self._config = previous_config
+            self._persisted_config = previous_persisted
+            self.persistence_error = "eval_load_failed"
             logger.error(f"Error loading configuration: {e}")
-            self._config = self._get_default_config()
+            # Refusal never discards an existing mutable draft.
+            if self._config is None:
+                self._config = self._get_default_config()
+
+    def persistence_safe_point(self):
+        """Report the actual mutable draft, including edits through get()."""
+        if self._config != self._persisted_config:
+            return "needs_user_save_or_discard"
+        return "persistence_failed" if self.persistence_error else "ready"
 
     def _get_default_config(self) -> Dict[str, Any]:
         """Get default configuration if file not found."""
@@ -224,18 +247,26 @@ class EvalConfigLoader:
             path: Optional path to save to (defaults to original path)
         """
         save_path = Path(path) if path else self.config_path
-
+        previous_persisted = self._persisted_config
         try:
-            from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
-
-            with acquire_storage(save_path):
-                # Hold ordinary admission for the entire durable mutation.
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(save_path, "w") as f:
-                    yaml.dump(self._config, f, default_flow_style=False, sort_keys=False)
-
-            logger.info(f"Saved configuration to {save_path}")
+            with raw._scope(self, "eval_config", writing=True, selected_read=save_path) as operation:
+                selected = raw._selected(operation)
+                snapshot = copy.deepcopy(self._config)
+                raw._mkdirs(operation)
+                temporary = selected.with_suffix(selected.suffix + ".tmp")
+                try:
+                    with raw._file(operation, temporary, "w") as f:
+                        yaml.dump(snapshot, f, default_flow_style=False, sort_keys=False)
+                    raw._replace(operation, temporary, selected)
+                finally:
+                    raw._remove_temporary(operation, temporary)
+                if selected == raw.lexical_path(self.config_path):
+                    self._persisted_config = snapshot
+                    self.persistence_error = None
+                logger.info(f"Saved configuration to {selected}")
         except Exception as e:
+            self._persisted_config = previous_persisted
+            self.persistence_error = "eval_save_failed"
             logger.error(f"Error saving configuration: {e}")
 
 

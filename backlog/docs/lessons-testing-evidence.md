@@ -5795,3 +5795,15 @@ payloads and native schema bytes as well as whitespace-insensitive code diffs.
 An AST comparison that normalizes string whitespace cannot certify preservation
 of an exact schema contract; this incident also used exact payload/control-flow
 comparison and the original capture validators.
+
+## A closed flag after a failed close is not positive retirement (TASK-31993)
+
+Phase8's runtime reader originally checked `stream.closed` in a `finally` block
+after `with stream`. A fault wrapper closed the real Python stream and then raised;
+the flag was true, so the code retired its separately owned native descriptor and
+released maintenance exclusion despite the ambiguous close result. The paired
+before/after-close subprocess test exposed this (one passed, one failed). Explicit
+close-success tracking now retains stream/descriptor evidence on either exception,
+and an independent native maintainer remains blocked until the child exits. Test
+both outcomes; neither a closed flag nor a completed context manager body proves
+successful resource retirement.

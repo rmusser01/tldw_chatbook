@@ -282,14 +282,16 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chat/prompt_template_manager.py | load_template | open | 1 | unsupported | files |
 | tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/prompt_history.py | PromptHistory._history_io | write | 1 | unsupported | phase7 async source lifetime; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | source-bound raw native IO; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _remove_temporary | os.unlink | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _replace | os.replace | 2 | generic_boundary | source-bound raw native IO; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _remove_temporary | os.unlink | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _replace | os.replace | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | _unlink | os.unlink | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
 | tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
+| tldw_chatbook/Notes/template_store.py | merge_templates | dump | 1 | unsupported | notes.templates phase8 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Widgets/emoji_picker.py | save_recent_emoji | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator.__init__ | secure_private_directory | 2 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
 | tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._add_character_dependency | dump | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
@@ -346,9 +348,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chunking/Chunk_Lib.py | load_document | open | 1 | unsupported | files |
 | tldw_chatbook/Chunking/engine/chunker.py | Chunker.chunk_file_stream | open | 1 | unsupported | files |
 | tldw_chatbook/Coding/code_mapper.py | SimpleIO.read_text | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | dump | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Config_Files/create_custom_template.py | create_custom_template | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/DB/AgentRuns_DB.py | AgentRunsDB | inherits:BaseDB | 1 | qualified | db.agent_runs |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB.backup_database | backup_connection_to_private | 1 | unsupported | sqlite |
@@ -372,10 +371,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/DB/Subscriptions_DB.py | ensure_site_configs_schema | connect_private_sqlite | 1 | qualified | db.subscriptions |
 | tldw_chatbook/DB/Workspace_DB.py | WorkspaceDB | inherits:BaseDB | 1 | qualified | db.workspaces |
 | tldw_chatbook/DB/base_db.py | BaseDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader._load_config | open | 1 | generic_boundary | evals |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | generic_boundary | evals |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | mkdir | 1 | generic_boundary | evals |
-| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | open | 1 | generic_boundary | evals |
+| tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | generic_boundary | eval.definitions phase8 exact default source; explicit exports ordinary; runtime composition pending |
 | tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_csv_dataset | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/dataset_loader.py | DatasetLoader._load_json_dataset | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/dataset_validator.py | DatasetValidator._load_dataset | open | 3 | external_input | evals |
@@ -438,10 +434,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._append_tts_artifact_chunk | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._append_tts_artifact_chunk | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py | TTSEventHandler._stream_response_via_sink | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | dump | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Event_Handlers/note_ingest_events.py | handle_ingest_notes_import_now_button_pressed.import_worker_notes | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Event_Handlers/notes_events.py | load_note_templates | open | 2 | unsupported | miscellaneous |
+| tldw_chatbook/Event_Handlers/notes_events.py | load_note_templates | open | 1 | external_input | shipped immutable fallback template read; user source uses Notes.template_store |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | ComfyUIImageAdapter._download_output | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/adapters/comfyui_image_adapter.py | _load_packaged_workflow | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Image_Generation/adapters/image_format_utils.py | maybe_convert_format | open | 1 | unsupported | miscellaneous |
@@ -1021,24 +1014,20 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Utils/note_importers.py | JSONImporter.parse_file | open | 1 | unsupported | files |
 | tldw_chatbook/Utils/note_importers.py | YAMLImporter.parse_file | open | 1 | unsupported | files |
 | tldw_chatbook/Utils/paths.py | get_project_databases_dir | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Utils/private_paths.py | _follow_trusted_symlink | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | _open_directory_component | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | _open_leaf_for_create | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | _open_verified_parent | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | _prepare_application_owned_parent | secure_private_directory | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | write | 2 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_text | atomic_private_write_bytes | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | create_private_text | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | create_private_text | secure_private_directory | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | create_private_text | write | 2 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | open_private_binary | open | 2 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | open_private_text_append | open_private_text_append_stream | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | mkdir | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | open | 2 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | secure_private_directory | mkdir | 2 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | secure_private_directory | open | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | verify_trusted_directory | open | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/private_paths.py | _native_open | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | _prepare_application_owned_parent | secure_private_directory | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | write | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_text | atomic_private_write_bytes | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | create_private_text | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | create_private_text | secure_private_directory | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | create_private_text | write | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_binary | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_text_append | open_private_text_append_stream | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | mkdir | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | open_private_text_append_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/private_paths.py | secure_private_directory | mkdir | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/secure_temp_files.py | create_secure_temp_file | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/secure_temp_files.py | secure_delete_file | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/secure_temp_files.py | secure_delete_file | write | 1 | generic_boundary | generic |
@@ -1077,11 +1066,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleMarkdownMessage._open_link | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage.__init__ | mkdir | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | copy2 | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._read_data | open | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
-| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | open | 1 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | write | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | SQLiteStorage._connect | connect_private_sqlite | 2 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
 | tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget._write_json_export | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/activity_log.py | ActivityLogWidget._write_text_export | write | 3 | unsupported | miscellaneous |
@@ -1095,14 +1081,8 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/file_extraction_dialog.py | FileExtractionDialog._save_files | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/project_skills_import_modal.py | _read_loose_skill_file_sync | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.__init__ | mkdir | 1 | unsupported | ui.themes; participant-task10 |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._load_user_themes | open | 1 | unsupported | ui.themes; participant-task10 |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.load_user_theme | open | 1 | unsupported | ui.themes; participant-task10 |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | dump | 1 | generic_boundary | caller-selected-external-theme-export |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | mkdir | 1 | generic_boundary | caller-selected-external-theme-export |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | open | 1 | generic_boundary | caller-selected-external-theme-export |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_save_theme | dump | 1 | unsupported | ui.themes; participant-task10 |
-| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_save_theme | open | 1 | unsupported | ui.themes; participant-task10 |
+| tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_save_theme | dump | 1 | unsupported | ui.themes phase8 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Workspaces/change_retention.py | prune_change_history | mkdir | 2 | qualified | workspaces.change_tracking |
 | tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo._locked._Lock.__enter__ | mkdir | 2 | qualified | workspaces.change_tracking |
 | tldw_chatbook/Workspaces/change_tracking.py | ShadowRepo.ensure_initialized | mkdir | 3 | qualified | workspaces.change_tracking |
@@ -1200,7 +1180,6 @@ The concrete `renameatx_np` callable assignment and `os.replace` seams are now c
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.replace | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.replace | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | os.replace | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | generic |
 | tldw_chatbook/Video_Generation/video_store.py | VideoStore._commit_sibling | os.replace | 1 | process_artifact | process |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | recursive_scrape.save_progress | os.replace | 1 | unsupported | miscellaneous |
 
@@ -1245,7 +1224,6 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | os.unlink | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | generic |
 | tldw_chatbook/Utils/secure_temp_files.py | secure_temp_file | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Web_Scraping/Article_Extractor_Lib.py | scrape_entire_site | os.unlink | 1 | unsupported | miscellaneous |
 
@@ -1590,7 +1568,7 @@ release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
 | chat.grammars; feedback; audio.history | data/tldw_chatbook_chat_grammars.json; tldw_chatbook_feedback.json; tldw_chatbook_audio_history.json | `LocalChatGrammarsService._persist`, `LocalFeedbackService._persist`, `LocalAudioServicesService._persist_history`; participant pending. |
 | chat.dictionaries | data/chat_dicts, including all retained files and empty topology | `config.load_settings` and installed dictionary writers; actual core `chat_dictionaries.file_path` remains a required group when present. Participant pending. |
 | chunking.templates | data/chunking_templates | `ChunkingTemplateManager._get_user_templates_dir`, `ChunkingTemplateManager.save_template`; participant pending. |
-| notes.templates | config-parent/note_templates.json | `Event_Handlers.notes_events.load_note_templates` effective config selector; `note_ingest_events.handle_ingest_notes_import_now_button_pressed.import_worker_notes` raw JSON write requires participant lifetime, pending. |
+| notes.templates | config-parent/note_templates.json | `Notes.template_store` effective config selector and shared RMW; actual CLI and `_import_template_files` worker use phase8 source lifetime; runtime composition pending. |
 | chat.prompts | installed package/Chat/prompt_templates | `Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR`, `load_template`; inert internal definitions. |
 | generation.styles | data/image_generation_styles | `Media_Creation.generation_templates` installed template directory; participant pending. |
 | tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Utils.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; participant pending. No environment model-cache inference. |
@@ -1660,7 +1638,7 @@ No startup hold is released as a shortcut for a raw writer lacking tokens.
 | chat.prompt_history | data/prompt_history.jsonl, all persisted history bytes | `Chat.prompt_history.default_prompt_history_path`, `PromptHistory._history_io` append and capped rewrite, source-owned async queued/native lifetime; runtime composition pending. |
 | ui.state | active config-parent/ui_state.toml, persisted sidebar state | `ChatScreen._load_sidebar_state`, `_write_sidebar_state_snapshot`, source-owned debounce/flush jobs; runtime composition pending. |
 | ui.emoji_recents | active config-parent/recent_emojis.json, persisted recents | `Widgets.emoji_picker._recent_emojis_path`, `save_recent_emoji`; pending. |
-| ui.themes | active config-parent/themes, every retained file and empty directory | `SettingsThemeEditor.__init__`, `on_save_theme`, `_delete_user_theme`; pending. `on_export_theme` writes a separate external Downloads destination, never authority to scan home. |
+| ui.themes | active config-parent/themes, every retained file and empty directory | `SettingsThemeEditor.__init__`, `on_save_theme`, `_delete_user_theme`; phase8 source lifetime, runtime composition pending. `on_export_theme` writes a separate external Downloads destination, never authority to scan home. |
 | chatbooks.registry | `database_path(config, "prompts_db_path").with_name("tldw_chatbook_chatbooks.json")`, baseline opaque registry including provenance/outbox and retained records | `TldwCli._build_chatbook_db_paths` always supplies Prompts; `LocalChatbookService._default_registry_path` selects it first; `_load_registry`/`_save_registry`, create/update/delete and provenance mutations require full read-modify-save lifetime in10. Final dependency IDs are this profile's config and db.prompts.primary. |
 | chatbooks.archives | data/chatbooks, every retained ordinary saved bundle and empty directory; baseline opaque bytes regardless of extension/name | `Chatbooks.database_paths.get_private_chatbooks_dir`, Chatbook creation wizard default destination and `ChatbookCreator._create_zip_archive`; full creator publish/cancel/cleanup lifetime pending10. ZIP contents are not opened or activated by recovery. A bundle does not become a recovery output merely because its source DB is captured or its filename resembles a backup. |
 | runtime.instance_lock | exact data/.instance.lock, excluded PID/portalocker state | `Utils.instance_lock.acquire_profile_instance_lock`; never restore a PID/held lock. Wrong-kind paths, links and unsupported metadata refuse. |
@@ -2119,3 +2097,71 @@ coverage, app/headless pause composition and independent whole-Task10 review rem
 required. Earlier phase2 combined-order callback/bootstrap and Task13 malformed
 Media-schema fixture debts remain; this cohort's focused runs did not reproduce
 them. No Complete/replacement capability or responder is enabled.
+
+### Task10 phase8 — settings, definitions and shared note-template files
+
+This cohort adds actual source lifetimes for `RuntimeSourceStateStore`, the installed
+`EvalConfigLoader` default YAML, the shared `Notes.template_store` module,
+`SettingsThemeEditor` and default `ConfigFileStorage`. Exact classes, module identity
+and current selectors determine installed posture; custom Eval/JSON paths and theme
+exports remain ordinary admission. Previously installed sources cannot retarget or
+demote to ordinary to evade a closed gate. Runtime composition remains unavailable.
+
+Each operation reserves before selection and holds its source path lock through
+serialization, native IO and positive retirement. Runtime private binary/atomic
+helpers discover only their live source operation internally; they have no new
+public authority arguments. The random runtime temporary is selected before helper
+side effects. Existing parent/posture algorithms remain, including ordinary
+unverified-platform behavior. The runtime source tracks helper traversal descriptors,
+streams, publication and cleanup identities; ambiguous close retains native evidence
+and prevents drain, with no close retry or garbage-collection retirement.
+
+Pet backup and theme directory membership use two-stage preflight. The initial
+ordinary parent admission and directory pin precede enumeration of exact TOML or
+`<stem>.backup_YYYYMMDD_HHMMSS.json` entries. Matching members are bounded, fixed and
+individually admitted while the initial lease/pin remains held. Selection, pause,
+parent and observed file identities are rechecked before mutation. New or replaced
+entries are never pruned by a stale name. Pet timestamp collisions preserve the
+existing same-second overwrite policy: the one backup contains the primary bytes
+from immediately before the latest save. Exact bytes are copied through an admitted
+exclusive backup sidecar and atomically published; stale unowned sidecars refuse.
+This is not constructor recovery replay during archive capture.
+
+Eval mutable `get()` results remain supported. `_persisted_config` and
+`persistence_error` expose truthful draft state; failed reload/save, including a
+final native directory-close failure, retain the previous draft/saved marker.
+`persistence_safe_point()` reports `needs_user_save_or_discard`,
+`persistence_failed`, or `ready`. The raw participant refuses drain for dirty/error
+Eval state or a theme's actual `is_modified` flag. Theme save/delete success and tree
+changes follow positive source completion; existing confirmation dialogs remain.
+Exports never mark an unrelated draft saved.
+
+The CLI gathers input before native admission, then shares `merge_templates` with
+the actual template importer. The admitted RMW rereads the latest file under the
+shared in-process path lock and refuses corrupt existing data. The actual async
+importer is the third concrete `_FileJob` dispatch route, with queued/running
+cancellation and pending result bookkeeping; final write failure never reports
+imported templates as successes. `notes_events.load_note_templates` uses the same
+user-file reader; shipped fallback reads remain separate immutable input.
+
+Ordinary cross-process CRUD still permits concurrent shared native writers. A
+ready-handshake, post-read template lost-update schedule fails on both phase8 and
+immutable phase BASE 838b949ac7aa9c92988d79fe725025e8ffc21a79. This is an existing
+limitation, not passing coverage or a new cross-process transaction guarantee.
+Maintenance exclusion is tested independently; no global writer mutex was added.
+
+Remaining handoffs: actual app/headless maintenance composition must retain these
+source instances, close gates, observe dirty/error state and positively drain before
+startup hold retirement. Non-template note import still has its separate DB/Notes/Git
+compound worker lifetime; config persistence still uses ordinary private helpers and
+portalocker and is not covered by the runtime-only hook. Persistent logging, other
+pending census cohorts, the responder and independent whole-Task10 review remain.
+No runtime/startup/Complete capability is enabled by this phase.
+
+The separate ADR-040 profile-path guard currently has two preexisting failures in
+untouched `TTS/recovery.py:111` and `:115`, for the literal legacy
+`~/.config/tldw_cli/chatterbox_voices` and `~/.config/tldw_cli/higgs_voices` paths.
+Both `test_production_profile_owned_path_inventory_is_exact` and
+`test_cli_prints_the_real_source_census_and_enforces_it` fail on current code and
+immutable phase8 BASE. Reconcile these concrete entries in the pending Task10 TTS
+cohort; the passing backup producer census does not erase that separate debt.

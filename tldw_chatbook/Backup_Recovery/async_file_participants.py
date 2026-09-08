@@ -1,4 +1,4 @@
-"""Two source-owned queued jobs; pending registration grants no IO authority."""
+"""Three source-owned queued jobs; pending registration grants no IO authority."""
 
 import asyncio
 from dataclasses import dataclass
@@ -104,6 +104,10 @@ class _FileJob:
                 from ..Chat.prompt_history import PromptHistory
 
                 value = PromptHistory._history_io(self._source, self.selected, payload)
+            elif self._route == "note_templates":
+                from ..Event_Handlers.note_ingest_events import _import_template_files
+
+                value = _import_template_files(*payload, self.selected)
             else:
                 cls = sys.modules["tldw_chatbook.UI.Screens.chat_screen"].ChatScreen
                 value = cls._write_sidebar_state_snapshot(
@@ -143,6 +147,8 @@ class _FileJob:
                 outcome = await asyncio.shield(self._completion)
             except asyncio.CancelledError:
                 cancelled = True
+                if self._route == "note_templates":
+                    payload[2].set()
                 with self._lock:
                     if self._state == "queued":
                         self._state = "cancelled"

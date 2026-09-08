@@ -12,6 +12,7 @@ import functools
 import os
 import secrets
 import stat
+import sys
 import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
@@ -137,7 +138,7 @@ def _trusted_directory_owner(directory_stat: os.stat_result, euid: int) -> bool:
 
 
 def _open_directory_component(parent_fd: int, component: str) -> int:
-    return os.open(
+    return _native_open(
         component,
         _DIRECTORY_OPEN_FLAGS | _NOFOLLOW,
         dir_fd=parent_fd,
@@ -236,8 +237,8 @@ def _follow_trusted_symlink(
     pending[:0] = components
     if not absolute:
         return current_fd, hops + 1
-    root_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
-    (_close or os.close)(current_fd)
+    root_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    (_close or _native_close)(current_fd)
     return root_fd, hops + 1
 
 
@@ -306,7 +307,7 @@ def _open_verified_parent(
     missing_leaf_allowed: bool,
     _close: Callable[[int], None] | None = None,
 ) -> tuple[int, str]:
-    close = _close or os.close
+    close = _close or _native_close
     parts = selected.parts
     if len(parts) < 2 or parts[0] != os.sep:
         raise PrivatePathError(
@@ -318,7 +319,7 @@ def _open_verified_parent(
         )
 
     euid = os.geteuid()
-    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:-1])
@@ -443,7 +444,7 @@ def _private_path_error_from_oserror(
 
 
 def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
-    return os.open(
+    return _native_open(
         leaf,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW,
         _PRIVATE_FILE_MODE,
@@ -451,10 +452,56 @@ def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
     )
 
 
+def _runtime_operation(path=None):
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    return raw._runtime_operation(path) if raw is not None else None
+
+
+def _native_open(*args, **kwargs):
+    operation = _runtime_operation()
+    fd = os.open(*args, **kwargs)
+    if operation is not None:
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        raw._states[operation].descriptors.add(fd)
+    return fd
+
+
+def _native_close(fd):
+    operation = _runtime_operation()
+    if operation is None:
+        os.close(fd)
+    else:
+        raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+        raw._close_descriptor(raw._states[operation], fd)
+
+
+def _close_runtime_stream(operation, stream):
+    """Retire a source stream only after an explicitly successful close."""
+    raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+    state = raw._states[operation]
+    try:
+        stream.close()
+        if not stream.closed:
+            raise RuntimeError("raw_resources_not_retired")
+    except BaseException:
+        state.uncertain = True
+        raise
+    state.files.remove(stream)
+
+
 def _admitted_file(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        operation = _runtime_operation(lexical_path(path))
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            state = raw._check(operation)
+            expected = (state.source.application_owned_directory
+                        if function.__name__ == "secure_private_directory" else state.selected)
+            if function.__name__ not in {"atomic_private_write_bytes", "secure_private_directory"} or expected is None or lexical_path(path) != lexical_path(expected) or (function.__name__ == "atomic_private_write_bytes" and state.temporary is None):
+                raise RuntimeError("raw_source_helper_not_supported")
+            return function(path, *args, **kwargs)
         with acquire_storage(lexical_path(path)):
             return function(path, *args, **kwargs)
     return admitted
@@ -492,6 +539,8 @@ def _admitted_stream(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        if _runtime_operation() is not None:
+            raise RuntimeError("raw_source_helper_not_supported")
         lease = acquire_storage(lexical_path(path))
         try:
             return _AdmittedStream(function(path, *args, **kwargs), lease)
@@ -505,6 +554,13 @@ def _admitted_reader(function):
     @functools.wraps(function)
     def admitted(path, *args, **kwargs):
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        operation = _runtime_operation(lexical_path(path))
+        if operation is not None:
+            raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+            if lexical_path(path) != raw._check(operation).selected:
+                raise RuntimeError("raw_source_helper_not_supported")
+            yield from function(path, *args, **kwargs)
+            return
         with acquire_storage(lexical_path(path)):
             yield from function(path, *args, **kwargs)
     return admitted
@@ -600,8 +656,8 @@ def create_private_text(
         ) from None
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(file_fd)
+        _native_close(parent_fd)
 
 
 def _prepare_application_owned_parent(
@@ -630,28 +686,50 @@ def atomic_private_write_bytes(
     """Atomically replace a private file without following its target."""
 
     selected = lexical_path(path)
+    operation = _runtime_operation(selected)
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
     _prepare_application_owned_parent(selected, application_owned_directory)
 
     if not _atomic_posix_guards_available():
         if _WINDOWS_PLATFORM:
             try:
-                fd, temporary = tempfile.mkstemp(
-                    dir=selected.parent,
-                    prefix=f".{selected.name}.",
-                    suffix=".tmp",
-                )
+                if operation is None:
+                    fd, temporary = tempfile.mkstemp(
+                        dir=selected.parent,
+                        prefix=f".{selected.name}.",
+                        suffix=".tmp",
+                    )
+                else:
+                    temporary = raw._check(operation).temporary
+                    fd = _native_open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _PRIVATE_FILE_MODE)
+                    info = os.fstat(fd)
+                    raw._check(operation).created_files[temporary] = (info.st_dev, info.st_ino)
             except OSError as exc:
                 raise _private_path_error_from_oserror(selected, exc) from None
             try:
-                with os.fdopen(fd, "wb") as stream:
+                with os.fdopen(fd, "wb", closefd=operation is None) as stream:
+                    if operation is not None:
+                        raw._check(operation).files.append(stream)
                     stream.write(payload)
                     stream.flush()
-                os.replace(temporary, selected)
+                if operation is not None:
+                    raw._check(operation).files.remove(stream)
+                    _native_close(fd)
+                    raw._replace(operation, temporary, selected)
+                else:
+                    os.replace(temporary, selected)
             except BaseException:
-                try:
-                    os.unlink(temporary)
-                except FileNotFoundError:
-                    pass
+                if operation is not None:
+                    state = raw._states[operation]
+                    if state.files or fd in state.descriptors:
+                        state.uncertain = True
+                    if not state.uncertain:
+                        raw._remove_temporary(operation, temporary)
+                else:
+                    try:
+                        os.unlink(temporary)
+                    except FileNotFoundError:
+                        pass
                 raise
             return PrivatePathResult(
                 selected,
@@ -670,9 +748,13 @@ def atomic_private_write_bytes(
         selected,
         missing_leaf_allowed=True,
     )
-    temporary_leaf = f".{leaf}.{secrets.token_hex(8)}.tmp"
+    operation = _runtime_operation(selected)
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    temporary_leaf = (raw._check(operation).temporary.name if operation is not None
+                      else f".{leaf}.{secrets.token_hex(8)}.tmp")
     temporary_fd = -1
     temporary_exists = False
+    published = False
     try:
         try:
             existing_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
@@ -687,7 +769,7 @@ def atomic_private_write_bytes(
             if rejected is not None:
                 raise PrivatePathError(PrivatePathResult(selected, rejected))
             prior_mode = stat.S_IMODE(existing_stat.st_mode)
-            existing_fd = os.open(
+            existing_fd = _native_open(
                 leaf,
                 _PRIVATE_FILE_OPEN_FLAGS,
                 dir_fd=parent_fd,
@@ -705,11 +787,13 @@ def atomic_private_write_bytes(
                 if prior_mode != _PRIVATE_FILE_MODE:
                     os.fchmod(existing_fd, _PRIVATE_FILE_MODE)
             finally:
-                os.close(existing_fd)
+                _native_close(existing_fd)
 
         temporary_fd = _open_leaf_for_create(parent_fd, temporary_leaf)
         temporary_exists = True
         temporary_stat = os.fstat(temporary_fd)
+        if operation is not None:
+            raw._check(operation).created_files[selected.parent / temporary_leaf] = (temporary_stat.st_dev, temporary_stat.st_ino)
         view = memoryview(payload)
         while view:
             written = os.write(temporary_fd, view)
@@ -747,13 +831,23 @@ def atomic_private_write_bytes(
                 )
             )
 
-        os.rename(
-            temporary_leaf,
-            leaf,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
-        )
+        if operation is not None:
+            raw._check_temporary_identity(raw._check(operation), selected.parent / temporary_leaf)
+        try:
+            os.rename(
+                temporary_leaf,
+                leaf,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+        except BaseException:
+            if operation is not None:
+                raw._states[operation].uncertain = True
+            raise
         temporary_exists = False
+        published = True
+        if operation is not None:
+            raw._check(operation).created_files.pop(selected.parent / temporary_leaf)
         os.fsync(parent_fd)
         if not _private_file_postcondition_holds(
             temporary_fd,
@@ -775,21 +869,26 @@ def atomic_private_write_bytes(
         else:
             status = PrivatePathStatus.ALREADY_PRIVATE
         return PrivatePathResult(selected, status)
-    except PrivatePathError:
+    except BaseException as exc:
+        if operation is not None and published:
+            raw._states[operation].uncertain = True
+        if isinstance(exc, OSError) and not isinstance(exc, PrivatePathError):
+            raise _private_path_error_from_oserror(selected, exc) from None
         raise
-    except OSError as exc:
-        raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if temporary_fd >= 0:
-            os.close(temporary_fd)
+            _native_close(temporary_fd)
         try:
             if temporary_exists:
                 try:
-                    os.unlink(temporary_leaf, dir_fd=parent_fd)
+                    if operation is not None:
+                        raw._remove_temporary(operation, selected.parent / temporary_leaf)
+                    else:
+                        os.unlink(temporary_leaf, dir_fd=parent_fd)
                 except FileNotFoundError:
                     pass
         finally:
-            os.close(parent_fd)
+            _native_close(parent_fd)
 
 
 def atomic_private_write_text(
@@ -873,7 +972,7 @@ def open_private_text_append_stream(
             if rejected is not None:
                 raise PrivatePathError(PrivatePathResult(selected, rejected))
 
-        file_fd = os.open(
+        file_fd = _native_open(
             leaf,
             os.O_WRONLY | os.O_APPEND | os.O_CREAT | _NOFOLLOW | _NONBLOCK | _NOCTTY,
             _PRIVATE_FILE_MODE,
@@ -923,8 +1022,8 @@ def open_private_text_append_stream(
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(file_fd)
+        _native_close(parent_fd)
 
 
 @contextlib.contextmanager
@@ -935,15 +1034,29 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     selected = lexical_path(path)
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
-            with selected.open("rb") as stream:
-                yield PrivateBinaryFile(
-                    stream=stream,
-                    result=PrivatePathResult(
-                        selected,
-                        PrivatePathStatus.UNVERIFIED_PLATFORM,
-                        reason="native_acl_not_verified",
-                    ),
-                )
+            operation = _runtime_operation(selected)
+            if operation is None:
+                with selected.open("rb") as stream:
+                    yield PrivateBinaryFile(
+                        stream=stream,
+                        result=PrivatePathResult(selected, PrivatePathStatus.UNVERIFIED_PLATFORM, reason="native_acl_not_verified"),
+                    )
+            else:
+                raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+                state = raw._check(operation)
+                fd = _native_open(selected, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+                try:
+                    stream = os.fdopen(fd, "rb", closefd=False)
+                    state.files.append(stream)
+                    try:
+                        yield PrivateBinaryFile(
+                            stream=stream,
+                            result=PrivatePathResult(selected, PrivatePathStatus.UNVERIFIED_PLATFORM, reason="native_acl_not_verified"),
+                        )
+                    finally:
+                        _close_runtime_stream(operation, stream)
+                finally:
+                    _native_close(fd)
             return
         raise PrivatePathError(
             PrivatePathResult(
@@ -975,7 +1088,7 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
             )
 
         try:
-            file_fd = os.open(
+            file_fd = _native_open(
                 leaf,
                 _PRIVATE_FILE_OPEN_FLAGS,
                 dir_fd=parent_fd,
@@ -1012,7 +1125,12 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
                         reason="private_file_postcondition_failed",
                     )
                 )
-            stream = os.fdopen(file_fd, "rb", closefd=True)
+            operation = _runtime_operation(selected)
+            stream = os.fdopen(file_fd, "rb", closefd=operation is None)
+            stream_fd = file_fd
+            if operation is not None:
+                raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
+                raw._check(operation).files.append(stream)
             file_fd = -1
         except PrivatePathError:
             raise
@@ -1020,14 +1138,24 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
             raise _private_path_error_from_oserror(selected, exc) from None
     finally:
         if file_fd >= 0:
-            os.close(file_fd)
-        os.close(parent_fd)
+            _native_close(file_fd)
+        _native_close(parent_fd)
 
-    with stream:
-        yield PrivateBinaryFile(
-            stream=stream,
-            result=PrivatePathResult(selected, status),
-        )
+    if operation is None:
+        with stream:
+            yield PrivateBinaryFile(
+                stream=stream,
+                result=PrivatePathResult(selected, status),
+            )
+    else:
+        try:
+            yield PrivateBinaryFile(
+                stream=stream,
+                result=PrivatePathResult(selected, status),
+            )
+        finally:
+            _close_runtime_stream(operation, stream)
+            _native_close(stream_fd)
 
 
 @_admitted_file
@@ -1063,7 +1191,7 @@ def secure_private_directory(
 
     euid = os.geteuid()
     parts = selected.parts
-    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     created_final = False
     hardened_final = False
     try:
@@ -1187,11 +1315,11 @@ def secure_private_directory(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                os.close(old_fd)
+                _native_close(old_fd)
                 current_stat = os.fstat(current_fd)
             finally:
                 if not transferred:
-                    os.close(next_fd)
+                    _native_close(next_fd)
 
         status = (
             PrivatePathStatus.CREATED_PRIVATE
@@ -1208,7 +1336,7 @@ def secure_private_directory(
     except OSError as exc:
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
-        os.close(current_fd)
+        _native_close(current_fd)
 
 
 def verify_trusted_directory(
@@ -1276,7 +1404,7 @@ def verify_trusted_directory(
         )
 
     euid = os.geteuid()
-    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    current_fd = _native_open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
     try:
         current_stat = os.fstat(current_fd)
         pending = list(parts[1:])
@@ -1384,11 +1512,11 @@ def verify_trusted_directory(
                 old_fd = current_fd
                 current_fd = next_fd
                 transferred = True
-                os.close(old_fd)
+                _native_close(old_fd)
                 current_stat = next_stat
             finally:
                 if not transferred:
-                    os.close(next_fd)
+                    _native_close(next_fd)
 
         return PrivatePathResult(
             selected,
@@ -1400,4 +1528,4 @@ def verify_trusted_directory(
     except OSError as exc:
         raise _private_path_error_from_oserror(selected, exc) from None
     finally:
-        os.close(current_fd)
+        _native_close(current_fd)
