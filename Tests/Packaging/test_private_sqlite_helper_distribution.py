@@ -42,13 +42,33 @@ PRIVATE_HELPER_CLOSURE = frozenset(
         "tldw_chatbook/Utils/private_paths.py",
     }
 )
-FORBIDDEN_IMPORT_PREFIXES = (
+APPROVED_STDLIB_TOP_LEVELS = frozenset({*sys.stdlib_module_names, "__main__"})
+APPROVED_PRODUCT_MODULES = frozenset(
+    {
+        "tldw_chatbook",
+        "tldw_chatbook.DB",
+        "tldw_chatbook.TTS",
+        "tldw_chatbook.TTS.migrations",
+        "tldw_chatbook.Utils",
+        *(
+            relative.removesuffix(".py").replace("/", ".")
+            for relative in PRIVATE_HELPER_CLOSURE
+        ),
+    }
+)
+FORBIDDEN_IMPORT_CONTROLS = (
     "keyring",
     "loguru",
     "textual",
-    "tldw_chatbook.LLM_Calls",
+    "openai",
+    "anthropic",
     "tldw_chatbook.app",
     "tldw_chatbook.config",
+    "tldw_chatbook.LLM_Calls.fake_provider",
+    "tldw_chatbook.LLM_Provider_Catalog.fake_provider",
+    "tldw_chatbook.Chat.console_provider_gateway",
+    "tldw_chatbook.Agents.mcp_tool_provider",
+    "tldw_chatbook.TTS.provider_ids",
 )
 
 
@@ -359,9 +379,22 @@ def test_installed_entry_preserves_argv_and_original_parent_checks(
     assert completed.stdout == completed.stderr == b""
 
 
-def _instrument_installed_entry(entry: Path, trace_path: Path) -> None:
+def _instrument_installed_entry(
+    entry: Path,
+    trace_path: Path,
+    *,
+    controlled_module_name: str | None = None,
+) -> None:
     source = entry.read_text(encoding="utf-8")
     insertion_point = "from types import ModuleType\n"
+    controlled_module = (
+        ""
+        if controlled_module_name is None
+        else (
+            f"\nsys.modules[{controlled_module_name!r}] = "
+            f"ModuleType({controlled_module_name!r})\n"
+        )
+    )
     instrumentation = f"""{insertion_point}
 import atexit as _trace_atexit
 import json as _trace_json
@@ -376,20 +409,40 @@ def _trace_audit(event, args):
 sys.addaudithook(_trace_audit)
 
 def _write_trace():
-    modules = {{
+    product_modules = {{
         name: getattr(module, "__file__", None)
         for name, module in sys.modules.items()
         if name == "tldw_chatbook" or name.startswith("tldw_chatbook.")
     }}
-    os.write(_trace_fd, _trace_json.dumps({{"modules": modules, "opened": _trace_opened}}).encode("utf-8"))
+    payload = {{
+        "module_names": sorted(sys.modules),
+        "product_modules": product_modules,
+        "opened": _trace_opened,
+    }}
+    os.write(_trace_fd, _trace_json.dumps(payload).encode("utf-8"))
     os.close(_trace_fd)
 
 _trace_atexit.register(_write_trace)
+{controlled_module}
 """
     assert source.count(insertion_point) == 1
     entry.write_text(
         source.replace(insertion_point, instrumentation),
         encoding="utf-8",
+    )
+
+
+def _unexpected_imports(module_names: set[str]) -> list[str]:
+    return sorted(
+        name
+        for name in module_names
+        if (name == "tldw_chatbook" or name.startswith("tldw_chatbook."))
+        and name not in APPROVED_PRODUCT_MODULES
+        or (
+            name != "tldw_chatbook"
+            and not name.startswith("tldw_chatbook.")
+            and name.partition(".")[0] not in APPROVED_STDLIB_TOP_LEVELS
+        )
     )
 
 
@@ -429,20 +482,19 @@ def test_owned_import_and_file_audit_stays_inside_installed_leaf_closure(
     # supplemental run intentionally uses CPython's import trace on stderr.
     assert b"private_sqlite_helper" in completed.stderr
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    module_names = set(trace["module_names"])
+    product_modules = trace["product_modules"]
+    assert set(product_modules) <= module_names
+    assert _unexpected_imports(module_names) == []
     file_modules = {
         name: Path(origin).resolve()
-        for name, origin in trace["modules"].items()
+        for name, origin in product_modules.items()
         if origin is not None
     }
     assert file_modules
     assert all(
         origin.is_relative_to(audited_target.resolve())
         for origin in file_modules.values()
-    )
-    assert not any(
-        name == prefix or name.startswith(f"{prefix}.")
-        for name in trace["modules"]
-        for prefix in FORBIDDEN_IMPORT_PREFIXES
     )
     forbidden_roots = (
         REPO_ROOT.resolve(),
@@ -460,6 +512,40 @@ def test_owned_import_and_file_audit_stays_inside_installed_leaf_closure(
         selected.is_relative_to(root) for selected in opened for root in forbidden_roots
     )
     assert not any(marker.exists() for marker in markers)
+
+
+@pytest.mark.parametrize("controlled_module_name", FORBIDDEN_IMPORT_CONTROLS)
+def test_owned_import_audit_rejects_controlled_forbidden_names(
+    installed_helper: InstalledHelper,
+    tmp_path: Path,
+    controlled_module_name: str,
+) -> None:
+    """Every claimed forbidden boundary must be visible to the audit gate."""
+
+    audited_target = tmp_path / "audited-install"
+    shutil.copytree(installed_helper.target, audited_target)
+    entry = audited_target / "tldw_chatbook" / "DB" / "private_sqlite_helper_entry.py"
+    trace_path = tmp_path / "child-audit.json"
+    _instrument_installed_entry(
+        entry,
+        trace_path,
+        controlled_module_name=controlled_module_name,
+    )
+    env = _sanitized_build_env(tmp_path / "state")
+    env["_TLDW_PRIVATE_SQLITE_PARENT_PID"] = str(os.getpid())
+
+    completed = _run_helper(
+        entry,
+        [_close_request()],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert completed.returncode == 0
+    assert completed.stderr == b""
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    module_names = set(trace["module_names"])
+    assert controlled_module_name in module_names
+    assert _unexpected_imports(module_names) == [controlled_module_name]
 
 
 def test_missing_installed_leaf_cannot_fall_back_to_hostile_pythonpath(
