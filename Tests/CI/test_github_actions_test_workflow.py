@@ -318,7 +318,7 @@ def test_ui_job_installs_the_root_project_before_pytest() -> None:
     ui_job = _ui_tests_job_block()
     install_command = "pip install -e ."
 
-    assert install_command in ui_job
+    assert [line.strip() for line in ui_job.splitlines()].count(install_command) == 1
     assert ui_job.index(install_command) < ui_job.index("pytest Tests/UI")
 
 

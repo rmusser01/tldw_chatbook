@@ -965,3 +965,23 @@ entry-compose file is unchanged. Combined with the prior complete canvas and
 Prompts qualification, this closes the attributed canvas/suspend/indexer-fixture
 failures, not the Media Browse size or Watchlists focus gates. The complete
 Library shell rerun and final revision's external review/CI remain required.
+
+## September 8 approved final gates and Qodo round 3
+
+The user approved the UI-local Media Browse state separation with ADR and the
+theme-aware Watchlists focus repair after checkpoint `98a9aeeb85`. ADR-128 and
+the exact whole-pure-member extraction plan are committed at `839c07ea56`.
+The requested repair retains the controller's generation/worker boundary and
+all existing size/CSS/focus limits. New dev `1c022378cb` adds only six Backlog
+documents (TASK-32041–32046); it will be incorporated after source freeze.
+
+Qodo's new comments 3957095884/3957095896/3957095903 are verified and repaired:
+historical/current authority and retention proof reads now use each database's
+transaction cursor; the UI workflow keeps one documented editable install.
+All 22 affected DB assertions remain equivalent under cursor normalization.
+The strengthened CI test fails with two installs before deletion and passes
+with one afterward. All three complete test files pass **78 tests in 23.81s**
+with only two existing dependency warnings
+(`/private/tmp/pr2427-qodo-round3-complete.log`). Independent spec/correctness
+review passes; scoped lint and diff-check pass. Production database behavior,
+standalone SQLite bootstrap fixtures and dependency choices are unchanged.

@@ -215,12 +215,13 @@ def test_raw_conversation_delete_preserves_messages_and_sync_proof(
     )
     before_conversation = db.get_conversation_by_id(conversation_id)
     before_message = db.get_message_by_id(message_id)
-    before_proof = [
-        dict(row)
-        for row in db.execute_query(
-            "SELECT * FROM sync_log ORDER BY change_id"
-        ).fetchall()
-    ]
+    with db.transaction() as cursor:
+        before_proof = [
+            dict(row)
+            for row in cursor.execute(
+                "SELECT * FROM sync_log ORDER BY change_id"
+            ).fetchall()
+        ]
     with pytest.raises(sqlite3.IntegrityError, match="semantic mutation"):
         with db.transaction() as cursor:
             cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
@@ -228,12 +229,13 @@ def test_raw_conversation_delete_preserves_messages_and_sync_proof(
     db.close_connection()
     assert db.get_conversation_by_id(conversation_id) == before_conversation
     assert db.get_message_by_id(message_id) == before_message
-    assert [
-        dict(row)
-        for row in db.execute_query(
-            "SELECT * FROM sync_log ORDER BY change_id"
-        ).fetchall()
-    ] == before_proof
+    with db.transaction() as cursor:
+        assert [
+            dict(row)
+            for row in cursor.execute(
+                "SELECT * FROM sync_log ORDER BY change_id"
+            ).fetchall()
+        ] == before_proof
 
 
 def test_v46_conversation_cascade_purges_sync_log_and_stays_purged_on_upgrade(tmp_path):
@@ -241,13 +243,14 @@ def test_v46_conversation_cascade_purges_sync_log_and_stays_purged_on_upgrade(tm
     path = tmp_path / "retention-v46.db"
     needle = "RETENTION_CASCADE_BODY_CANARY"
     with chachanotes_db_at_version(path, 46) as historical:
-        assert (
-            historical.execute_query(
-                "SELECT version FROM db_schema_version WHERE schema_name = ?",
-                (CharactersRAGDB._SCHEMA_NAME,),
-            ).fetchone()[0]
-            == 46
-        )
+        with historical.transaction() as cursor:
+            assert (
+                cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (CharactersRAGDB._SCHEMA_NAME,),
+                ).fetchone()[0]
+                == 46
+            )
         conversation_id = historical.add_conversation({"title": "cascade"})
         message_id = historical.add_message(
             {
@@ -259,12 +262,13 @@ def test_v46_conversation_cascade_purges_sync_log_and_stays_purged_on_upgrade(tm
         assert _sync_log_hits(historical, needle)
         with historical.transaction() as cursor:
             cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
-        assert (
-            historical.execute_query(
-                "SELECT id FROM messages WHERE id = ?", (message_id,)
-            ).fetchone()
-            is None
-        )
+        with historical.transaction() as cursor:
+            assert (
+                cursor.execute(
+                    "SELECT id FROM messages WHERE id = ?", (message_id,)
+                ).fetchone()
+                is None
+            )
         assert _sync_log_hits(historical, needle) == []
         assert _entries(historical, "messages", message_id) == []
 
