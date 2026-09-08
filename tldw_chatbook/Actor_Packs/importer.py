@@ -386,6 +386,7 @@ class ActorPackImportService:
                         document.sections,
                         frozenset(staged_records),
                         lambda member: _read_staged(candidate, staged_records[member]),
+                        required_features=manifest["required_features"],
                     )
                     matched = self.repository.get_identity_by_portable_uuid(
                         document.portable_uuid
@@ -1173,6 +1174,8 @@ def _validate_sections(
     sections: tuple[Any, ...],
     archive_members: frozenset[str],
     read_member: Callable[[str], bytes],
+    *,
+    required_features: list[str],
 ) -> tuple[tuple[str, tuple[_ActorPackSectionAsset, ...]], ...]:
     # Deferred: see the TASK-21200 note at the top of this module.
     from tldw_chatbook.Character_Chat.visual_identity import (
@@ -1265,6 +1268,7 @@ def _validate_sections(
             decode_artwork_attribution(
                 read_member(ARTWORK_MEMBER),
                 {asset.expression_key: asset.sha256 for asset in visual.assets},
+                required_features=required_features,
             )
             expected_members.add(ARTWORK_MEMBER)
         if section_members != expected_members:

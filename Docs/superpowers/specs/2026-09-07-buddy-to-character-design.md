@@ -1,9 +1,10 @@
 # Create an independent character from a Buddy
 
-Status: Design review
+Status: Implemented on `codex/buddy-import-design`
 Attribution prerequisite: implemented on `codex/buddy-import-design`; see
 [verification](../reviews/2026-09-07-artwork-attribution-verification.md).
-Conversion itself remains unimplemented.
+Conversion implementation and verification are recorded in
+[the conversion review](../reviews/2026-09-07-buddy-character-conversion-verification.md).
 Date: 2026-09-07
 Creator: tldw-project
 Programme: [Buddy imports and characters](2026-09-07-buddy-character-programme-design.md)

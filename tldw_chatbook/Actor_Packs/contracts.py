@@ -19,6 +19,7 @@ from typing import Any
 from tldw_chatbook.Character_Chat.artwork_attribution import (
     ARTWORK_FEATURE,
     ARTWORK_MEMBER,
+    CONVERSION_FEATURE,
     MAX_ARTWORK_BYTES,
     decode_artwork_attribution,
 )
@@ -68,7 +69,12 @@ _ACTOR_KEYS = frozenset({"kind", "portable_uuid", "payload", "portrait"})
 _SECTION_KEYS = frozenset({"kind", "manifest"})
 _FILE_KEYS = frozenset({"path", "bytes", "sha256"})
 _KNOWN_REQUIRED_FEATURES = frozenset(
-    {"shared-visual-identity/v1", "persona-runtime/sprite-frames-v1", ARTWORK_FEATURE}
+    {
+        "shared-visual-identity/v1",
+        "persona-runtime/sprite-frames-v1",
+        ARTWORK_FEATURE,
+        CONVERSION_FEATURE,
+    }
 )
 _CHARACTER_FIELDS = frozenset(
     {
@@ -352,6 +358,7 @@ def _validate_actor_pack_document(
                     asset["expression_key"]: asset["sha256"]
                     for asset in visual["assets"]
                 },
+                required_features=manifest["required_features"],
             )
         except (KeyError, TypeError, ValueError, RecursionError):
             raise ActorPackValidationError("actor_pack_section_invalid") from None
@@ -393,6 +400,8 @@ def _validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocum
     inventory = _inventory(manifest.get("files"))
     artwork = next((item for item in inventory if item.path == ARTWORK_MEMBER), None)
     if (artwork is not None) != (ARTWORK_FEATURE in required_features):
+        raise ActorPackValidationError("actor_pack_feature_unsupported")
+    if CONVERSION_FEATURE in required_features and artwork is None:
         raise ActorPackValidationError("actor_pack_feature_unsupported")
     if artwork is not None and (
         artwork.byte_count > MAX_ARTWORK_BYTES

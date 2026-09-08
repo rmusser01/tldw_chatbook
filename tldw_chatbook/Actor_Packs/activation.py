@@ -408,6 +408,7 @@ class ActorPackActivationService:
                 raise ValueError
             from tldw_chatbook.Character_Chat.artwork_attribution import (
                 ARTWORK_NAMESPACE,
+                CONVERSION_NAMESPACE,
                 decode_artwork_attribution,
             )
 
@@ -444,6 +445,9 @@ class ActorPackActivationService:
                 attribution = artwork["assets"].get(raw["expression_key"])
                 if attribution is not None:
                     row["source_context"][ARTWORK_NAMESPACE] = attribution
+                conversion = artwork.get("conversions", {}).get(raw["expression_key"])
+                if conversion is not None:
+                    row["source_context"][CONVERSION_NAMESPACE] = conversion
                 asset_rows.append(row)
             manifest["pack_content_sha256"] = compute_pack_content_sha256(manifest)
             validated = validate_visual_identity_manifest(manifest)

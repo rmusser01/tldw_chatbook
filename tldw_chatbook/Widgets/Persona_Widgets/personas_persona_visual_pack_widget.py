@@ -48,6 +48,14 @@ class PersonaVisualImportRequested(Message):
     """Ask the screen to import one Persona Visual archive for review."""
 
 
+class BuddyCharacterCreateRequested(Message):
+    """Review a saved Buddy or native archive as an independent character."""
+
+    def __init__(self, *, archive: bool = False) -> None:
+        self.archive = archive
+        super().__init__()
+
+
 class PersonaVisualSaveRequested(Message):
     """Ask the screen to publish its current isolated draft exactly once."""
 
@@ -138,7 +146,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     BUNDLED_CSS = """
     PersonasPersonaVisualPackWidget {
         width: 100%;
-        height: 27;
+        height: 30;
         min-height: 20;
         margin-top: 1;
         padding: 1;
@@ -181,9 +189,9 @@ class PersonasPersonaVisualPackWidget(Vertical):
 
     PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
         width: 100%;
-        height: 6;
+        height: 9;
         layout: grid;
-        grid-size: 3 2;
+        grid-size: 3 3;
         grid-gutter: 0 1;
         margin-top: 1;
     }
@@ -200,7 +208,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
     }
 
     PersonasPersonaVisualPackWidget.-narrow {
-        height: 31;
+        height: 34;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
@@ -281,6 +289,18 @@ class PersonasPersonaVisualPackWidget(Vertical):
                 "Cancel Draft",
                 id="personas-persona-visual-cancel",
                 classes="console-action-subdued",
+            )
+
+            yield Button(
+                "Create character…",
+                id="personas-persona-visual-create-character",
+                classes="console-action-secondary",
+                tooltip="Create an independent character from this saved Buddy.",
+            )
+            yield Button(
+                "From Buddy archive…",
+                id="personas-persona-visual-character-archive",
+                classes="console-action-secondary",
             )
 
     def on_mount(self) -> None:
@@ -464,6 +484,12 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self.query_one("#personas-persona-visual-save", Button).disabled = not (
             available and idle and self._dirty and activatable
         )
+        self.query_one(
+            "#personas-persona-visual-create-character", Button
+        ).disabled = not (available and idle and not self._dirty and activatable)
+        self.query_one(
+            "#personas-persona-visual-character-archive", Button
+        ).disabled = not (available and idle)
         cancel_allowed = available and (
             self._dirty or self._busy in {"importing", "preparing", "previewing"}
         )
@@ -516,6 +542,16 @@ class PersonasPersonaVisualPackWidget(Vertical):
         event.stop()
         self.post_message(PersonaVisualImportRequested())
 
+    @on(Button.Pressed, "#personas-persona-visual-create-character")
+    def _create_character_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(BuddyCharacterCreateRequested())
+
+    @on(Button.Pressed, "#personas-persona-visual-character-archive")
+    def _character_archive_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(BuddyCharacterCreateRequested(archive=True))
+
     @on(Button.Pressed, "#personas-persona-visual-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -528,13 +564,14 @@ class PersonasPersonaVisualPackWidget(Vertical):
 
 
 __all__ = [
+    "BuddyCharacterCreateRequested",
     "PersonaVisualAddCustomRequested",
     "PersonaVisualCancelRequested",
     "PersonaVisualClearRequested",
+    "PersonaVisualCustomStateDialog",
     "PersonaVisualImportRequested",
     "PersonaVisualPreviewRequested",
     "PersonaVisualReplaceRequested",
     "PersonaVisualSaveRequested",
-    "PersonaVisualCustomStateDialog",
     "PersonasPersonaVisualPackWidget",
 ]

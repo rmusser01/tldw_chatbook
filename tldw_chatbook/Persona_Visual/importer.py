@@ -165,23 +165,7 @@ def import_persona_visual_pack(
         root = _private_staging_root(staging_root)
         _raise_if_cancelled(cancelled)
         with zipfile.ZipFile(BytesIO(source.data), "r") as archive:
-            members = _validated_members(archive)
-            outer = _json_member(archive, members, "manifest.json")
-            checksums = _checksums(
-                _json_member(archive, members, "checksums/sha256.json")
-            )
-            pack = _pack(_json_member(archive, members, "metadata/pack.json"))
-            asset_records = _assets(
-                _json_member(archive, members, "metadata/assets.json")
-            )
-            _validate_declarations(
-                archive,
-                members,
-                outer,
-                checksums,
-                asset_records,
-                cancelled,
-            )
+            members, pack, asset_records = _validated_archive(archive, cancelled)
             _preflight_space(root, members)
             candidate = _create_candidate(root)
             draft_assets = _extract_assets(
@@ -575,6 +559,20 @@ def _validate_declarations(
             raise ValueError
 
 
+def _validated_archive(
+    archive: zipfile.ZipFile,
+    cancelled: Any,
+) -> tuple[dict[str, zipfile.ZipInfo], dict[str, Any], tuple[dict[str, Any], ...]]:
+    """Shared native declarations/checksum boundary for import and snapshots."""
+    members = _validated_members(archive)
+    outer = _json_member(archive, members, "manifest.json")
+    checksums = _checksums(_json_member(archive, members, "checksums/sha256.json"))
+    pack = _pack(_json_member(archive, members, "metadata/pack.json"))
+    records = _assets(_json_member(archive, members, "metadata/assets.json"))
+    _validate_declarations(archive, members, outer, checksums, records, cancelled)
+    return members, pack, records
+
+
 def _preflight_space(root: Path, members: Mapping[str, zipfile.ZipInfo]) -> None:
     required = sum(info.file_size for info in members.values()) + 1024 * 1024
     if shutil.disk_usage(root).free < required:
@@ -671,7 +669,7 @@ def _extract_assets(
     return tuple(draft_assets)
 
 
-def _inspect_image(path: Path, record: Mapping[str, Any]) -> tuple[int, int | None]:
+def _inspect_image(path: Path | BytesIO, record: Mapping[str, Any]) -> tuple[int, int | None]:
     with Image.open(path) as image:
         if (
             image.format != _FORMAT_BY_MIME[record["mime_type"]][0]

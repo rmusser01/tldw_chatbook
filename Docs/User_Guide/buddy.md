@@ -148,6 +148,36 @@ to preview it; use **Replace…**, **Clear**, **Add Custom State**, or
 runtime pack. See [Characters and Personas](roleplay-chat-dictionaries/characters-and-personas.md)
 for the surrounding editor and import/export workflow.
 
+## Create a character from a Buddy
+
+In a saved local Persona's **Persona Visual** editor, choose **Create character…**.
+Save or cancel pending pack edits first. You can also choose **From Buddy archive…**,
+or import a `.tldw-persona-vpack` from **Characters → Import** without creating a
+Persona first.
+
+The review shows the original creator and artwork terms when the source includes
+them. Missing metadata is shown as **unspecified**. Name the new character, optionally
+add personality and a greeting, and review each expression mapping. Leave a key
+blank to exclude it; at least one expression must map to `neutral`. Conflicting
+keys need distinct names or an explicit exclusion.
+
+Choose a portrait state and, optionally, a frame number. The portrait is independent
+of the character's expressions. **Preserve animation in created expressions** keeps
+supported source timelines; turn it off to create static images. Select **Prepare
+preview**, inspect the expressions in Dynamic or Static mode, and review any
+conversion warnings before choosing **Create character**. Global animation and
+reduced-motion preferences still apply to previews and Console playback.
+
+Creation makes an independent editable local character. Updating or deleting the
+source Buddy does not change that copy. Creation leaves the active conversation
+and floating Buddy alone. Choose **Open in Console** when you want to start chatting
+with the new character, or **Done** to return to the workbench.
+
+Chatbook Actor Pack export preserves the carried artwork terms and conversion
+history. The inspected server importer does not support this metadata carrier;
+do not rely on a server image import to preserve that history. This workflow accepts
+native Buddy archives; importing a Petdex URL is a separate feature.
+
 ## Troubleshooting
 
 | Symptom | Next step |
@@ -163,7 +193,11 @@ for the surrounding editor and import/export workflow.
 
 ## Verification scope and related guides
 
-This guide was checked against Chatbook `dev` **307df6c79** on **2026-09-07**
+The Buddy-to-character workflow above was verified with mounted UI and real local
+publication tests on `codex/buddy-import-design`; see the
+[conversion verification record](../superpowers/reviews/2026-09-07-buddy-character-conversion-verification.md).
+
+The earlier setup and voice guidance was checked against Chatbook `dev` **307df6c79** on **2026-09-07**
 using current controls, existing mounted UI coverage, and recorded September 5
 Migu UAT. It is not a claim that every instruction was re-executed in a fresh
 physical session for this documentation update. Native dragging and local Kokoro

@@ -91,6 +91,24 @@ server contract is a compatibility source only.
 
 ## Context
 
+### Reviewed Buddy snapshot conversion (2026-09-07)
+
+Users may explicitly convert a validated saved Buddy or native archive into a new
+independent Character. A review maps operational states to expression keys and
+selects a portrait; conversion encodes ordinary native expression images. No live
+cross-runtime binding is created. Character publication uses the existing Actor
+Pack activation transaction and privately prepared files. Source/destination
+authority is rechecked before commit. Deleting or changing the source afterwards
+cannot affect the character.
+
+Per-image `tldw/buddy_conversion` v1 lineage is public, bounded, and hash-bound.
+It travels in attribution carrier v2 with required `visual-buddy-conversion/v1`;
+older readers reject rather than discard it. Source local identifiers never leave
+the profile. The exact contract and alternatives are recorded in the
+[conversion plan](../../Docs/superpowers/plans/2026-09-07-buddy-character-conversion.md).
+This narrowly permits a reviewed one-time transformation while preserving the
+separate runtime/storage models and the portable identities defined above.
+
 ### Artwork attribution amendment (TASK-32024, 2026-09-07)
 
 Shared Visual Identity may carry a versioned public attribution record in the

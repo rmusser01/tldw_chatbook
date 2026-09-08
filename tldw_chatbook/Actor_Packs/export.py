@@ -473,7 +473,10 @@ class ActorPackExportService:
 def write_actor_pack_archive(snapshot: ActorPackExportSnapshot, sink: BinaryIO) -> str:
     """Write one deterministic Actor Pack and return its archive SHA-256."""
 
-    from tldw_chatbook.Character_Chat.artwork_attribution import ARTWORK_FEATURE
+    from tldw_chatbook.Character_Chat.artwork_attribution import (
+        ARTWORK_FEATURE,
+        CONVERSION_FEATURE,
+    )
 
     if type(snapshot) is not ActorPackExportSnapshot:
         raise ActorPackExportError("actor_pack_export_snapshot_invalid")
@@ -515,6 +518,12 @@ def write_actor_pack_archive(snapshot: ActorPackExportSnapshot, sink: BinaryIO) 
             section.artwork_attribution is not None for section in snapshot.sections
         ):
             root["required_features"].append(ARTWORK_FEATURE)
+        for section in snapshot.sections:
+            if section.artwork_attribution is not None:
+                carrier = json.loads(section.artwork_attribution)
+                if isinstance(carrier, dict) and carrier.get("version") == 2:
+                    root["required_features"].append(CONVERSION_FEATURE)
+                    break
         root["content_digest"] = actor_pack_content_digest(root)
         validate_actor_pack_document(root, files)
         archive_files = {"actor-pack.json": canonical_json_bytes(root), **files}

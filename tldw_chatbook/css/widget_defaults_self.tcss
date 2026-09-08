@@ -2760,6 +2760,25 @@
     }
 
 
+/* ===== WIDGET: BuddyCharacterReviewDialog (Widgets/Persona_Widgets/buddy_character_review.py) ===== */
+
+    BuddyCharacterReviewDialog { align: center middle; }
+    BuddyCharacterReviewDialog #buddy-review {
+        width: 94%; max-width: 96; height: 94%;
+        border: round $accent; background: $panel; padding: 0 1;
+    }
+    BuddyCharacterReviewDialog #buddy-review-scroll { height: 1fr; }
+    BuddyCharacterReviewDialog .buddy-copy { height: auto; }
+    BuddyCharacterReviewDialog .buddy-text { height: 4; }
+    BuddyCharacterReviewDialog #buddy-preview-host,
+    BuddyCharacterReviewDialog #buddy-portrait-host { height: 8; }
+    BuddyCharacterReviewDialog #buddy-actions { height: 3; }
+    BuddyCharacterReviewDialog #buddy-actions Button {
+        width: 1fr; min-width: 0; border: none;
+    }
+    BuddyCharacterReviewDialog #buddy-status { height: auto; max-height: 4; }
+
+
 /* ===== WIDGET: PersonaBuddyWidget (Widgets/Persona_Widgets/persona_buddy_widget.py) ===== */
 
     PersonaBuddyWidget {
@@ -3682,7 +3701,7 @@
 
     PersonasPersonaVisualPackWidget {
         width: 100%;
-        height: 27;
+        height: 30;
         min-height: 20;
         margin-top: 1;
         padding: 1;
@@ -3725,9 +3744,9 @@
 
     PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
         width: 100%;
-        height: 6;
+        height: 9;
         layout: grid;
-        grid-size: 3 2;
+        grid-size: 3 3;
         grid-gutter: 0 1;
         margin-top: 1;
     }
@@ -3744,7 +3763,7 @@
     }
 
     PersonasPersonaVisualPackWidget.-narrow {
-        height: 31;
+        height: 34;
     }
 
     PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {

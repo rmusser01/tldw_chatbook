@@ -562,15 +562,16 @@ def test_dispatch_vpack_renamed_zip_autodetects(tmp_path):
     assert set(res.images) == {"idle", "speaking"}
 
 
-def test_dispatch_plain_zip_named_vpack_falls_back_to_stems(tmp_path):
+def test_dispatch_plain_zip_named_vpack_requires_native_validation(tmp_path):
     z = tmp_path / "set.tldw-persona-vpack"   # plain stem zip, wrong extension
     z.write_bytes(_zip({"idle.png": _png()}))
     res = resolve_local_expression_set([z])
-    assert set(res.images) == {"idle"}   # stem mapping still works
+    assert not res.images
+    assert res.skipped
 
 
 def test_dispatch_nested_single_root_extracts(tmp_path):
-    z = tmp_path / "pack.tldw-persona-vpack"
+    z = tmp_path / "pack.zip"
     z.write_bytes(simple_vpack({"thinking": _png()}, prefix="MyPack/"))
     res = resolve_local_expression_set([z])
     assert "thinking" in res.images
@@ -581,7 +582,7 @@ def test_dispatch_two_roots_falls_through(tmp_path):
     buf = io.BytesIO(simple_vpack({"idle": _png()}, prefix="A/"))
     with zipfile.ZipFile(buf, "a") as zf:
         zf.writestr("B/stray.txt", b"x")   # a second root breaks single-prefix detection
-    z = tmp_path / "two-roots.tldw-persona-vpack"
+    z = tmp_path / "two-roots.zip"
     z.write_bytes(buf.getvalue())
     res = resolve_local_expression_set([z])
     assert res.images == {}   # fell through to stem mapping, nothing matched
@@ -617,7 +618,7 @@ def test_dispatch_manifest_beyond_member_64(tmp_path):
         extra_members=filler,
         manifest_last=True,
     )
-    z = tmp_path / "big.tldw-persona-vpack"
+    z = tmp_path / "big.zip"
     z.write_bytes(data)
     res = resolve_local_expression_set([z])
     assert "idle" in res.images
@@ -626,7 +627,7 @@ def test_dispatch_manifest_beyond_member_64(tmp_path):
 def test_dispatch_mixed_inputs_share_budget(tmp_path, monkeypatch):
     import tldw_chatbook.Character_Chat.expression_set_io as mod
     vp = simple_vpack({"idle": _png()})
-    z = tmp_path / "pack.tldw-persona-vpack"
+    z = tmp_path / "pack.zip"
     z.write_bytes(vp)
     loose = tmp_path / "speaking.png"
     loose.write_bytes(_png())
