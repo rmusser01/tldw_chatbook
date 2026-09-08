@@ -12224,6 +12224,23 @@ rather than a flat window sized to the happy path. The probe already
 records STARTS rather than running state, so waiting cannot miss a worker
 that finishes quickly.
 
+
+## Preserve real project defaults and verify the provider input
+
+**TASK-31976.1, 2026-09-07.** The trace recovery helper disabled project
+instructions, so its passing sends missed the production default that selected
+a ready workspace containing AGENTS.md. Real workspace/controller/agent/factory
+tests reproduced trace_turn_unavailable before HTTP: the appended context had
+been mistaken for a saved user turn. Keeping that context exposed consecutive
+turn replacement and filtered-artifact equality failures. Review then found
+that the generic provider path could replay filtered trace artifacts as actual
+provider input; llama.cpp's separate wire path concealed that error.
+
+Use real workspace defaults when testing sends. Assert each reconstructed call
+and the actual provider input across subsequent sends, tool calls, fallback
+and a cold trace factory; test credential and PII filtering with distinct
+secrets in the context. A saved trace alone cannot prove what the model received.
+
 ### TASK-31827: git-ignored scratch inside a worktree dies with the worktree -- mirror it
 
 At 18:13 on 2026-09-07 an unidentified bulk cleanup removed the whole `.claude/worktrees/`

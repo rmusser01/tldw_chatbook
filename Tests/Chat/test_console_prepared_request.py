@@ -445,6 +445,59 @@ def test_known_mandatory_overflow_is_explicit_and_compaction_cannot_remove_it() 
     )
 
 
+@pytest.mark.parametrize("ceiling", [3, 7])
+def test_project_context_cannot_evict_its_current_user(ceiling: int) -> None:
+    """An appended context rider must not turn the user's ask into history."""
+    semantic = build_console_request(
+        [
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "current question"},
+            {
+                "role": "user",
+                "content": "project guidance",
+                "_chatbook_ephemeral_origin": "project_instructions",
+            },
+        ]
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(ceiling),
+        count_fn=_word_count,
+    )
+
+    assert [row["content"] for row in prepared.messages_payload] == [
+        "current question",
+        "project guidance",
+    ]
+    assert prepared.dropped_messages == 2
+    assert prepared.known_overflow is (ceiling == 3)
+
+
+def test_historical_project_context_stays_in_its_complete_turn() -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "old question"},
+            {
+                "role": "user",
+                "content": "old context",
+                "_chatbook_ephemeral_origin": "project_instructions",
+            },
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "current question"},
+        ]
+    )
+
+    assert len(request.compactable) == 1
+    assert [row["content"] for row in request.compactable[0].messages] == [
+        "old question",
+        "old context",
+        "old answer",
+    ]
+
+
 def test_unknown_and_user_overridden_limits_are_honestly_labeled() -> None:
     semantic = build_console_request([{"role": "user", "content": "hello"}])
     unknown = prepare_provider_request(

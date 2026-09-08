@@ -367,6 +367,30 @@ Related earlier incident: task-2200 ("`is_mounted` ≠ in-the-DOM").
 
 ---
 
+## Removing menu borders cannot make too many actions fit
+
+**TASK-32033, Copy selection.** Adding the eighth action to the Console
+selection menu made its seven-row transcript fixture fail containment:
+removing the border and hint still left eight action rows, and clamping the
+offset put the last action over the composer. The menu now caps its height
+to the owner and scrolls after the existing compacting pass. The regression
+checks normal and ANSI modes, including keyboard wrap from the first action
+to the last and back, with both focused labels visible inside the owner.
+
+Qodo's follow-up found that the height cap and hidden hint persisted after
+the owner grew. Four resize regressions reproduced this for terminal and
+transcript changes in both color modes. A capped menu may not resize when
+its owner grows, so the fix uses the screen layout signal to detect changed
+owner bounds, clears the temporary constraints, and measures again.
+
+**What to do.** When adding an action to a floating menu, exercise an owner
+shorter than the action count. Compact styling needs a scrolling fallback
+when the actions alone exceed the available rows. Exercise shrink/grow
+cycles too; the child's own resize event cannot reliably detect available
+space changing around a capped child.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

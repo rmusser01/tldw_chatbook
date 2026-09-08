@@ -777,3 +777,23 @@ def test_empty_reader_widening_is_off_under_custom_widths() -> None:
     assert resolve_media_reader_layout(
         235, custom, reader_has_item=False
     ) == resolve_media_reader_layout(235, custom, reader_has_item=True)
+
+
+@pytest.mark.parametrize("bad_value", [1, 0, "True", None])
+def test_reader_has_item_rejects_a_non_boolean(bad_value) -> None:
+    """task-32039 AC#3: the boundary arg is bool-validated like its siblings.
+
+    ``reader_has_item`` fed a truthiness check without a type guard, so ``1``
+    (or any truthy non-bool) silently passed. It is validated now, matching the
+    ``width``/``preferences``/``profile`` guards.
+
+    Args:
+        bad_value: A non-boolean the resolver must refuse.
+    """
+    with pytest.raises(TypeError, match="reader_has_item must be a boolean"):
+        resolve_adaptive_reader_layout(
+            235,
+            AdaptiveReaderLayoutPreferences(),
+            MEDIA_PROFILE,
+            reader_has_item=bad_value,
+        )
