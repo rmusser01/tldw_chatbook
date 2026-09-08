@@ -821,7 +821,13 @@ class ConsoleSessionSurface(Vertical):
         provider_action_label: str = "",
         provider_action_tooltip: str = "",
     ) -> None:
-        """Keep guidance out of the title and sync the empty transcript card state."""
+        """Keep guidance out of the title and sync the empty transcript card state.
+
+        Args:
+            card_state: Setup guidance to display when the transcript is empty.
+            provider_action_label: Setup action label; empty hides the action.
+            provider_action_tooltip: Tooltip describing the setup action.
+        """
         try:
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
