@@ -364,3 +364,162 @@ async def test_match_scroll_resolves_the_real_scroller_and_maps_through_the_wrap
             ),
         )
         assert raw_view.scroll_offset.y != target_line
+
+
+async def _open_rendered_body_ready(screen, pilot) -> LibraryMediaContentBody:
+    """Return the body once its rendered Markdown has laid out (max scroll > 0).
+
+    Textual's ``Markdown`` widget parses in an executor and mounts its blocks
+    in batches, so the rendered scroller's ``max_scroll_y`` stays 0 for a pump
+    or two after the reader session settles -- an immediate ``scroll_to`` right
+    then clamps to the top. This waits until the body can actually scroll.
+    """
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            ).active_mode
+            == "rendered"
+            and screen.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            ).scroller.max_scroll_y
+            > 0
+        ),
+        message="Rendered Markdown body never laid out (max_scroll_y stayed 0).",
+    )
+    return screen.query_one(
+        "#library-media-viewer-content", LibraryMediaContentBody
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset():
+    """task-31968: Read -> Analysis -> Read must land back on the saved offset.
+
+    The mode-change restore fires on the viewer's post-recompose hook, while
+    the freshly rebuilt Markdown body is still parsing/laying out -- so the
+    container's max scroll is 0 and ``scroll_to`` clamps the captured offset to
+    the top. Drive the real mode buttons and assert the rebuilt, laid-out
+    rendered scroller returns to the captured offset. Before the fix this
+    lands at 0 (the position is lost); after it, the restore re-applies once
+    the rebuilt body has laid out.
+    """
+    app, service = _flow_app(count=4)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        canonical_id, backing_id, _title = _seed_row_document(
+            screen, service, 0, _markdown_wrapping_document(trailing_lines=200)
+        )
+        # The fixture's media items are all video/audio/PDF; force this row's
+        # type into the markdown allowlist so the content sniff applies and the
+        # Reader defaults to the Rendered view (the parse race is Rendered-only).
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["type"] = "plaintext"
+
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            message="Row never settled its detail.",
+        )
+        assert screen._library_media_content_mode == "rendered", (
+            "Fixture must default to Rendered for the round-trip to mean anything."
+        )
+
+        body = await _open_rendered_body_ready(screen, pilot)
+        body.scroller.scroll_to(y=12, animate=False, immediate=True)
+        await pilot.pause()
+        target = int(body.scroller.scroll_y)
+        assert target > 0, "Fixture scroll did not move -- test setup is broken."
+
+        # Read -> Analysis captures the Read offset; Analysis -> Read restores.
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.mode == "analysis",
+            message="Never switched to Analysis.",
+        )
+        screen.query_one("#library-media-reader-select-read", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.mode == "read",
+            message="Never switched back to Read.",
+        )
+
+        # The rebuilt body must lay out AND land back on the captured offset,
+        # read from the real (re-queried) scroll container.
+        await _wait_for_condition(
+            pilot,
+            lambda: int(
+                screen.query_one(
+                    "#library-media-viewer-content", LibraryMediaContentBody
+                ).scroller.scroll_y
+            )
+            == target,
+            message=(
+                "Rendered scroll offset was not restored after the "
+                "Read -> Analysis -> Read round-trip."
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_mode_change_restore_lands_synchronously_on_the_laid_out_body():
+    """task-31968: the restore must apply against the current layout at once.
+
+    The mode-change restore fires on the viewer's post-recompose hook, when
+    the rebuilt Markdown body may not have laid out yet. A single DEFERRED
+    ``scroll_to`` applies a refresh later -- against a body that is still
+    parsing then it clamps to the top and never re-applies, so the reader
+    loses its place. The fix applies immediately (so it can tell an unlaid
+    body, offset clamped short, from a landed one) and re-arms itself until
+    the offset lands.
+
+    This pins the half that is deterministic in this harness: called against
+    an already laid-out rendered scroller, the restore lands the saved offset
+    SYNCHRONOUSLY, with no intervening refresh. The deferred-only restore
+    (``scroll_to`` without ``immediate=True``) leaves the scroller at rest at
+    this point, so this reads 0 and fails. (The full sub-frame parse race is
+    collapsed by ``pilot.pause`` and is not reproducible end-to-end here --
+    see the round-trip test above, a regression guard, and the task notes.)
+    """
+    app, service = _flow_app(count=4)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        canonical_id, backing_id, _title = _seed_row_document(
+            screen, service, 0, _markdown_wrapping_document(trailing_lines=200)
+        )
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["type"] = "plaintext"
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            message="Row never settled its detail.",
+        )
+        body = await _open_rendered_body_ready(screen, pilot)
+        body.scroller.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        assert int(body.scroller.scroll_y) == 0, "Fixture must start unscrolled."
+        assert body.scroller.max_scroll_y >= 14, (
+            "Fixture must overflow the reading surface for the offset to land."
+        )
+
+        screen._library_media_read_scroll_by_id[canonical_id] = (0, 14)
+        screen._restore_library_media_loaded_progress(canonical_id)
+        # No pause: the fix applies against the laid-out scroller immediately;
+        # the deferred-only restore would still read 0 here.
+        assert int(body.scroller.scroll_y) == 14

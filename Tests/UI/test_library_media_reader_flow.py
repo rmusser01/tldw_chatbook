@@ -1037,14 +1037,21 @@ def test_progress_restores_after_loaded_content_mounts():
         _library_media_read_scroll_by_id={"local:media:7": (2, 19)},
         query_one=lambda *_args, **_kwargs: SimpleNamespace(
             scroller=SimpleNamespace(
-                scroll_to=lambda **kwargs: calls.append(kwargs)
+                # task-31968: the restore reads scroll_y after applying to
+                # decide whether the body laid out short and needs a re-apply;
+                # already at the target here, so it lands once.
+                scroll_x=2,
+                scroll_y=19,
+                scroll_to=lambda **kwargs: calls.append(kwargs),
             )
         ),
     )
 
     LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:7")
 
-    assert calls == [{"x": 2, "y": 19, "animate": False, "force": True}]
+    assert calls == [
+        {"x": 2, "y": 19, "animate": False, "force": True, "immediate": True}
+    ]
 
 
 @pytest.mark.asyncio
@@ -1127,7 +1134,9 @@ def test_mode_change_preserves_per_item_read_scroll_for_session():
     )
     LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:4")
 
-    assert restored == [{"x": 0, "y": 23, "animate": False, "force": True}]
+    assert restored == [
+        {"x": 0, "y": 23, "animate": False, "force": True, "immediate": True}
+    ]
 
 
 def test_external_server_detail_does_not_use_local_progress_seam():
