@@ -842,6 +842,19 @@ OPENAI_API_KEY_fallback = "sk-your-api-key"
 - Voice mixing capabilities (planned)
 - No internet connection required
 
+Kokoro streams raw PCM incrementally. Encoded responses (including WAV, MP3 and
+FLAC) collect the utterance before encoding one complete file in either engine.
+This avoids concatenating separate file headers, which can make decoders stop
+after the first chunk. Each encoded request is limited to five minutes of
+24 kHz audio (7,200,000 samples). One growable buffer holds the float32 samples;
+encoding reads it without a second full float-array copy. Voice mixing applies
+the same duration limit to each voice and keeps one running mix, so retained
+audio does not grow with the number of voices. Each buffer retains at most
+28.8 MB of sample data; model inference and codec working memory are separate.
+An oversized request stops without publishing a partial audio file. Shorten
+the text or choose PCM for longer speech and incremental playback. Encoded
+output within the budget still waits for synthesis to finish.
+
 **Configuration:**
 ```toml
 [app_tts]
@@ -1057,9 +1070,37 @@ The S/TT/S tab provides a comprehensive TTS testing environment:
    - **audio.cpp**: Catalog-selected model, complete WAV, and speed `1.0`
    - **Chatterbox**: Exaggeration, CFG weight, temperature, candidates, validation
    - **ElevenLabs**: Stability, similarity boost, style, speaker boost
-   - **Kokoro**: Language selection
+   - **Kokoro**: Language selection, with **Automatic (from voice)** as the
+     default for both ONNX and PyTorch. Automatic omits the request language
+     override so the backend infers it from the selected voice. Explicit choices
+     submit canonical language codes and remain selected when switching away
+     from Kokoro and back within the Playground session.
+     Fresh Kokoro controls enable **Use ONNX**, matching automatic reply speech.
+     Explicitly disabling the switch still selects the PyTorch backend.
 5. **Audio Controls**: Play, pause, stop, and export generated audio
 6. **Generation Log**: Real-time feedback on TTS processing
+
+### Resolving TTS selection failures
+
+An effective-selection failure happens before audio generation. The UI identifies
+the affected setting and its owner: global **Settings > Speech & TTS**, a voice
+profile, saved Studio preferences, or the current Speech Lab controls. Correct
+invalid or missing selections before generating again; repeating the same
+request does not repair an invalid setting. Catalog failures offer refresh,
+and inconsistent Studio preferences offer reopening Speech Lab.
+
+For Kokoro and the other legacy providers, global **Voice policy** must be
+**Exact**, with a voice value. **Server default** is an audio.cpp policy. Settings
+keep an unsupported saved policy visible for repair and reject it on Save.
+Changing the default provider selects its own model and voice defaults; returning
+to the saved provider restores its saved model and voice choices. Console
+**Speak replies** resolves those global defaults and any applicable voice profile;
+the Playground language selector is local to the Studio request.
+
+Resolution diagnostics record only `resolution_code`, `resolution_axis`, and
+`resolution_source` (plus the existing Console outcome). These bounded fields
+distinguish configuration errors from temporary catalog/state failures without
+logging text, model/voice identifiers, or raw exception messages.
 
 ### Programmatic Usage
 

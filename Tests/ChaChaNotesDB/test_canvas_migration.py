@@ -1,4 +1,4 @@
-"""Focused v66 -> v68 persistence tests for durable Canvas revisions."""
+"""Canvas v66 -> v68 persistence remains intact across later schema versions."""
 
 from __future__ import annotations
 
@@ -211,7 +211,7 @@ def test_genuine_v66_database_migrates_to_v68_with_complete_canvas_schema(
     migrated = CharactersRAGDB(path, client_id="canvas-v68-migrated")
     try:
         connection = migrated.get_connection()
-        assert _version(path) == 68
+        assert _version(path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         objects = _canvas_schema(connection)
         assert {
             name for (object_type, name) in objects if object_type == "table"
@@ -242,7 +242,7 @@ def test_fresh_v68_schema_matches_migrated_v66_and_reopen_is_idempotent(
     try:
         fresh_schema = _canvas_schema(fresh.get_connection())
         migrated_schema = _canvas_schema(migrated.get_connection())
-        assert fresh._CURRENT_SCHEMA_VERSION == 68
+        assert fresh._CURRENT_SCHEMA_VERSION >= 68
         assert fresh_schema == migrated_schema
         assert fresh_schema
     finally:
@@ -251,7 +251,7 @@ def test_fresh_v68_schema_matches_migrated_v66_and_reopen_is_idempotent(
 
     reopened = CharactersRAGDB(fresh_path, client_id="canvas-v68-reopen")
     try:
-        assert _version(fresh_path) == 68
+        assert _version(fresh_path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _canvas_schema(reopened.get_connection()) == fresh_schema
         assert (
             reopened.get_connection().execute("PRAGMA foreign_key_check").fetchall()
@@ -299,7 +299,7 @@ def test_v66_migration_rolls_back_all_ddl_and_version_then_retries(
     )
     retried = CharactersRAGDB(path, client_id="canvas-v68-retry")
     try:
-        assert _version(path) == 68
+        assert _version(path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _canvas_schema(retried.get_connection())
     finally:
         retried.close_connection()
@@ -347,7 +347,7 @@ def test_v67_migration_preserves_canvas_rows_and_accepts_inert_runtime_profiles(
     migrated = CharactersRAGDB(path, client_id="canvas-v68-migrated")
     try:
         connection = migrated.get_connection()
-        assert _version(path) == 68
+        assert _version(path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         preserved = connection.execute(
             "SELECT html, runtime_profile FROM canvas_revisions WHERE id = ?",
             (revision_id,),
@@ -449,7 +449,7 @@ def test_v67_to_v68_migration_rolls_back_and_retries(
     monkeypatch.setattr(CharactersRAGDB, "_execute_migration_statements", original)
     retried = CharactersRAGDB(path, client_id="canvas-v68-retry")
     try:
-        assert _version(path) == 68
+        assert _version(path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         row = (
             retried.get_connection()
             .execute(

@@ -93,6 +93,7 @@ class TraceTransformKind(str, Enum):
     SYSTEM_FRAMING = "system_framing"
     PROVIDER_OVERLAY = "provider_overlay"
     MESSAGE_REWRITE = "message_rewrite"
+    CURRENT_TURN_TEXT = "current_turn_text"
     WINDOWING = "windowing"
 
 
@@ -597,6 +598,17 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
 
     transform = descriptor.transform
     artifact = descriptor.artifact
+    if transform is TraceTransformKind.CURRENT_TURN_TEXT:
+        if (
+            len(descriptor.inputs) != 1
+            or type(descriptor.inputs[0]) is not SavedRevisionTraceProvenance
+            or artifact is None
+            or artifact.source is not TraceProvenanceSource.ACTIVE_REQUEST
+        ):
+            raise TraceProvenanceAlignmentError(
+                "current-turn text requires one saved source and its active artifact"
+            )
+        return
     if transform in {
         TraceTransformKind.THINKING_ATTACHMENT,
         TraceTransformKind.CONTINUATION_ATTACHMENT,
@@ -623,6 +635,7 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
             )
         return
     required_artifacts = {
+        TraceTransformKind.MESSAGE_REWRITE: frozenset({TraceProvenanceSource.THINKING}),
         TraceTransformKind.PROVIDER_OVERLAY: frozenset(
             {TraceProvenanceSource.PROVIDER_OVERLAY}
         ),
@@ -640,7 +653,9 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
         ),
     }
     allowed_sources = required_artifacts.get(transform)
-    if allowed_sources is not None:
+    if transform is TraceTransformKind.MESSAGE_REWRITE and artifact is None:
+        pass
+    elif allowed_sources is not None:
         if artifact is None or artifact.source not in allowed_sources:
             raise TraceProvenanceAlignmentError(
                 "derived transform requires its exact provider artifact"
@@ -669,6 +684,61 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
         raise TraceProvenanceAlignmentError(
             "message rewrite sidecar does not match its exact owner"
         )
+    if (
+        transform is TraceTransformKind.MESSAGE_REWRITE
+        and artifact is not None
+        and not any(
+            type(item) is DerivedTraceProvenance
+            and item.transform is TraceTransformKind.THINKING_ATTACHMENT
+            for item in descriptor.inputs[1:]
+        )
+    ):
+        raise TraceProvenanceAlignmentError(
+            "message rewrite artifact requires its typed thinking attachment"
+        )
+
+
+def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
+    """Return the exact source of a saved or admitted current-user row.
+
+    Args:
+        descriptor: Validated saved-revision or derived trace provenance.
+
+    Returns:
+        The saved revision identifier for a saved row or admitted current-turn
+        text transform, or None for other provenance shapes.
+    """
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return descriptor.revision_id
+    if (
+        type(descriptor) is DerivedTraceProvenance
+        and descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT
+    ):
+        return descriptor.inputs[0].revision_id
+    return None
+
+
+def saved_response_source_revision_id(descriptor: TraceProvenance) -> str | None:
+    """Return the exact saved owner of a response or its typed thinking replay.
+
+    Args:
+        descriptor: Validated saved-revision or derived trace provenance.
+
+    Returns:
+        The saved revision identifier for a saved response or its typed thinking
+        rewrite, or None when the descriptor has no supported saved owner.
+    """
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return descriptor.revision_id
+    if (
+        type(descriptor) is DerivedTraceProvenance
+        and descriptor.transform is TraceTransformKind.MESSAGE_REWRITE
+        and descriptor.artifact is not None
+        and descriptor.artifact.source is TraceProvenanceSource.THINKING
+        and type(descriptor.inputs[0]) is SavedRevisionTraceProvenance
+    ):
+        return descriptor.inputs[0].revision_id
+    return None
 
 
 def _descriptor_matches_category(

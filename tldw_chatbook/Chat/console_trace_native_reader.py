@@ -384,6 +384,7 @@ class ConsoleTraceNativeReader:
                 revision_id=revision.revision_id,
                 expected_conversation_id=revision.source_conversation_id,
                 policy_id=call.policy_id,
+                response_call=call,
             )
         value = self._decode_artifact(
             self.repository.get_artifact(cursor, response.artifact_id or "")

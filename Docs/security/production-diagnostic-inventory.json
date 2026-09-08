@@ -1002,15 +1002,15 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 28,
-      "diagnostic_digest": "e900ca7054c98c2d9160",
+      "call_count": 29,
+      "diagnostic_digest": "d6f178afee6348890e84",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 48,
-      "diagnostic_digest": "8355c4da0ee36235c479",
+      "call_count": 50,
+      "diagnostic_digest": "95d2b6a88660ad3919a2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2269,8 +2269,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 70,
-      "diagnostic_digest": "c8c97abdd441f878754e",
+      "call_count": 65,
+      "diagnostic_digest": "83ea677c53d1212fd535",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/kokoro.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -6177,7 +6177,16 @@
     {
       "candidates": [
         {
-          "call_digest": "98ebc7145d856d74",
+          "call_digest": "7195ae005fa5e57b",
+          "method": "error",
+          "path_expressions": [
+            "outcome_code"
+          ],
+          "scope": "TTSEventHandler._generate_tts",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "ef1293cd6664cd2c",
           "method": "error",
           "path_expressions": [
             "outcome_code"
@@ -11478,10 +11487,10 @@
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
     "owner_files": 591,
-    "path_privacy_candidate_calls": 710,
+    "path_privacy_candidate_calls": 711,
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
     "task_492_calls": 1348,
-    "task_494_calls": 7681
+    "task_494_calls": 7679
   }
 }

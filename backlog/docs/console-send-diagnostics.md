@@ -41,6 +41,22 @@ arbitrary exception messages are never recorded. SQLite failures also carry a
 numeric `sqlite_code`. App version is the running package's source version; it
 is not a verified Git commit or proof that an installation is latest dev.
 
+`trace_turn_unavailable` means the current provider row could not establish one
+saved turn owner at reservation. It does not identify the transformation that
+lost ownership. Include the installed Git revision or package origin and whether
+the request used images, dictionaries, skills, references, world information or
+automatic project instructions;
+request bodies are unnecessary for this metadata report. Unchanged multimodal
+rows must retain their saved owner across frozen/transport JSON representations.
+Admitted current-user text transforms retain their exact saved source while the
+trace stores the transformed provider value as an artifact. Automatic project
+context remains attached to that user and cannot become the saved turn owner.
+Historical requests
+remain unchanged when a later send returns to raw saved history.
+Captured requests also preserve eligible saved thinking and provider continuation
+history. A saved response link requires the supported typed thinking envelope as
+well as its visible answer; selected private history is never diagnostic metadata.
+
 `event=ui_refresh_churn` under `diagnostics.ui` records excessive activity even
 when the event loop remains responsive. It identifies `console_sync` or
 `screen_recompose`, the count/window duration, active timers/workers and the last

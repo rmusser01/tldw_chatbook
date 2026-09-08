@@ -660,7 +660,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 68  # Preserve bounded inert Canvas runtime profiles.
+    _CURRENT_SCHEMA_VERSION = 69  # Pin the exact saved source of Console calls.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8011,6 +8011,55 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v68_to_v69(self, conn: sqlite3.Connection) -> None:
+        """Permit the existing event FK to pin a call's exact saved source."""
+
+        self._require_migration_entry_version(conn, 68, "V68→V69")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v68_to_v69_console_trace_source_pin.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                # SQLite defers validation of trigger references until use.
+                # Compile them before replacing the guard on a malformed DB.
+                cursor.execute(
+                    "SELECT event.event_type, event.turn_id, event.call_id, "
+                    "event.surface_node_id, event.surface_replacement_id, "
+                    "event.request_header_id, event.semantic_revision_id, "
+                    "event.artifact_id, event.omission_reason_code, "
+                    "revision.source_message_id, revision.source_conversation_id, "
+                    "call.turn_id, owner.conversation_id "
+                    "FROM console_trace_events AS event "
+                    "JOIN console_trace_calls AS call ON call.call_id = event.call_id "
+                    "AND call.segment_id = event.segment_id "
+                    "JOIN console_trace_owners AS owner ON owner.owner_id = call.owner_id "
+                    "JOIN console_trace_semantic_revisions AS revision "
+                    "ON revision.revision_id = event.semantic_revision_id LIMIT 0"
+                )
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V68→V69"
+                )
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError("Trace source migration foreign key audit failed")
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 69 "
+                    "WHERE schema_name = ? AND version = 68",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("Trace source migration version update failed")
+            if self._get_db_version(conn) != 69:
+                raise SchemaError("Trace source migration version check failed")
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V68 to V69 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8231,6 +8280,7 @@ UPDATE db_schema_version
                     65: self._migrate_from_v65_to_v66,
                     66: self._migrate_from_v66_to_v67,
                     67: self._migrate_from_v67_to_v68,
+                    68: self._migrate_from_v68_to_v69,
                 }
 
                 if current_db_version == 0:
