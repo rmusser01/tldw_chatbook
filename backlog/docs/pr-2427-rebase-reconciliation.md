@@ -756,3 +756,12 @@ Screen collection test with the isolated real poll timer. Independent review
 confirms that a retained application-owned writer/controller reference would
 still fail the unchanged weakref assertion. This closes that recorded cleanup
 failure; it does not qualify the separate outstanding Library/Watchlists gates.
+
+The remaining live-work routing failure was a fixture bypass of production's
+Watchlists route-stylesheet loader. Reusing `FullAppDestinationContext` for that
+single case restores the real application lifecycle; a new click-hit assertion
+confirms that the compositor reaches the intended button. All original route,
+target, label and status assertions remain. The complete live-work file now
+passes **70/70** in 72.27 seconds
+(`/private/tmp/pr2427-watch-route-complete.log`); scoped Ruff and diff checks pass.
+No production code or stylesheet changed in this repair.
