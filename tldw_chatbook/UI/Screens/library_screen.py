@@ -3430,7 +3430,9 @@ class LibraryScreen(BaseAppScreen):
             prompt_service=lambda: getattr(
                 self.app_instance, "prompt_scope_service", None
             ),
-            sync_view=lambda state: self._sync_library_prompt_history_region(state),
+            sync_view=lambda state: (
+                self._prompts_controller._sync_library_prompt_history_region(state)
+            ),
         )
         self._library_prompt_browse_controller = LibraryPromptBrowseController(
             screen=self,
@@ -3484,7 +3486,9 @@ class LibraryScreen(BaseAppScreen):
             prompt_service=lambda: getattr(
                 self.app_instance, "prompt_scope_service", None
             ),
-            sync_memberships=lambda: self._sync_library_prompt_memberships,
+            sync_memberships=lambda: (
+                self._prompts_controller._sync_library_prompt_memberships
+            ),
             current_prompt_id=lambda: self._prompts_state.selected_prompt_id,
             current_prompt_detail=lambda: self._prompts_state.detail,
             prompt_editor_active=lambda: self._prompts_state.view == "editor",
@@ -3876,7 +3880,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
             or self._library_note_editor_active()
-            or self._library_prompt_editor_active()
+            or self._prompts_controller._library_prompt_editor_active()
         ):
             if (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -5088,7 +5092,7 @@ class LibraryScreen(BaseAppScreen):
         guarded = bool(
             (self.is_mounted and self.app.screen is not self)
             or self._library_open_choice_strip() is not None
-            or self._library_prompt_editor_active()
+            or self._prompts_controller._library_prompt_editor_active()
             or self._library_skill_editor_active()
             or self._prompts_state.mutation_in_flight
             or self._prompts_state.dirty
@@ -8846,7 +8850,7 @@ class LibraryScreen(BaseAppScreen):
         self._conversations_state.request_generation += 1
         self._invalidate_library_prompts_browse()
         self._library_skills_browse_controller.invalidate()
-        self._invalidate_library_prompt_detail_generation()
+        self._prompts_controller._invalidate_library_prompt_detail_generation()
         self._media_state.lifecycle_generation += 1
         self._media_state.return_settlement = None
         self._media_state.last_settlement_outcome = None
@@ -9571,9 +9575,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_note_editor_active(self) -> bool:
         return self._notes_controller._library_note_editor_active()
 
-    def _library_prompt_editor_active(self) -> bool:
-        return self._prompts_controller._library_prompt_editor_active()
-
     def _library_list_canvas_showing_list(self) -> bool:
         """True while Media/Notes/Prompts/Skills shows its plain LIST sub-view.
 
@@ -10279,7 +10280,7 @@ class LibraryScreen(BaseAppScreen):
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
         if not prompt_flush_allowed:
-            self._notify_prompt_dirty_veto()
+            self._prompts_controller._notify_prompt_dirty_veto()
         if not skill_flush_allowed:
             # task-449: the app-level navigation veto only logs, so tell
             # the user why the tab switch was refused -- same toast as the
@@ -11088,7 +11089,7 @@ class LibraryScreen(BaseAppScreen):
             )
         if shell.canvas_kind == "skills":
             return LibrarySkillsListCanvas(
-                **self._library_skills_canvas_kwargs(),
+                **self._skills_controller._library_skills_canvas_kwargs(),
                 id="library-skills-canvas",
             )
         if shell.canvas_kind == "collections":
@@ -14736,8 +14737,12 @@ class LibraryScreen(BaseAppScreen):
                                 is_create=not self._skills_state.selected_skill_name,
                                 dirty=self._skills_state.dirty,
                                 confirming_delete=self._skills_state.confirming_delete,
-                                scroll_to_actions=self._consume_library_skill_scroll_pending(),
-                                skill_path=self._library_skill_on_disk_path(),
+                                scroll_to_actions=(
+                                    self._skills_controller._consume_library_skill_scroll_pending()
+                                ),
+                                skill_path=(
+                                    self._skills_controller._library_skill_on_disk_path()
+                                ),
                                 # Task 5: the editor's own trust panel renders a
                                 # Reset button for ``quarantined_manifest_error``
                                 # (no adaptive header in editor mode, so
@@ -17916,9 +17921,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_skill_work_pane_kwargs(self) -> dict[str, Any]:
         return self._skills_controller._library_skill_work_pane_kwargs()
 
-    def _library_skills_canvas_kwargs(self, *, consume_scroll: bool = True) -> dict[str, Any]:
-        return self._skills_controller._library_skills_canvas_kwargs(consume_scroll=consume_scroll)
-
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
 
@@ -17934,14 +17936,8 @@ class LibraryScreen(BaseAppScreen):
             select_mode=self._prompts_state.select_mode,
         )
 
-    def _sync_library_prompt_selection(self, focus_identity: str | None) -> None:
-        return self._prompts_controller._sync_library_prompt_selection(focus_identity)
-
     def _clear_library_prompt_selection(self, *, announce: bool) -> None:
         return self._prompts_controller._clear_library_prompt_selection(announce=announce)
-
-    def _sync_library_prompt_memberships(self, state) -> None:
-        return self._prompts_controller._sync_library_prompt_memberships(state)
 
     def _apply_library_prompt_collection(self, collection_id: int | None) -> None:
         return self._prompts_controller._apply_library_prompt_collection(collection_id)
@@ -17958,12 +17954,6 @@ class LibraryScreen(BaseAppScreen):
     def _restore_library_prompts_focus(self, focus_identity: str | None, filter_cursor: int | None=None) -> None:
         return self._prompts_controller._restore_library_prompts_focus(focus_identity, filter_cursor)
 
-    def _stop_library_prompts_search_debounce(self) -> None:
-        return self._prompts_controller._stop_library_prompts_search_debounce()
-
-    def _capture_library_prompts_filter_cursor(self, request_token: int, focus_identity: str | None) -> None:
-        return self._prompts_controller._capture_library_prompts_filter_cursor(request_token, focus_identity)
-
     def _request_library_prompts_browse(
         self,
         scope: PromptBrowseScope,
@@ -17971,12 +17961,14 @@ class LibraryScreen(BaseAppScreen):
         focus_identity: str | None = None,
     ) -> Any | None:
         """Capture presentation context and request one exact Prompt page."""
-        self._stop_library_prompts_search_debounce()
+        self._prompts_controller._stop_library_prompts_search_debounce()
         if focus_identity is None:
             focus_identity = self._library_prompts_focus_identity()
         controller = self._library_prompt_browse_controller
         token = controller.begin(scope)
-        self._capture_library_prompts_filter_cursor(token, focus_identity)
+        self._prompts_controller._capture_library_prompts_filter_cursor(
+            token, focus_identity
+        )
         return controller.dispatch(
             scope,
             request_token=token,
@@ -21234,7 +21226,7 @@ class LibraryScreen(BaseAppScreen):
                 )
                 self._prompts_state.detail = detail
         elif not await self._flush_library_prompt_save():
-            self._notify_prompt_dirty_veto()
+            self._prompts_controller._notify_prompt_dirty_veto()
             return
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
@@ -24026,15 +24018,6 @@ class LibraryScreen(BaseAppScreen):
         self._skills_state.scroll_pending = False
         self._skills_state.editor_armed = False
 
-    def _consume_library_skill_scroll_pending(self) -> bool:
-        return self._skills_controller._consume_library_skill_scroll_pending()
-
-    def _library_skill_on_disk_path(self) -> str:
-        return self._skills_controller._library_skill_on_disk_path()
-
-    def _update_library_skill_warnings_static(self, *, name: str | None = None) -> None:
-        return self._skills_controller._update_library_skill_warnings_static(name=name)
-
     def _update_library_skill_status_static(self, text: str) -> None:
         return self._skills_controller._update_library_skill_status_static(text)
 
@@ -24149,9 +24132,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _notify_skill_dirty_veto(self) -> None:
         return self._skills_controller._notify_skill_dirty_veto()
-
-    def _set_library_skill_discard_enabled(self, enabled: bool) -> None:
-        return self._skills_controller._set_library_skill_discard_enabled(enabled)
 
     def _sync_library_skill_lifecycle_actions(self) -> bool:
         return self._skills_controller._sync_library_skill_lifecycle_actions()
@@ -24323,7 +24303,7 @@ class LibraryScreen(BaseAppScreen):
             )
         if action == "library_prompt_editor_back":
             return (
-                self._library_prompt_editor_active()
+                self._prompts_controller._library_prompt_editor_active()
                 and not self._prompts_state.select_mode
             )
         if action == "library_ingest_back":
@@ -25018,9 +24998,6 @@ class LibraryScreen(BaseAppScreen):
     async def _refresh_library_skill_trust_status(self) -> None:
         return await self._skills_controller._refresh_library_skill_trust_status()
 
-    def _refresh_library_skill_script_grant(self) -> None:
-        return self._skills_controller._refresh_library_skill_script_grant()
-
     async def _request_library_skill_trust_bootstrap_passphrase(self) -> str | None:
         return await self._skills_controller._request_library_skill_trust_bootstrap_passphrase()
 
@@ -25502,7 +25479,7 @@ class LibraryScreen(BaseAppScreen):
             self._prompts_state.selection = self._prompts_state.selection.toggle(
                 entry
             )
-            self._sync_library_prompt_selection(focus_identity)
+            self._prompts_controller._sync_library_prompt_selection(focus_identity)
             return
         if type(prompt_id) is not int or prompt_id < 1:
             return
@@ -25532,9 +25509,6 @@ class LibraryScreen(BaseAppScreen):
         )
         _sync_library_canvas(self, "prompts")
 
-    def _invalidate_library_prompt_detail_generation(self) -> None:
-        return self._prompts_controller._invalidate_library_prompt_detail_generation()
-
     async def _refresh_library_prompt_detail(self, prompt_id: int, *, open_history: bool=False, expected_history_scope: tuple[str, int] | None=None, entry_origin: bool=False, request_generation: int | None=None, mutation_generation: int | None=None, expected_version: int | None=None) -> LibraryEntryReconcileResult | None:
         return await self._prompts_controller._refresh_library_prompt_detail(prompt_id, open_history=open_history, expected_history_scope=expected_history_scope, entry_origin=entry_origin, request_generation=request_generation, mutation_generation=mutation_generation, expected_version=expected_version)
 
@@ -25548,12 +25522,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_prompt_history_state(self) -> PromptHistoryState | None:
         """Expose controller-owned state to composition and conflict views."""
         return self._library_prompt_history_controller.state
-
-    def _invalidate_library_prompt_history(self) -> None:
-        return self._prompts_controller._invalidate_library_prompt_history()
-
-    def _sync_library_prompt_history_region(self, state: PromptHistoryState | None=None) -> None:
-        return self._prompts_controller._sync_library_prompt_history_region(state)
 
     @on(LibraryPromptHistoryRegion.Ready)
     def _on_library_prompt_history_region_ready(self, event: LibraryPromptHistoryRegion.Ready) -> None:
@@ -25601,7 +25569,7 @@ class LibraryScreen(BaseAppScreen):
         tracking clean for the next prompt.
         """
         self._prompts_state.view = "list"
-        self._invalidate_library_prompt_detail_generation()
+        self._prompts_controller._invalidate_library_prompt_detail_generation()
         self._prompts_state.detail = None
         self._prompts_state.loaded_id = None
         self._prompts_state.detail_selected_name = ""
@@ -25613,9 +25581,9 @@ class LibraryScreen(BaseAppScreen):
         self._prompts_state.block_state = None
         self._prompts_state.detached_structured = False
         self._prompts_state.include_starter_content = False
-        self._clear_library_prompt_delete_pending()
+        self._prompts_controller._clear_library_prompt_delete_pending()
         self._prompts_state.editor_armed = False
-        self._invalidate_library_prompt_history()
+        self._prompts_controller._invalidate_library_prompt_history()
         self._library_prompt_collections_controller.invalidate()
 
     @on(Input.Changed, "#library-prompt-name")
@@ -25696,9 +25664,6 @@ class LibraryScreen(BaseAppScreen):
     def _read_library_prompt_editor_fields(self) -> tuple[str, str, str, str, str, str] | None:
         return self._prompts_controller._read_library_prompt_editor_fields()
 
-    def _update_library_prompt_status_static(self, text: str) -> None:
-        return self._prompts_controller._update_library_prompt_status_static(text)
-
     @on(Button.Pressed, "#library-prompt-save")
     def handle_library_prompt_save(self, event: Button.Pressed) -> None:
         return self._prompts_controller.handle_library_prompt_save(event)
@@ -25725,9 +25690,6 @@ class LibraryScreen(BaseAppScreen):
             ``False`` when a dirty edit must be resolved first.
         """
         return not self._prompts_state.dirty
-
-    def _notify_prompt_dirty_veto(self) -> None:
-        return self._prompts_controller._notify_prompt_dirty_veto()
 
     def _apply_library_prompt_working_copy(self, *, state: PromptBlockEditorState, system_prompt: str | None, user_prompt: str | None) -> None:
         return self._prompts_controller._apply_library_prompt_working_copy(state=state, system_prompt=system_prompt, user_prompt=user_prompt)
@@ -26241,12 +26203,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_prompt_delete_fingerprint(self) -> str | None:
         return self._prompts_controller._library_prompt_delete_fingerprint()
 
-    def _clear_library_prompt_delete_pending(self) -> None:
-        return self._prompts_controller._clear_library_prompt_delete_pending()
-
-    def _library_prompt_write_worker_is_active(self) -> bool:
-        return self._prompts_controller._library_prompt_write_worker_is_active()
-
     def _settle_library_prompt_delete(self, decision: PromptDeleteDecision) -> None:
         """Delete only a once-settled confirmation for the same live editor."""
         if self._prompts_state.mutation_in_flight:
@@ -26258,10 +26214,10 @@ class LibraryScreen(BaseAppScreen):
         entries = self._prompts_state.delete_pending_entries
         selection_generation = self._prompts_state.delete_pending_selection_generation
         editor_prompt_id = self._prompts_state.delete_pending_editor_prompt_id
-        self._clear_library_prompt_delete_pending()
+        self._prompts_controller._clear_library_prompt_delete_pending()
         if not decision.confirmed:
             if editor_prompt_id is not None:
-                self._refocus_library_prompt_delete_action()
+                self._prompts_controller._refocus_library_prompt_delete_action()
             return
         if not targets or not entries:
             return
@@ -26284,8 +26240,8 @@ class LibraryScreen(BaseAppScreen):
             return
         # The inventory check and mutation-flag acquisition stay in this one
         # synchronous UI turn, so a new writer cannot enter between them.
-        if self._library_prompt_write_worker_is_active():
-            self._notify_library_prompt_delete_failure(
+        if self._prompts_controller._library_prompt_write_worker_is_active():
+            self._prompts_controller._notify_library_prompt_delete_failure(
                 _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY
             )
             if selection_generation is not None:
@@ -26295,14 +26251,14 @@ class LibraryScreen(BaseAppScreen):
                     "library-prompts-delete-selected",
                 )
             else:
-                self._update_library_prompt_status_static(
+                self._prompts_controller._update_library_prompt_status_static(
                     _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY
                 )
-                self._refocus_library_prompt_delete_action()
+                self._prompts_controller._refocus_library_prompt_delete_action()
             return
         mutation_token = int(pending)
         focus_identity = (
-            self._library_prompt_nearest_survivor_focus(targets)
+            self._prompts_controller._library_prompt_nearest_survivor_focus(targets)
             if selection_generation is not None
             else None
         )
@@ -26311,7 +26267,7 @@ class LibraryScreen(BaseAppScreen):
         self._prompts_state.mutation_status = ""
         self._prompts_state.mutation_in_flight = True
         self._prompts_state.delete_inflight_fingerprint = pending
-        self._sync_library_prompt_mutation_presentation()
+        self._prompts_controller._sync_library_prompt_mutation_presentation()
         self.run_worker(
             self._delete_library_prompts(
                 targets,
@@ -26326,18 +26282,6 @@ class LibraryScreen(BaseAppScreen):
 
     async def _delete_library_prompts(self, targets: tuple[PromptBatchTarget, ...], *, selection_generation: int | None, editor_prompt_id: int | None, mutation_token: int, focus_identity: str | None=None) -> None:
         return await self._prompts_controller._delete_library_prompts(targets, selection_generation=selection_generation, editor_prompt_id=editor_prompt_id, mutation_token=mutation_token, focus_identity=focus_identity)
-
-    def _sync_library_prompt_mutation_presentation(self) -> None:
-        return self._prompts_controller._sync_library_prompt_mutation_presentation()
-
-    def _library_prompt_nearest_survivor_focus(self, targets: tuple[PromptBatchTarget, ...]) -> str | None:
-        return self._prompts_controller._library_prompt_nearest_survivor_focus(targets)
-
-    def _notify_library_prompt_delete_failure(self, message: str) -> None:
-        return self._prompts_controller._notify_library_prompt_delete_failure(message)
-
-    def _refocus_library_prompt_delete_action(self) -> None:
-        return self._prompts_controller._refocus_library_prompt_delete_action()
 
     @on(Button.Pressed, "#library-prompts-delete-undo")
     def handle_library_prompt_delete_undo(self, event: Button.Pressed) -> None:

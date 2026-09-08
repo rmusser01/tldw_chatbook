@@ -1895,11 +1895,19 @@ class LibraryMediaController:
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build Media rows only from the controller's retained exact page."""
         controller = self._library_media_browse_controller
+        reader = self._library_media_reader_session
+        # Initial page projection may clear the Items cursor while a deep link
+        # loads. The local Reader retains that request's canonical identity.
+        selected_id = (
+            reader.selected_id or self._selected_media_id
+            if self._library_media_view == "viewer" and not reader.external_detail
+            else self._selected_media_id
+        )
         if controller.applied_result is None:
             return build_library_media_state(
                 (),
                 active_type=self._library_media_type_filter,
-                selected_id=self._selected_media_id,
+                selected_id=selected_id,
                 select_mode=self._library_media_select_mode,
                 selected_ids=self._library_media_row_selection.ids,
                 confirming_bulk_delete=self._library_media_confirming_bulk_delete,
@@ -1917,7 +1925,7 @@ class LibraryMediaController:
             retained_items=self._decorate_library_media_reviewed(
                 controller.retained_items
             ),
-            selected_id=self._selected_media_id,
+            selected_id=selected_id,
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,

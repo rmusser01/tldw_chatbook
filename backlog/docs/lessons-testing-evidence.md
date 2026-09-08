@@ -1270,6 +1270,14 @@ widget whose CSS was consolidated, inherit `ConsolidatedCSSApp`. The tell was
 the surviving mutant, not the failing test: a green geometry assertion under a
 harness that cannot see the rule looks identical to a correct one.
 
+**Recurred, TASK-31932, 2026-09-08.** The ingest harness also loaded the full
+app bundle but inherited plain `App`. Its unstyled navigation bar occupied 23
+rows instead of three; the compositor hit the docked fold hint at the visible
+Clear button's coordinates. Reusing `ConsolidatedCSSApp` restored the real
+default tier and made the original mouse click, clear-value, widget-identity
+and focus assertions pass. An added exact navigation-height control failed
+23-versus-3 before the fixture repair. The defect was not in the Clear handler.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test
@@ -13992,3 +14000,16 @@ the sub-0.5-second unmount bound. Production scheduling is unchanged. When a
 weakref test fails, attribute the external root before blaming an internal
 cycle or assertion rewriting. Do not purge asyncio's private timer heap or
 disable the cleanup assertion to manufacture collection.
+
+## Off the screen stack does not mean unmounted
+
+**PR 2427 / TASK-31932, 2026-09-08.** Two Console tests navigated away, asserted
+the old screen was absent from `screen_stack`, then expected cancellation and
+post-unmount refusal banking. TASK-31520 intentionally retains installed Console
+instances and their runtime attachment across suspension. Tracing showed no
+`on_unmount` until app shutdown; the retained composer restored refusals directly.
+The tests now use the existing exact-owner uninstall/removal helper when testing
+recreation, while the unchanged warm-reuse tests cover ordinary navigation. All
+31 ownership/reuse cases pass, retaining the original 45 cancellation, identity
+and draft-provenance assertions. Verify the actual lifecycle event before
+classifying a teardown failure; do not turn intentional suspension into disposal.
