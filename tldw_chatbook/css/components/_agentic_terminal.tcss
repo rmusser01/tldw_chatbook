@@ -1293,10 +1293,17 @@ ConsoleRunLogModal {
    (DataTable), TASK-2300 (SelectOverlay) and task-31221 (the media type
    chooser). Focus stays visible the sanctioned way: the arrow glyph
    recolours to the accent and goes bold. */
+/* task-32053 fix round 1 (controller ruling): recolouring the arrow and
+   bolding it is still a COLOUR-family change -- critique #8 measured focus
+   as invisible here, and a 1-cell-wide grip has no room for a glyph cue.
+   `reverse` inverts the whole grip as a block, which reads at a glance and
+   survives monochrome, without the outline this rule deliberately refuses
+   (task-31276: an outline on a shell-tall grip paints over the Reader's
+   identity line and reads as a rendering artifact). */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
     background: $ds-surface-raised;
     color: $ds-action-focus;
-    text-style: bold;
+    text-style: bold reverse;
     tint: transparent;
     outline: none;
 }

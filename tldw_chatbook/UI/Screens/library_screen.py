@@ -9315,8 +9315,15 @@ class LibraryScreen(BaseAppScreen):
             and self._library_emergency_restore_receipt is not None
         )
         if emergency_tab:
+            # task-32052 AC#3 (fix round 1): through
+            # ``_move_library_screen_focus``, not the bare
+            # ``Screen.focus_next``/``focus_previous``. This branch handles
+            # Tab itself and stops the event, so ``action_focus_next`` never
+            # runs here -- and the bare calls default to selector "*", which
+            # walks the nav bar. The narrow-terminal emergency stage is a
+            # Library canvas like any other.
             if event.key == "tab":
-                focused = self.focus_next()
+                focused = self._move_library_screen_focus(1)
             else:
                 owner = self._library_entry_canvas_owner()
                 route_focus_chain = (
@@ -9338,7 +9345,7 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         focused.focus()
                 else:
-                    focused = self.focus_previous()
+                    focused = self._move_library_screen_focus(-1)
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
@@ -9488,17 +9495,21 @@ class LibraryScreen(BaseAppScreen):
         """Shift+Tab: the reverse of ``action_focus_next``."""
         self._move_library_screen_focus(-1)
 
-    def _move_library_screen_focus(self, direction: int) -> None:
-        """Cycle focus within the Library content, or app-wide from chrome."""
+    def _move_library_screen_focus(self, direction: int) -> Widget | None:
+        """Cycle focus within the Library content, or app-wide from chrome.
+
+        Returns the newly focused widget, which the emergency-stage Tab path
+        in ``on_key`` hands to
+        ``_advance_library_ordinary_emergency_user_interaction``.
+        """
         focused = self.focused
         inside = focused is not None and any(
             node.id == "screen-content" for node in focused.ancestors
         )
         selector = self._LIBRARY_TAB_REGION if inside or focused is None else "*"
         if direction >= 0:
-            self.focus_next(selector)
-        else:
-            self.focus_previous(selector)
+            return self.focus_next(selector)
+        return self.focus_previous(selector)
 
     def action_focus_previous_workbench_pane(self) -> None:
         """Shift+F6: move focus to the previous Library workbench pane."""
@@ -25479,10 +25490,22 @@ class LibraryScreen(BaseAppScreen):
             # row in F1 on every canvas that already has one).
             if not isinstance(self.focused, (Input, TextArea)):
                 return False
-            return not any(
+            if any(
                 self.check_action(earlier, ())
                 for earlier in self._library_escape_actions_before(action)
-            )
+            ):
+                return False
+            # ...and never take the key from the focus-rail hop declared
+            # AFTER this one when that hop would genuinely MOVE focus. On a
+            # list canvas with the caret in the canvas filter box, the footer
+            # promises "esc focus rail" and must be telling the truth; this
+            # binding exists only for the case where that hop lands on the
+            # widget that already has focus (the rail search box), which is
+            # what made Escape inert and let the next key be typed.
+            if self.check_action("library_list_focus_rail", ()):
+                target = self._library_list_focus_rail_target().lstrip("#")
+                return not target or target == (self.focused.id or "")
+            return True
         if action == "library_list_focus_rail":
             # task-4023 AC#7: Collections joins the list-canvas Escape
             # contract (it was the one browse canvas where Escape was
@@ -27125,16 +27148,35 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._close_open_library_choice_strip():
             return
+        target = self._library_list_focus_rail_target()
+        if not target:
+            return
+        if target == "#library-conversations-filter":
+            self._focus_library_control(target)
+            return
+        self._focus_library_rail_action(target)
+
+    def _library_list_focus_rail_target(self) -> str:
+        """The selector ``action_library_list_focus_rail`` would focus, if any.
+
+        Extracted (task-32051 fix round 1) so the ``library_blur_text_field``
+        gate can ask "would this hop actually MOVE focus?" without restating
+        the destination -- the two answers must never drift, because the
+        footer's "esc focus rail" chip promises this destination and the blur
+        binding is what could silently take the key away from it.
+
+        Returns:
+            The selector, or ``""`` when the hop would focus nothing.
+        """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             region = self._library_conversation_focus_region()
             layout = self._conversations_state.reader_layout
             if region == "work" and layout.items_open:
-                self._focus_library_control("#library-conversations-filter")
-                return
+                return "#library-conversations-filter"
             if region in {"work", "items"} and layout.library_open:
-                self._focus_library_rail_action("#library-search-input")
-            return
-        self._focus_library_rail_action("#library-search-input")
+                return "#library-search-input"
+            return ""
+        return "#library-search-input"
 
     @on(LibraryEmergencyReturn.ReturnRequested)
     def handle_library_emergency_return(

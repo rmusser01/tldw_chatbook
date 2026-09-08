@@ -23,9 +23,17 @@ from __future__ import annotations
 
 import pytest
 
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import Button, Input
 
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LibraryAdaptiveReaderPaneGrip,
+)
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
 )
@@ -184,6 +192,78 @@ async def test_escape_still_belongs_to_the_surface_that_already_owns_it():
         assert screen.check_action("library_blur_text_field", ()) is False
 
 
+@pytest.mark.asyncio
+async def test_escape_from_a_list_filter_box_still_goes_where_the_footer_says():
+    """Fix round 1 (Important #1): the blur binding must not outrank a
+    focus-rail hop that genuinely moves focus.
+
+    On a list canvas `library_list_focus_rail` is check_action-True and is
+    declared AFTER the blur binding, so an unconditional blur gate silently
+    took Escape from the canvas filter box and left the footer's "esc focus
+    rail" chip lying about where the caret would land.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-filter")
+        # The real gesture: "/" focuses this canvas's own filter (task-32046)
+        # and, being a key, also disarms the list's entry-focus arm -- a bare
+        # .focus() races that arm and measures it instead of the key.
+        await pilot.press("slash")
+        await pilot.pause()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen.focused is screen.query_one("#library-media-filter", Input)
+
+        # What the footer promises BEFORE the press.
+        assert (
+            "esc",
+            "focus rail",
+        ) in screen._library_footer_shortcuts_for_current_state()
+        assert screen.check_action("library_blur_text_field", ()) is False
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is screen.query_one("#library-search-input", Input), (
+            "Escape left the filter box for the canvas while the footer said "
+            "'focus rail'."
+        )
+
+
+@pytest.mark.asyncio
+async def test_escape_still_claimed_when_the_rail_hop_would_be_a_no_op():
+    """...but the rail search box itself keeps the blur, on the same canvas.
+
+    This is the whole reason the binding exists: from inside
+    `#library-search-input` the focus-rail hop re-focuses the widget that
+    already has focus, so Escape was inert and the next key was typed.
+    """
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-filter")
+        search_box = screen.query_one("#library-search-input", Input)
+        # A key first, so the list's entry-focus arm is disarmed (see the
+        # sibling test) and the caret genuinely stays in the rail box.
+        await pilot.press("slash")
+        await pilot.pause()
+        search_box.focus()
+        await pilot.pause()
+        assert screen.focused is search_box
+
+        assert screen.check_action("library_blur_text_field", ()) is True
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.focused is not search_box
+        assert not isinstance(screen.focused, Input)
+
+
+
 # --- task-32052: the New-note canvas is keyboard-complete -------------------
 
 
@@ -215,6 +295,14 @@ async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
         await pilot.press("up")
         await pilot.pause()
         assert screen.focused is blank
+
+        # AC#1 is "Enter creates a note immediately" -- assert the outcome,
+        # not just the focus that makes it possible.
+        await pilot.press("enter")
+        editor = await _wait_for_selector(screen, pilot, "#library-note-body")
+        assert editor is not None
+        assert screen._library_notes_view == "editor"
+        assert screen._library_note_session.snapshot is not None
 
 
 @pytest.mark.asyncio
@@ -407,4 +495,123 @@ async def test_run_button_has_a_visible_focus_state():
         assert focused != blurred, (
             "The Run button paints identically focused and blurred -- a "
             "keyboard user cannot see where they are."
+        )
+
+
+@pytest.mark.asyncio
+async def test_tab_stays_inside_library_in_the_emergency_return_state():
+    """Fix round 1 (Important #2): the narrow-terminal Tab path was unscoped.
+
+    `on_key`'s `emergency_tab` branch handles Tab itself and stops the event,
+    so `action_focus_next` never runs -- and it called the bare
+    `Screen.focus_next()`, whose default `"*"` selector walks the nav bar.
+    AC#3 says ANY Library canvas, which includes this one.
+    """
+    from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+    host = _build_library_host()
+    async with host.run_test(size=(60, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        screen.query_one("#library-rag-query-input", Input).focus()
+        await pilot.pause()
+        # The narrow-width gate arms this on its own; give it a beat and
+        # fall back to the same two fields it sets if the resize watcher has
+        # not run yet (the state, not the route to it, is what is under test).
+        for _ in range(40):
+            if screen._library_emergency_stage == "canvas-only":
+                break
+            await pilot.pause(0.02)
+        if screen._library_emergency_stage != "canvas-only":
+            screen._library_emergency_stage = "canvas-only"
+            screen._library_emergency_restore_receipt = (
+                screen._capture_library_emergency_restore_receipt(
+                    screen.query_one("#library-rail"),
+                    screen.query_one("#library-canvas"),
+                )
+            )
+            screen._apply_library_notes_stage_visibility()
+            await pilot.pause()
+        assert screen._library_emergency_stage == "canvas-only"
+        assert screen._library_emergency_restore_receipt is not None
+
+        nav_bar = screen.query_one(MainNavigationBar)
+        seen = []
+        for _ in range(20):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = screen.focused
+            assert focused is not None
+            seen.append(focused.id)
+            assert nav_bar not in focused.ancestors, (
+                f"emergency Tab escaped into the nav bar at {focused.id!r}; "
+                f"walk so far: {seen}"
+            )
+
+
+class _GripFocusHost(App):
+    """Two real pane grips inside a real shell container, production CSS.
+
+    The `:focus` rule is scoped `.library-adaptive-reader-shell > .library-
+    adaptive-reader-pane-grip:focus`, so the parent class is load-bearing.
+    `AUTO_FOCUS = None` keeps both grips genuinely blurred until a test moves
+    focus, so the observed treatment is the one a real Tab produces.
+    """
+
+    AUTO_FOCUS = None
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="library-adaptive-reader-shell"):
+            yield LibraryAdaptiveReaderPaneGrip(
+                "library", open=True, pane_label="Library", id="grip-a", width=1
+            )
+            yield LibraryAdaptiveReaderPaneGrip(
+                "items", open=True, pane_label="Items", id="grip-b", width=1
+            )
+
+
+@pytest.mark.asyncio
+async def test_pane_grip_focus_is_visible_against_its_blurred_sibling():
+    """Controller ruling (B): the grip's focus treatment must actually show.
+
+    `.library-adaptive-reader-pane-grip:focus` was background + colour + bold
+    with no inversion, which is the "focus invisible on grips" critique #8
+    measured. `reverse` makes the grip invert as a block; read through the
+    real compositor, the focused grip's painted style must differ from its
+    blurred sibling's.
+    """
+    app = _GripFocusHost()
+    async with app.run_test(size=(80, 12)) as pilot:
+        grip_a = app.query_one("#grip-a", LibraryAdaptiveReaderPaneGrip)
+        grip_b = app.query_one("#grip-b", LibraryAdaptiveReaderPaneGrip)
+
+        def _style_at(widget):
+            region = widget.region
+            y = region.y + region.height // 2
+            column = 0
+            for segment in app.screen._compositor.render_strips()[y]:
+                for _char in segment.text:
+                    if column == region.x:
+                        return segment.style
+                    column += 1
+            return None
+
+        blurred_both = (_style_at(grip_a), _style_at(grip_b))
+        assert blurred_both[0] == blurred_both[1], (
+            "both grips must start identically painted for this to mean anything"
+        )
+
+        grip_a.focus()
+        await pilot.pause()
+        assert grip_a.has_focus and not grip_b.has_focus
+        assert _style_at(grip_a) != _style_at(grip_b), (
+            "the focused grip paints identically to its blurred sibling -- "
+            "keyboard focus on a pane grip is invisible."
+        )
+        assert "reverse" in str(grip_a.styles.text_style).lower(), (
+            f"expected a reverse (block-inverting) focus style, got "
+            f"{grip_a.styles.text_style!r}"
         )
