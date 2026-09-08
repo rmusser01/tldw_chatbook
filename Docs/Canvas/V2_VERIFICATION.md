@@ -235,11 +235,17 @@ The wheel was built with the existing offline toolchain, installed with
 closure matched the wheel and checkout byte-for-byte. The installed absolute
 entry ran with `-I -S` from hostile cwd/`PYTHONPATH`: plain close, real prepare,
 and fixed TTS initialization all completed with clean stderr. A supplemental
-test-owned import/file audit found every product import in the installed copy,
-no app/config/provider/keyring/loguru/Textual import, no resolved absolute open
-under trap roots, and no poison sentinel access. Deleting an installed leaf
-produced source-free `helper_unavailable`; hostile roots could not rescue it.
-The focused packaging/UI-loop selection passed 8 tests in 12.54s.
+test-owned import/file audit records every loaded module name separately from
+the product-file origin mapping. It admits only the fixed helper's approved
+product-module closure and Python's standard-library top-level modules, thereby
+excluding keyring/loguru/Textual and every provider SDK. It found no forbidden
+import, resolved absolute open under trap roots, or poison sentinel access.
+Controlled `ModuleType` names prove rejection of app, config, keyring, loguru,
+Textual, two external provider SDKs, and provider-bearing LLM Calls, provider
+catalog, Chat, Agents, and TTS namespaces without importing real credential or
+provider code. Deleting an installed leaf produced source-free
+`helper_unavailable`; hostile roots could not rescue it. The final audit-fix
+packaging selection passed 19 tests with the existing dependency warning.
 
 The exact 27-file affected command and exact five-node Canvas command both
 failed at collection because the shared virtual environment's
