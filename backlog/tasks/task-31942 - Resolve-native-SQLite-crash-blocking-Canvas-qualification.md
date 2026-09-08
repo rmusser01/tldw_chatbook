@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 15:33'
-updated_date: '2026-09-08 00:16'
+updated_date: '2026-09-08 01:05'
 labels:
   - database
   - canvas
@@ -51,6 +51,6 @@ Detailed plan: Docs/superpowers/plans/2026-09-07-sqlite-lock-safe-private-valida
 4. Extract shared pure TTS schema/domain/metadata validation and the fixed helper proof.
 5. Integrate TTS live proof, explicit restore/directory handoffs, shielded-worker ownership and bounded restart-required quarantine; qualify both orderly and abrupt process exit.
 6. Correct exclusive descriptor/finalizer ownership and complete the raw-close consumer census.
-7. Qualify installed-wheel/import isolation, targeted DB/TTS/privacy/lifetime/performance tests and the previously failing actual Canvas child workflows; independently review the complete correction before returning to TASK-31941.
-Subagent-driven execution started at 6601eba5d. Tasks1/2 passed independent spec and quality gates through 83f0be4e9/5faa04887. Task3 passed both gates at 0e5363446: root lock/protocol/process167 passed; remaining listed DB/private-path tests372 passed, two Windows skips and three unchanged strict inventory failures. The inventory gaps remain qualification blockers pending separate scope approval; no waiver. Task4 starts next, including the required domain-parser spy adjustment at its extraction seam. Later TTS/exclusive-descriptor correction and whole qualification remain outstanding. Keep V2 disabled; no full repository sweep, PR, push, rebase or merge.
+7. Qualify installed-wheel/import isolation, targeted DB/TTS/privacy/lifetime/performance tests and previously failing actual Canvas child workflows; independently review the complete correction before returning to TASK-31941.
+Subagent-driven execution started at 6601eba5d. Tasks1/2/3 passed independent spec and quality gates through 83f0be4e9/5faa04887/0e5363446. Task4 implemented at2db961c4d; spec correctiond643bbc90 passed re-review. Quality remains open for first-pin filesystem refusal misclassification. Implementation paused for explicit user direction on partial cohort capture: whether retry may retain the exact acquired WAL/main/parent pins while binding previously unbound SHM once. Do not infer staged completion or permanent close-only semantics. Root verification after spec fix174proof/protocol/process passes; broader repository/lifecycle360passes with11stdlib semaphore allocation failures reproduced outside app/sandbox. Those tests and three unchanged strict inventory gaps remain qualification limitations, not waivers. Task5 not started. Keep V2 disabled; no full sweep, PR, push, rebase, merge or host resource changes.
 <!-- SECTION:PLAN:END -->
