@@ -4163,6 +4163,18 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[tuple[str, str], ...]:
         """Hide rail-search hints while the compact rail has no search box."""
         shortcuts = self._library_route_shortcuts_for_current_state()
+        # task-32053 AC#3: on Search/RAG the "enter" chip names whatever the
+        # FOCUSED control's Enter genuinely does. The static set said
+        # "select evidence" everywhere -- in the query box (Enter runs the
+        # search) and on a source toggle (Enter empties the results), the
+        # two places the live walk actually pressed it.
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            enter_label = self._library_focus_enter_label()
+            shortcuts = tuple(
+                ("enter", enter_label) if pair[0] == "enter" else pair
+                for pair in shortcuts
+                if pair[0] != "enter" or enter_label
+            )
         # task-31223 (re-critique P1): while a text field holds focus, every
         # single printable key is INSERTED AS TEXT, so advertising "] next
         # in set" or "s select" is the footer lying -- live, a stray "]"

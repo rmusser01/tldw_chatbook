@@ -9324,6 +9324,16 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold;
 }
 
+/* task-32053 AC#4: Run painted byte-identically focused and blurred (the
+   generic `*:focus{outline:solid}` cannot paint around a 1-row button).
+   Same heavy SIDE rails the compact canvas actions use (task-3302 MI-05):
+   they land on the button's own `padding: 0 1` cells, so the label
+   survives and the dimensions never change on focus/blur. */
+#library-rag-run-query:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
 #library-rag-run-query:disabled {
     background: $ds-surface-raised;
     color: $ds-text-disabled;
@@ -9352,9 +9362,26 @@ ListItem.personas-library-row.is-active.-highlight {
     border-bottom: solid $ds-grid-line;
 }
 
+/* task-32053 AC#1 (critique #8 row 4): the card was reachable in five Tabs
+ * from the query box, but the ONLY cue was this border-colour swap -- a
+ * colour-only signal, against the house rule, and the reason two live
+ * reviewers read the cards as unreachable and the keys as inert. The left
+ * edge becomes the house `thick` block bar (`█`, same non-colour cue as
+ * `.library-media-row:focus`/`.library-notes-row:focus`, task-31983);
+ * `thick` occupies the same single cell `solid` already reserved, so
+ * nothing shifts on focus/blur. */
 .library-rag-result-card:focus {
     border: solid $ds-focus-accent;
     border-bottom: solid $ds-focus-accent;
+    border-left: thick $ds-focus-accent;
+    /* Load-bearing, and the reason the card LOOKED colour-only: the generic
+     * `*:focus { outline: solid $ds-focus-accent }` fallback
+     * (core/_reset.tcss) paints its edges OVER this widget's own border
+     * cells, so every edge -- including this one -- came out as the
+     * outline's `│` recoloured to the accent, and the border rule above was
+     * never visible at all. Every sibling row rule already suppresses it
+     * for exactly this reason (`.library-media-row:focus`, task-2856). */
+    outline: none;
 }
 
 /* task-7 PR-2 leftover: this title Static used to draw its own

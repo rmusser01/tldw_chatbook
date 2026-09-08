@@ -296,3 +296,115 @@ async def test_ctrl_n_into_new_note_also_focuses_blank_note():
             f"Ctrl+N left focus on {getattr(screen.focused, 'id', None)!r}, "
             "so Enter does not create a note."
         )
+
+
+# --- task-32053: keyboard-visible Search/RAG evidence -----------------------
+
+
+@pytest.mark.asyncio
+async def test_evidence_card_focus_is_a_shape_change_not_a_colour_swap():
+    """AC#1: the focused card carries the house left-edge block cue."""
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _run_library_rag_search(screen, pilot)
+
+        card = screen.query_one("#library-rag-result-card-0")
+        other = screen.query_one("#library-rag-result-card-1")
+
+        assert _left_edge(_painted_rows(host), card) != _THICK_LEFT_GLYPH
+
+        card.focus()
+        await pilot.pause()
+        rows = _painted_rows(host)
+        assert _left_edge(rows, card) == _THICK_LEFT_GLYPH, (
+            "The focused evidence card only changed border COLOUR -- there is "
+            "no shape cue telling a keyboard user where they are."
+        )
+        assert _left_edge(rows, other) != _THICK_LEFT_GLYPH, (
+            "The blurred sibling card paints the focus cue too."
+        )
+
+
+@pytest.mark.asyncio
+async def test_evidence_cards_are_reachable_and_enter_selects_them():
+    """AC#2: Tab reaches a card and Enter selects it, matching the footer."""
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _run_library_rag_search(screen, pilot)
+
+        screen.query_one("#library-rag-query-input", Input).focus()
+        await pilot.pause()
+        for _ in range(6):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused_id = getattr(screen.focused, "id", "") or ""
+            if focused_id.startswith("library-rag-result-card-"):
+                break
+        else:
+            raise AssertionError("Six Tabs from the query box reached no card.")
+
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert (
+            str(screen.query_one("#library-rag-select-result-0", Button).label)
+            == "Selected evidence"
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_rag_footer_names_the_focused_controls_enter_action():
+    """AC#3: "enter run search" in the query box, "enter toggle Notes" on a
+    source toggle, "enter select evidence" on a card."""
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _run_library_rag_search(screen, pilot)
+
+        screen.query_one("#library-rag-query-input", Input).focus()
+        await pilot.pause()
+        assert ("enter", "run search") in screen._library_footer_shortcuts_for_current_state()
+
+        screen.query_one("#library-rag-scope-toggle-notes", Button).focus()
+        await pilot.pause()
+        assert (
+            "enter",
+            "toggle Notes",
+        ) in screen._library_footer_shortcuts_for_current_state()
+
+        screen.query_one("#library-rag-result-card-0").focus()
+        await pilot.pause()
+        assert (
+            "enter",
+            "select evidence",
+        ) in screen._library_footer_shortcuts_for_current_state()
+
+
+@pytest.mark.asyncio
+async def test_run_button_has_a_visible_focus_state():
+    """AC#4: focusing Run changes the painted rows, not just a colour token."""
+    host = _build_library_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-run-query")
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy")
+
+        run = screen.query_one("#library-rag-run-query", Button)
+        blurred = _painted_rows(host)[run.region.y][
+            run.region.x : run.region.right
+        ]
+
+        run.focus()
+        await pilot.pause()
+        focused = _painted_rows(host)[run.region.y][run.region.x : run.region.right]
+        assert focused != blurred, (
+            "The Run button paints identically focused and blurred -- a "
+            "keyboard user cannot see where they are."
+        )
